@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>Negev · Anime requests</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">N</span><span>Negev</span></div>
+    <div id="identity" class="identity" hidden><span id="username"></span><button id="invite" class="quiet" hidden>Create invite</button><button id="signout" class="quiet">Sign out</button></div>
+  </header>
+  <main>
+    <section class="intro">
+      <p class="eyebrow">Anime requests</p>
+      <h1>Find your next show or film.</h1>
+      <p>Search the AniDB catalogue, choose an installment, and save a request.</p>
+    </section>
+    <p class="notice">Negev is in preview. Requests are saved, but automatic downloads and availability updates are not active yet.</p>
+    <p id="message" class="message" role="status" aria-live="polite"></p>
+    <p id="invite-code" class="invite-code" hidden></p>
+    <section id="auth" class="panel auth-panel">
+      <div class="tabs"><button id="login-tab" class="selected" type="button">Sign in</button><button id="register-tab" type="button">Use an invitation</button></div>
+      <form id="login-form">
+        <label>Username<input name="username" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="primary" type="submit">Sign in</button>
+      </form>
+      <form id="register-form" hidden>
+        <label>Invitation code<input name="code" autocomplete="off" required></label>
+        <label>Username<input name="username" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <button class="primary" type="submit">Create account</button>
+      </form>
+    </section>
+    <section id="workspace" hidden>
+      <form id="search-form" class="search-row" role="search">
+        <label for="query" class="sr-only">Search anime</label>
+        <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime titles" required>
+        <button class="primary" type="submit">Search</button>
+      </form>
+      <div class="columns">
+        <section class="panel" aria-labelledby="results-title"><h2 id="results-title">Search results</h2><div id="results" class="results"><p class="muted">Search by title to begin.</p></div></section>
+        <section class="panel" aria-labelledby="detail-title"><h2 id="detail-title">Installment</h2><div id="detail"><p class="muted">Select a result to see its details.</p></div></section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

@@ -25,6 +25,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readRequest: (id) => requestLedger.getRequest(id),
   });
   try {
+    const page = await app.inject({ method: 'GET', url: '/' });
+    assert.equal(page.statusCode, 200);
+    assert.match(page.headers['content-security-policy'], /default-src 'none'/);
+    assert.match(page.body, /Negev/);
+    const script = await app.inject({ method: 'GET', url: '/app.js' });
+    assert.equal(script.statusCode, 200);
+    assert.match(script.headers['content-type'], /javascript/);
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);
     const crossSite = await app.inject({ method: 'POST', url: '/api/login',

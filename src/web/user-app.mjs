@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
@@ -42,6 +43,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: secureCookies,
       maxAge: 24 * 60 * 60 } });
   await app.register(rateLimit, { global: false });
+  const pages = await Promise.all(['index.html', 'app.js', 'style.css'].map((name) =>
+    readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
+  const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+    'Cache-Control': 'no-store' };
+  for (const [url, contentType, body] of [
+    ['/', 'text/html; charset=utf-8', pages[0]],
+    ['/app.js', 'text/javascript; charset=utf-8', pages[1]],
+    ['/style.css', 'text/css; charset=utf-8', pages[2]],
+  ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
       return reply.code(403).send({ error: 'Origin rejected' });
