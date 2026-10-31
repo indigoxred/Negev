@@ -93,6 +93,47 @@ test('failed reconciliation never schedules work', async () => {
   assert.equal(closed, true);
 });
 
+test('a held target does not delay unrelated acquisition stages', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickPublish: async () => { calls.push('publish');
+      return { state: 'held', reason: 'import_activity_unverified' }; },
+    tickCompletions: async () => { calls.push('completion');
+      return { state: 'idle' }; },
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async () => ({ state: 'idle' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  await timer.advance();
+  assert.deepEqual(timer.delays(), [60_000]);
+  await timer.advance();
+  assert.deepEqual(calls, ['publish', 'completion']);
+  await scheduler.stop();
+});
+
+test('a failed worker call uses the longer retry delay', async () => {
+  const timer = clock();
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickPublish: async () => { throw new Error('provider unavailable'); },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async () => ({ state: 'idle' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  await timer.advance();
+  assert.deepEqual(timer.delays(), [5 * 60_000]);
+  await scheduler.stop();
+});
+
 test('operator status distinguishes waiting, active work and a stopped worker', async () => {
   const timer = clock();
   let release;

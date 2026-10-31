@@ -42,14 +42,18 @@ export function createPipelineScheduler({ pipeline,
     const stage = stages[stageIndex];
     stageIndex = (stageIndex + 1) % stages.length;
     activeStage = stage.slice(4).toLowerCase();
+    let workerFailed = false;
     try { lastResult = await pipeline[stage](); }
-    catch { lastResult = { state: 'held', reason: 'worker_unavailable' }; }
+    catch { workerFailed = true;
+      lastResult = { state: 'held', reason: 'worker_unavailable' }; }
     lastStage = activeStage;
     activeStage = null;
     const finished = now();
     lastFinishedMs = Number.isSafeInteger(finished) && finished >= 0
       ? finished : null;
-    schedule(lastResult?.state === 'held' ? failureDelayMs : stepDelayMs);
+    // A durable worker may hold one target while later targets remain ready.
+    // Reserve the longer backoff for an actual worker failure.
+    schedule(workerFailed ? failureDelayMs : stepDelayMs);
   };
   return {
     start() {
