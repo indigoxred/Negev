@@ -128,7 +128,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return result;
   });
   app.get('/api/catalogue/:id', { preHandler: requireUser,
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof loadDetail !== 'function') return reply.code(503).send({ error: 'Catalogue unavailable' });
     const id = Number(request.params.id);
@@ -159,6 +159,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(409).send({ state: 'held', reason: 'unknown_title' });
     }
     const result = await hydrateTitle({ anidbId: id });
+    if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'pending') return reply.code(202).send(result);
     if (result.state === 'detail_ready') return result;
     return reply.code(409).send(result);
@@ -179,13 +180,15 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return result.state === 'created' ? reply.code(201).send(result) :
       reply.code(403).send({ error: 'Admin required' });
   });
-  app.post('/api/requests', { preHandler: writeGuards }, async (request, reply) => {
+  app.post('/api/requests', { preHandler: writeGuards,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const body = request.body;
     if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey'])) {
       return reply.code(400).send({ error: 'Invalid request' });
     }
     const result = await submitRequest({ ...body, requesterId: request.negevUser.id });
+    if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
       return reply.code(202).send(result);
     }

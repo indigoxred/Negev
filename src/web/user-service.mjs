@@ -8,6 +8,7 @@ import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { buildUserApp } from './user-app.mjs';
+import { createMetadataLimiter } from './metadata-limiter.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
@@ -26,6 +27,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
     hydration = openHydrationLedger(dbPath);
+    const metadata = createMetadataLimiter();
     const titleRegistry = createObservedTitleRegistry({ now });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
@@ -41,12 +43,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       titleRegistry, loadDetail, ledger: requests, now, today,
     });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
-      now, submitRequest, readRequest: (id) => requests.getRequest(id),
+      now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
+      readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => requests.listRequests(input),
-      searchTitles: ({ query, page }) => searchAniDbTitles({
+      searchTitles: ({ query, page }) => metadata.run(() => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
-      }),
-      titleRegistry, loadDetail, hydrateTitle: (input) => hydrator.load(input),
+      })),
+      titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      hydrateTitle: (input) => metadata.run(() => hydrator.load(input)),
     });
     return { app, async close() {
       try { await app.close(); }

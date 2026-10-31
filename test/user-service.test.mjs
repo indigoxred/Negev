@@ -109,3 +109,41 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('concurrent catalogue reads do not pile up on Shoko', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-load-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let release;
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  let calls = 0;
+  let service;
+  try {
+    service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false,
+      fetchImpl: async () => {
+        calls++;
+        started();
+        return new Promise((resolve) => { release = resolve; });
+      } });
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const first = service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Example', headers: { cookie } });
+    await entered;
+    const busy = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Another', headers: { cookie } });
+    assert.equal(busy.statusCode, 503);
+    assert.equal(calls, 1);
+    release(json({ Total: 0, List: [] }));
+    assert.equal((await first).statusCode, 200);
+  } finally {
+    await service?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
