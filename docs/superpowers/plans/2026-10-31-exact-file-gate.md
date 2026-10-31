@@ -48,5 +48,13 @@
 **Files:** `package.json`, `README.md`
 
 - [x] Document the current slice and its limitations without claiming a working downloader or availability service.
-- [ ] Verify the public tree contains no credentials, private evidence or media.
-- [ ] Commit locally after tests pass. Publishing is a separate step.
+- [x] Verify the public tree contains no credentials, private evidence or media.
+- [x] Commit locally after tests pass. The owner supplied the Negev repository and authorized proceeding; the initial public tree was published and verified.
+
+### Task 4: Read-only Shoko adapter
+
+**Files:** `src/identity/shoko-preview.mjs`, `test/shoko-preview.test.mjs`
+
+- [x] Write a failing test for the installed provider preview URL, header-only credential, 200 JSON, 204 ambiguity, and transport failure.
+- [x] Implement a GET-only adapter with injected fetch and a bounded timeout.
+- [x] Run the full local test suite. Do not use a live credential or change Shoko.

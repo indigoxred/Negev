@@ -2,7 +2,7 @@
 
 Negev is a planned, self-hosted anime request and acquisition app. This repository currently contains only the first **read-only identity gate**. It is not yet a request site, downloader, Shoko importer, or availability service.
 
-The gate calculates a completed video's ED2K hash and evaluates a Shoko AniDB release-preview response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban.
+The gate calculates a completed video's ED2K hash, calls Shoko's read-only AniDB release-preview endpoint, and evaluates the response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban. The adapter is tested with fake responses only; it has not been connected to a live Negev service.
 
 Run the local tests with `node --test` using Node.js 24 or later. No external package or server connection is needed for the tests.
 
