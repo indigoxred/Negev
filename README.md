@@ -21,5 +21,7 @@ A private Fastify app factory can search Shoko's AniDB title cache and read AniD
 
 A separate pure request-intent planner can select exact AniDB episodes from complete detail. It distinguishes an Airing installment that monitors future regular episodes from a Completed one-time acquisition, and allows explicit Specials without adding the rest of the installment. It requires a trusted Airing/Completed classification; Negev does not yet obtain that classification from Shoko, expose a request route, or persist a user's request.
 
+A pure release-state helper can infer Airing, Completed, Upcoming or Unknown from AniDB start/end dates and regular episode dates. Its result is labelled **inferred** because AniDB cannot reliably distinguish a hiatus or cancellation from an ongoing release. The installed Shoko API date fields have not yet been sampled for this helper, so it is not connected to request creation or monitoring.
+
 Do not commit credentials, NAS configuration, database copies, logs, operational evidence, or media to this public project.
 
