@@ -9,7 +9,7 @@ const f = (b, c, d) => (b & c) | (~b & d);
 const g = (b, c, d) => (b & c) | (b & d) | (c & d);
 const h = (b, c, d) => b ^ c ^ d;
 
-function md4(input) {
+function* md4Steps(input) {
   const paddedLength = Math.ceil((input.length + 9) / 64) * 64;
   const data = Buffer.alloc(paddedLength);
   input.copy(data);
@@ -40,11 +40,29 @@ function md4(input) {
       }
     }
     for (let i = 0; i < 4; i++) state[i] = (state[i] + original[i]) >>> 0;
+    if ((offset + 64) % (1024 * 1024) === 0 && offset + 64 < data.length) yield;
   }
 
   const digest = Buffer.alloc(16);
   for (let i = 0; i < 4; i++) digest.writeUInt32LE(state[i], i * 4);
   return digest;
+}
+
+function md4(input) {
+  const steps = md4Steps(input);
+  let result = steps.next();
+  while (!result.done) result = steps.next();
+  return result.value;
+}
+
+async function md4Cooperative(input, yieldCpu) {
+  const steps = md4Steps(input);
+  let result = steps.next();
+  while (!result.done) {
+    await yieldCpu();
+    result = steps.next();
+  }
+  return result.value;
 }
 
 function ed2kFromChunkDigests(digests) {
@@ -62,10 +80,12 @@ export function ed2kBuffer(bytes) {
   return ed2kFromChunkDigests(digests);
 }
 
-export async function ed2kFile(path, { pacer, expectedStat } = {}) {
+export async function ed2kFile(path, { pacer, expectedStat,
+  yieldCpu = () => setImmediate() } = {}) {
   if (pacer !== undefined && typeof pacer?.afterBytes !== 'function') {
     throw new TypeError('Invalid ED2K read pacer');
   }
+  if (typeof yieldCpu !== 'function') throw new TypeError('Invalid ED2K CPU yield');
   const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const before = await file.stat({ bigint: true });
@@ -88,7 +108,7 @@ export async function ed2kFile(path, { pacer, expectedStat } = {}) {
         if (bytesRead === 0) throw new Error('File ended during hashing');
         filled += bytesRead;
       }
-      digests.push(md4(chunk.subarray(0, wanted)));
+      digests.push(await md4Cooperative(chunk.subarray(0, wanted), yieldCpu));
       remaining -= BigInt(wanted);
       if (pacer) await pacer.afterBytes(wanted);
       else await setImmediate();

@@ -58,6 +58,18 @@ test('file hashing reports bytes to the shared pacer', async () => {
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('file hashing yields during a full AniDB chunk without changing the hash', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-yield-'));
+  const file = path.join(dir, 'chunk.bin');
+  let yields = 0;
+  try {
+    await writeFile(file, Buffer.alloc(CHUNK_SIZE));
+    const result = await ed2kFile(file, { yieldCpu: async () => { yields++; } });
+    assert.equal(result.ed2k, 'D7DEF262A127CD79096A108E7A9FC138');
+    assert.ok(yields >= 8, `expected bounded CPU segments, saw ${yields}`);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('staged file hashing rejects a path replaced after validation', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-swap-'));
   const file = path.join(dir, 'episode.mkv');
