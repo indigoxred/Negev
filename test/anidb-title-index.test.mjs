@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAniDbTitleDump, searchAniDbTitleIndex } from '../src/catalogue/anidb-title-index.mjs';
+import { parseAniDbTitleDump, parseAniDbTitleDumpAsync,
+  searchAniDbTitleIndex } from '../src/catalogue/anidb-title-index.mjs';
 
 const fixture = [
   '# aid|type|language|title',
@@ -46,4 +47,21 @@ test('search validates user input and never treats a title as file evidence', ()
   }
   assert.deepEqual(searchAniDbTitleIndex(index, { query: 'missing' }),
     { state: 'results', total: 0, page: 1, items: [] });
+});
+
+test('large title parsing yields while preserving the exact synchronous index', async () => {
+  const text = Array.from({ length: 4_100 }, (_, index) =>
+    `${index + 1}|1|x-jat|Title ${index + 1}`).join('\n');
+  const events = [];
+  const parsing = parseAniDbTitleDumpAsync(text).then((index) => {
+    events.push('parsed');
+    return index;
+  });
+  await new Promise((resolve) => setImmediate(() => {
+    events.push('tick');
+    resolve();
+  }));
+  const index = await parsing;
+  assert.deepEqual(events, ['tick', 'parsed']);
+  assert.deepEqual(index, parseAniDbTitleDump(text));
 });

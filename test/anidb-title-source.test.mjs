@@ -57,6 +57,20 @@ test('rejects redirects, malformed gzip and oversized expanded data without repl
   }
 });
 
+test('a late malformed title row cannot publish a partially refreshed catalogue', async () => {
+  let bytes = dump;
+  let time = 0;
+  const source = createAniDbTitleSource({ now: () => time,
+    fetchImpl: async () => response(bytes) });
+  assert.equal((await source.refresh()).state, 'ready');
+  bytes = gzipSync(`${Array.from({ length: 4_100 }, (_, index) =>
+    `${index + 20}|1|x-jat|New ${index}`).join('\n')}\ninvalid row`);
+  time = 86_400_000;
+  assert.deepEqual(await source.refresh(), { state: 'stale', titles: 1 });
+  assert.equal(source.search({ query: 'English Name' }).items[0].anidbId, 17);
+  assert.equal(source.search({ query: 'New 1' }).total, 0);
+});
+
 test('a failed first fetch leaves catalogue unavailable', async () => {
   const source = createAniDbTitleSource({ fetchImpl: async () => response(null, 503) });
   assert.deepEqual(await source.refresh(), { state: 'unavailable' });

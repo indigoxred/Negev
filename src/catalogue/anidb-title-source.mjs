@@ -1,6 +1,6 @@
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
-import { parseAniDbTitleDump, searchAniDbTitleIndex } from './anidb-title-index.mjs';
+import { parseAniDbTitleDumpAsync, searchAniDbTitleIndex } from './anidb-title-index.mjs';
 
 const DUMP_URL = 'https://anidb.net/api/anime-titles.dat.gz';
 const gunzipAsync = promisify(gunzip);
@@ -71,7 +71,8 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
       const expanded = await gunzipAsync(compressed,
         { maxOutputLength: maxExpandedBytes });
       const text = new TextDecoder('utf-8', { fatal: true }).decode(expanded);
-      const next = parseAniDbTitleDump(text, { maxBytes: maxExpandedBytes });
+      const next = await parseAniDbTitleDumpAsync(text,
+        { maxBytes: maxExpandedBytes });
       index = next;
       lastSuccessMs = started;
       return { state: 'ready', titles: index.size };

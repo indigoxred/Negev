@@ -6,7 +6,7 @@ const TITLE_TYPES = new Map([
 
 // Pure parser for a candidate AniDB pipe-delimited title dump. The caller
 // must verify the downloaded format and freshness before using this index.
-export function parseAniDbTitleDump(text, { maxBytes = 32_000_000,
+function prepareRows(text, { maxBytes = 32_000_000,
   maxLines = 500_000 } = {}) {
   if (typeof text !== 'string' || !Number.isSafeInteger(maxBytes) || maxBytes < 1 ||
       !Number.isSafeInteger(maxLines) || maxLines < 1 ||
@@ -15,38 +15,42 @@ export function parseAniDbTitleDump(text, { maxBytes = 32_000_000,
   }
   const rows = text.split(/\r?\n/);
   if (rows.length > maxLines + 1) throw new TypeError('Invalid AniDB title dump');
-  const byId = new Map();
-  for (const row of rows) {
-    if (!row || row.startsWith('#')) continue;
-    const first = row.indexOf('|');
-    const second = row.indexOf('|', first + 1);
-    const third = row.indexOf('|', second + 1);
-    if (first < 1 || second < 0 || third < 0) throw new TypeError('Invalid AniDB title row');
-    const rawId = row.slice(0, first);
-    const type = TITLE_TYPES.get(row.slice(first + 1, second));
-    const language = row.slice(second + 1, third);
-    const title = row.slice(third + 1).trim();
-    const id = Number(rawId);
-    if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id) ||
-        !type || !/^[a-z0-9-]{2,16}$/i.test(language) ||
-        !title || title.length > 500 || /[\u0000-\u001f]/.test(title)) {
-      throw new TypeError('Invalid AniDB title row');
-    }
-    let entry = byId.get(id);
-    if (!entry) {
-      entry = { anidbId: id, title: null, aliases: new Set(),
-        englishOfficial: new Set() };
-      byId.set(id, entry);
-    }
-    if (type === 'main') {
-      if (entry.title && entry.title !== title) throw new TypeError('Conflicting AniDB main title');
-      entry.title = title;
-    }
-    if (type === 'official' && language.toLowerCase() === 'en') {
-      entry.englishOfficial.add(title);
-    }
-    entry.aliases.add(title.toLocaleLowerCase('en'));
+  return rows;
+}
+
+function addRow(byId, row) {
+  if (!row || row.startsWith('#')) return;
+  const first = row.indexOf('|');
+  const second = row.indexOf('|', first + 1);
+  const third = row.indexOf('|', second + 1);
+  if (first < 1 || second < 0 || third < 0) throw new TypeError('Invalid AniDB title row');
+  const rawId = row.slice(0, first);
+  const type = TITLE_TYPES.get(row.slice(first + 1, second));
+  const language = row.slice(second + 1, third);
+  const title = row.slice(third + 1).trim();
+  const id = Number(rawId);
+  if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id) ||
+      !type || !/^[a-z0-9-]{2,16}$/i.test(language) ||
+      !title || title.length > 500 || /[\u0000-\u001f]/.test(title)) {
+    throw new TypeError('Invalid AniDB title row');
   }
+  let entry = byId.get(id);
+  if (!entry) {
+    entry = { anidbId: id, title: null, aliases: new Set(),
+      englishOfficial: new Set() };
+    byId.set(id, entry);
+  }
+  if (type === 'main') {
+    if (entry.title && entry.title !== title) throw new TypeError('Conflicting AniDB main title');
+    entry.title = title;
+  }
+  if (type === 'official' && language.toLowerCase() === 'en') {
+    entry.englishOfficial.add(title);
+  }
+  entry.aliases.add(title.toLocaleLowerCase('en'));
+}
+
+function finishIndex(byId) {
   if (byId.size === 0 || [...byId.values()].some((entry) => !entry.title)) {
     throw new TypeError('Incomplete AniDB title dump');
   }
@@ -55,6 +59,28 @@ export function parseAniDbTitleDump(text, { maxBytes = 32_000_000,
     delete entry.englishOfficial;
   }
   return byId;
+}
+
+export function parseAniDbTitleDump(text, options) {
+  const rows = prepareRows(text, options);
+  const byId = new Map();
+  for (const row of rows) addRow(byId, row);
+  return finishIndex(byId);
+}
+
+// Parse the same bounded dump in small batches so a catalogue refresh does
+// not monopolize the web event loop. The completed map is published only
+// after every row and every main-title requirement has passed validation.
+export async function parseAniDbTitleDumpAsync(text, options) {
+  const rows = prepareRows(text, options);
+  const byId = new Map();
+  for (let index = 0; index < rows.length; index++) {
+    addRow(byId, rows[index]);
+    if ((index + 1) % 2_048 === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  }
+  return finishIndex(byId);
 }
 
 export function searchAniDbTitleIndex(index, { query, page = 1,
