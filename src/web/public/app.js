@@ -19,15 +19,16 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
-function progressText(progress) {
+function progressText(progress, kind) {
+  const target = kind === 'movie' ? 'film' : 'episode';
   if (!progress || !['unverified', 'verified_recently'].includes(progress.publicAvailability)) {
     return 'Request status unavailable';
   }
   if (progress.state === 'review_needed') return 'Needs owner review';
   if (progress.publicAvailability === 'verified_recently') {
     return progress.publicVerifiedTargets === progress.targetCount
-      ? 'All requested episodes checked playable in Plex recently'
-      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested episodes checked playable in Plex recently`;
+      ? `All requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`
+      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`;
   }
   switch (progress.state) {
     case 'saved': return 'Saved · no download recorded';
@@ -36,7 +37,7 @@ function progressText(progress) {
     case 'torrent_stopped': return 'Release selected · download not started';
     case 'download_unverified': return 'Download requested · completion unverified';
     case 'partial_private_copy':
-      return `${progress.privateVerifiedTargets}/${progress.targetCount} episode targets have a recorded private copy · Plex unverified`;
+      return `${progress.privateVerifiedTargets}/${progress.targetCount} ${target} target${progress.targetCount === 1 ? '' : 's'} have a recorded private copy · Plex unverified`;
     case 'private_copy_recorded':
       return 'Files verified privately · Shoko import unverified';
     case 'import_unverified': return 'Shoko import outcome unverified · Plex unverified';
@@ -102,8 +103,8 @@ async function loadRequests(append = false) {
       const row = element('div', undefined, 'request-row');
       const heading = element('div');
       heading.append(element('strong', item.title || `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
-        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
-      row.append(heading, element('span', progressText(item.progress), 'request-status'));
+        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} ${item.kind === 'movie' ? 'film' : 'episode'} target${item.episodeIds.length === 1 ? '' : 's'}`));
+      row.append(heading, element('span', progressText(item.progress, item.kind), 'request-status'));
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
         const candidates = element('div', undefined, 'candidate-list');
@@ -305,7 +306,7 @@ async function showDetail(item) {
       return;
     }
     const pager = createEpisodePager(data);
-    panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed episode${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
     const relatedButton = element('button', 'Show related installments');
     const relatedList = element('div', undefined, 'related-list');
     relatedButton.addEventListener('click', async () => {
@@ -336,7 +337,7 @@ async function showDetail(item) {
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
       const check = element('div', undefined, 'availability-check');
-      const label = element('label', 'Check an episode in Plex');
+      const label = element('label', data.kind === 'movie' ? 'Check a film target in Plex' : 'Check an episode in Plex');
       const select = element('select');
       const appendOptions = (episodes) => {
         for (const episode of episodes) {
@@ -349,15 +350,17 @@ async function showDetail(item) {
       label.append(select);
       const button = element('button', 'Check availability');
       const result = element('p', '', 'muted');
+      select.addEventListener('change', () => { result.textContent = ''; });
       button.addEventListener('click', async () => {
         button.disabled = true;
+        select.disabled = true;
         result.textContent = 'Checking the public library…';
         try {
           const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
           result.textContent = status.state === 'available' ?
             'Playable in Plex' : 'Availability is not confirmed yet';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
-        finally { button.disabled = false; }
+        finally { button.disabled = false; select.disabled = false; }
       });
       check.append(label, button, result);
       if (data.kind === 'series' && data.restricted === false) {
