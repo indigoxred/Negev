@@ -138,7 +138,8 @@ export function parseUserServerConfig(env) {
       env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
       env.NEGEV_DIRECT_AVAILABILITY,
-      env.NEGEV_SHOKO_HYDRATION].some((flag) =>
+      env.NEGEV_SHOKO_HYDRATION,
+      env.NEGEV_ANIDB_TITLE_DUMP].some((flag) =>
     flag != null && !['0', '1'].includes(flag))) {
     throw new TypeError('Invalid observer flag');
   }
@@ -185,6 +186,7 @@ export function parseUserServerConfig(env) {
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
+    anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),
     prowlarr: prowlarrConfig(env, dataDir),
     plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,

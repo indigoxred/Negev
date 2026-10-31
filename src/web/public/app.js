@@ -250,6 +250,8 @@ byId('search-form').addEventListener('submit', async (event) => {
     if (token !== state.searchToken) return;
     const pager = createSearchPager(data);
     results.replaceChildren();
+    if (data.catalogueStale) results.append(element('p',
+      'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
     if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
     appendItems(data.items);
     const addMore = () => {

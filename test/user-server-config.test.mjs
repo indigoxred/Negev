@@ -25,6 +25,11 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parseUserServerConfig({ ...valid,
     NEGEV_SHOKO_RECENT: '1' }).shokoRecent, true);
   assert.equal(parsed.shokoHydration, false);
+  assert.equal(parsed.anidbTitleDump, false);
+  assert.equal(parseUserServerConfig({ ...valid,
+    NEGEV_ANIDB_TITLE_DUMP: '1' }).anidbTitleDump, true);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_ANIDB_TITLE_DUMP: 'yes' }), TypeError);
   assert.equal(parsed.prowlarr, null);
   assert.equal(parseUserServerConfig({ ...valid,
     NEGEV_SHOKO_HYDRATION: '1' }).shokoHydration, true);

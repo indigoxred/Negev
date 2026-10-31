@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -11,6 +12,81 @@ import { createUserService } from '../src/web/user-service.mjs';
 const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
+
+test('opt-in AniDB dump search finds an unowned title and marks stale results', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-search-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let dumpAvailable = true;
+  let shokoSearches = 0;
+  let time = 1_000;
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    anidbTitleDump: true, now: () => time,
+    fetchImpl: async (url) => {
+      if (String(url) === 'https://anidb.net/api/anime-titles.dat.gz') {
+        return new Response(dumpAvailable ? dump : null,
+          { status: dumpAvailable ? 200 : 503 });
+      }
+      shokoSearches++;
+      return json({ Total: 1, List: [{ ID: 1234, Title: 'Shoko Fallback' }] });
+    },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const broad = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    assert.equal(broad.statusCode, 200, broad.body);
+    assert.equal(broad.json().items[0].anidbId, 4158);
+    assert.equal(broad.json().catalogueSource, 'anidb_dump');
+    assert.equal(shokoSearches, 0);
+    dumpAvailable = false;
+    time += 86_400_000;
+    const stale = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    assert.equal(stale.json().items[0].anidbId, 4158);
+    assert.equal(stale.json().catalogueSource, 'anidb_dump');
+    assert.equal(stale.json().catalogueStale, true);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a first-load AniDB dump failure falls back to bounded Shoko search', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-fallback-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const paths = [];
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    anidbTitleDump: true, now: () => 1_000,
+    fetchImpl: async (url) => {
+      paths.push(new URL(url).pathname);
+      return String(url).startsWith('https://anidb.net/')
+        ? new Response(null, { status: 503 })
+        : json({ Total: 1, List: [{ ID: 1234, Title: 'Shoko Fallback' }] });
+    },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const search = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Fallback', headers: { cookie } });
+    assert.equal(search.statusCode, 200, search.body);
+    assert.equal(search.json().items[0].anidbId, 1234);
+    assert.equal(search.json().catalogueSource, 'shoko_cache');
+    assert.deepEqual(paths, ['/api/anime-titles.dat.gz',
+      '/api/v3/Series/AniDB/Search']);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
 
 test('signed-in user searches AniDB and saves an exact held request across restart', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-service-'));

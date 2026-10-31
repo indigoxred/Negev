@@ -23,6 +23,7 @@ export function createSearchPager(first) {
     append(page) {
       if (nextPage === null || nextPage > 1000 || page?.state !== 'results' ||
           page.page !== nextPage || page.total !== first.total ||
+          page.catalogueSource !== first.catalogueSource ||
           !Array.isArray(page.items) || page.items.length < 1 ||
           page.items.length > 20 || items.length + page.items.length > first.total ||
           page.items.some((item) => !validItem(item) || ids.has(item.anidbId)) ||

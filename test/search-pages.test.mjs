@@ -28,6 +28,14 @@ test('holds changed totals, repeated IDs and empty continuation pages', () => {
   }
 });
 
+test('a fallback source cannot be spliced into a dump search page', () => {
+  const pager = createSearchPager({ state: 'results', page: 1,
+    total: 3, catalogueSource: 'anidb_dump', items: [item(1), item(2)] });
+  assert.deepEqual(pager.append({ state: 'results', page: 2,
+    total: 3, catalogueSource: 'shoko_cache', items: [item(3)] }),
+  { state: 'held' });
+});
+
 test('empty search has no further page', () => {
   const pager = createSearchPager({ state: 'results', page: 1,
     total: 0, items: [] });

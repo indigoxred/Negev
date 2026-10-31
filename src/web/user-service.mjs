@@ -7,6 +7,7 @@ import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs'
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
+import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
@@ -41,7 +42,7 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
-  shokoRecent = false,
+  shokoRecent = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
@@ -50,7 +51,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
-      typeof shokoRecent !== 'boolean' ||
+      typeof shokoRecent !== 'boolean' || typeof anidbTitleDump !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
@@ -80,6 +81,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);
     directAvailability = openDirectAvailabilityQueue(dbPath);
     const metadata = createMetadataLimiter();
+    const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now }) : null;
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
     const enqueueChangedFile = ({ before, after, observedMs,
@@ -177,9 +179,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             : local };
         }) };
       },
-      searchTitles: ({ query, page }) => metadata.run(() => searchAniDbTitles({
-        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
-      })),
+      searchTitles: ({ query, page }) => metadata.run(async () => {
+        const sourceStatus = await titleSource?.refresh();
+        if (sourceStatus?.state === 'ready' || sourceStatus?.state === 'stale') {
+          const result = titleSource.search({ query, page });
+          return sourceStatus.state === 'stale'
+            ? { ...result, catalogueSource: 'anidb_dump', catalogueStale: true }
+            : { ...result, catalogueSource: 'anidb_dump' };
+        }
+        const result = await searchAniDbTitles({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
+        });
+        return { ...result, catalogueSource: 'shoko_cache' };
+      }),
       loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),
