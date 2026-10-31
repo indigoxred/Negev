@@ -3,6 +3,7 @@ import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
 import { progressText } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
+import { createFranchiseExplorer } from './franchise-explorer.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -336,7 +337,7 @@ byId('search-form').addEventListener('submit', async (event) => {
     message(error.message, true);
   }
 });
-async function showDetail(item) {
+async function showDetail(item, franchise = null) {
   state.selected = item.anidbId;
   const panel = byId('detail');
   panel.replaceChildren(element('p', 'Loading details…', 'muted'));
@@ -365,29 +366,41 @@ async function showDetail(item) {
     }
     const pager = createEpisodePager(data);
     panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
-    const relatedButton = element('button', 'Show related installments');
+    const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
+      title: data.title || item.title });
+    const relatedButton = element('button', 'Explore franchise');
     const relatedList = element('div', undefined, 'related-list');
+    const renderFamily = () => {
+      relatedList.replaceChildren(element('p',
+        'Verified Shoko relationships. Other installments may exist; each title has its own request.', 'muted'));
+      for (const installment of family.items()) {
+        const open = element('button', `${installment.title}${installment.relation ? ` · ${installment.relation}` : ''}`);
+        open.disabled = installment.anidbId === item.anidbId;
+        open.addEventListener('click', () => {
+          void showDetail({ anidbId: installment.anidbId,
+            title: installment.title }, family);
+        });
+        relatedList.append(open);
+      }
+      relatedButton.textContent = family.next() ? 'Explore next related title' :
+        'No further verified links in this view';
+      relatedButton.disabled = !family.next();
+    };
+    if (franchise) renderFamily();
     relatedButton.addEventListener('click', async () => {
+      const next = family.next();
+      if (!next) return;
       relatedButton.disabled = true;
-      relatedList.replaceChildren(element('p', 'Checking related titles…', 'muted'));
       try {
-        const related = await api(`/api/catalogue/${item.anidbId}/related`);
-        if (state.selected !== item.anidbId) return;
-        relatedList.replaceChildren(element('p',
-          'Related titles found in Shoko. This may not be the complete franchise.', 'muted'));
-        if (related.items.length === 0) {
-          relatedList.append(element('p', 'No verified direct relationships are cached yet.', 'muted'));
-        }
-        for (const installment of related.items) {
-          const searchButton = element('button', `${installment.title} · ${installment.relation}`);
-          searchButton.addEventListener('click', () => {
-            void showDetail({ anidbId: installment.anidbId, title: installment.title });
-          });
-          relatedList.append(searchButton);
-        }
+        const related = await api(`/api/catalogue/${next.anidbId}/related`);
+        family.add(related);
+        if (state.selected === item.anidbId) renderFamily();
       } catch {
-        relatedList.replaceChildren(element('p', 'Related titles are unavailable right now.', 'muted'));
-        relatedButton.disabled = false;
+        if (state.selected === item.anidbId) {
+          relatedList.append(element('p',
+            'Could not expand this relationship now. Try again later.', 'muted'));
+          relatedButton.disabled = false;
+        }
       }
     });
     panel.append(relatedButton, relatedList);
