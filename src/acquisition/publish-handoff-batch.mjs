@@ -214,6 +214,10 @@ export async function publishPreparedHandoff({
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
       lookup, readPacer: pacer }); }
     catch { return held('identity_unavailable'); }
+    if (result?.state === 'held' &&
+        ['provider_unavailable', 'lookup_inconclusive'].includes(result.reason)) {
+      return held('identity_unavailable');
+    }
     if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
         result.ed2k !== file.ed2k || result.size !== file.size) {
       return held('identity_changed');

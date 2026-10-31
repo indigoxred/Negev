@@ -7,6 +7,12 @@ const validReason = (value) => typeof value === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(value);
 const RETRY_MS = 30 * 60_000;
 const UNCERTAIN_RETRY_MS = 5 * 60_000;
+// A held batch can contain many large videos. Never rehash changed evidence
+// indefinitely; even transient failures receive just one automatic retry.
+const RETRYABLE_HOLDS = new Set([
+  'identity_unavailable', 'subtitle_unavailable', 'worker_unavailable',
+  'interrupted_before_publish',
+]);
 
 // Durable, one-batch-at-a-time selection after a verified private handoff.
 // An interrupted claim stays excluded until its saved publish state is
@@ -82,9 +88,9 @@ export function openHandoffPublishQueue(dbPath) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid publish result');
       }
-      const delay = state === 'publish_unknown' ? 60_000 :
-        reason === 'publish_outcome_unknown' ? UNCERTAIN_RETRY_MS : RETRY_MS;
-      const due = state === 'published_observed' ? null : checkedMs + delay;
+      const due = state === 'publish_unknown' ? checkedMs + 60_000 :
+        state === 'held' && RETRYABLE_HOLDS.has(reason) && version === 1
+          ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid publish clock');
       return transact(() => {
         const status = handoff.get(attemptId)?.status;

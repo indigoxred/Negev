@@ -75,6 +75,50 @@ test('one held handoff defers while later prepared batches continue', async () =
     assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId, ctx.ids[0]);
   }));
 
+test('changed evidence requires review and does not repeatedly hash the same batch', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    assert.deepEqual(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'held', reason: 'manifest_tree_mismatch',
+      checkedMs: 1_001 }), { state: 'recorded' });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    ctx.reopen();
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
+  }));
+
+test('temporary provider failure gets at most one automatic retry', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'held', reason: 'identity_unavailable',
+      checkedMs: 1_001 }).state, 'recorded');
+    const second = ctx.queue.claimNext({ nowMs: 1_801_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    assert.equal(ctx.queue.recordResult({ attemptId: second.attemptId,
+      version: second.version, state: 'held', reason: 'identity_unavailable',
+      checkedMs: 1_801_002 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
+  }));
+
+test('unknown publish outcome requires review after one reconciliation', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    const row = ctx.handoffs.getHandoff(first.attemptId);
+    assert.equal(ctx.handoffs.beginPublish({ attemptId: first.attemptId,
+      evidenceDigest: row.evidenceDigest, nowMs: 1_001 }).state, 'publish_unknown');
+    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'publish_unknown', checkedMs: 1_002 }).state,
+    'recorded');
+    const second = ctx.queue.claimNext({ nowMs: 61_002 });
+    assert.equal(second.attemptId, first.attemptId);
+    assert.equal(ctx.queue.recordResult({ attemptId: second.attemptId,
+      version: second.version, state: 'held', reason: 'publish_outcome_unknown',
+      checkedMs: 61_003 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
+  }));
+
 test('an interrupted claim resumes from durable publish intent without a second send', async () =>
   fixture(async (ctx) => {
     const claim = ctx.queue.claimNext({ nowMs: 1_000 });

@@ -78,6 +78,16 @@ test('fresh partial coverage or corrupted release cannot enter watched Import', 
   }
 });
 
+test('provider outage during final identity check is a bounded retryable hold', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => { throw new Error('provider offline'); },
+      attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'held', reason: 'identity_unavailable' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
 test('an uncertain publish with the exact destination is observed without another rename', async () =>
   withBatch(async (sample) => {
     sample.ledger.beginPublish();
