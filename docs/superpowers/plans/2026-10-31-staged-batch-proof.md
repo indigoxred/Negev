@@ -5,3 +5,4 @@ After a single owned torrent's completion and selected-file manifest have been o
 The result is evidence only and explicitly says `handoffReady: false`. It neither selects nor grabs a torrent, moves a file, triggers Shoko import, nor marks a request fulfilled. The episode-to-file plan is only a proposed mapping; the exact AniDB file response must prove it. A later handoff needs its own immediate file and torrent recheck and durable transaction rules.
 
 Synthetic tests include a two-video batch with real tiny file bytes and exact AniDB release responses. No NAS media was read. Before any live hashing, benchmark the ED2K implementation and set resource limits appropriate for the NAS; the current JavaScript digest can consume sustained CPU and disk read bandwidth.
+The standalone staged-file verifier also holds a file over its configurable per-file byte ceiling before hashing. The batch ceiling remains separate and applies to the sum of selected files.

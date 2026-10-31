@@ -8,7 +8,12 @@ const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts'
 
 // Identity check only. A separate worker must prove qBittorrent completion
 // and recheck the file before any later Shoko Import handoff.
-export async function verifyStagedFile({ root, relativePath, expected, lookup }) {
+export async function verifyStagedFile({
+  root, relativePath, expected, lookup, maxFileBytes = 64 * 1024 ** 3,
+}) {
+  if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 1024 ** 4) {
+    throw new TypeError('Invalid staged file byte budget');
+  }
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       typeof relativePath !== 'string' || path.isAbsolute(relativePath) ||
       relativePath.includes('\\') || relativePath.includes('\0')) {
@@ -41,6 +46,7 @@ export async function verifyStagedFile({ root, relativePath, expected, lookup })
       if (index < parts.length - 1 && !info.isDirectory()) return held('non_regular_file');
       if (index === parts.length - 1) {
         if (!info.isFile()) return held('non_regular_file');
+        if (info.size > BigInt(maxFileBytes)) return held('file_over_budget');
         before = info;
       }
     }

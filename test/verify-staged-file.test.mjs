@@ -89,3 +89,12 @@ test('holds a staged file when the provider is unavailable', async () => {
     });
   });
 });
+
+test('rejects an over-budget staged file before hashing or provider lookup', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    assert.deepEqual(await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, maxFileBytes: 2, lookup: async () => { throw Error('must not look up'); } }),
+    { state: 'held', reason: 'file_over_budget' });
+  });
+});
