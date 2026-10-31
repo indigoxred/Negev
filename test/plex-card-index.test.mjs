@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
+import { indexPlexCardPage, retryOnePlexCard } from
+  '../src/availability/plex-card-page-worker.mjs';
 
 const cleanup = [];
 afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
@@ -45,6 +47,40 @@ test('a newer card refresh replaces old Parts; an older page cannot revert it', 
     kind: 'episode' }).cards.length, 0);
   assert.equal(ledger.lookupCards({ sizes: [8], libraryIds: [102],
     kind: 'episode' }).cards.length, 1);
+  ledger.close();
+});
+
+test('a confirmed missing card retires its indexed Parts without erasing a newer observation', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(), observedMs: 10 });
+  assert.deepEqual(ledger.forgetCard({ libraryId: 102, ratingKey: 500,
+    observedMs: 9 }), { state: 'stale_card' });
+  assert.equal(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.length, 1);
+  const result = await indexPlexCardPage({ libraryId: 102, kind: 'episode',
+    offset: 0, now: () => 11, index: ledger,
+    readPage: async () => ({ state: 'page', libraryId: 102, kind: 'episode',
+      offset: 0, totalSize: 1, keys: [500], complete: false }),
+    readCard: async () => ({ state: 'not_found' }) });
+  assert.equal(result.state, 'page_indexed');
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }), { state: 'candidates', cards: [] });
+  ledger.close();
+});
+
+test('a confirmed missing retry also retires its old Part candidate', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(), observedMs: 10 });
+  ledger.deferCard({ libraryId: 102, ratingKey: 500,
+    kind: 'episode', nowMs: 10 });
+  const result = await retryOnePlexCard({ libraryId: 102, kind: 'episode',
+    index: ledger, now: () => 60_010,
+    readCard: async () => ({ state: 'not_found' }) });
+  assert.deepEqual(result, { state: 'retry_missing', ratingKey: 500 });
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }), { state: 'candidates', cards: [] });
+  assert.equal(ledger.nextRetry({ libraryId: 102,
+    kind: 'episode', nowMs: 100_000 }), null);
   ledger.close();
 });
 

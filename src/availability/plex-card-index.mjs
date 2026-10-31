@@ -58,6 +58,8 @@ export function openPlexCardIndex(dbPath) {
     kind=excluded.kind,observed_ms=excluded.observed_ms`);
   const clearParts = db.prepare(`DELETE FROM plex_part_candidates
     WHERE library_id=? AND rating_key=?`);
+  const clearCard = db.prepare(`DELETE FROM plex_card_observations
+    WHERE library_id=? AND rating_key=?`);
   const addPart = db.prepare(`INSERT INTO plex_part_candidates
     (library_id,rating_key,part_id,file_size,plex_path) VALUES (?,?,?,?,?)`);
   const oldRetry = db.prepare(`SELECT attempts FROM plex_card_retries
@@ -89,6 +91,31 @@ export function openPlexCardIndex(dbPath) {
     return candidateQueries.get(libraryCount);
   };
   return {
+    forgetCard({ libraryId, ratingKey, observedMs }) {
+      if (!validId(libraryId) || !validId(ratingKey) ||
+          !Number.isSafeInteger(observedMs) || observedMs < 0) {
+        throw new TypeError('Invalid Plex card removal observation');
+      }
+      let begun = false;
+      try {
+        db.exec('BEGIN IMMEDIATE'); begun = true;
+        const old = previous.get(libraryId, ratingKey);
+        if (old && old.observed_ms >= observedMs) {
+          db.exec('ROLLBACK'); begun = false;
+          return { state: 'stale_card' };
+        }
+        if (old) {
+          clearParts.run(libraryId, ratingKey);
+          clearCard.run(libraryId, ratingKey);
+        }
+        clearRetry.run(libraryId, ratingKey);
+        db.exec('COMMIT'); begun = false;
+        return { state: old ? 'card_forgotten' : 'card_absent' };
+      } catch (error) {
+        if (begun) db.exec('ROLLBACK');
+        throw error;
+      }
+    },
     recordCard({ libraryId, ratingKey, kind, parts, observedMs }) {
       if (!validId(libraryId) || !validId(ratingKey) ||
           !['episode', 'movie'].includes(kind) ||

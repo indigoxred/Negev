@@ -42,7 +42,10 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
     if (card?.state !== 'ok' || card.complete !== true ||
         !Array.isArray(card.parts) || card.parts.length < 1) {
       skipped++;
-      if (card?.state !== 'not_found') defer(ratingKey);
+      if (card?.state === 'not_found') {
+        try { index.forgetCard?.({ libraryId, ratingKey, observedMs }); }
+        catch { defer(ratingKey); }
+      } else defer(ratingKey);
       continue;
     }
     try {
@@ -103,7 +106,14 @@ export async function retryOnePlexCard({ libraryId, kind, index, readCard,
     expectedType: kind }); }
   catch { card = { state: 'unavailable' }; }
   if (card?.state === 'not_found') {
-    index.clearRetry({ libraryId, ratingKey: due.ratingKey });
+    try {
+      if (typeof index.forgetCard === 'function') index.forgetCard({
+        libraryId, ratingKey: due.ratingKey, observedMs: nowMs });
+      else index.clearRetry({ libraryId, ratingKey: due.ratingKey });
+    } catch {
+      index.deferCard({ libraryId, ratingKey: due.ratingKey, kind, nowMs });
+      return { state: 'retry_deferred', ratingKey: due.ratingKey };
+    }
     return { state: 'retry_missing', ratingKey: due.ratingKey };
   }
   if (card?.state === 'ok' && card.complete === true &&
