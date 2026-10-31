@@ -113,6 +113,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         directAvailability.enqueue({ ...pair,
           observedMs: Math.max(observedMs, (previous?.observedMs ?? -1) + 1),
           priority });
+        try { titleChecks?.invalidateTarget({ ...pair, observedMs }); }
+        catch { /* Direct import reconciliation must still proceed. */ }
       }
     };
     const inventoryWorker = createShokoInventoryWorker({ ledger: inventory, now,
@@ -227,11 +229,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const detail = await metadata.run(() => loadDetail(input));
         if (!plexObserver || detail?.state !== 'details' ||
             !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
-        return { ...detail, episodes: detail.episodes.map((episode) => ({
-          ...episode, availability: directAvailability.getStatus({
-            anidbId: detail.anidbId, episodeId: episode.id,
-            nowMs: now() }).state,
-        })) };
+        return { ...detail, episodes: detail.episodes.map((episode) => {
+          const target = { anidbId: detail.anidbId,
+            episodeId: episode.id, nowMs: now() };
+          const direct = directAvailability.getStatus(target).state;
+          const title = titleChecks?.getTargetStatus(target).state;
+          return { ...episode, availability:
+            direct === 'available' || title === 'available'
+              ? 'available' : 'unknown' };
+        }) };
       },
       startTitleCheck: titleChecks ? ({ anidbId }) =>
         titleChecks.start({ anidbId, nowMs: now() }) : undefined,

@@ -83,8 +83,12 @@ test('finished positive results expire without turning Unknown into Missing', as
   assert.deepEqual(job.getProgress({ anidbId: 42, nowMs: 6 }),
     { state: 'done', generation: 1, totalCount: 1, checkedCount: 1,
       recentAvailableCount: 1 });
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 6 }), { state: 'available' });
   assert.equal(job.getProgress({ anidbId: 42,
     nowMs: 30 * 60_000 + 6 }).recentAvailableCount, 0);
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 30 * 60_000 + 6 }), { state: 'unknown' });
   assert.deepEqual(job.start({ anidbId: 42, nowMs: 30 * 60_000 + 7 }),
     { state: 'queued', generation: 2 });
   job.close();
@@ -117,5 +121,23 @@ test('a result from an earlier generation cannot overwrite a restarted title', a
     status: 'available', checkedMs: 7 }),
   { state: 'held', reason: 'stale_claim' });
   assert.equal(job.getProgress({ anidbId: 42, nowMs: 8 }).generation, 2);
+  job.close();
+});
+
+test('a Shoko file change withdraws its recent positive and rechecks it', async () => {
+  const { job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const page = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: page, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const target = job.claimNext({ nowMs: 4 });
+  job.recordTarget({ claim: target, status: 'available', checkedMs: 5 });
+  assert.deepEqual(job.invalidateTarget({ anidbId: 42,
+    episodeId: 1001, observedMs: 4 }), { state: 'unchanged' });
+  assert.deepEqual(job.invalidateTarget({ anidbId: 42,
+    episodeId: 1001, observedMs: 6 }), { state: 'queued' });
+  assert.deepEqual(job.getProgress({ anidbId: 42, nowMs: 7 }),
+    { state: 'checking', generation: 1, totalCount: 1,
+      checkedCount: 0, recentAvailableCount: 0 });
+  assert.equal(job.claimNext({ nowMs: 7 }).episodeId, 1001);
   job.close();
 });

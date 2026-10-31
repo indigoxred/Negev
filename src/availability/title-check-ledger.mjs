@@ -70,6 +70,14 @@ export function openTitleCheckLedger(dbPath) {
     ORDER BY ordinal LIMIT 1`);
   const hasTarget = db.prepare(`SELECT 1 FROM title_check_targets
     WHERE anidb_id=? AND generation=? AND episode_id=?`);
+  const targetStatus = db.prepare(`SELECT state,checked_ms AS checkedMs
+    FROM title_check_targets WHERE anidb_id=? AND generation=? AND episode_id=?`);
+  const resetTarget = db.prepare(`UPDATE title_check_targets
+    SET state='pending',checked_ms=NULL WHERE anidb_id=? AND generation=?
+    AND episode_id=?`);
+  const requeueJob = db.prepare(`UPDATE title_check_jobs SET
+    state=CASE WHEN state='done' THEN 'checking' ELSE state END,
+    version=version+1,lease_until_ms=0 WHERE anidb_id=? AND generation=?`);
   const addTarget = db.prepare(`INSERT INTO title_check_targets
     (anidb_id,generation,ordinal,episode_id,state)
     VALUES (?,?,?,?,'pending')`);
@@ -205,6 +213,23 @@ export function openTitleCheckLedger(dbPath) {
         return { state: 'recorded_target' };
       });
     },
+    invalidateTarget({ anidbId, episodeId, observedMs }) {
+      if (!validId(anidbId) || !validId(episodeId) || !validTime(observedMs)) {
+        throw new TypeError('Invalid title target invalidation');
+      }
+      return transaction(() => {
+        const job = find.get(anidbId);
+        if (!job) return { state: 'unchanged' };
+        const target = targetStatus.get(anidbId, job.generation, episodeId);
+        if (!target || target.state === 'pending' ||
+            !validTime(target.checkedMs) || target.checkedMs >= observedMs) {
+          return { state: 'unchanged' };
+        }
+        resetTarget.run(anidbId, job.generation, episodeId);
+        requeueJob.run(anidbId, job.generation);
+        return { state: 'queued' };
+      });
+    },
     defer({ claim: receipt, retryAtMs }) {
       if (!(validReceipt(receipt, 'claimed_page') ||
           validReceipt(receipt, 'claimed_target')) || !validTime(retryAtMs)) {
@@ -234,6 +259,16 @@ export function openTitleCheckLedger(dbPath) {
       return { state: job.state, generation: job.generation,
         totalCount: job.totalCount, checkedCount: row.checkedCount,
         recentAvailableCount: row.recentAvailableCount };
+    },
+    getTargetStatus({ anidbId, episodeId, nowMs }) {
+      if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid title target status query');
+      }
+      const job = find.get(anidbId);
+      const row = job && targetStatus.get(anidbId, job.generation, episodeId);
+      return row?.state === 'available' && validTime(row.checkedMs) &&
+        row.checkedMs <= nowMs && row.checkedMs + positiveLifetimeMs > nowMs
+        ? { state: 'available' } : { state: 'unknown' };
     },
     close() { db.close(); },
   };
