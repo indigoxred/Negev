@@ -47,7 +47,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         throw new TypeError('Invalid availability target');
       }
       const publicLibraryIds = target.kind === 'movie'
-        ? publicSections.movie : publicSections.episode;
+        ? [...publicSections.episode, ...publicSections.movie]
+        : publicSections.episode;
       if (publicLibraryIds.length === 0) {
         return Promise.resolve({ state: 'unknown', reason: 'public_library_unconfigured' });
       }

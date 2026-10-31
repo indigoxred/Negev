@@ -53,6 +53,14 @@ export async function readPlexItemParts({ baseUrl, token, ratingKey, expectedTyp
   }
   const parts = [];
   const seen = new Set();
+  const itemGuid = typeof item.guid === 'string' && item.guid.length <= 512
+    ? item.guid : null;
+  const showGuid = typeof item.grandparentGuid === 'string' &&
+    item.grandparentGuid.length <= 512 ? item.grandparentGuid : null;
+  const externalGuids = Array.isArray(item.Guid) && item.Guid.length <= 50 &&
+    item.Guid.every((guid) => typeof guid?.id === 'string' &&
+      guid.id.length > 0 && guid.id.length <= 512 &&
+      !/[\r\n\0]/.test(guid.id)) ? item.Guid.map((guid) => guid.id) : [];
   for (const media of item.Media) {
     if (!Array.isArray(media?.Part) || media.Part.length === 0 || media.Part.length > 20) {
       return unavailable();
@@ -64,7 +72,9 @@ export async function readPlexItemParts({ baseUrl, token, ratingKey, expectedTyp
         return unavailable();
       }
       seen.add(partId);
-      parts.push({ partId, plexPath: part.file, size, libraryId: positive(libraryId) });
+      parts.push({ partId, plexPath: part.file, size,
+        libraryId: positive(libraryId), cardType: expectedType,
+        itemGuid, showGuid, externalGuids });
     }
   }
   return { state: 'ok', complete: true, parts };

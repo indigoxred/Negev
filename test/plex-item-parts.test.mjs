@@ -3,6 +3,8 @@ import test from 'node:test';
 import { readPlexItemParts } from '../src/availability/plex-item-parts.mjs';
 
 const item = { ratingKey: '512', type: 'episode', librarySectionID: 102,
+  guid: 'tv.plex.agents.custom.shoko://episode/e555',
+  grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
   Media: [{ id: 77, Part: [{ id: 88, file: '/source-pure/Anime/Show/01.mkv', size: 5 }] }] };
 const response = (metadata = item) => Response.json({ MediaContainer: {
   size: 1, Metadata: [metadata],
@@ -23,7 +25,9 @@ test('reads one exact public Plex episode and its file parts without a scan', as
   } });
   assert.equal(calls, 1);
   assert.deepEqual(result, { state: 'ok', complete: true, parts: [
-    { partId: 88, plexPath: '/source-pure/Anime/Show/01.mkv', size: 5, libraryId: 102 },
+    { partId: 88, plexPath: '/source-pure/Anime/Show/01.mkv', size: 5,
+      libraryId: 102, cardType: 'episode', itemGuid: item.guid,
+      showGuid: item.grandparentGuid, externalGuids: [] },
   ] });
 });
 

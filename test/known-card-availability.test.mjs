@@ -15,12 +15,15 @@ const release = { ID: `anidb://${digest}+5`, ProviderName: 'AniDB',
   Hashes: [{ Type: 'ED2K', Value: digest }],
   CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
     PercentageStart: null, PercentageEnd: null }] };
-const shokoPayload = { IDs: { AniDB: 1001 }, Files: [{ ID: 51, Size: 5,
+const shokoPayload = { IDs: { ID: 555, ParentSeries: 99, AniDB: 1001 }, Files: [{ ID: 51, Size: 5,
   IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: digest }], Release: release,
   Locations: [{ ID: 70, FileID: 51, ManagedFolderID: 2,
     AbsolutePath: '/pure/Anime/Example/01.mkv', IsAccessible: true }] }] };
 const plexPayload = { MediaContainer: { size: 1, Metadata: [{ ratingKey: '512',
-  type: 'episode', librarySectionID: 102, Media: [{ Part: [{ id: 88,
+  type: 'episode', librarySectionID: 102,
+  guid: 'tv.plex.agents.custom.shoko://episode/e555',
+  grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+  Media: [{ Part: [{ id: 88,
     file: '/source-pure/Anime/Example/01.mkv', size: 5 }] }] }] } };
 
 async function fixture() {
@@ -35,7 +38,7 @@ async function fixture() {
   const plex = await readPlexItemParts({ baseUrl: 'http://plex:32400/',
     token: 'synthetic', ratingKey: 512, libraryId: 102, expectedType: 'episode',
     fetchImpl: async () => Response.json(plexPayload) });
-  return { target: { anidbId: 42, episodeId: 1001 }, shoko, plex,
+  return { target: { anidbId: 42, episodeId: 1001, kind: 'series' }, shoko, plex,
     publicLibraryIds: [102],
     shokoMount: { appRoot: '/pure', localRoot },
     plexMount: { appRoot: '/source-pure', localRoot } };
@@ -55,7 +58,7 @@ test('a valid playable release stays Available beside an unverified Shoko siblin
   assert.deepEqual(await observeKnownCardAvailability({ ...input,
     shoko: { ...input.shoko, complete: false },
     plex: { ...input.plex, parts: [] } }),
-  { state: 'unknown', reason: 'observer_incomplete' });
+  { state: 'unknown', reason: 'card_identity_unverified' });
 });
 
 test('a same-size different Plex file cannot create availability', async () => {
@@ -67,6 +70,41 @@ test('a same-size different Plex file cannot create availability', async () => {
     plexPath: '/source-pure/other/01.mkv' }] };
   assert.deepEqual(await observeKnownCardAvailability({ ...input, plex }),
     { state: 'awaiting_plex' });
+});
+
+test('a readable file attached to the wrong Plex show or episode is Unknown', async () => {
+  const input = await fixture();
+  for (const changed of [
+    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e556' },
+    { showGuid: 'tv.plex.agents.custom.shoko://show/100' },
+  ]) {
+    const plex = { ...input.plex, parts: [{ ...input.plex.parts[0], ...changed }] };
+    assert.deepEqual(await observeKnownCardAvailability({ ...input, plex }),
+      { state: 'unknown', reason: 'card_identity_unverified' });
+  }
+});
+
+test('an anime movie represented as a native Plex episode keeps exact Shoko identity', async () => {
+  const input = await fixture();
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    target: { ...input.target, kind: 'movie' } }),
+  { state: 'available', fileId: 51 });
+});
+
+test('a true Plex Movie card requires one exact linked TMDB movie identity', async () => {
+  const input = await fixture();
+  const shoko = { ...input.shoko, tmdbMovieIds: [2468] };
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    cardType: 'movie', itemGuid: 'plex://movie/local', showGuid: null,
+    externalGuids: ['tmdb://2468'] }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    target: { ...input.target, kind: 'movie' }, shoko, plex }),
+  { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    target: { ...input.target, kind: 'movie' }, shoko,
+    plex: { ...plex, parts: [{ ...plex.parts[0],
+      externalGuids: ['tmdb://9999'] }] } }),
+  { state: 'unknown', reason: 'card_identity_unverified' });
 });
 
 test('one stale Plex version does not hide another proven playable version', async () => {

@@ -47,6 +47,26 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
         !Number.isSafeInteger(part?.libraryId) || part.libraryId <= 0 ||
         !Number.isSafeInteger(part.size) || part.size <= 0 ||
         typeof part.plexPath !== 'string')) return unknown('observer_incomplete');
+  // A readable Part under a different Plex episode or show is not available
+  // to the requested installment. An AniDB movie can be a native Anime
+  // episode card or a true Plex Movie card with one exact Shoko-linked TMDB ID.
+  if (!['series', 'movie'].includes(target.kind) ||
+      !Number.isSafeInteger(shoko.shokoEpisodeId) || shoko.shokoEpisodeId < 1 ||
+      !Number.isSafeInteger(shoko.shokoSeriesId) || shoko.shokoSeriesId < 1) {
+    return unknown('card_identity_unverified');
+  }
+  const episodeGuid = `tv.plex.agents.custom.shoko://episode/e${shoko.shokoEpisodeId}`;
+  const showGuid = `tv.plex.agents.custom.shoko://show/${shoko.shokoSeriesId}`;
+  const movieGuid = Array.isArray(shoko.tmdbMovieIds) &&
+    shoko.tmdbMovieIds.length === 1 &&
+    Number.isSafeInteger(shoko.tmdbMovieIds[0]) && shoko.tmdbMovieIds[0] > 0
+    ? `tmdb://${shoko.tmdbMovieIds[0]}` : null;
+  const identityParts = plex.parts.filter((part) =>
+    (part.cardType === 'episode' && part.itemGuid === episodeGuid &&
+      part.showGuid === showGuid) ||
+    (target.kind === 'movie' && part.cardType === 'movie' && movieGuid &&
+      (part.itemGuid === movieGuid || part.externalGuids?.includes(movieGuid))));
+  if (identityParts.length === 0) return unknown('card_identity_unverified');
   if (maxChecks === 0) return unknown('comparison_budget_exceeded');
   const publicIds = new Set(publicLibraryIds);
   const files = [];
@@ -63,7 +83,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     for (const remoteSource of file.sourcePaths) {
       const shokoPath = localPath(remoteSource, shokoMount);
       if (!shokoPath) return unknown('path_mapping_failed');
-      for (const part of plex.parts) {
+      for (const part of identityParts) {
         if (!publicIds.has(part.libraryId) || part.size !== file.size) continue;
         const mapping = mounts.find((entry) => localPath(part.plexPath, entry));
         const plexPath = mapping && localPath(part.plexPath, mapping);

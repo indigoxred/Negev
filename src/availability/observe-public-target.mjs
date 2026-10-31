@@ -20,8 +20,11 @@ export async function observePublicTarget({ target, publicLibraryIds, knownCards
   const publicIds = new Set(publicLibraryIds);
   const selected = new Set();
   for (const card of knownCards) {
+    const cardKind = card?.kind ?? (target.kind === 'movie' ? 'movie' : 'episode');
     const key = `${card?.libraryId}:${card?.ratingKey}`;
     if (!publicIds.has(card?.libraryId) || !validId(card.ratingKey) ||
+        !['episode', 'movie'].includes(cardKind) ||
+        (target.kind === 'series' && cardKind !== 'episode') ||
         selected.has(key)) throw new TypeError('Invalid scoped Plex card');
     selected.add(key);
   }
@@ -38,7 +41,7 @@ export async function observePublicTarget({ target, publicLibraryIds, knownCards
     let result;
     try { result = await readPlex({ libraryId: card.libraryId,
       ratingKey: card.ratingKey,
-      expectedType: target.kind === 'movie' ? 'movie' : 'episode' }); }
+      expectedType: card.kind ?? (target.kind === 'movie' ? 'movie' : 'episode') }); }
     catch { incomplete = true; continue; }
     if (result?.state !== 'ok' || result.complete !== true ||
         !Array.isArray(result.parts) || result.parts.length > 40 ||
@@ -54,6 +57,7 @@ export async function observePublicTarget({ target, publicLibraryIds, knownCards
     ...(proveImpl ? { proveImpl } : {}) });
   if (result.state === 'available') return result;
   if (incomplete) return unknown('observer_incomplete');
+  if (result.reason === 'card_identity_unverified') return result;
   if (result.state === 'held') return result;
   return unknown('card_discovery_incomplete');
 }

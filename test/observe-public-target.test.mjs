@@ -4,14 +4,18 @@ import path from 'node:path';
 import { observePublicTarget } from '../src/availability/observe-public-target.mjs';
 
 const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
-const shoko = { state: 'ok', complete: true, files: [{ fileId: 51,
+const shoko = { state: 'ok', complete: true, shokoEpisodeId: 555,
+  shokoSeriesId: 99, files: [{ fileId: 51,
   anidbId: 42, episodeIds: [1001], coverage: [{ episodeId: 1001, start: 0, end: 100 }],
   sourcePaths: ['/pure/a.mkv'], size: 5 }] };
 const localRoot = path.resolve('local');
 const mounts = { shokoMount: { appRoot: '/pure', localRoot },
   plexMount: { appRoot: '/source-pure', localRoot } };
 const part = { state: 'ok', complete: true, parts: [{ libraryId: 102,
-  plexPath: '/source-pure/a.mkv', size: 5 }] };
+  plexPath: '/source-pure/a.mkv', size: 5,
+  cardType: 'episode', externalGuids: [],
+  itemGuid: 'tv.plex.agents.custom.shoko://episode/e555',
+  showGuid: 'tv.plex.agents.custom.shoko://show/99' }] };
 
 test('joins one scoped public Plex card to an exact Shoko episode', async () => {
   const calls = [];
@@ -25,13 +29,14 @@ test('joins one scoped public Plex card to an exact Shoko episode', async () => 
     ['plex', { libraryId: 102, ratingKey: 600, expectedType: 'episode' }]]);
 });
 
-test('movie uses a movie card and accepts one proven version beside a stale card', async () => {
+test('movie target can use a native episode card in the public Anime library', async () => {
   const result = await observePublicTarget({ target: { ...target, kind: 'movie' },
     publicLibraryIds: [102], knownCards: [
-      { libraryId: 102, ratingKey: 600 }, { libraryId: 102, ratingKey: 601 },
+      { libraryId: 102, ratingKey: 600, kind: 'episode' },
+      { libraryId: 102, ratingKey: 601, kind: 'episode' },
     ], ...mounts, readShoko: async () => shoko,
     readPlex: async ({ ratingKey, expectedType }) => {
-      assert.equal(expectedType, 'movie');
+      assert.equal(expectedType, 'episode');
       return ratingKey === 600 ? { state: 'not_found' } : part;
     }, proveImpl: async () => ({ state: 'same_file', storageKey: '1:2:5' }) });
   assert.deepEqual(result, { state: 'available', fileId: 51 });

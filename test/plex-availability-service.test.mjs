@@ -30,13 +30,16 @@ async function fixture() {
     if (url.hostname === 'plex' && url.pathname === '/library/metadata/500') {
       return Response.json({ MediaContainer: { size: 1, Metadata: [{
         ratingKey: '500', type: 'episode', librarySectionID: 102,
+        guid: 'tv.plex.agents.custom.shoko://episode/e555',
+        grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
         Media: [{ Part: [{ id: 900, size: 5,
           file: '/source-pure/Anime/one.mkv' }] }],
       }] } });
     }
     if (url.hostname === 'shoko' && url.pathname ===
         '/api/v3/Episode/AniDB/1001/Episode') {
-      return Response.json({ IDs: { AniDB: 1001 }, Files: [{ ID: 51,
+      return Response.json({ IDs: { ID: 555, ParentSeries: 99,
+        AniDB: 1001 }, Files: [{ ID: 51,
         Size: 5, IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: digest }],
         Release: { ID: `anidb://${digest}+5`, ProviderName: 'AniDB',
           ReleaseURI: 'https://anidb.net/file/800', FileSize: 5,
@@ -69,7 +72,9 @@ test('a direct Shoko import becomes Available only after public Plex card discov
     { state: 'page_indexed', processed: 1, nextOffset: 0 });
   assert.deepEqual(await service.observeTarget(target),
     { state: 'available', fileId: 51 });
-  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 2);
+  assert.deepEqual(await service.observeTarget({ ...target, kind: 'movie' }),
+    { state: 'available', fileId: 51 });
+  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 3);
   service.close();
 });
 

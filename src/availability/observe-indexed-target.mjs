@@ -19,18 +19,25 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
       shoko.files.length === 0 || shoko.files.length > 50 ||
       shoko.files.some((file) => !Number.isSafeInteger(file?.size) ||
         file.size < 1)) return unknown('observer_incomplete');
-  let selected;
-  try { selected = cardIndex.lookupCards({
-    sizes: [...new Set(shoko.files.map((file) => file.size))],
-    libraryIds: publicLibraryIds,
-    kind: target.kind === 'movie' ? 'movie' : 'episode',
-  }); }
+  let cards = [];
+  try {
+    for (const kind of target.kind === 'movie' ? ['episode', 'movie'] : ['episode']) {
+      const selected = cardIndex.lookupCards({
+        sizes: [...new Set(shoko.files.map((file) => file.size))],
+        libraryIds: publicLibraryIds, kind,
+      });
+      if (selected?.state !== 'candidates' || !Array.isArray(selected.cards)) {
+        return unknown('card_discovery_incomplete');
+      }
+      cards.push(...selected.cards.map((card) => ({ ...card, kind })));
+      if (cards.length > 10) return unknown('card_discovery_incomplete');
+    }
+  }
   catch { return unknown('card_discovery_incomplete'); }
-  if (selected?.state !== 'candidates' || !Array.isArray(selected.cards) ||
-      selected.cards.length === 0) return unknown('card_discovery_incomplete');
+  if (cards.length === 0) return unknown('card_discovery_incomplete');
   try {
     return await observePublicTarget({ target, publicLibraryIds,
-      knownCards: selected.cards, shokoMount, plexMount, plexMounts,
+      knownCards: cards, shokoMount, plexMount, plexMounts,
       readShoko: async () => shoko, readPlex, proveImpl });
   } catch { return unknown('observer_incomplete'); }
 }

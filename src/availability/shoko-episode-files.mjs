@@ -76,5 +76,12 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       size: file.Size, sourcePaths });
   }
   if (incomplete && files.length === 0) return unavailable();
-  return { state: 'ok', complete: !incomplete, files };
+  const movieIds = episode.IDs.TMDB?.Movie;
+  return { state: 'ok', complete: !incomplete,
+    shokoEpisodeId: validId(episode.IDs.ID) ? episode.IDs.ID : null,
+    shokoSeriesId: validId(episode.IDs.ParentSeries) ?
+      episode.IDs.ParentSeries : null,
+    tmdbMovieIds: Array.isArray(movieIds) && movieIds.length <= 20 &&
+      movieIds.every(validId) && new Set(movieIds).size === movieIds.length
+      ? movieIds : [], files };
 }

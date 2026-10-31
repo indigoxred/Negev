@@ -9,7 +9,7 @@ const release = { ID: `anidb://${digest}+123`, ProviderName: 'AniDB',
   Hashes: [{ Type: 'ED2K', Value: digest }],
   CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
     PercentageStart: null, PercentageEnd: null }] };
-const episode = { IDs: { AniDB: 1001 }, Files: [{ ID: 51, Size: 123,
+const episode = { IDs: { ID: 555, ParentSeries: 99, AniDB: 1001 }, Files: [{ ID: 51, Size: 123,
   IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: digest }], Release: release,
   Locations: [{ ID: 70, FileID: 51, ManagedFolderID: 2,
     AbsolutePath: '/pure/Anime/Example/01.mkv', IsAccessible: true }] }] };
@@ -29,7 +29,8 @@ test('reads one exact AniDB episode and its registered accessible file', async (
     assert.equal(init.headers.Authorization, 'Bearer synthetic-key');
     return json(episode);
   } });
-  assert.deepEqual(result, { state: 'ok', complete: true, files: [{
+  assert.deepEqual(result, { state: 'ok', complete: true,
+    shokoEpisodeId: 555, shokoSeriesId: 99, tmdbMovieIds: [], files: [{
     fileId: 51, anidbFileId: 800, ed2k: digest, anidbId: 42, episodeIds: [1001],
     coverage: [{ episodeId: 1001, start: 0, end: 100 }],
     size: 123, sourcePaths: ['/pure/Anime/Example/01.mkv'],
@@ -41,8 +42,10 @@ test('missing local episode and empty local file list stay distinct', async () =
     fetchImpl: async () => new Response('', { status: 404 }) });
   assert.deepEqual(missing, { state: 'not_imported' });
   const empty = await readShokoEpisodeFiles({ ...base,
-    fetchImpl: async () => json({ IDs: { AniDB: 1001 }, Files: [] }) });
-  assert.deepEqual(empty, { state: 'ok', complete: true, files: [] });
+    fetchImpl: async () => json({ IDs: { ID: 555, ParentSeries: 99,
+      AniDB: 1001 }, Files: [] }) });
+  assert.deepEqual(empty, { state: 'ok', complete: true,
+    shokoEpisodeId: 555, shokoSeriesId: 99, tmdbMovieIds: [], files: [] });
 });
 
 test('wrong identity, inaccessible location, and unregistered release hold the observation', async () => {
