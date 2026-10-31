@@ -348,24 +348,23 @@ async function showDetail(item, franchise = null) {
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
-        return;
+      } else {
+        panel.append(element('p', 'Episode details are being prepared. This title cannot be requested yet.', 'muted'));
+        const button = element('button', 'Load details');
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            const result = await api(`/api/catalogue/${item.anidbId}/load-detail`,
+              { method: 'POST', body: '{}' });
+            message(result.state === 'pending' ? 'Detail refresh queued. Check again later.' : 'Details are ready. Select the title again.');
+          } catch (error) { message(error.message, true); }
+          finally { button.disabled = false; }
+        });
+        panel.append(button);
       }
-      panel.append(element('p', 'Episode details are being prepared. This title cannot be requested yet.', 'muted'));
-      const button = element('button', 'Load details');
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try {
-          const result = await api(`/api/catalogue/${item.anidbId}/load-detail`,
-            { method: 'POST', body: '{}' });
-          message(result.state === 'pending' ? 'Detail refresh queued. Check again later.' : 'Details are ready. Select the title again.');
-        } catch (error) { message(error.message, true); }
-        finally { button.disabled = false; }
-      });
-      panel.append(button);
-      return;
     }
-    const pager = createEpisodePager(data);
-    panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
+    if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise');
@@ -404,6 +403,7 @@ async function showDetail(item, franchise = null) {
       }
     });
     panel.append(relatedButton, relatedList);
+    if (!pager) return;
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
