@@ -60,6 +60,15 @@ test('a movie page uses movie type and remains non-exhaustive even when empty', 
     offset: 0, totalSize: 0, keys: [], complete: false });
 });
 
+test('an empty Plex section may omit Metadata without hiding the zero-item page', async () => {
+  const result = await readPlexSectionKeys({ ...base,
+    fetchImpl: withSection(async () => Response.json({ MediaContainer: {
+      size: 0, totalSize: 0, offset: 0, librarySectionID: 102,
+    } })) });
+  assert.deepEqual(result, { state: 'page', libraryId: 102,
+    kind: 'episode', offset: 0, totalSize: 0, keys: [], complete: false });
+});
+
 test('an omitted optional total still yields keys without claiming completeness', async () => {
   const result = await readPlexSectionKeys({ ...base,
     fetchImpl: withSection(async () => Response.json({ MediaContainer: {

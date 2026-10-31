@@ -269,6 +269,25 @@ test('two identical complete key sweeps retire a card omitted from Plex', async 
   reopened.close();
 });
 
+test('two complete zero-item sweeps retire the final indexed card', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(500), observedMs: 1 });
+  let clock = 10;
+  const worker = createPlexCardPageWorker({ libraryId: 102,
+    kind: 'episode', index: ledger, now: () => clock++,
+    readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+      kind: 'episode', offset, totalSize: 0, keys: [], complete: false }),
+    readCard: async () => { throw Error('empty section has no cards'); },
+  });
+  assert.equal((await worker.tick()).state, 'page_indexed');
+  assert.equal(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.length, 1);
+  assert.equal((await worker.tick()).state, 'page_indexed');
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards, []);
+  ledger.close();
+});
+
 test('truncated or inconsistent key sweep cannot retire an older card', async () => {
   const { ledger } = await index();
   ledger.recordCard({ ...card(500), observedMs: 1 });
