@@ -18,6 +18,8 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
   accounts.close();
   const methods = [];
+  let showSecond = false;
+  let calendarDay = '2026-10-31';
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     methods.push(`${init.method} ${parsed.pathname}`);
@@ -31,8 +33,11 @@ test('signed-in user searches AniDB and saves an exact held request across resta
         EpisodeNumber: 1, Type: 'Episode', Title: 'Movie', AirDate: '2026-01-01' }] });
     }
     if (parsed.pathname.endsWith('/Episode')) {
-      return json({ Total: 1, List: [{ ID: 1001, AnimeID: 1234,
-        EpisodeNumber: 1, Type: 'Episode', Title: 'First', AirDate: '2026-10-01' }] });
+      return json({ Total: showSecond ? 2 : 1,
+        List: [{ ID: 1001, AnimeID: 1234,
+          EpisodeNumber: 1, Type: 'Episode', Title: 'First', AirDate: '2026-10-01' },
+        ...(showSecond ? [{ ID: 1002, AnimeID: 1234, EpisodeNumber: 2,
+          Type: 'Episode', Title: 'Second', AirDate: '2026-11-01' }] : [])] });
     }
     if (parsed.pathname.endsWith('/AniDB/1234')) {
       return json({ ID: 1234, Title: 'Example Series', Type: 'TV',
@@ -47,7 +52,7 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   const config = { dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
     shokoApiKey: 'synthetic-shoko-key', sessionKey: randomBytes(32),
     publicOrigin: origin, secureCookies: false, fetchImpl,
-    now: () => 1_000, today: () => '2026-10-31' };
+    now: () => 1_000, today: () => calendarDay };
   let service;
   try {
     service = await createUserService(config);
@@ -77,10 +82,15 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.deepEqual(read.json().episodeIds, [1001]);
     assert.equal(read.json().requesterId, owner.id);
     assert.equal(read.json().monitorFuture, true);
+    showSecond = true;
+    calendarDay = '2026-11-01';
     const airing = await service.pollAiringNextPage();
     assert.equal(airing.state, 'page');
     assert.equal(airing.afterId, 0);
     assert.equal(airing.results.length, 1);
+    const afterAir = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${id}`, headers: { cookie } });
+    assert.deepEqual(afterAir.json().episodeIds, [1001, 1002]);
     const movieSearch = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Movie', headers: { cookie } });
     assert.equal(movieSearch.statusCode, 200, movieSearch.body);

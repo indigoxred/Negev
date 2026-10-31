@@ -2,10 +2,14 @@ import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const selectable = new Set(['Episode', 'Special']);
+const fullDate = (value) => typeof value === 'string' &&
+  /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+  Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
+  new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
 // Pure request intent. Classification must come from a trusted source; this
 // function never guesses Airing/Completed from a title or current date.
-export function planRequest({ detail, releaseState, scope, episodeIds } = {}) {
+export function planRequest({ detail, releaseState, scope, episodeIds, today } = {}) {
   const anidbId = detail?.anidbId;
   if (!isCompleteAniDbDetail(detail, anidbId) ||
       !['series', 'movie'].includes(detail.kind)) return held('detail_incomplete');
@@ -15,7 +19,10 @@ export function planRequest({ detail, releaseState, scope, episodeIds } = {}) {
 
   let selected;
   if (scope === 'installment') {
-    selected = detail.episodes.filter((episode) => episode.type === 'Episode').map((episode) => episode.id);
+    if (releaseState === 'airing' && !fullDate(today)) return held('invalid_current_date');
+    selected = detail.episodes.filter((episode) => episode.type === 'Episode' &&
+      (releaseState === 'completed' ||
+        (fullDate(episode.airDate) && episode.airDate <= today))).map((episode) => episode.id);
   } else {
     if (!Array.isArray(episodeIds) || episodeIds.length === 0 ||
         episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
@@ -26,7 +33,8 @@ export function planRequest({ detail, releaseState, scope, episodeIds } = {}) {
     }
     selected = episodeIds;
   }
-  if (selected.length === 0) return held('invalid_episode_selection');
+  if (selected.length === 0) return held(releaseState === 'airing' &&
+    scope === 'installment' ? 'no_aired_episodes' : 'invalid_episode_selection');
   return {
     state: 'ready', anidbId, kind: detail.kind,
     episodeIds: [...selected].sort((a, b) => a - b),

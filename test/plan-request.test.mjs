@@ -4,16 +4,21 @@ import { planRequest } from '../src/requests/plan-request.mjs';
 
 const detail = { state: 'details', anidbId: 1234, kind: 'series', complete: true,
   total: 3, episodes: [
-    { id: 1001, number: 1, type: 'Episode' },
-    { id: 1002, number: 2, type: 'Episode' },
+    { id: 1001, number: 1, type: 'Episode', airDate: '2026-10-01' },
+    { id: 1002, number: 2, type: 'Episode', airDate: '2026-11-01' },
     { id: 1099, number: 1, type: 'Special' },
   ] };
 
 test('airing whole installment stores current regular IDs and future monitoring', () => {
-  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment' }), {
+  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment',
+    today: '2026-10-31' }), {
     state: 'ready', anidbId: 1234, kind: 'series',
-    episodeIds: [1001, 1002], monitorFuture: true,
+    episodeIds: [1001], monitorFuture: true,
   });
+  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment',
+    today: '2026-09-30' }), { state: 'held', reason: 'no_aired_episodes' });
+  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment' }),
+    { state: 'held', reason: 'invalid_current_date' });
 });
 
 test('completed installment and movie are one-time exact acquisitions', () => {

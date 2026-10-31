@@ -33,9 +33,11 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
       return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');
     }
     if (detail.restricted !== false) return held('restricted_or_unverified');
-    const release = inferReleaseState({ ...detail, today: today() });
+    const currentDate = today();
+    const release = inferReleaseState({ ...detail, today: currentDate });
     if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
-    const intent = planRequest({ detail, releaseState: release.state, scope, episodeIds });
+    const intent = planRequest({ detail, releaseState: release.state,
+      scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;
     return ledger.submit({ requesterId, requestKey, commandKey, intent, nowMs: now() });
   };
