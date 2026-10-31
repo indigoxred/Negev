@@ -6,18 +6,19 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { reserveMissingTargets } from '../src/acquisition/reserve-missing-targets.mjs';
+import { collectUnimportedTargets } from '../src/acquisition/collect-unimported-targets.mjs';
 
 const candidate = { indexerId: 7, guid: 'candidate-for-two-episodes' };
 const file = { fileId: 91, anidbId: 42, episodeIds: [1001],
   coverage: [{ episodeId: 1001, start: 0, end: 100 }], storageKey: 'same-video' };
 const part = { storageKey: 'same-video', libraryId: 102, readable: true };
 
-async function withLedgers(run) {
+async function withLedgers(run, kind = 'series') {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-missing-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
   const saved = requests.submit({ requesterId: 1, requestKey: 'missing-gate', nowMs: 10,
-    intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
+    intent: { state: 'ready', anidbId: 42, kind, monitorFuture: false,
       episodeIds: [1001, 1002] } });
   const acquisitions = openAcquisitionLedger(dbPath);
   try { await run({ request: requests.getRequest(saved.requestId), acquisitions }); }
@@ -83,7 +84,7 @@ test('an already playable episode blocks the entire candidate before any claim',
     assert.equal(next.state, 'reserved');
   }));
 
-test('Shoko 404 for a first-time title never proves its requested episode absent', async () =>
+test('a generic Shoko 404 never proves its requested episode absent', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     const result = await reserveMissingTargets({ request, candidate,
       episodeIds: [1001], readEvidence: async () => evidence({
@@ -93,6 +94,57 @@ test('Shoko 404 for a first-time title never proves its requested episode absent
       reason: 'target_not_proven_missing', episodeId: 1001 });
     assert.equal(acquisitions.getAttempt(1), null);
   }));
+
+test('exact catalogue-verified first-time targets can reserve only with complete Plex and settled import evidence', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001, 1002], readEvidence: async () => evidence({
+        shoko: await collectUnimportedTargets({ anidbId: 42,
+          episodeIds: [1001, 1002], readEpisode: async (target) =>
+            ({ state: 'not_imported', ...target }) }),
+        plex: { state: 'ok', complete: true, libraryIds: [102], parts: [] },
+      }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.equal(result.state, 'reserved');
+    assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds,
+      [1001, 1002]);
+  }));
+
+test('first-time evidence for a different episode or an unverified public section remains held', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    for (const override of [
+      { shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001] } },
+      { shoko: { state: 'unimported_targets', anidbId: 99,
+        episodeIds: [1001, 1002] } },
+      { shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001, 1002] }, plex: { state: 'unavailable' } },
+      { shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001, 1002] }, plex: { state: 'ok', complete: true,
+        libraryIds: [103], parts: [] } },
+      { shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001, 1002] }, plex: { state: 'ok', complete: true,
+        libraryIds: [102], parts: [part] } },
+    ]) {
+      const result = await reserveMissingTargets({ request, candidate,
+        episodeIds: [1001, 1002], readEvidence: async () => evidence(override),
+        publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+      assert.equal(result.state, 'held');
+    }
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
+test('an AniDB movie target uses the same first-time gate', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001], readEvidence: async () => evidence({
+        episodeIds: [1001], shoko: { state: 'unimported_targets',
+          anidbId: 42, episodeIds: [1001] },
+        plex: { state: 'ok', complete: true,
+          libraryIds: [102, 123], parts: [] },
+      }), publicLibraryIds: [102, 123], ledger: acquisitions,
+      now: () => 101 });
+    assert.equal(result.state, 'reserved');
+  }, 'movie'));
 
 test('incomplete, stale, or unrelated observations never authorize a grab', async () =>
   withLedgers(async ({ request, acquisitions }) => {

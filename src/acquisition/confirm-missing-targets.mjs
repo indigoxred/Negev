@@ -58,7 +58,23 @@ export async function confirmMissingTargets({ request, episodeIds,
       return held('unattributed_plex_part');
     }
   }
+  // A first-time title may have no local Shoko episode row. Only a separate
+  // per-target collector may summarize exact AniDB metadata confirmations;
+  // a bare 404 or a partial list cannot enter this branch.
+  const firstTimeUnimported = snapshot.shoko?.state === 'unimported_targets' &&
+    snapshot.shoko.anidbId === request.anidbId &&
+    Array.isArray(snapshot.shoko.episodeIds) &&
+    snapshot.shoko.episodeIds.length === episodeIds.length &&
+    new Set(snapshot.shoko.episodeIds).size === episodeIds.length &&
+    episodeIds.every((id) => snapshot.shoko.episodeIds.includes(id)) &&
+    snapshot.plex?.state === 'ok' && snapshot.plex.complete === true &&
+    Array.isArray(snapshot.plex.libraryIds) &&
+    snapshot.plex.libraryIds.length === publicLibraryIds.length &&
+    new Set(snapshot.plex.libraryIds).size === publicLibraryIds.length &&
+    publicLibraryIds.every((id) => snapshot.plex.libraryIds.includes(id)) &&
+    Array.isArray(snapshot.plex.parts) && snapshot.plex.parts.length === 0;
   for (const episodeId of episodeIds) {
+    if (firstTimeUnimported) continue;
     const result = evaluateExactAvailability({
       target: { anidbId: request.anidbId, episodeId },
       shoko: snapshot.shoko, plex: snapshot.plex, publicLibraryIds });

@@ -45,7 +45,8 @@ test('missing local episode and empty local file list stay distinct', async () =
       return paths.length === 1 ? new Response('', { status: 404 }) :
         json({ ID: 1001, AnimeID: 42 });
     } });
-  assert.deepEqual(missing, { state: 'not_imported' });
+  assert.deepEqual(missing, { state: 'not_imported',
+    anidbId: 42, episodeId: 1001 });
   assert.deepEqual(paths, ['/api/v3/Episode/AniDB/1001/Episode',
     '/api/v3/Episode/AniDB/1001']);
   const empty = await readShokoEpisodeFiles({ ...base,

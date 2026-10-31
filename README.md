@@ -168,3 +168,5 @@ The installed Plex mount review found a deployment detail for the availability w
 
 The synthetic missing-target gate now requires a fresh, target-scoped settled-import fence before reserving a release or starting a stopped torrent. An idle Shoko queue, empty episode response, or empty Plex index cannot supply that fence alone. No installed adapter currently produces it, so this change is a fail-closed contract, not working automatic acquisition. A bounded live import-activity policy and genuine-arrival test remain required before enabling the runtime.
 
+The first-time request path now has a separate exact AniDB metadata check for every selected episode. A Shoko 404 alone is not enough: the reader must confirm the episode belongs to the requested AniDB anime, and a bounded collector must verify the whole requested subset. The missing-target gate accepts that result only alongside a fresh settled-import fence and a complete, explicitly scoped empty public Plex observation. This is source-only; the live Plex-negative observer and import-settlement provider are still absent, so it does not enable downloads or prove first-time acquisition on the NAS.
+

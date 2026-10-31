@@ -43,7 +43,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       if (metadataResponse.status !== 200) return unavailable();
       const metadata = await readBoundedJson(metadataResponse, 100_000);
       return metadata?.ID === episodeId && metadata.AnimeID === anidbId
-        ? { state: 'not_imported' } : unavailable();
+        ? { state: 'not_imported', anidbId, episodeId } : unavailable();
     }
     if (response.status !== 200) return unavailable();
     episode = await readBoundedJson(response, 2_000_000);
