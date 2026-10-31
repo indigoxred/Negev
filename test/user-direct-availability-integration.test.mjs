@@ -92,14 +92,8 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     const search = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } });
     assert.equal(search.statusCode, 200);
-    const session = await service.app.inject({ method: 'GET',
-      url: '/api/session', headers: { cookie } });
-    const created = await service.app.inject({ method: 'POST',
-      url: '/api/requests', headers: { cookie,
-        origin: 'http://localhost:3000',
-        'x-negev-csrf': session.json().csrfToken },
-      payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
-    assert.equal(created.statusCode, 202, created.body);
+    assert.deepEqual((await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } })).json().items, []);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
       headers: { cookie } })).json().state, 'unknown');
     assert.deepEqual(await service.refreshShokoFile(51),
@@ -113,6 +107,17 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
       result: 'available' });
     assert.equal(service.getDirectAvailabilityStatus({
       anidbId: 42, episodeId: 1001 }).state, 'available');
+    const detailWithPlayable = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/42', headers: { cookie } });
+    assert.equal(detailWithPlayable.json().episodes[0].availability, 'available');
+    const session = await service.app.inject({ method: 'GET',
+      url: '/api/session', headers: { cookie } });
+    const created = await service.app.inject({ method: 'POST',
+      url: '/api/requests', headers: { cookie,
+        origin: 'http://localhost:3000',
+        'x-negev-csrf': session.json().csrfToken },
+      payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
+    assert.equal(created.statusCode, 202, created.body);
     const history = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.equal(history.json().items[0].progress.publicAvailability,
@@ -122,6 +127,9 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
     assert.deepEqual(service.getDirectAvailabilityStatus({
       anidbId: 42, episodeId: 1001 }), { state: 'unknown' });
+    const detailAfterUnlink = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/42', headers: { cookie } });
+    assert.equal(detailAfterUnlink.json().episodes[0].availability, 'unknown');
     const withdrawn = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.equal(withdrawn.json().items[0].progress.publicAvailability,

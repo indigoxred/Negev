@@ -312,13 +312,30 @@ async function showDetail(item) {
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
       const check = element('div', undefined, 'availability-check');
+      if (pager.episodes.some((episode) => episode.availability)) {
+        check.append(element('p',
+          'Playable labels use recent, verified public Plex evidence. Unlabelled episodes are not confirmed yet.',
+          'muted'));
+      }
       const label = element('label', data.kind === 'movie' ? 'Check a film target in Plex' : 'Check an episode in Plex');
       const select = element('select');
+      const optionText = (episode) =>
+        `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
+        `${episode.title ? ` · ${episode.title}` : ''}` +
+        `${episode.availability === 'available' ? ' · Playable in Plex' : ''}`;
       const appendOptions = (episodes) => {
         for (const episode of episodes) {
-          const option = element('option', `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
+          const option = element('option', optionText(episode));
           option.value = String(episode.id);
           select.append(option);
+        }
+      };
+      const updateOption = (episodeId, availability) => {
+        const episode = pager.episodes.find((entry) => entry.id === episodeId);
+        const option = [...select.options].find((entry) => entry.value === String(episodeId));
+        if (episode && option) {
+          episode.availability = availability;
+          option.textContent = optionText(episode);
         }
       };
       appendOptions(pager.episodes);
@@ -332,6 +349,7 @@ async function showDetail(item) {
         result.textContent = 'Checking the public library…';
         try {
           const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
+          updateOption(Number(select.value), status.state);
           result.textContent = status.state === 'available' ?
             'Playable in Plex' : 'Availability is not confirmed yet';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
@@ -352,6 +370,7 @@ async function showDetail(item) {
           for (const entry of checked.items) {
             const episode = pager.episodes[checkedCount];
             if (entry.episodeId !== episode?.id) throw new Error('Episode list changed; select the title again');
+            updateOption(entry.episodeId, entry.state);
             checkedList.append(element('p', `${episode.type} ${episode.number}: ${entry.state === 'available' ? 'Playable in Plex' : 'Not confirmed yet'}`));
             checkedCount++;
           }

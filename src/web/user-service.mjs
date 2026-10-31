@@ -168,7 +168,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),
-      titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      titleRegistry, loadDetail: async (input) => {
+        const detail = await metadata.run(() => loadDetail(input));
+        if (!plexObserver || detail?.state !== 'details' ||
+            !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
+        return { ...detail, episodes: detail.episodes.map((episode) => ({
+          ...episode, availability: directAvailability.getStatus({
+            anidbId: detail.anidbId, episodeId: episode.id,
+            nowMs: now() }).state,
+        })) };
+      },
       discoverCandidates, previewCandidate,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
