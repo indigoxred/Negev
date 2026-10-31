@@ -15,6 +15,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const accounts = openAccountLedger(path.join(dir, 'accounts.sqlite'), { now: () => 1_000 });
   const requestLedger = openRequestLedger(path.join(dir, 'requests.sqlite'));
   const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  const observed = [];
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
     submitRequest: async (command) => requestLedger.submit({
@@ -24,6 +25,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }),
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
+    observePublicTarget: async (target) => { observed.push(target);
+      return { state: 'available', fileId: 900 }; },
   });
   try {
     const page = await app.inject({ method: 'GET', url: '/' });
@@ -60,6 +63,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'first' } });
     assert.equal(submitted.statusCode, 202, submitted.body);
     assert.equal(requestLedger.getRequest(1).requesterId, owner.id);
+    const available = await app.inject({ method: 'GET',
+      url: '/api/requests/1/episodes/1001/availability', headers: { cookie } });
+    assert.equal(available.statusCode, 200);
+    assert.deepEqual(available.json(), { state: 'available' });
+    assert.deepEqual(observed, [{ anidbId: 1234, episodeId: 1001, kind: 'series' }]);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/requests/1/episodes/1002/availability', headers: { cookie } })).statusCode, 404);
     const mine = await app.inject({ method: 'GET', url: '/api/requests',
       headers: { cookie } });
     assert.deepEqual(mine.json().items.map((item) => item.id), [1]);
@@ -87,6 +97,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const hidden = await app.inject({ method: 'GET', url: '/api/requests/1',
       headers: { cookie: friendCookie } });
     assert.equal(hidden.statusCode, 404);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/requests/1/episodes/1001/availability',
+      headers: { cookie: friendCookie } })).statusCode, 404);
     const wrongOrigin = await app.inject({ method: 'POST', url: '/api/requests',
       headers: { cookie, origin: 'https://attacker.example', 'x-negev-csrf': csrf },
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'second' } });

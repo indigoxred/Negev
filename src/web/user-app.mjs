@@ -17,7 +17,7 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
-  loadDetail, hydrateTitle } = {}) {
+  loadDetail, hydrateTitle, observePublicTarget } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -219,6 +219,38 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(404).send({ error: 'Request not found' });
     }
     return result;
+  });
+  // A status read belongs to an existing exact request target. Keep internal
+  // file IDs, mount paths and Plex rating keys out of the end-user response.
+  app.get('/api/requests/:id/episodes/:episodeId/availability', {
+    preHandler: requireUser,
+    config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (Object.keys(request.query).length) {
+      return reply.code(400).send({ error: 'Invalid availability query' });
+    }
+    const id = Number(request.params.id);
+    const episodeId = Number(request.params.episodeId);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        !Number.isSafeInteger(episodeId) || episodeId < 1) {
+      return reply.code(400).send({ error: 'Invalid request target' });
+    }
+    const saved = readRequest(id);
+    if (!saved || (request.negevUser.role !== 'admin' &&
+        saved.requesterId !== request.negevUser.id) ||
+        !saved.episodeIds?.includes(episodeId)) {
+      return reply.code(404).send({ error: 'Request target not found' });
+    }
+    if (typeof observePublicTarget !== 'function') {
+      return { state: 'unknown', reason: 'observer_not_configured' };
+    }
+    let result;
+    try { result = await observePublicTarget({ anidbId: saved.anidbId,
+      episodeId, kind: saved.kind }); }
+    catch { return { state: 'unknown', reason: 'observer_unavailable' }; }
+    if (result?.state === 'available') return { state: 'available' };
+    return { state: 'unknown', reason: 'evidence_incomplete' };
   });
   return app;
 }

@@ -81,6 +81,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })),
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
       hydrateTitle: (input) => metadata.run(() => hydrator.load(input)),
+      observePublicTarget: (target) => plexObserver ?
+        metadata.run(() => plexObserver.observeTarget(target)) :
+        { state: 'unknown', reason: 'observer_not_configured' },
     });
     const observations = new Set();
     let stopping = false;
