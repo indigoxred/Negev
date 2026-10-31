@@ -36,6 +36,9 @@ function showSession(data) {
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
+  byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
+    ? 'Negev is in preview. Requests are saved; automatic downloads are not active. Public Plex availability can be checked, and an unconfirmed result does not mean a file is missing.'
+    : 'Negev is in preview. Requests are saved; automatic downloads and public Plex checks are not active.';
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -50,6 +53,8 @@ function clearWorkspace() {
   state.nextBeforeId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
+  byId('service-notice').textContent =
+    'Negev is in preview. Requests are saved; automatic downloads are not active.';
   byId('request-list').replaceChildren();
   byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
   byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));

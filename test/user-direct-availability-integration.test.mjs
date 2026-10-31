@@ -112,6 +112,7 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     assert.equal(detailWithPlayable.json().episodes[0].availability, 'available');
     const session = await service.app.inject({ method: 'GET',
       url: '/api/session', headers: { cookie } });
+    assert.equal(session.json().capabilities.availabilityChecks, true);
     const created = await service.app.inject({ method: 'POST',
       url: '/api/requests', headers: { cookie,
         origin: 'http://localhost:3000',

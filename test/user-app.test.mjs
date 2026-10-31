@@ -99,7 +99,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
     assert.equal(session.json().user.id, owner.id);
     assert.deepEqual(session.json().capabilities, {
-      releaseSearch: true, detailLoad: false });
+      releaseSearch: true, detailLoad: false, availabilityChecks: false });
     const related = await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/related', headers: { cookie } });
     assert.equal(related.statusCode, 200);
@@ -187,7 +187,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const friendSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie: friendCookie } });
     assert.deepEqual(friendSession.json().capabilities, {
-      releaseSearch: false, detailLoad: false });
+      releaseSearch: false, detailLoad: false, availabilityChecks: false });
     const memberInvite = await app.inject({ method: 'POST', url: '/api/invitations',
       headers: { cookie: friendCookie, origin,
         'x-negev-csrf': friendSession.json().csrfToken }, payload: {} });

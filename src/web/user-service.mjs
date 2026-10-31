@@ -147,6 +147,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
+      publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {

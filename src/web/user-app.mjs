@@ -18,7 +18,7 @@ const constantEqual = (a, b) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
-  discoverCandidates, previewCandidate } = {}) {
+  discoverCandidates, previewCandidate, publicAvailabilityConfigured = false } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -35,7 +35,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         ['localhost', '127.0.0.1'].includes(origin.hostname))) ||
       (secureCookies && origin.protocol !== 'https:') ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
-      typeof readRequest !== 'function') throw new TypeError('Invalid user app configuration');
+      typeof readRequest !== 'function' ||
+      typeof publicAvailabilityConfigured !== 'boolean') {
+    throw new TypeError('Invalid user app configuration');
+  }
 
   const app = Fastify({ logger: false, bodyLimit: 16 * 1024, trustProxy: false });
   await app.register(secureSession, { key: sessionKey,
@@ -126,7 +129,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
-      detailLoad: typeof hydrateTitle === 'function' } };
+      detailLoad: typeof hydrateTitle === 'function',
+      availabilityChecks: publicAvailabilityConfigured } };
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
