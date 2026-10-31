@@ -18,6 +18,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const observed = [];
   const discovered = [];
   const previewed = [];
+  const knownTitles = new Set([1234]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
     submitRequest: async (command) => requestLedger.submit({
@@ -27,7 +28,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }),
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
-    titleRegistry: { isKnownTitle: ({ anidbId }) => anidbId === 1234 },
+    titleRegistry: {
+      isKnownTitle: ({ anidbId }) => knownTitles.has(anidbId),
+      observe: (result) => {
+        if (result?.state !== 'results' || !Array.isArray(result.items)) return false;
+        for (const item of result.items) knownTitles.add(item.anidbId);
+        return true;
+      },
+    },
     loadRelatedTitles: async ({ anidbId }) => ({ state: 'related_titles',
       anidbId, completeness: 'unproven', items: [{ anidbId: 5678,
         title: 'Another installment', relation: 'Sequel' }] }),
@@ -72,6 +80,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(related.statusCode, 200);
     assert.equal(related.json().completeness, 'unproven');
     assert.equal(related.json().items[0].anidbId, 5678);
+    assert.equal(knownTitles.has(5678), true);
     const unknownRelated = await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/related', headers: { cookie } });
     assert.equal(unknownRelated.statusCode, 404);

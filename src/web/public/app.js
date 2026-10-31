@@ -234,8 +234,7 @@ async function showDetail(item) {
         for (const installment of related.items) {
           const searchButton = element('button', `${installment.title} · ${installment.relation}`);
           searchButton.addEventListener('click', () => {
-            byId('query').value = installment.title;
-            byId('search-form').requestSubmit();
+            void showDetail({ anidbId: installment.anidbId, title: installment.title });
           });
           relatedList.append(searchButton);
         }

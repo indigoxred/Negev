@@ -166,6 +166,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(400).send({ error: 'Invalid AniDB ID' });
     }
     if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        typeof titleRegistry.observe !== 'function' ||
         !titleRegistry.isKnownTitle({ anidbId: id })) {
       return reply.code(404).send({ error: 'Title not found' });
     }
@@ -173,7 +174,17 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(503).send({ error: 'Related titles unavailable' });
     }
     const result = await loadRelatedTitles({ anidbId: id });
-    if (result?.state !== 'related_titles') {
+    if (result?.state !== 'related_titles' || result.anidbId !== id ||
+        result.completeness !== 'unproven' || !Array.isArray(result.items) ||
+        result.items.length > 50 || result.items.some((item) =>
+          !Number.isSafeInteger(item?.anidbId) || item.anidbId < 1 ||
+          typeof item.title !== 'string' || !item.title.trim() ||
+          typeof item.relation !== 'string' || !item.relation)) {
+      return reply.code(503).send({ error: 'Related titles unavailable' });
+    }
+    if (!titleRegistry.observe({ state: 'results', total: result.items.length,
+          items: result.items.map((item) => ({ anidbId: item.anidbId,
+            title: item.title })) })) {
       return reply.code(503).send({ error: 'Related titles unavailable' });
     }
     return result;
