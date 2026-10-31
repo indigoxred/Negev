@@ -26,22 +26,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - run: docker build --tag negev-private-test:ci .
+      - run: docker build --tag negev-user-test:ci .
       - run: |
-          docker run --detach --name negev-private-ci --network none \
+          docker run --detach --name negev-user-ci --network none \
             --tmpfs /data:rw,mode=0700,uid=1000,gid=1000 \
-            --env NEGEV_PRIVATE_TEST=1 \
+            --env NEGEV_USER_SERVER=1 \
             --env NEGEV_SHOKO_URL=http://shoko.invalid:8111 \
             --env NEGEV_SHOKO_API_KEY=synthetic-key \
-            --env NEGEV_TEST_TOKEN=synthetic-private-token \
-            --env NEGEV_DATA_DIR=/data negev-private-test:ci
+            --env NEGEV_DATA_DIR=/data \
+            --env NEGEV_PUBLIC_ORIGIN=http://localhost:3000 \
+            --env NEGEV_ADMIN_USERNAME=Owner \
+            --entrypoint sh negev-user-test:ci \
+            -c 'printf "synthetic-test-password\n" | node src/auth/init-admin.mjs && node src/web/user-server.mjs'
           for attempt in 1 2 3 4 5; do
-            if docker exec negev-private-ci node -e "fetch('http://127.0.0.1:3000/health/live').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"; then
-              docker stop negev-private-ci
+            if docker exec negev-user-ci node -e "fetch('http://127.0.0.1:3000/health/live').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"; then
+              docker stop negev-user-ci
               exit 0
             fi
             sleep 1
           done
-          docker logs negev-private-ci
-          docker stop negev-private-ci
+          docker logs negev-user-ci
+          docker stop negev-user-ci
           exit 1
