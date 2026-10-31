@@ -1,5 +1,6 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { createHash } from 'node:crypto';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -16,7 +17,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
-  return async ({ requestId, candidateOffset = 0 } = {}) => {
+  return async ({ requestId, candidateOffset = 0,
+    candidateFingerprint = null } = {}) => {
     if (!validId(requestId) || !Number.isSafeInteger(candidateOffset) ||
         candidateOffset < 0 || candidateOffset > 50) return held('invalid_request');
     let request;
@@ -47,9 +49,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),
       nextCandidateOffset: 0 };
+    const fingerprint = createHash('sha256').update(JSON.stringify(
+      found.items.map((item) => [item.indexerId, item.guid]))).digest('hex');
     const seen = new Set();
     let selected;
-    const start = candidateOffset < found.items.length ? candidateOffset : 0;
+    // Search ranking can change between passes. An index from another result
+    // set could skip a newly arrived candidate, so restart at the first one.
+    const start = candidateFingerprint === fingerprint &&
+      candidateOffset < found.items.length ? candidateOffset : 0;
     let nextIndex = start;
     for (let index = start; index < found.items.length; index++) {
       if (seen.size >= maxPreflights) break;
@@ -76,7 +83,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
       break;
     }
     if (!selected) return { ...held('no_safe_release'),
-      nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0 };
+      nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0,
+      nextCandidateFingerprint: fingerprint };
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }
@@ -115,7 +123,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),
-        nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0 };
+        nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0,
+        nextCandidateFingerprint: fingerprint };
     }
     return held(validReason(outcome?.reason) ? outcome.reason :
       'submit_unavailable');

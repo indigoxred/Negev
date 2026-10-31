@@ -101,10 +101,40 @@ test('later candidate batches can reach a fourth release without rechecking the 
     loadDetail: async () => detail,
     submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'held', reason: 'no_safe_release', nextCandidateOffset: 3 });
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 3 }),
+  const first = await process({ requestId: 4 });
+  assert.equal(first.state, 'held');
+  assert.equal(first.reason, 'no_safe_release');
+  assert.equal(first.nextCandidateOffset, 3);
+  assert.match(first.nextCandidateFingerprint, /^[0-9a-f]{64}$/);
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 3,
+    candidateFingerprint: first.nextCandidateFingerprint }),
     { state: 'stopped_observed', attemptId: 12 });
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2',
+    'candidate-3', 'candidate-4']);
+});
+
+test('changed search order invalidates the saved candidate position', async () => {
+  let order = [candidate(1), candidate(2), candidate(3), candidate(4)];
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: order }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-4' ? preflight :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.nextCandidateOffset, 3);
+  order = [candidate(4), candidate(1), candidate(2), candidate(3)];
+  assert.equal((await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint })).state,
+  'stopped_observed');
   assert.deepEqual(seen, ['candidate-1', 'candidate-2',
     'candidate-3', 'candidate-4']);
 });
@@ -127,9 +157,11 @@ test('an already playable first candidate does not hide a later missing episode'
       ? { state: 'held', reason: 'target_already_available' }
       : { state: 'stopped_observed', attemptId: 12 },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'held', reason: 'target_already_available', nextCandidateOffset: 1 });
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1 }),
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'target_already_available');
+  assert.equal(first.nextCandidateOffset, 1);
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: first.nextCandidateFingerprint }),
     { state: 'stopped_observed', attemptId: 12 });
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
@@ -152,9 +184,11 @@ test('an import awaiting Plex does not hide a later missing episode candidate', 
       ? { state: 'held', reason: 'target_not_proven_missing', episodeId: 1001 }
       : { state: 'stopped_observed', attemptId: 12 },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'held', reason: 'target_not_proven_missing', nextCandidateOffset: 1 });
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1 }),
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'target_not_proven_missing');
+  assert.equal(first.nextCandidateOffset, 1);
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: first.nextCandidateFingerprint }),
     { state: 'stopped_observed', attemptId: 12 });
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });

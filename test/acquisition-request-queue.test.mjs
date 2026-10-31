@@ -189,14 +189,17 @@ test('restart recovery reviews every page of interrupted requests', async () =>
 
 test('a held request resumes its next candidate batch after a restart', async () =>
   fixture(async (dbPath) => {
+    const fingerprint = 'a'.repeat(64);
     let queue = openAcquisitionRequestQueue(dbPath);
     try {
       const claim = queue.claimNext({ nowMs: 100 });
       assert.equal(claim.requestId, 1);
       assert.deepEqual(queue.recordResult({ requestId: 1, pass: claim.pass,
         state: 'held', reason: 'no_safe_release',
-        nextCandidateOffset: 3, checkedMs: 100 }), { state: 'recorded' });
+        nextCandidateOffset: 3, nextCandidateFingerprint: fingerprint,
+        checkedMs: 100 }), { state: 'recorded' });
       assert.equal(queue.getResult(1).candidateOffset, 3);
+      assert.equal(queue.getResult(1).candidateFingerprint, fingerprint);
     } finally { queue.close(); }
     queue = openAcquisitionRequestQueue(dbPath);
     try {
@@ -209,7 +212,7 @@ test('a held request resumes its next candidate batch after a restart', async ()
       assert.equal(queue.claimNext({ nowMs: 1_800_100 }).state, 'pass_complete');
       const resumed = queue.claimNext({ nowMs: 1_800_100 });
       assert.deepEqual(resumed, { state: 'claimed', requestId: 1,
-        pass: 2, candidateOffset: 3 });
+        pass: 2, candidateOffset: 3, candidateFingerprint: fingerprint });
     } finally { queue.close(); }
   }));
 
@@ -220,21 +223,23 @@ test('the page worker passes a saved candidate offset to a later attempt', async
     try {
       const worker = createAcquisitionPageWorker({ queue, limit: 3,
         now: () => 100,
-        processRequest: async ({ requestId, candidateOffset }) => {
-          seen.push({ requestId, candidateOffset });
+        processRequest: async ({ requestId, candidateOffset, candidateFingerprint }) => {
+          seen.push({ requestId, candidateOffset, candidateFingerprint });
           return { state: 'held', reason: 'no_safe_release',
-            nextCandidateOffset: requestId === 1 ? 3 : 0 };
+            nextCandidateOffset: requestId === 1 ? 3 : 0,
+            nextCandidateFingerprint: requestId === 1 ? 'b'.repeat(64) : undefined };
         } });
       assert.equal((await worker.runOnce()).state, 'page');
       assert.equal((await worker.runOnce()).state, 'pass_complete');
       const later = createAcquisitionPageWorker({ queue, limit: 1,
         now: () => 1_800_100,
-        processRequest: async ({ requestId, candidateOffset }) => {
-          seen.push({ requestId, candidateOffset });
+        processRequest: async ({ requestId, candidateOffset, candidateFingerprint }) => {
+          seen.push({ requestId, candidateOffset, candidateFingerprint });
           return { state: 'held', reason: 'no_safe_release' };
         } });
       assert.equal((await later.runOnce()).state, 'page');
-      assert.deepEqual(seen.at(-1), { requestId: 1, candidateOffset: 3 });
+      assert.deepEqual(seen.at(-1), { requestId: 1, candidateOffset: 3,
+        candidateFingerprint: 'b'.repeat(64) });
     } finally { queue.close(); }
   }));
 
