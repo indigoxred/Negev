@@ -85,6 +85,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const progressModule = await app.inject({ method: 'GET', url: '/request-progress-text.mjs' });
     assert.equal(progressModule.statusCode, 200);
     assert.match(progressModule.headers['content-type'], /javascript/);
+    const epochModule = await app.inject({ method: 'GET', url: '/response-epoch.mjs' });
+    assert.equal(epochModule.statusCode, 200);
+    assert.match(epochModule.headers['content-type'], /javascript/);
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);
     const crossSite = await app.inject({ method: 'POST', url: '/api/login',

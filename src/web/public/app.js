@@ -2,6 +2,7 @@ import { createRequestKeyStore } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
 import { progressText } from './request-progress-text.mjs';
+import { createResponseEpoch } from './response-epoch.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -9,6 +10,8 @@ const requestKeys = createRequestKeyStore({ storage: sessionStorage,
 const state = { csrf: null, user: null, selected: null,
   nextBeforeId: null, releaseSearch: false, detailLoad: false,
   searchToken: 0 };
+const sessionResponses = createResponseEpoch();
+const requestResponses = createResponseEpoch();
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -32,6 +35,12 @@ async function api(url, options = {}) {
   return data;
 }
 function showSession(data) {
+  if (state.user?.id !== data.user.id) {
+    sessionResponses.invalidate();
+    requestResponses.invalidate();
+    byId('request-list').replaceChildren();
+    state.nextBeforeId = null;
+  }
   state.user = data.user;
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
@@ -46,6 +55,8 @@ function showSession(data) {
   byId('invite').hidden = data.user.role !== 'admin';
 }
 function clearWorkspace() {
+  sessionResponses.invalidate();
+  requestResponses.invalidate();
   state.user = null;
   state.csrf = null;
   state.selected = null;
@@ -66,15 +77,27 @@ function clearWorkspace() {
   byId('auth').hidden = false;
 }
 async function refreshSession() {
-  try { showSession(await api('/api/session')); await loadRequests(); }
-  catch { clearWorkspace(); }
+  const started = sessionResponses.current();
+  try {
+    const data = await api('/api/session');
+    if (!sessionResponses.isCurrent(started)) return;
+    showSession(data);
+    await loadRequests();
+  } catch {
+    if (sessionResponses.isCurrent(started)) clearWorkspace();
+  }
 }
 async function loadRequests(append = false) {
+  const session = sessionResponses.current();
+  const listRequest = requestResponses.invalidate();
+  const userId = state.user?.id;
   const list = byId('request-list');
   if (!append) list.replaceChildren(element('p', 'Loading requests…', 'muted'));
   const suffix = append && state.nextBeforeId ? `?beforeId=${state.nextBeforeId}` : '';
   try {
     const page = await api(`/api/requests${suffix}`);
+    if (!sessionResponses.isCurrent(session) ||
+        !requestResponses.isCurrent(listRequest) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
     if (!append && page.items.length === 0) {
       list.append(element('p', 'No requests yet. Search for an anime to begin.', 'muted'));
@@ -148,7 +171,12 @@ async function loadRequests(append = false) {
     }
     state.nextBeforeId = page.nextBeforeId;
     byId('more-requests').hidden = state.nextBeforeId === null;
-  } catch (error) { message(error.message, true); }
+  } catch (error) {
+    if (sessionResponses.isCurrent(session) &&
+        requestResponses.isCurrent(listRequest) && state.user?.id === userId) {
+      message(error.message, true);
+    }
+  }
 }
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('more-requests').addEventListener('click', () => { void loadRequests(true); });
