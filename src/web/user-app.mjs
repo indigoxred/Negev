@@ -159,7 +159,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   // becomes Available and no identifier or path from the observer is exposed.
   app.get('/api/catalogue/:id/episodes/:episodeId/availability', {
     preHandler: requireUser,
-    config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+    config: { rateLimit: { max: 4, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const id = Number(request.params.id);
