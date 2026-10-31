@@ -22,6 +22,9 @@ test('partial dates use their last possible day and future starts remain upcomin
   assert.equal(inferReleaseState({ ...base, airDate: '2026-11' }).state, 'upcoming');
   assert.equal(inferReleaseState({ ...base, airDate: '2026' }).state, 'upcoming');
   assert.equal(inferReleaseState({ ...base, airDate: '2025' }).state, 'airing');
+  assert.equal(inferReleaseState({ ...base, airDate: '2026',
+    endDate: '2026-06', episodes: [{ type: 'Episode', airDate: '2026-05-01' }] }).state,
+  'completed');
 });
 
 test('a started movie or all expected regular episodes aired is completed', () => {

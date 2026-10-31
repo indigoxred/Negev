@@ -30,6 +30,7 @@ export function inferReleaseState({ today, kind, airDate, endDate = null, episod
       episode.airDate != null &&
       (!parsePartialDate(episode.airDate) ||
         parsePartialDate(episode.airDate).first > end.last))) return unknown;
+  if (end && end.last <= current.last) return inferred('completed');
   if (start.last > current.last) return inferred('upcoming');
   if (end) return inferred(end.last <= current.last ? 'completed' : 'airing');
   if (kind === 'movie') return inferred('completed');
