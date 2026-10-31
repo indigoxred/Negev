@@ -78,6 +78,9 @@ test('private search to exact held request never dispatches acquisition', async 
     const poll = await service.pollAiringOnce();
     assert.equal(poll.results[0].state, 'advanced');
     assert.equal(poll.results[0].reason, 'completion_unconfirmed');
+    const paged = await service.pollAiringNextPage();
+    assert.equal(paged.state, 'page');
+    assert.equal(paged.afterId, 0);
     const afterPoll = await service.app.inject({ method: 'GET',
       url: `/api/requests/${requestId}`, headers: auth });
     assert.deepEqual(afterPoll.json().episodeIds, [1001, 1002]);

@@ -251,3 +251,25 @@ test('two ledger connections cannot append the same airing episode twice', async
     assert.deepEqual(two.getRequest(saved.requestId).episodeIds, [1001, 1002, 1003]);
   } finally { one.close(); two.close(); }
 }));
+
+test('airing page cursor survives restart and rejects stale concurrent advancement', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const two = openRequestLedger(dbPath);
+  let oneClosed = false;
+  try {
+    assert.equal(one.getAiringCursor(), 0);
+    assert.deepEqual(one.advanceAiringCursor({ expectedAfterId: 0, nextAfterId: 17 }),
+      { state: 'advanced', afterId: 17 });
+    assert.deepEqual(two.advanceAiringCursor({ expectedAfterId: 0, nextAfterId: 23 }),
+      { state: 'held', reason: 'stale_cursor' });
+    assert.equal(two.getAiringCursor(), 17);
+    one.close();
+    oneClosed = true;
+    const reopened = openRequestLedger(dbPath);
+    try {
+      assert.equal(reopened.getAiringCursor(), 17);
+      assert.deepEqual(reopened.advanceAiringCursor({ expectedAfterId: 17, nextAfterId: 0 }),
+        { state: 'advanced', afterId: 0 });
+    } finally { reopened.close(); }
+  } finally { if (!oneClosed) one.close(); two.close(); }
+}));

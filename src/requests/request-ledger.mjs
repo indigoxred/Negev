@@ -68,6 +68,11 @@ export function openRequestLedger(dbPath) {
       target_id INTEGER NOT NULL REFERENCES targets(id),
       PRIMARY KEY(request_id,target_id)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS airing_poll_cursor (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      after_id INTEGER NOT NULL CHECK(after_id>=0)
+    ) STRICT`);
+    db.exec('INSERT INTO airing_poll_cursor(id,after_id) VALUES (1,0) ON CONFLICT(id) DO NOTHING');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
 
@@ -90,6 +95,8 @@ export function openRequestLedger(dbPath) {
   const closeWatch = db.prepare('UPDATE requests SET watch_closed=1 WHERE id=? AND watch_closed=0');
   const activeAirings = db.prepare(`SELECT id,anidb_id FROM requests
     WHERE id>? AND monitor_future=1 AND watch_closed=0 ORDER BY id LIMIT ?`);
+  const readAiringCursor = db.prepare('SELECT after_id FROM airing_poll_cursor WHERE id=1');
+  const updateAiringCursor = db.prepare('UPDATE airing_poll_cursor SET after_id=? WHERE id=1 AND after_id=?');
 
   function transact(action) {
     let begun = false;
@@ -106,6 +113,16 @@ export function openRequestLedger(dbPath) {
   }
 
   return {
+    getAiringCursor() { return readAiringCursor.get().after_id; },
+    advanceAiringCursor({ expectedAfterId, nextAfterId }) {
+      if (![expectedAfterId, nextAfterId].every((id) => Number.isSafeInteger(id) && id >= 0) ||
+          (nextAfterId !== 0 && nextAfterId <= expectedAfterId)) {
+        throw new TypeError('Invalid airing cursor advancement');
+      }
+      return transact(() => updateAiringCursor.run(nextAfterId, expectedAfterId).changes === 1
+        ? { state: 'advanced', afterId: nextAfterId }
+        : held('stale_cursor'));
+    },
     listActiveAirings({ afterId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
