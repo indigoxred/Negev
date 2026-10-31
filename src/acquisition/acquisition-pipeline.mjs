@@ -4,6 +4,8 @@ import { openStartQueue, createStartWorker } from './start-queue.mjs';
 import { openCompletionQueue, createCompletionWorker } from './completion-queue.mjs';
 import { openHandoffPublishQueue, createHandoffPublishWorker } from
   './handoff-publish-queue.mjs';
+import { createAcquisitionSessionRunners } from
+  './acquisition-session-runners.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -13,13 +15,16 @@ const held = (reason) => ({ state: 'held', reason });
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions,
   processRequest, processStart, processCompletion, processPublish,
-  now = Date.now } = {}) {
+  qbBaseUrl, sessionGate, fetchImpl = fetch, now = Date.now } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
       [processRequest, processStart, processCompletion, processPublish, now]
         .some((fn) => typeof fn !== 'function')) {
     throw new TypeError('Invalid acquisition pipeline');
   }
+  const sessionRunners = createAcquisitionSessionRunners({ qbBaseUrl,
+    sessionGate, fetchImpl, processRequest, processStart,
+    processCompletion, processPublish });
   const queues = [];
   try {
     queues.push(openAcquisitionRequestQueue(dbPath));
@@ -32,13 +37,13 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
   }
   const [requestQueue, startQueue, completionQueue, publishQueue] = queues;
   const requestWorker = createAcquisitionPageWorker({ queue: requestQueue,
-    processRequest, now });
+    processRequest: sessionRunners.processRequest, now });
   const startWorker = createStartWorker({ queue: startQueue,
-    processAttempt: processStart, now });
+    processAttempt: sessionRunners.processStart, now });
   const completionWorker = createCompletionWorker({ queue: completionQueue,
-    processAttempt: processCompletion, now });
+    processAttempt: sessionRunners.processCompletion, now });
   const publishWorker = createHandoffPublishWorker({ queue: publishQueue,
-    processAttempt: processPublish, now });
+    processAttempt: sessionRunners.processPublish, now });
   const active = new Set();
   let initialization;
   let recovery;

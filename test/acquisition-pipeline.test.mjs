@@ -11,6 +11,40 @@ import { openAcquisitionRequestQueue } from
 import { openAcquisitionPipeline } from '../src/acquisition/acquisition-pipeline.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
+const authorizedSession = { get: async () => ({ state: 'authenticated',
+  sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
+const qbBaseUrl = 'http://qb:8080/';
+
+test('pipeline never invokes a download processor while qBittorrent authentication is held', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-auth-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'auth-hold', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      episodeIds: [1001], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  let invoked = 0;
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: { get: async () => ({ state: 'held',
+      reason: 'authentication_backoff' }), invalidate: () => {} },
+    processRequest: async () => { invoked++; return { state: 'held', reason: 'unsafe' }; },
+    processStart: async () => { invoked++; },
+    processCompletion: async () => { invoked++; },
+    processPublish: async () => ({ state: 'held', reason: 'not_prepared' }),
+    now: () => 100 });
+  try {
+    await pipeline.initialize();
+    const result = await pipeline.tickRequests();
+    assert.equal(result.results[0].reason, 'authentication_backoff');
+    assert.equal(invoked, 0);
+  } finally {
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('restart reconciliation precedes worker ticks and later requests advance', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-'));
   const dbPath = path.join(dir, 'state.sqlite');
@@ -28,6 +62,7 @@ test('restart reconciliation precedes worker ticks and later requests advance', 
   let pipeline;
   try {
     pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      qbBaseUrl, sessionGate: authorizedSession,
       processRequest: async ({ requestId }) => {
         visited.push(requestId);
         return { state: 'held', reason: 'target_not_proven_missing' };
@@ -70,6 +105,7 @@ test('closing the pipeline waits for an active request check before closing its 
   const started = new Promise((resolve) => { entered = resolve; });
   const blocked = new Promise((resolve) => { release = resolve; });
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession,
     processRequest: async () => { entered(); await blocked;
       return { state: 'held', reason: 'availability_unavailable' }; },
     processStart: async () => ({ state: 'held', reason: 'disabled' }),
@@ -114,6 +150,7 @@ test('a held request does not block a later synthetic request-to-publish chain',
   let pipeline;
   try {
     pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      qbBaseUrl, sessionGate: authorizedSession,
       processRequest: async ({ requestId }) => {
         events.push(`request:${requestId}`);
         if (requestId === 1) return { state: 'held',
@@ -175,6 +212,7 @@ test('a held request does not block a later synthetic request-to-publish chain',
     assert.equal((await pipeline.tickStarts()).state, 'idle');
     await pipeline.close();
     pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      qbBaseUrl, sessionGate: authorizedSession,
       processRequest: async () => { throw new Error('No request replay'); },
       processStart: async () => { throw new Error('No start replay'); },
       processCompletion: async () => { throw new Error('No completion replay'); },
