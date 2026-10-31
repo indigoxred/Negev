@@ -48,6 +48,8 @@
 - [ ] Implement the verified policy; keep unknown paths held.
 - [ ] Run an isolated arrival/withdrawal exercise before allowing the new decision to authorize a stopped torrent.
 
+The Task 1 probe is also exposed through an authenticated, admin-only, two-per-minute diagnostic for at most ten saved request targets. It returns only state and reason; no file paths, IDs or credentials. This read-only route is not a missing-target gate and has not been run against installed services.
+
 ### Task 3: Opt-in worker composition and recovery
 
 **Files:** Modify `src/web/user-server-config.mjs`, `src/web/user-service.mjs`, `src/web/user-server.mjs`; add a focused integration test.

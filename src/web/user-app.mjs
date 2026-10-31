@@ -18,7 +18,8 @@ const constantEqual = (a, b) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
-  discoverCandidates, previewCandidate, publicAvailabilityConfigured = false } = {}) {
+  discoverCandidates, previewCandidate, probeRequestTargets,
+  publicAvailabilityConfigured = false } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -403,6 +404,51 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(503).send({ error: 'Preflight unavailable' });
     }
     return result;
+  });
+  // Diagnostic only: no Unknown observation may authorize acquisition.
+  app.post('/api/requests/:id/presence-probe', { preHandler: writeGuards,
+    config: { rateLimit: { max: 2, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Admin required' });
+    }
+    const id = Number(request.params.id);
+    const episodeIds = request.body?.episodeIds;
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        Object.keys(request.query).length ||
+        !allowedBody(request.body, ['episodeIds']) ||
+        Object.keys(request.body).length !== 1 ||
+        !Array.isArray(episodeIds) || episodeIds.length < 1 ||
+        episodeIds.length > 10 || episodeIds.some((episodeId) =>
+          !Number.isSafeInteger(episodeId) || episodeId < 1) ||
+        new Set(episodeIds).size !== episodeIds.length) {
+      return reply.code(400).send({ error: 'Invalid presence probe' });
+    }
+    const saved = readRequest(id);
+    if (!saved) return reply.code(404).send({ error: 'Request not found' });
+    if (!Array.isArray(saved.episodeIds) ||
+        episodeIds.some((episodeId) => !saved.episodeIds.includes(episodeId))) {
+      return reply.code(400).send({ error: 'Invalid request targets' });
+    }
+    if (typeof probeRequestTargets !== 'function') {
+      return reply.code(503).send({ error: 'Presence probe unavailable' });
+    }
+    let result;
+    try { result = await probeRequestTargets({ request: saved, episodeIds }); }
+    catch { return reply.code(503).send({ error: 'Presence probe unavailable' }); }
+    if (result?.state !== 'probe' || !Number.isSafeInteger(result.observedAtMs) ||
+        result.observedAtMs < 0 || !Array.isArray(result.targets) ||
+        result.targets.length !== episodeIds.length ||
+        result.targets.some((entry, index) =>
+          entry?.episodeId !== episodeIds[index] ||
+          !['available', 'present_in_shoko', 'unknown'].includes(entry.state) ||
+          typeof entry.reason !== 'string' ||
+          !/^[a-z][a-z0-9_]{0,79}$/.test(entry.reason))) {
+      return reply.code(503).send({ error: 'Presence probe unavailable' });
+    }
+    return { state: 'probe', observedAtMs: result.observedAtMs,
+      targets: result.targets.map(({ episodeId, state, reason }) =>
+        ({ episodeId, state, reason })) };
   });
   // A status read belongs to an existing exact request target. Keep internal
   // file IDs, mount paths and Plex rating keys out of the end-user response.

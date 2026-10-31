@@ -30,6 +30,9 @@ import { createRequestCandidateDiscovery } from
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
+import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
+import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
+import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
@@ -180,6 +183,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         })) };
       },
       discoverCandidates, previewCandidate,
+      probeRequestTargets: plexObserver ? ({ request, episodeIds }) =>
+        probeTargetPresence({ anidbId: request.anidbId,
+          kind: request.kind, episodeIds, now,
+          readImportActivity: () => metadata.run(() =>
+            readShokoImportActivity({ baseUrl: shokoBaseUrl,
+              apiKey: shokoApiKey, fetchImpl })),
+          readShokoEpisode: (target) => metadata.run(() =>
+            readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
+              apiKey: shokoApiKey, ...target, fetchImpl })),
+          readPublicTarget: (target) => observeCurrentPublic(target),
+        }) : undefined,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?
