@@ -32,6 +32,8 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
       target, result: 'available' });
     assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 101 }),
       { state: 'available', verifiedAtMs: 101 });
+    assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 100 }),
+      { state: 'unknown' });
     ctx.reopen();
     assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 101 + 30 * 60_000 }),
       { state: 'unknown' });
@@ -89,6 +91,9 @@ test('coverage counts only current exact positives and never counts unknown targ
       episodeIds: [1001, 1002], nowMs: 101 }),
     { verifiedTargets: 1, targetCount: 2 });
     assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
+      episodeIds: [1001, 1002], nowMs: 100 }),
+    { verifiedTargets: 0, targetCount: 2 });
+    assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
       episodeIds: [1001, 1002], nowMs: 101 + 30 * 60_000 }),
     { verifiedTargets: 0, targetCount: 2 });
   });
@@ -131,4 +136,17 @@ test('a prior durable queue gains event priority without losing a pending target
         { anidbId: 42, episodeId: 1001 });
     } finally { queue.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a clock rollback cannot save a future availability proof', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 200 });
+    const claim = ctx.queue.claimNext({ nowMs: 200 });
+    assert.deepEqual(ctx.queue.recordResult({ claim,
+      state: 'available', checkedMs: 199 }),
+    { state: 'held', reason: 'clock_regressed' });
+    assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 201 }),
+      { state: 'unknown' });
+  });
 });

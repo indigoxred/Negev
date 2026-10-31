@@ -55,7 +55,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     AND observed_ms=? AND version=? AND state='checking'`);
   const positiveForAnime = db.prepare(`SELECT episode_id AS episodeId
     FROM direct_availability_targets WHERE anidb_id=? AND state='available'
-    AND verified_ms>? LIMIT 10001`);
+    AND verified_ms>? AND verified_ms<=? LIMIT 10001`);
   return {
     getObservation({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {
@@ -84,7 +84,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       }
       const row = find.get(anidbId, episodeId);
       return row?.state === 'available' && validTime(row.verifiedMs) &&
-        row.verifiedMs + positiveLifetimeMs > nowMs
+        row.verifiedMs <= nowMs && row.verifiedMs + positiveLifetimeMs > nowMs
         ? { state: 'available', verifiedAtMs: row.verifiedMs }
         : { state: 'unknown' };
     },
@@ -95,7 +95,8 @@ export function openDirectAvailabilityQueue(dbPath) {
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid availability coverage query');
       }
-      const rows = positiveForAnime.all(anidbId, nowMs - positiveLifetimeMs);
+      const rows = positiveForAnime.all(anidbId,
+        nowMs - positiveLifetimeMs, nowMs);
       const positives = rows.length > 10_000 ? new Set() :
         new Set(rows.map((row) => row.episodeId));
       return { verifiedTargets: episodeIds.filter((id) => positives.has(id)).length,
@@ -122,6 +123,9 @@ export function openDirectAvailabilityQueue(dbPath) {
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
           !validId(receipt.version) || !['available', 'unknown'].includes(state) ||
           !validTime(checkedMs)) throw new TypeError('Invalid availability result');
+      if (checkedMs < receipt.observedMs) {
+        return { state: 'held', reason: 'clock_regressed' };
+      }
       const dueMs = checkedMs + (state === 'available'
         ? positiveLifetimeMs : retryMs);
       const updated = record.run(state, dueMs,
