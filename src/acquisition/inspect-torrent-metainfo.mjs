@@ -107,7 +107,8 @@ function v1Files(info) {
       const fileName = path.value.map(safeSegment).join('/');
       const attr = asBytes(field(entry, 'attr'));
       if (attr && attr.includes(112)) {
-        if (attr.toString('ascii') !== 'p' || !/^\.pad\/[1-9][0-9]*$/.test(fileName)) {
+        if (attr.toString('ascii') !== 'p' || !/^\.pad\/[1-9][0-9]*$/.test(fileName) ||
+            Number(fileName.slice(5)) !== size) {
           throw new TypeError('Invalid padding file');
         }
         continue;

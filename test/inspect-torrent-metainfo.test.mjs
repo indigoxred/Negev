@@ -26,6 +26,16 @@ test('extracts a canonical v1 info hash and one safe file', () => {
   assert.equal(inspect(torrent(v1Info, { comment: 'changed tracker metadata' })).hash, result.hash);
 });
 
+test('omits genuine pad entries from the qBittorrent-visible file list', () => {
+  const info = { name: 'Show', 'piece length': 16384, pieces: Buffer.alloc(20, 7),
+    files: [{ length: 1000, path: ['01.mkv'] },
+      { attr: 'p', length: 100, path: ['.pad', '100'] }] };
+  assert.deepEqual(inspect(torrent(info)).files, [{ name: '01.mkv', size: 1000 }]);
+  assert.equal(inspect(torrent({ ...info, files: [
+    info.files[0], { attr: 'p', length: 100, path: ['.pad', '101'] },
+  ] })).state, 'held');
+});
+
 test('derives qBittorrent truncated SHA-256 ID for a v2 torrent', () => {
   const info = { 'file tree': { 'Example.mkv': { '': { length: 1000, 'pieces root': Buffer.alloc(32, 2) } } },
     'meta version': 2, name: 'Example', 'piece length': 16384 };
