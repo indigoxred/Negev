@@ -1,0 +1,124 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openStartQueue, createStartWorker } from '../src/acquisition/start-queue.mjs';
+
+async function fixture(run) {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-start-queue-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const request = requests.submit({ requesterId: 1, requestKey: 'start', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: false, episodeIds: [1001, 1002, 1003] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const ids = [];
+  for (let i = 0; i < 3; i++) {
+    const candidate = { indexerId: 7, guid: `start-${i}` };
+    const hash = String(i + 1).repeat(40);
+    const reserved = acquisitions.reserve({ requestId: request.requestId, candidate,
+      episodeIds: [1001 + i], nowMs: 200 + i * 10 });
+    const attemptId = reserved.attemptId;
+    acquisitions.bindPreparedTorrent({ attemptId, candidate, hash,
+      nowMs: 201 + i * 10 });
+    acquisitions.recordFilePlan({ attemptId, hash,
+      plannedFiles: [{ name: `${i + 1}.mkv`, size: 10,
+        episodeIds: [1001 + i] }], nowMs: 202 + i * 10 });
+    acquisitions.beginDispatch({ attemptId, nowMs: 203 + i * 10 });
+    acquisitions.recordTorrent({ attemptId, hash, nowMs: 204 + i * 10 });
+    ids.push({ attemptId, hash });
+  }
+  let queue = openStartQueue(dbPath);
+  try {
+    await run({ dbPath, ids, acquisitions,
+      get queue() { return queue; },
+      reopen() { queue.close(); queue = openStartQueue(dbPath); } });
+  } finally {
+    queue.close(); acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test('one stopped torrent holds while later stopped torrents advance', async () =>
+  fixture(async (ctx) => {
+    const worker = createStartWorker({ queue: ctx.queue, now: () => 1_000,
+      processAttempt: async () => ({ state: 'held', reason: 'mount_evidence_unavailable' }) });
+    for (const row of ctx.ids) {
+      const result = await worker.runOnce();
+      assert.equal(result.attemptId, row.attemptId);
+    }
+    assert.deepEqual(await worker.runOnce(), { state: 'idle' });
+    assert.equal(ctx.queue.getResult(ctx.ids[0].attemptId).nextDueMs, 1_801_000);
+    ctx.reopen();
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_800_999 }).state, 'idle');
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId,
+      ctx.ids[0].attemptId);
+  }));
+
+test('a saved start intent is never selected for a second start', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    const row = ctx.ids[0];
+    assert.equal(ctx.acquisitions.beginStart({ attemptId: row.attemptId,
+      hash: row.hash, manifestDigest: 'a'.repeat(64), nowMs: 1_001 }).state,
+    'start_unknown');
+    assert.deepEqual(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'start_unknown', checkedMs: 1_002 }),
+    { state: 'recorded' });
+    ctx.reopen();
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
+      ctx.ids[1].attemptId);
+  }));
+
+test('an interrupted claim reconciles from the durable start intent', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.acquisitions.beginStart({ attemptId: first.attemptId,
+      hash: ctx.ids[0].hash, manifestDigest: 'a'.repeat(64), nowMs: 1_001 });
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_002 }),
+      { state: 'reviewed', resolved: [first.attemptId], held: [] });
+    assert.equal(ctx.queue.getResult(first.attemptId).state, 'start_unknown');
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
+      ctx.ids[1].attemptId);
+  }));
+
+test('an interrupted pre-intent claim retries later without blocking others', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_001 }),
+      { state: 'reviewed', resolved: [first.attemptId], held: [] });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 301_001);
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).attemptId, ctx.ids[1].attemptId);
+  }));
+
+test('a second queue connection cannot claim the same stopped attempt', async () =>
+  fixture(async (ctx) => {
+    const other = openStartQueue(ctx.dbPath);
+    try {
+      const first = ctx.queue.claimNext({ nowMs: 1_000 });
+      const second = other.claimNext({ nowMs: 1_000 });
+      assert.equal(first.attemptId, ctx.ids[0].attemptId);
+      assert.equal(second.attemptId, ctx.ids[1].attemptId);
+    } finally { other.close(); }
+  }));
+
+test('a repeated unavailable start goes to review rather than polling forever', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'held', reason: 'provider_unavailable',
+      checkedMs: 1_001 }).state, 'recorded');
+    const second = ctx.queue.claimNext({ nowMs: 1_801_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    assert.equal(ctx.queue.recordResult({ attemptId: second.attemptId,
+      version: second.version, state: 'held', reason: 'provider_unavailable',
+      checkedMs: 1_801_002 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
+      ctx.ids[1].attemptId);
+  }));
