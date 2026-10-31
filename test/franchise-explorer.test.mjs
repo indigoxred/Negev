@@ -25,3 +25,14 @@ test('does not accept an unrelated, invalid, or oversized response', () => {
       { anidbId: 20, title: 'Film', relation: 'Sequel' }] }));
   assert.equal(view.items().length, 1);
 });
+
+test('a title over the safety budget cannot partly enter the franchise', () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' }, 2);
+  assert.throws(() => view.add({ anidbId: 10, state: 'related_titles',
+    completeness: 'unproven', items: [
+      { anidbId: 20, title: 'Film', relation: 'SideStory' },
+      { anidbId: 30, title: 'Sequel', relation: 'Sequel' },
+    ] }), RangeError);
+  assert.deepEqual(view.items().map((item) => item.anidbId), [10]);
+  assert.equal(view.next()?.anidbId, 10);
+});
