@@ -59,6 +59,33 @@ test('new Shoko evidence invalidates a prior badge and prevents stale in-flight 
   });
 });
 
+test('a same-millisecond Shoko event invalidates an available badge', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 100 });
+    const claim = ctx.queue.claimNext({ nowMs: 100 });
+    ctx.queue.recordResult({ claim, state: 'available', checkedMs: 100 });
+    assert.equal(ctx.queue.enqueue({ ...target, observedMs: 100,
+      priority: 'event' }).state, 'queued');
+    assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 100 }),
+      { state: 'unknown' });
+    assert.equal(ctx.queue.claimNext({ nowMs: 100 }).state, 'claimed');
+  });
+});
+
+test('a same-millisecond event rejects an in-flight older proof', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 100 });
+    const claim = ctx.queue.claimNext({ nowMs: 100 });
+    ctx.queue.enqueue({ ...target, observedMs: 100, priority: 'event' });
+    assert.deepEqual(ctx.queue.recordResult({ claim, state: 'available',
+      checkedMs: 100 }), { state: 'held', reason: 'stale_claim' });
+    assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 100 }),
+      { state: 'unknown' });
+  });
+});
+
 test('uncertain Plex check retries later while another direct import advances', async () => {
   await fixture(async (ctx) => {
     const first = { anidbId: 42, episodeId: 1001 };

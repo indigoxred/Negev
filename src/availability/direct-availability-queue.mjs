@@ -43,7 +43,7 @@ export function openDirectAvailabilityQueue(dbPath) {
   const replace = db.prepare(`UPDATE direct_availability_targets SET
     observed_ms=?,due_ms=?,version=version+1,priority=?,
     state='pending',verified_ms=NULL
-    WHERE anidb_id=? AND episode_id=? AND observed_ms<?`);
+    WHERE anidb_id=? AND episode_id=? AND observed_ms<=?`);
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
     observed_ms AS observedMs,version FROM direct_availability_targets
     WHERE due_ms<=? ORDER BY priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
@@ -71,12 +71,14 @@ export function openDirectAvailabilityQueue(dbPath) {
       }
       const rank = priority === 'event' ? 1 : 0;
       const old = find.get(anidbId, episodeId);
+      const changed = !old || observedMs > old.observedMs ||
+        (rank === 1 && observedMs === old.observedMs);
       if (!old) insert.run(anidbId, episodeId, observedMs, observedMs, rank);
-      else if (observedMs > old.observedMs) {
+      else if (changed) {
         replace.run(observedMs, observedMs, rank,
           anidbId, episodeId, observedMs);
       }
-      return { state: old && observedMs <= old.observedMs ? 'unchanged' : 'queued' };
+      return { state: changed ? 'queued' : 'unchanged' };
     },
     getStatus({ anidbId, episodeId, nowMs }) {
       if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
