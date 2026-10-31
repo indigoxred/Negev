@@ -10,7 +10,7 @@ test('private catalogue server binds only loopback by default', () => {
   assert.deepEqual(parsePrivateServerConfig(env), {
     shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
     testToken: 'synthetic-private-token', dataDir: '/tmp/negev-private',
-    host: '127.0.0.1', port: 3000,
+    host: '127.0.0.1', port: 3000, airingPollEnabled: false,
   });
 });
 
@@ -18,6 +18,12 @@ test('external binding requires an additional explicit private-test flag', () =>
   assert.throws(() => parsePrivateServerConfig({ ...env, NEGEV_LISTEN_HOST: '0.0.0.0' }), TypeError);
   assert.equal(parsePrivateServerConfig({ ...env, NEGEV_LISTEN_HOST: '0.0.0.0',
     NEGEV_EXPOSE_PRIVATE_TEST: '1' }).host, '0.0.0.0');
+});
+
+test('background Airing polling requires an explicit private-test flag', () => {
+  assert.equal(parsePrivateServerConfig(env).airingPollEnabled, false);
+  assert.equal(parsePrivateServerConfig({ ...env, NEGEV_PRIVATE_AIRING_POLL: '1' }).airingPollEnabled, true);
+  assert.throws(() => parsePrivateServerConfig({ ...env, NEGEV_PRIVATE_AIRING_POLL: 'yes' }), TypeError);
 });
 
 test('missing test flag or credentials and invalid ports fail before listening', () => {

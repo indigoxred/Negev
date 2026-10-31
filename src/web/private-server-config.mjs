@@ -17,6 +17,11 @@ export function parsePrivateServerConfig(env) {
     throw new TypeError('Missing private catalogue configuration');
   }
   const host = env.NEGEV_LISTEN_HOST ?? '127.0.0.1';
+  if (env.NEGEV_PRIVATE_AIRING_POLL !== undefined &&
+      !['0', '1'].includes(env.NEGEV_PRIVATE_AIRING_POLL)) {
+    throw new TypeError('Invalid private Airing poll setting');
+  }
+  const airingPollEnabled = env.NEGEV_PRIVATE_AIRING_POLL === '1';
   if (host !== '127.0.0.1' && !(host === '0.0.0.0' && env.NEGEV_EXPOSE_PRIVATE_TEST === '1')) {
     throw new TypeError('Private catalogue bind not allowed');
   }
@@ -74,6 +79,6 @@ export function parsePrivateServerConfig(env) {
     plex = { plexBaseUrl: env.NEGEV_PLEX_URL,
       plexToken: env.NEGEV_PLEX_TOKEN, plexSections: sections };
   }
-  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port,
+  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port, airingPollEnabled,
     ...prowlarr, ...plex };
 }
