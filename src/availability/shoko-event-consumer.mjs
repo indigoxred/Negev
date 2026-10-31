@@ -61,13 +61,14 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         pending.delete(fileId);
         inFlight = fileId;
         const resolution = resolutions.get(fileId);
-        resolutions.delete(fileId);
         try {
           const result = await refreshFile(fileId);
           if (result?.state !== 'recorded_file') flagUnresolvedEvent(fileId);
-          else if (resolution &&
-              detected.get(resolution.key) === resolution.sequence) {
-            detected.delete(resolution.key);
+          else if (resolution && result.recognition === 'linked') {
+            if (detected.get(resolution.key) === resolution.sequence) {
+              detected.delete(resolution.key);
+            }
+            resolutions.delete(fileId);
           }
         } catch { flagUnresolvedEvent(fileId); }
         inFlight = null;

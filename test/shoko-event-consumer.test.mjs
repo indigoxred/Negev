@@ -31,7 +31,7 @@ test('a detected path stays busy until its hashed file refresh succeeds', async 
   consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
   assert.deepEqual(consumer.getArrivalState(),
     { state: 'busy', pendingPaths: 1 });
-  gate.resolve({ state: 'recorded_file' });
+  gate.resolve({ state: 'recorded_file', recognition: 'linked' });
   await consumer.close();
   assert.deepEqual(consumer.getArrivalState(),
     { state: 'unverified', pendingPaths: 0 });
@@ -46,7 +46,7 @@ test('a second detection during hash refresh remains pending', async () => {
   consumer.accept('file:detected', [path]);
   consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
   consumer.accept('file:detected', [path]);
-  gate.resolve({ state: 'recorded_file' });
+  gate.resolve({ state: 'recorded_file', recognition: 'linked' });
   await consumer.close();
   assert.deepEqual(consumer.getArrivalState(),
     { state: 'busy', pendingPaths: 1 });
@@ -68,6 +68,23 @@ test('failed hash refresh and malformed detection cannot declare imports quiet',
   assert.deepEqual(malformed.getArrivalState(),
     { state: 'unverified', pendingPaths: 0 });
   await malformed.close();
+});
+
+test('an unrecognized hash stays busy until a later update links the same file', async () => {
+  const observed = ['provisional', 'linked'];
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: observed.shift() }) });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  // Drain the first targeted refresh before delivering Shoko's later update.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  consumer.accept('file:updated', [{ FileID: 10 }]);
+  await consumer.close();
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'unverified', pendingPaths: 0 });
 });
 
 test('hashed and relocated events coalesce by Shoko file ID and run serially', async () => {

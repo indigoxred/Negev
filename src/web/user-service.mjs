@@ -274,17 +274,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
+    const refreshRecognizedShokoFile = async (fileId) => {
+      const result = await refreshShokoFile(fileId);
+      return result?.state === 'recorded_file' ? { ...result,
+        recognition: inventory.getFile(fileId)?.state } : result;
+    };
     const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
       readPage: (input) => metadata.run(() => readShokoRecentPage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
-      refreshFile: async (fileId) => {
-        const result = await refreshShokoFile(fileId);
-        return result?.state === 'recorded_file' ? { ...result,
-          recognition: inventory.getFile(fileId)?.state } : result;
-      },
+      refreshFile: refreshRecognizedShokoFile,
     }) : null;
-    const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile,
+    const eventConsumer = createShokoEventConsumer({
+      refreshFile: refreshRecognizedShokoFile,
       onReconciliationNeeded: onShokoReconciliationNeeded,
       onDeleted: (fileId) => {
         const before = inventory.getFile(fileId);
