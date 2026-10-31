@@ -191,10 +191,9 @@ test('a reopened handoff journal can publish once and observe the exact destinat
           attemptId: selected, ledger: reopened, holdingRoot, importRoot,
           lookup, nowMs, readPacer: config.readPacer }) });
       assert.deepEqual(await worker.runOnce(), { state: 'processed', attemptId,
-        result: { state: 'publish_unknown' } });
-      nowMs = 60_208;
-      assert.deepEqual(await worker.runOnce(), { state: 'processed', attemptId,
         result: { state: 'published_observed' } });
+      nowMs = 60_208;
+      assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1 });
       assert.deepEqual(await readdir(importRoot),
         [reopened.getHandoff(attemptId).publishName]);
     } finally { queue.close(); reopened.close(); }

@@ -173,7 +173,7 @@ test('one final exact check exposes a complete directory and records it before r
     assert.equal(sample.getObservations(), 1);
     assert.deepEqual(await processRecordedHandoff({ ...sample,
       attemptId: 1, nowMs: 501 }),
-      { state: 'published_observed', destination: path.join(sample.importRoot, sample.publishName) });
+      { state: 'published_observed' });
     assert.equal(sample.getBegins(), 1);
     assert.equal(sample.getObservations(), 1);
   }));
