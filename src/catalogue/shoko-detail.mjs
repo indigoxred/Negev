@@ -1,6 +1,6 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
-const SERIES_TYPES = new Set(['TV', 'TVSeries', 'OVA', 'TVSpecial', 'Web', 'Other']);
+const SERIES_TYPES = new Set(['TV', 'TVSeries', 'TVShort', 'OVA', 'TVSpecial', 'Web', 'Other']);
 
 async function readJson(url, apiKey, fetchImpl, timeoutMs) {
   try {

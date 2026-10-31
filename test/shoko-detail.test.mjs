@@ -69,6 +69,19 @@ test('keeps a trailer distinct from a regular OVA episode with the same number',
   assert.equal(result.requestable, false);
 });
 
+test('classifies Shoko TVShort as a requestable series type', async () => {
+  const result = await loadAniDbDetail({ ...config, fetchImpl: async (url) =>
+    String(url).endsWith('/AniDB/1234')
+      ? { status: 200, text: async () => JSON.stringify({ ...anime,
+        Type: 'TVShort' }) }
+      : { status: 200, text: async () => JSON.stringify({ Total: 1,
+        List: [episode] }) },
+  });
+  assert.equal(result.state, 'details');
+  assert.equal(result.kind, 'series');
+  assert.deepEqual(result.episodes.map((item) => item.id), [1001]);
+});
+
 test('wrong anime episode or malformed response fails closed', async () => {
   const result = await loadAniDbDetail({ ...config, fetchImpl: async (url) =>
     String(url).endsWith('/AniDB/1234')
