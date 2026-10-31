@@ -22,7 +22,9 @@ test('a complete video and subtitle pass exact identity into private holding onl
     const videoFile = { index: 0, name: '01.mkv', size: video.length };
     const sidecar = { index: 1, name: '01.en.srt', size: subtitle.length };
     const verified = await verifyStagedBatch({ root: stagingRoot,
-      request: { status: 'held', anidbId: 42, episodeIds: [1001] },
+      request: { id: 1, status: 'held', anidbId: 42, episodeIds: [1001] },
+      attempt: { id: 1, requestId: 1, anidbId: 42, status: 'torrent_observed',
+        episodeIds: [1001], torrentHash: 'a'.repeat(40) },
       expectedTorrent: { hash: 'a'.repeat(40), category: 'negev' },
       plannedFiles: [{ name: videoFile.name, episodeIds: [1001] }],
       observe: async () => ({ state: 'complete', files: [videoFile], subtitles: [sidecar] }),

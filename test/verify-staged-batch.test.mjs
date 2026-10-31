@@ -6,17 +6,50 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-const request = { anidbId: 42, episodeIds: [1001, 1002], status: 'held' };
+const request = { id: 1, anidbId: 42, episodeIds: [1001, 1002], status: 'held' };
 const expectedTorrent = { hash: 'a'.repeat(40), category: 'negev', savePath: '/staging' };
 const files = [{ index: 0, name: 'Show/01.mkv', size: 3 },
   { index: 1, name: 'Show/02.mkv', size: 3 }];
 const plannedFiles = [{ name: 'Show/01.mkv', episodeIds: [1001] },
   { name: 'Show/02.mkv', episodeIds: [1002] }];
+const attempt = { id: 1, requestId: 1, anidbId: 42, status: 'torrent_observed',
+  episodeIds: [1001, 1002], torrentHash: expectedTorrent.hash };
+
+test('one reserved episode subset can verify without acquiring the whole request', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1002] }, expectedTorrent,
+    plannedFiles: [plannedFiles[1]],
+    observe: async () => ({ state: 'complete', files: [files[1]] }),
+    verify: async () => ({ state: 'identity_verified', fileId: 52,
+      coverage: [{ episodeId: 1002, start: 0, end: 100 }],
+      ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.deepEqual(result.files[0].episodeIds, [1002]);
+});
+
+test('unclaimed targets and mismatched attempt identity hold before observing bytes', async () => {
+  for (const change of [
+    { attempt: { ...attempt, requestId: 2 } },
+    { attempt: { ...attempt, torrentHash: 'b'.repeat(40) } },
+    { attempt: { ...attempt, episodeIds: [1003] } },
+    { attempt: { ...attempt, episodeIds: [1001] }, plannedFiles: [plannedFiles[1]] },
+  ]) {
+    let observations = 0;
+    const result = await verifyStagedBatch({ root: '/staging', request, attempt,
+      expectedTorrent, plannedFiles, ...change,
+      observe: async () => { observations++; return { state: 'complete', files }; },
+      lookup: async () => null });
+    assert.equal(result.state, 'held');
+    assert.equal(observations, 0);
+  }
+});
 
 test('checks each selected file in sequence and rechecks torrent before reporting evidence', async () => {
   const calls = [];
   const readPacer = { afterBytes: async () => {} };
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     readPacer,
     observe: async () => { calls.push('observe'); return { state: 'complete', files }; },
     verify: async ({ relativePath, expected, readPacer: suppliedPacer }) => {
@@ -38,7 +71,7 @@ test('checks each selected file in sequence and rechecks torrent before reportin
 
 test('one wrong or unavailable file holds the whole batch and stops later hashing', async () => {
   const calls = [];
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files }),
     verify: async ({ relativePath }) => {
       calls.push(relativePath);
@@ -50,7 +83,7 @@ test('one wrong or unavailable file holds the whole batch and stops later hashin
 });
 
 test('registered partial episode cannot reach handoff', async () => {
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3,
@@ -68,7 +101,7 @@ test('manifest mismatch, duplicate targets and byte budget stop before hashing',
     { maxTotalBytes: 5 },
   ]) {
     let hashes = 0;
-    const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent,
+    const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent,
       plannedFiles, observe: async () => ({ state: 'complete', files }),
       verify: async () => { hashes++; throw Error('must not hash'); }, lookup: async () => null,
       ...change });
@@ -79,7 +112,7 @@ test('manifest mismatch, duplicate targets and byte budget stop before hashing',
 
 test('a changed torrent after hashing cannot pass the batch', async () => {
   let observations = 0;
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files: ++observations === 1 ? files :
       [{ ...files[0], size: 4 }, files[1]] }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
@@ -93,7 +126,7 @@ test('a changed torrent after hashing cannot pass the batch', async () => {
 test('a changed selected subtitle after video hashing holds the pack', async () => {
   let observations = 0;
   const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files,
       subtitles: [{ ...subtitle, size: ++observations === 1 ? 120 : 121 }] }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
@@ -107,7 +140,7 @@ test('a changed selected subtitle after video hashing holds the pack', async () 
 
 test('unchanged selected subtitles are recorded in identity evidence', async () => {
   const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
-  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files, subtitles: [subtitle] }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
       coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002, start: 0, end: 100 }],
@@ -128,7 +161,7 @@ test('synthetic staged bytes pass only through exact AniDB file identities', asy
     const hashes = bytes.map(ed2kBuffer);
     const observations = [{ index: 0, name: '01.mkv', size: 3 },
       { index: 1, name: '02.mkv', size: 3 }];
-    const result = await verifyStagedBatch({ root, request, expectedTorrent,
+    const result = await verifyStagedBatch({ root, request, attempt, expectedTorrent,
       plannedFiles: [{ name: '01.mkv', episodeIds: [1001] },
         { name: '02.mkv', episodeIds: [1002] }],
       observe: async () => ({ state: 'complete', files: observations }),

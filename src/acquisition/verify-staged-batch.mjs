@@ -9,7 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // Diagnostic orchestration only. A later handoff must revalidate immediately
 // before exposing any file to Shoko; this function never moves media.
 export async function verifyStagedBatch({
-  root, request, expectedTorrent, plannedFiles, observe,
+  root, request, attempt, expectedTorrent, plannedFiles, observe,
   lookup, verify = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
   maxTotalBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
@@ -26,11 +26,22 @@ export async function verifyStagedBatch({
     throw new TypeError('Invalid staged batch read pacer');
   }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
-  if (request?.status !== 'held' || !Number.isSafeInteger(request.anidbId) ||
+  if (request?.status !== 'held' || !Number.isSafeInteger(request.id) || request.id <= 0 ||
+      !Number.isSafeInteger(request.anidbId) ||
       request.anidbId <= 0 || !Array.isArray(request.episodeIds) ||
       request.episodeIds.length === 0 || request.episodeIds.length > 500 ||
       request.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
       new Set(request.episodeIds).size !== request.episodeIds.length ||
+      attempt?.status !== 'torrent_observed' ||
+      !Number.isSafeInteger(attempt.id) || attempt.id <= 0 ||
+      attempt.requestId !== request.id || attempt.anidbId !== request.anidbId ||
+      typeof attempt.torrentHash !== 'string' ||
+      attempt.torrentHash.toLowerCase() !== expectedTorrent.hash.toLowerCase() ||
+      !Array.isArray(attempt.episodeIds) || attempt.episodeIds.length === 0 ||
+      attempt.episodeIds.length > 50 ||
+      attempt.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0 ||
+        !request.episodeIds.includes(id)) ||
+      new Set(attempt.episodeIds).size !== attempt.episodeIds.length ||
       !Array.isArray(plannedFiles) || plannedFiles.length === 0 || plannedFiles.length > 50) {
     return held('invalid_batch_plan');
   }
@@ -44,8 +55,8 @@ export async function verifyStagedBatch({
     plannedByName.set(file.name, file);
     for (const id of file.episodeIds) plannedIds.add(id);
   }
-  if (plannedIds.size !== request.episodeIds.length ||
-      request.episodeIds.some((id) => !plannedIds.has(id))) return held('target_coverage_mismatch');
+  if (plannedIds.size !== attempt.episodeIds.length ||
+      attempt.episodeIds.some((id) => !plannedIds.has(id))) return held('target_coverage_mismatch');
 
   let first;
   try { first = await observe({ expected: expectedTorrent }); }
