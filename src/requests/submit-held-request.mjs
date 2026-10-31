@@ -40,7 +40,12 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
     const currentDate = today();
     const release = inferReleaseState({ ...detail, today: currentDate });
     if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
-    const intent = planRequest({ detail, releaseState: release.state,
+    // A full declared episode count is only an inferred ending. Keep a new
+    // series request watched until AniDB supplies an explicit end date, just
+    // as the Airing poll does for an existing request.
+    const releaseState = detail.kind === 'series' && release.state === 'completed' &&
+      detail.endDate == null ? 'airing' : release.state;
+    const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;
     return ledger.submit({ requesterId, requestKey, commandKey,

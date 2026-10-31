@@ -85,6 +85,12 @@ test('private search to exact held request never dispatches acquisition', async 
     const afterPoll = await service.app.inject({ method: 'GET',
       url: `/api/requests/${requestId}`, headers: auth });
     assert.deepEqual(afterPoll.json().episodeIds, [1001, 1002]);
+    const laterRequest = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth, payload: { ...body, requestKey: 'submission-2' } });
+    assert.equal(laterRequest.statusCode, 202);
+    const laterSaved = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${laterRequest.json().requestId}`, headers: auth });
+    assert.equal(laterSaved.json().monitorFuture, true);
     assert.equal(methods.every((entry) => entry.startsWith('GET ')), true);
     const forged = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'forged', releaseState: 'completed', requesterId: 999 } });

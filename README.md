@@ -16,6 +16,8 @@ An independent `NEGEV_SHOKO_INVENTORY=1` setting opts into paced read-only recon
 
 For a whole-installment Airing request, Negev initially saves only regular episodes with a valid air date on or before that local day. It keeps the watch open for later AniDB episodes. A title with no aired regular episode holds until one is listed; a Completed request remains a one-time target set. A title that later becomes restricted holds its Airing watch without blocking other watches.
 
+If a series has all its declared episodes dated in the past but no explicit AniDB end date, Negev keeps a new request on the Airing watch. The same rule already applies to existing watches; a mere episode-count inference cannot close monitoring. Movies remain one-time requests.
+
 The gate calculates a completed video's ED2K hash, calls Shoko's read-only AniDB release-preview endpoint, and evaluates the response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban. The adapter is tested with fake responses only; it has not been connected to a live Negev service.
 
 Run `pnpm install --frozen-lockfile` and `node --test` using Node.js 24. Tests use synthetic responses and make no live server calls.
