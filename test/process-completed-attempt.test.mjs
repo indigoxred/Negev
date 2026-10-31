@@ -168,7 +168,7 @@ test('one durable completion tick reaches a verified private handoff', async () 
       assert.equal(queue.getResult(attemptId).state, 'handoff_prepared');
       assert.equal(handoffs.getHandoff(attemptId).status, 'prepared');
       assert.deepEqual(await readdir(stores.importRoot), []);
-      assert.deepEqual(await worker.runOnce(), { state: 'idle' });
+      assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1 });
     } finally { queue.close(); }
   });
 });
@@ -193,7 +193,7 @@ test('a reopened handoff journal can publish once and observe the exact destinat
       assert.deepEqual(await worker.runOnce(), { state: 'processed', attemptId,
         result: { state: 'published_observed' } });
       nowMs = 60_208;
-      assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1 });
+      assert.deepEqual(await worker.runOnce(), { state: 'idle' });
       assert.deepEqual(await readdir(importRoot),
         [reopened.getHandoff(attemptId).publishName]);
     } finally { queue.close(); reopened.close(); }
