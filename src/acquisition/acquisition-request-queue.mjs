@@ -202,24 +202,30 @@ export async function reconcileUnresolvedAcquisitionClaims({ queue,
       !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     throw new TypeError('Invalid acquisition claim recovery');
   }
-  const claims = queue.listUnresolved({ limit });
   const resolved = [];
   const heldClaims = [];
-  for (const claim of claims) {
-    let observation;
-    try { observation = await inspectRequest(claim.requestId); }
-    catch { observation = null; }
-    if (observation?.state !== 'no_attempt') {
-      heldClaims.push(claim.requestId);
-      continue;
+  let afterId = 0;
+  while (true) {
+    const claims = queue.listUnresolved({ afterId, limit });
+    if (claims.length === 0) break;
+    for (const claim of claims) {
+      let observation;
+      try { observation = await inspectRequest(claim.requestId); }
+      catch { observation = null; }
+      if (observation?.state !== 'no_attempt') {
+        heldClaims.push(claim.requestId);
+        continue;
+      }
+      try {
+        const saved = queue.recordResult({ requestId: claim.requestId,
+          pass: claim.pass, state: 'held', reason: 'reconciled_no_dispatch',
+          checkedMs: now() });
+        if (saved.state === 'recorded') resolved.push(claim.requestId);
+        else heldClaims.push(claim.requestId);
+      } catch { heldClaims.push(claim.requestId); }
     }
-    try {
-      const saved = queue.recordResult({ requestId: claim.requestId,
-        pass: claim.pass, state: 'held', reason: 'reconciled_no_dispatch',
-        checkedMs: now() });
-      if (saved.state === 'recorded') resolved.push(claim.requestId);
-      else heldClaims.push(claim.requestId);
-    } catch { heldClaims.push(claim.requestId); }
+    afterId = claims.at(-1).requestId;
+    if (claims.length < limit) break;
   }
   return { state: 'reviewed', resolved, held: heldClaims };
 }

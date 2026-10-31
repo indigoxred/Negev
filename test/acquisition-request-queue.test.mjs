@@ -160,6 +160,33 @@ test('restart recovery releases only claims with no saved acquisition attempt', 
     } finally { queue.close(); }
   }));
 
+test('restart recovery reviews every page of interrupted requests', async () =>
+  fixture(async (dbPath) => {
+    const requests = openRequestLedger(dbPath);
+    try {
+      for (let id = 4; id <= 23; id++) requests.submit({ requesterId: 1,
+        requestKey: `request-${id}`, nowMs: id,
+        intent: { ...intent, anidbId: 40 + id } });
+    } finally { requests.close(); }
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      for (let id = 1; id <= 23; id++) {
+        assert.equal(queue.claimNext({ nowMs: 100 }).requestId, id);
+      }
+      const inspected = [];
+      const recovered = await reconcileUnresolvedAcquisitionClaims({ queue,
+        inspectRequest: async (requestId) => {
+          inspected.push(requestId);
+          return requestId === 21 ? { state: 'attempt_present' } :
+            { state: 'no_attempt' };
+        }, now: () => 200, limit: 5 });
+      assert.deepEqual(inspected, Array.from({ length: 23 }, (_, i) => i + 1));
+      assert.deepEqual(recovered.held, [21]);
+      assert.equal(recovered.resolved.length, 22);
+      assert.deepEqual(queue.listUnresolved().map((row) => row.requestId), [21]);
+    } finally { queue.close(); }
+  }));
+
 test('a held request resumes its next candidate batch after a restart', async () =>
   fixture(async (dbPath) => {
     let queue = openAcquisitionRequestQueue(dbPath);
