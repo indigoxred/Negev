@@ -11,7 +11,7 @@ function hasTestToken(header, token) {
 // Private catalogue contract prototype. No accounts, download controls, or
 // production authentication are provided here.
 export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle,
-  titleRegistry, submitRequest, readRequest }) {
+  titleRegistry, submitRequest, readRequest, searchReleases }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
   }
@@ -41,6 +41,18 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
     if (titleRegistry && !titleRegistry.observe(result)) {
       return reply.code(503).send({ error: 'Catalogue unavailable' });
     }
+    return result;
+  });
+
+  app.get('/api/releases/search', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const q = request.query.q;
+    if (typeof q !== 'string' || q.trim().length < 2 || q.trim().length > 120) {
+      return reply.code(400).send({ error: 'Invalid search' });
+    }
+    if (typeof searchReleases !== 'function') return reply.code(503).send({ error: 'Release search unavailable' });
+    const result = await searchReleases({ query: q.trim() });
+    if (result.state !== 'candidates') return reply.code(503).send({ error: 'Release search unavailable' });
     return result;
   });
 

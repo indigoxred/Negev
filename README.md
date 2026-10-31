@@ -31,7 +31,7 @@ A pure release-state helper infers Airing, Completed, Upcoming or Unknown from A
 
 The end-user web app, real accounts, indexer/qBittorrent control, Shoko handoff, and live Plex observation are **not implemented**. No production service has been changed for this repository.
 
-A read-only Prowlarr search adapter can return bounded, sanitized torrent **candidates** from configured indexers. It is not wired to the request route, has only synthetic tests, and cannot grab a release. Even a successful empty search does not prove that no release exists. Candidate titles do not satisfy Negev's exact AniDB-file requirement.
+A read-only Prowlarr search adapter can return bounded, sanitized torrent **candidates** from configured indexers. The guarded diagnostic offers `GET /api/releases/search?q=...` only when `NEGEV_PROWLARR_URL`, `NEGEV_PROWLARR_API_KEY`, and comma-separated `NEGEV_PROWLARR_INDEXER_IDS` are all configured. It uses the private bearer token, has only synthetic tests, is not tied to saved requests, and cannot grab a release. Even a successful empty search does not prove that no release exists. Candidate titles do not satisfy Negev's exact AniDB-file requirement.
 
 Do not commit credentials, NAS configuration, database copies, logs, operational evidence, or media to this public project.
 

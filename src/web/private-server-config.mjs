@@ -26,5 +26,25 @@ export function parsePrivateServerConfig(env) {
   if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
     throw new TypeError('Invalid private catalogue port');
   }
-  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port };
+  const prowlarrValues = [env.NEGEV_PROWLARR_URL, env.NEGEV_PROWLARR_API_KEY,
+    env.NEGEV_PROWLARR_INDEXER_IDS];
+  let prowlarr = {};
+  if (prowlarrValues.some((value) => value !== undefined)) {
+    let prowlarrUrl;
+    try { prowlarrUrl = new URL(env.NEGEV_PROWLARR_URL); }
+    catch { throw new TypeError('Invalid Prowlarr URL'); }
+    const ids = typeof env.NEGEV_PROWLARR_INDEXER_IDS === 'string' &&
+      /^\d+(,\d+)*$/.test(env.NEGEV_PROWLARR_INDEXER_IDS)
+      ? env.NEGEV_PROWLARR_INDEXER_IDS.split(',').map(Number) : [];
+    if (!['http:', 'https:'].includes(prowlarrUrl.protocol) || prowlarrUrl.username ||
+        prowlarrUrl.password || prowlarrUrl.search || prowlarrUrl.hash ||
+        typeof env.NEGEV_PROWLARR_API_KEY !== 'string' || !env.NEGEV_PROWLARR_API_KEY ||
+        ids.length === 0 || ids.length > 20 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+        new Set(ids).size !== ids.length) {
+      throw new TypeError('Invalid Prowlarr search configuration');
+    }
+    prowlarr = { prowlarrBaseUrl: env.NEGEV_PROWLARR_URL,
+      prowlarrApiKey: env.NEGEV_PROWLARR_API_KEY, prowlarrIndexerIds: ids };
+  }
+  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port, ...prowlarr };
 }

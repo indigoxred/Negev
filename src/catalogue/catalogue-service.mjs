@@ -7,12 +7,14 @@ import { requestAniDbHydration } from './shoko-hydration.mjs';
 import { searchAniDbTitles } from './shoko-search.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
+import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 
 // An injectable private prototype. No listener, account system, download
 // client or production configuration is provided here.
 export function createCatalogueTestService({
   shokoBaseUrl, shokoApiKey, dbPath, testToken, fetchImpl = fetch, now = Date.now,
   today = () => new Date().toISOString().slice(0, 10),
+  prowlarrBaseUrl, prowlarrApiKey, prowlarrIndexerIds,
 }) {
   if (typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
@@ -42,6 +44,10 @@ export function createCatalogueTestService({
       testToken, titleRegistry,
       searchTitles: ({ query, page }) => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
+      }),
+      searchReleases: prowlarrBaseUrl === undefined ? undefined : ({ query }) => searchReleaseCandidates({
+        baseUrl: prowlarrBaseUrl, apiKey: prowlarrApiKey, indexerIds: prowlarrIndexerIds,
+        query, fetchImpl,
       }),
       loadDetail,
       hydrateTitle: (input) => hydrator.load(input),
