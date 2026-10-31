@@ -7,7 +7,8 @@ const held = (reason, episodeId) => ({ state: 'held', reason,
 // Shared positive absence gate for reservation and the later torrent start.
 // A stale reservation never authorizes a fresh qBittorrent start by itself.
 export async function confirmMissingTargets({ request, episodeIds,
-  readEvidence, publicLibraryIds, now = Date.now } = {}) {
+  readEvidence, publicLibraryIds, firstTimePolicy = 'strict',
+  now = Date.now } = {}) {
   if (!validId(request?.id) || !validId(request.anidbId) ||
       !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > 50 ||
       episodeIds.some((id) => !validId(id)) ||
@@ -15,6 +16,7 @@ export async function confirmMissingTargets({ request, episodeIds,
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       publicLibraryIds.some((id) => !validId(id)) ||
       new Set(publicLibraryIds).size !== publicLibraryIds.length ||
+      !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       typeof readEvidence !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid missing-target confirmation');
   }
@@ -61,20 +63,29 @@ export async function confirmMissingTargets({ request, episodeIds,
   // A first-time title may have no local Shoko episode row. Only a separate
   // per-target collector may summarize exact AniDB metadata confirmations;
   // a bare 404 or a partial list cannot enter this branch.
-  const firstTimeUnimported = snapshot.shoko?.state === 'unimported_targets' &&
+  const unimportedScope = snapshot.shoko?.state === 'unimported_targets' &&
     snapshot.shoko.anidbId === request.anidbId &&
     Array.isArray(snapshot.shoko.episodeIds) &&
     snapshot.shoko.episodeIds.length === episodeIds.length &&
     new Set(snapshot.shoko.episodeIds).size === episodeIds.length &&
-    episodeIds.every((id) => snapshot.shoko.episodeIds.includes(id)) &&
-    snapshot.plex?.state === 'ok' && snapshot.plex.complete === true &&
-    Array.isArray(snapshot.plex.libraryIds) &&
+    episodeIds.every((id) => snapshot.shoko.episodeIds.includes(id));
+  const scopedPlex = Array.isArray(snapshot.plex?.libraryIds) &&
     snapshot.plex.libraryIds.length === publicLibraryIds.length &&
     new Set(snapshot.plex.libraryIds).size === publicLibraryIds.length &&
-    publicLibraryIds.every((id) => snapshot.plex.libraryIds.includes(id)) &&
-    Array.isArray(snapshot.plex.parts) && snapshot.plex.parts.length === 0;
+    publicLibraryIds.every((id) => snapshot.plex.libraryIds.includes(id));
+  const noObservedPublicPart = Array.isArray(snapshot.plex?.parts) &&
+    snapshot.plex.parts.length === 0;
+  const strictFirstTime = unimportedScope && scopedPlex && noObservedPublicPart &&
+    snapshot.plex.state === 'ok' && snapshot.plex.complete === true;
+  // The owner explicitly prefers one first acquisition over indefinitely
+  // holding a possible legacy Plex-only duplicate. An outage, known Part or
+  // unverified Shoko target is never this narrow policy's uncertainty.
+  const permissiveFirstTime = !strictFirstTime &&
+    firstTimePolicy === 'single_uncertain_attempt' && unimportedScope &&
+    scopedPlex && noObservedPublicPart &&
+    snapshot.plex.state === 'healthy_unconfirmed';
   for (const episodeId of episodeIds) {
-    if (firstTimeUnimported) continue;
+    if (strictFirstTime || permissiveFirstTime) continue;
     const result = evaluateExactAvailability({
       target: { anidbId: request.anidbId, episodeId },
       shoko: snapshot.shoko, plex: snapshot.plex, publicLibraryIds });
@@ -97,5 +108,7 @@ export async function confirmMissingTargets({ request, episodeIds,
       snapshot.observedAtMs - fence.beforeObservedAtMs > 30_000) {
     return held('import_activity_unverified');
   }
-  return { state: 'missing_confirmed', checkedAtMs };
+  return { state: 'missing_confirmed', checkedAtMs,
+    ...(permissiveFirstTime ?
+      { evidencePolicy: 'first_time_permissive' } : {}) };
 }

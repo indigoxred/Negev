@@ -19,7 +19,8 @@ const torrent = { hash, category: 'negev', save_path: expected.savePath,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
 
-async function withObservedTorrent(run, { withPlan = true } = {}) {
+async function withObservedTorrent(run, { withPlan = true,
+  evidencePolicy = 'strict' } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-start-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -27,7 +28,7 @@ async function withObservedTorrent(run, { withPlan = true } = {}) {
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false, episodeIds: [1001] } });
   const ledger = openAcquisitionLedger(dbPath);
   const attempt = ledger.reserve({ requestId: request.requestId, candidate,
-    episodeIds: [1001], nowMs: 200 });
+    episodeIds: [1001], evidencePolicy, nowMs: 200 });
   ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
   if (withPlan) ledger.recordFilePlan({ attemptId: attempt.attemptId, hash,
     plannedFiles: [{ name: 'Example.mkv', size: 1000, episodeIds: [1001] }], nowMs: 201 });
@@ -46,6 +47,35 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
     importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
       beforeObservedAtMs: 203, afterObservedAtMs: 204 },
     plex: { state: 'ok', complete: true, parts: [] } }) };
+
+test('a saved first-time uncertainty policy is rechecked before a stopped torrent starts', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let starts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger,
+      attemptId, readRequest,
+      readEvidence: async () => ({ anidbId: 42, episodeIds: [1001],
+        observedAtMs: 204,
+        shoko: { state: 'unimported_targets', anidbId: 42,
+          episodeIds: [1001] },
+        plex: { state: 'healthy_unconfirmed', libraryIds: [102],
+          parts: [] },
+        importFence: { state: 'settled', anidbId: 42,
+          episodeIds: [1001], beforeObservedAtMs: 203,
+          afterObservedAtMs: 204 } }),
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) {
+          starts++;
+          return new Response('');
+        }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      },
+    });
+    assert.equal(result.state, 'start_unknown');
+    assert.equal(starts, 1);
+  }, { evidencePolicy: 'first_time_permissive' }));
 
 test('starts only the exact safe stopped manifest once after durable intent', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {

@@ -27,6 +27,52 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('permissive first acquisition records one historical attempt per exact target across restarts', async () =>
+  withLedger(async ({ dbPath, firstId, thirdId }) => {
+    const one = openAcquisitionLedger(dbPath);
+    let attemptId;
+    try {
+      const first = one.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], evidencePolicy: 'first_time_permissive',
+        nowMs: 200 });
+      assert.equal(first.state, 'reserved');
+      attemptId = first.attemptId;
+      assert.equal(one.getAttempt(attemptId).evidencePolicy,
+        'first_time_permissive');
+      assert.deepEqual(one.releaseReserved({ attemptId, nowMs: 201 }),
+        { state: 'released_pre_dispatch' });
+    } finally { one.close(); }
+    const two = openAcquisitionLedger(dbPath);
+    try {
+      const requests = openRequestLedger(dbPath);
+      let sameTargetId;
+      try {
+        sameTargetId = requests.submit({ requesterId: 4,
+          requestKey: 'same-target', nowMs: 202,
+          intent: { state: 'ready', anidbId: 42, kind: 'series',
+            monitorFuture: false, episodeIds: [1001] } }).requestId;
+      } finally { requests.close(); }
+      assert.deepEqual(two.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'alternate' },
+        episodeIds: [1001], evidencePolicy: 'first_time_permissive',
+        nowMs: 202 }), { state: 'held',
+        reason: 'uncertain_attempt_exhausted' });
+      assert.deepEqual(two.reserve({ requestId: sameTargetId,
+        candidate: { indexerId: 7, guid: 'overlap' },
+        episodeIds: [1001], evidencePolicy: 'first_time_permissive',
+        nowMs: 203 }), { state: 'held',
+        reason: 'uncertain_attempt_exhausted' });
+      assert.equal(two.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'later-episode' },
+        episodeIds: [1002], evidencePolicy: 'first_time_permissive',
+        nowMs: 204 }).state, 'reserved');
+      assert.equal(two.reserve({ requestId: thirdId,
+        candidate: { indexerId: 7, guid: 'other-target' },
+        episodeIds: [1004], evidencePolicy: 'first_time_permissive',
+        nowMs: 205 }).state, 'reserved');
+    } finally { two.close(); }
+  }));
+
 test('restart recovery can distinguish an untouched request from any saved attempt', async () =>
   withLedger(async ({ dbPath, firstId, secondId }) => {
     const ledger = openAcquisitionLedger(dbPath);

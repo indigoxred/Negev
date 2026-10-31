@@ -146,6 +146,52 @@ test('an AniDB movie target uses the same first-time gate', async () =>
     assert.equal(result.state, 'reserved');
   }, 'movie'));
 
+test('explicit first-time uncertainty policy permits one bounded target attempt with healthy but non-exhaustive Plex', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const snapshot = evidence({ episodeIds: [1001],
+      shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001] },
+      plex: { state: 'healthy_unconfirmed', libraryIds: [102],
+        parts: [] } });
+    const input = { request, episodeIds: [1001],
+      readEvidence: async () => snapshot, publicLibraryIds: [102],
+      ledger: acquisitions, now: () => 101,
+      firstTimePolicy: 'single_uncertain_attempt' };
+    const first = await reserveMissingTargets({ ...input, candidate });
+    assert.equal(first.state, 'reserved');
+    assert.equal(acquisitions.getAttempt(first.attemptId).evidencePolicy,
+      'first_time_permissive');
+    assert.deepEqual(acquisitions.releaseReserved({ attemptId: first.attemptId,
+      nowMs: 102 }), { state: 'released_pre_dispatch' });
+    assert.deepEqual(await reserveMissingTargets({ ...input,
+      candidate: { indexerId: 7, guid: 'second-uncertain-release' } }),
+    { state: 'held', reason: 'uncertain_attempt_exhausted' });
+  }));
+
+test('first-time uncertainty never treats a Plex outage, visible part, or missing fence as acquisition permission', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const base = evidence({ episodeIds: [1001],
+      shoko: { state: 'unimported_targets', anidbId: 42,
+        episodeIds: [1001] },
+      plex: { state: 'healthy_unconfirmed', libraryIds: [102],
+        parts: [] } });
+    for (const override of [
+      { plex: { state: 'unavailable' } },
+      { plex: { state: 'healthy_unconfirmed', libraryIds: [103],
+        parts: [] } },
+      { plex: { state: 'healthy_unconfirmed', libraryIds: [102],
+        parts: [part] } },
+      { importFence: null },
+    ]) {
+      const result = await reserveMissingTargets({ request, candidate,
+        episodeIds: [1001], readEvidence: async () => ({ ...base,
+          ...override }), publicLibraryIds: [102], ledger: acquisitions,
+        firstTimePolicy: 'single_uncertain_attempt', now: () => 101 });
+      assert.equal(result.state, 'held');
+    }
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
 test('incomplete, stale, or unrelated observations never authorize a grab', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     for (const snapshot of [

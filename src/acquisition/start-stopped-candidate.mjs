@@ -34,6 +34,10 @@ export async function startStoppedCandidate({
   const attempt = ledger.getAttempt(attemptId);
   if (attempt?.status !== 'torrent_observed' ||
       attempt.torrentHash !== expected.hash.toLowerCase()) return held('torrent_not_observed');
+  if (attempt.evidencePolicy !== undefined &&
+      attempt.evidencePolicy !== 'first_time_permissive') {
+    return held('attempt_policy_invalid');
+  }
   let request;
   try { request = await readRequest(attempt.requestId); }
   catch { return held('request_unavailable'); }
@@ -78,7 +82,9 @@ export async function startStoppedCandidate({
     return held('incomplete_path_outside_staging');
   }
   const checked = await confirmMissingTargets({ request,
-    episodeIds: attempt.episodeIds, readEvidence, publicLibraryIds, now });
+    episodeIds: attempt.episodeIds, readEvidence, publicLibraryIds,
+    firstTimePolicy: attempt.evidencePolicy === 'first_time_permissive'
+      ? 'single_uncertain_attempt' : 'strict', now });
   if (checked.state !== 'missing_confirmed') return checked;
   let currentRequest;
   try { currentRequest = await readRequest(attempt.requestId); }

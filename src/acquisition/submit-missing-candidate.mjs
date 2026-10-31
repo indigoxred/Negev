@@ -39,8 +39,9 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, expectedHash, readEvidence, publicLibraryIds, ledger,
-  now = Date.now, prowlarr, qbittorrent }) {
+  firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
+      !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
         (typeof expectedHash !== 'string' ||
         !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedHash)))) {
@@ -70,7 +71,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds)) return held('file_plan_mismatch');
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
-    readEvidence, publicLibraryIds, ledger, now });
+    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   const nowMs = now();
   const bound = ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
