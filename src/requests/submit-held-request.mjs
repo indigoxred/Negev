@@ -4,8 +4,8 @@ import { planRequest } from './plan-request.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
-// Diagnostic-only request orchestration. It never searches an indexer or
-// dispatches qBittorrent. The authenticated caller supplies requesterId.
+// Held-request orchestration. It never searches an indexer or dispatches
+// qBittorrent. The authenticated caller supplies requesterId.
 export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, now, today }) {
   if (typeof titleRegistry?.isKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||

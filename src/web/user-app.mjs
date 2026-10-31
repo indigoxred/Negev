@@ -15,7 +15,8 @@ const constantEqual = (a, b) => {
 // Account-backed HTTP boundary. Acquisition and availability are injected
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
-  now = Date.now, submitRequest, readRequest } = {}) {
+  now = Date.now, submitRequest, readRequest, searchTitles, titleRegistry,
+  loadDetail, hydrateTitle } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -95,6 +96,61 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     reply.header('Cache-Control', 'no-store');
     const { id, username, role } = request.negevUser;
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken') };
+  });
+  app.get('/api/catalogue/search', { preHandler: requireUser,
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof searchTitles !== 'function' || typeof titleRegistry?.observe !== 'function') {
+      return reply.code(503).send({ error: 'Catalogue unavailable' });
+    }
+    const { q, page: rawPage } = request.query;
+    const page = rawPage === undefined ? 1 : Number(rawPage);
+    if (Object.keys(request.query).some((key) => !['q', 'page'].includes(key)) ||
+        typeof q !== 'string' || q.trim().length < 2 || q.trim().length > 120 ||
+        !Number.isSafeInteger(page) || page < 1 || page > 1000) {
+      return reply.code(400).send({ error: 'Invalid search' });
+    }
+    const result = await searchTitles({ query: q.trim(), page });
+    if (result.state !== 'results' || !titleRegistry.observe(result)) {
+      return reply.code(503).send({ error: 'Catalogue unavailable' });
+    }
+    return result;
+  });
+  app.get('/api/catalogue/:id', { preHandler: requireUser,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof loadDetail !== 'function') return reply.code(503).send({ error: 'Catalogue unavailable' });
+    const id = Number(request.params.id);
+    const rawPage = request.query.page;
+    const page = rawPage === undefined ? 1 : Number(rawPage);
+    if (!Number.isSafeInteger(id) || id <= 0 ||
+        Object.keys(request.query).some((key) => key !== 'page') ||
+        !Number.isSafeInteger(page) || page < 1 || page > 1000) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID or page' });
+    }
+    const result = await loadDetail({ anidbId: id, page });
+    if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
+    if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
+    return { ...result, requestable: false };
+  });
+  app.post('/api/catalogue/:id/load-detail', { preHandler: writeGuards,
+    config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof hydrateTitle !== 'function' || typeof titleRegistry?.isKnownTitle !== 'function') {
+      return reply.code(503).send({ error: 'Catalogue hydration unavailable' });
+    }
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0 ||
+        !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length > 0) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID' });
+    }
+    if (!titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(409).send({ state: 'held', reason: 'unknown_title' });
+    }
+    const result = await hydrateTitle({ anidbId: id });
+    if (result.state === 'pending') return reply.code(202).send(result);
+    if (result.state === 'detail_ready') return result;
+    return reply.code(409).send(result);
   });
   app.post('/api/logout', { preHandler: writeGuards }, async (request, reply) => {
     accounts.revokeSessions({ userId: request.negevUser.id });
