@@ -87,6 +87,25 @@ test('an unrecognized hash stays busy until a later update links the same file',
     { state: 'unverified', pendingPaths: 0 });
 });
 
+test('an older file ID cannot clear a path now associated with a newer hash', async () => {
+  const oldRead = deferred();
+  const newRead = deferred();
+  const consumer = createShokoEventConsumer({ refreshFile: (id) =>
+    id === 10 ? oldRead.promise : newRead.promise });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 11 }]);
+  oldRead.resolve({ state: 'recorded_file', recognition: 'linked' });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  newRead.resolve({ state: 'recorded_file', recognition: 'linked' });
+  await consumer.close();
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'unverified', pendingPaths: 0 });
+});
+
 test('hashed and relocated events coalesce by Shoko file ID and run serially', async () => {
   const gate = deferred();
   const calls = [];

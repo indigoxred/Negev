@@ -42,6 +42,11 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   const pending = new Set();
   const detected = new Map();
   const resolutions = new Map();
+  const forgetPathResolutions = (key) => {
+    for (const [fileId, resolution] of resolutions) {
+      if (resolution.key === key) resolutions.delete(fileId);
+    }
+  };
   let detectionSequence = 0;
   let inFlight = null;
   let pump = null;
@@ -64,7 +69,8 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         try {
           const result = await refreshFile(fileId);
           if (result?.state !== 'recorded_file') flagUnresolvedEvent(fileId);
-          else if (resolution && result.recognition === 'linked') {
+          else if (resolution && result.recognition === 'linked' &&
+              resolutions.get(fileId) === resolution) {
             if (detected.get(resolution.key) === resolution.sequence) {
               detected.delete(resolution.key);
             }
@@ -87,6 +93,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         const key = Array.isArray(args) && args.length === 1
           ? arrivalKey(args[0]) : null;
         if (key && (detected.has(key) || detected.size < maxArrivals)) {
+          forgetPathResolutions(key);
           detected.set(key, ++detectionSequence);
         }
         return { state: 'reconcile', reason: 'file_detected' };
@@ -110,6 +117,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       if (target === 'file:hashed') {
         const key = arrivalKey(args[0]);
         if (key && detected.has(key)) {
+          forgetPathResolutions(key);
           resolutions.set(fileId, { key, sequence: detected.get(key) });
         }
       }
