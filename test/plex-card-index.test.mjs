@@ -68,6 +68,31 @@ test('a confirmed missing card retires its indexed Parts without erasing a newer
   ledger.close();
 });
 
+test('a missing-card observation survives restart and rejects a delayed older card page', async () => {
+  const { path: dbPath, ledger } = await index();
+  ledger.recordCard({ ...card(), observedMs: 10 });
+  assert.deepEqual(ledger.forgetCard({ libraryId: 102, ratingKey: 500,
+    observedMs: 20 }), { state: 'card_forgotten' });
+  ledger.close();
+  const reopened = openPlexCardIndex(dbPath);
+  assert.deepEqual(reopened.recordCard({ ...card(), observedMs: 15 }),
+    { state: 'stale_card' });
+  assert.deepEqual(reopened.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }), { state: 'candidates', cards: [] });
+  assert.deepEqual(reopened.recordCard({ ...card(), observedMs: 21 }),
+    { state: 'recorded_card' });
+  reopened.close();
+});
+
+test('an unseen missing card also rejects an older in-flight read', async () => {
+  const { ledger } = await index();
+  assert.deepEqual(ledger.forgetCard({ libraryId: 102, ratingKey: 500,
+    observedMs: 20 }), { state: 'card_absent' });
+  assert.deepEqual(ledger.recordCard({ ...card(), observedMs: 19 }),
+    { state: 'stale_card' });
+  ledger.close();
+});
+
 test('a confirmed missing retry also retires its old Part candidate', async () => {
   const { ledger } = await index();
   ledger.recordCard({ ...card(), observedMs: 10 });

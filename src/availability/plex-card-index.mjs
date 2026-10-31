@@ -32,6 +32,14 @@ export function openPlexCardIndex(dbPath) {
       FOREIGN KEY(library_id,rating_key)
         REFERENCES plex_card_observations(library_id,rating_key)
     ) STRICT`);
+    // Keep a removal timestamp after deleting a card. An older page read may
+    // finish later, including after a service restart.
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_card_removals (
+      library_id INTEGER NOT NULL CHECK(library_id>0),
+      rating_key INTEGER NOT NULL CHECK(rating_key>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
+      PRIMARY KEY(library_id,rating_key)
+    ) STRICT`);
     db.exec('CREATE INDEX IF NOT EXISTS plex_candidate_size ON plex_part_candidates(file_size,library_id,rating_key)');
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_cursors (
       library_id INTEGER NOT NULL CHECK(library_id>0),
@@ -51,6 +59,14 @@ export function openPlexCardIndex(dbPath) {
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const previous = db.prepare(`SELECT observed_ms FROM plex_card_observations
+    WHERE library_id=? AND rating_key=?`);
+  const previousRemoval = db.prepare(`SELECT observed_ms FROM plex_card_removals
+    WHERE library_id=? AND rating_key=?`);
+  const saveRemoval = db.prepare(`INSERT INTO plex_card_removals
+    (library_id,rating_key,observed_ms) VALUES (?,?,?)
+    ON CONFLICT(library_id,rating_key) DO UPDATE SET
+    observed_ms=excluded.observed_ms`);
+  const clearRemoval = db.prepare(`DELETE FROM plex_card_removals
     WHERE library_id=? AND rating_key=?`);
   const saveCard = db.prepare(`INSERT INTO plex_card_observations
     (library_id,rating_key,kind,observed_ms) VALUES (?,?,?,?)
@@ -100,7 +116,9 @@ export function openPlexCardIndex(dbPath) {
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const old = previous.get(libraryId, ratingKey);
-        if (old && old.observed_ms >= observedMs) {
+        const removed = previousRemoval.get(libraryId, ratingKey);
+        if ((old && old.observed_ms >= observedMs) ||
+            (removed && removed.observed_ms >= observedMs)) {
           db.exec('ROLLBACK'); begun = false;
           return { state: 'stale_card' };
         }
@@ -108,6 +126,7 @@ export function openPlexCardIndex(dbPath) {
           clearParts.run(libraryId, ratingKey);
           clearCard.run(libraryId, ratingKey);
         }
+        saveRemoval.run(libraryId, ratingKey, observedMs);
         clearRetry.run(libraryId, ratingKey);
         db.exec('COMMIT'); begun = false;
         return { state: old ? 'card_forgotten' : 'card_absent' };
@@ -131,11 +150,14 @@ export function openPlexCardIndex(dbPath) {
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const old = previous.get(libraryId, ratingKey);
-        if (old && old.observed_ms >= observedMs) {
+        const removed = previousRemoval.get(libraryId, ratingKey);
+        if ((old && old.observed_ms >= observedMs) ||
+            (removed && removed.observed_ms >= observedMs)) {
           db.exec('ROLLBACK'); begun = false;
           return { state: 'stale_card' };
         }
         saveCard.run(libraryId, ratingKey, kind, observedMs);
+        if (removed) clearRemoval.run(libraryId, ratingKey);
         clearParts.run(libraryId, ratingKey);
         for (const part of parts) addPart.run(libraryId, ratingKey,
           part.partId, part.size, part.plexPath);
