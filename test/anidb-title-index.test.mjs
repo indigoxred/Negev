@@ -6,6 +6,7 @@ const fixture = [
   '# aid|type|language|title',
   '10|1|x-jat|Kimi no Na wa.',
   '10|4|en|Your Name',
+  '10|3|en|YN',
   '10|2|en|Your Name. | The Movie',
   '11|1|x-jat|Your Name: Another Story',
   '12|1|x-jat|A Different Show',
@@ -13,6 +14,8 @@ const fixture = [
 
 test('indexes aliases under one exact AniDB ID and prefers the main title', () => {
   const index = parseAniDbTitleDump(fixture);
+  assert.deepEqual(index.get(10).releaseQueries,
+    ['Kimi no Na wa.', 'Your Name']);
   assert.deepEqual(searchAniDbTitleIndex(index, { query: 'Your Name', page: 1 }), {
     state: 'results', total: 2, page: 1,
     items: [

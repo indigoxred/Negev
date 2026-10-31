@@ -4,9 +4,12 @@ const held = (reason) => ({ state: 'held', reason });
 
 // This joins a saved exact request to a current Shoko title before searching.
 // Neither a title nor a Prowlarr hit proves the release's AniDB file identity.
-export function createRequestCandidateDiscovery({ readRequest, loadDetail, searchReleases }) {
+export function createRequestCandidateDiscovery({ readRequest, loadDetail,
+  searchReleases, releaseQueries = async () => [],
+  pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   if (typeof readRequest !== 'function' || typeof loadDetail !== 'function' ||
-      typeof searchReleases !== 'function') {
+      typeof searchReleases !== 'function' || typeof releaseQueries !== 'function' ||
+      typeof pause !== 'function') {
     throw new TypeError('Invalid request discovery configuration');
   }
   return async ({ requestId }) => {
@@ -28,16 +31,47 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail, searc
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
     if (detail.title.length > 120) return held('query_too_long');
-    let result;
-    try { result = await searchReleases({ query: detail.title }); }
-    catch { return held('release_search_unavailable'); }
-    if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
-        result.items.length > 50 || result.items.some((item) =>
-          typeof item?.guid !== 'string' || !item.guid ||
-          typeof item.title !== 'string' || !item.title || item.evidence !== 'unverified')) {
-      return held('release_search_unavailable');
+    let aliases;
+    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+    catch { aliases = []; }
+    const queries = [];
+    const seenQueries = new Set();
+    for (const value of [detail.title, ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
+      if (typeof value !== 'string') continue;
+      const query = value.trim();
+      const key = query.toLocaleLowerCase('en');
+      if (query.length < 2 || query.length > 120 || /[\x00-\x1f\x7f]/.test(query) ||
+          seenQueries.has(key)) continue;
+      seenQueries.add(key);
+      queries.push(query);
+      if (queries.length === 3) break;
     }
+    const items = [];
+    const seenCandidates = new Set();
+    let successful = 0;
+    for (const [index, query] of queries.entries()) {
+      if (index > 0) await pause(1_000);
+      let result;
+      try { result = await searchReleases({ query }); }
+      catch { continue; }
+      if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
+          result.items.length > 50 || result.items.some((item) =>
+            typeof item?.guid !== 'string' || !item.guid ||
+            typeof item.title !== 'string' || !item.title || item.evidence !== 'unverified')) {
+        continue;
+      }
+      successful++;
+      for (const item of result.items) {
+        const key = `${item.indexerId}:${item.guid}`;
+        if (seenCandidates.has(key)) continue;
+        seenCandidates.add(key);
+        items.push(item);
+        if (items.length === 50) break;
+      }
+      if (items.length === 50) break;
+    }
+    if (successful === 0) return held('release_search_unavailable');
     return { state: 'candidates', requestId, anidbId: request.anidbId,
-      items: result.items, exhaustive: false };
+      items, exhaustive: false };
   };
 }

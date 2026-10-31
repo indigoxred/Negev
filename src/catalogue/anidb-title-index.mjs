@@ -34,17 +34,25 @@ export function parseAniDbTitleDump(text, { maxBytes = 32_000_000,
     }
     let entry = byId.get(id);
     if (!entry) {
-      entry = { anidbId: id, title: null, aliases: new Set() };
+      entry = { anidbId: id, title: null, aliases: new Set(),
+        englishOfficial: new Set() };
       byId.set(id, entry);
     }
     if (type === 'main') {
       if (entry.title && entry.title !== title) throw new TypeError('Conflicting AniDB main title');
       entry.title = title;
     }
+    if (type === 'official' && language.toLowerCase() === 'en') {
+      entry.englishOfficial.add(title);
+    }
     entry.aliases.add(title.toLocaleLowerCase('en'));
   }
   if (byId.size === 0 || [...byId.values()].some((entry) => !entry.title)) {
     throw new TypeError('Incomplete AniDB title dump');
+  }
+  for (const entry of byId.values()) {
+    entry.releaseQueries = [...new Set([entry.title, ...entry.englishOfficial])].slice(0, 3);
+    delete entry.englishOfficial;
   }
   return byId;
 }

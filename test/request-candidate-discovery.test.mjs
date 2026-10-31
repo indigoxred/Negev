@@ -52,3 +52,29 @@ test('indexer outage and zero results never mean no release exists', async () =>
     if (result.state === 'candidates') assert.equal(result.exhaustive, false);
   }
 });
+
+test('searches verified same-ID aliases with a bounded pace and deduplicates releases', async () => {
+  const queries = [];
+  const waits = [];
+  const shared = { indexerId: 7, guid: 'same', title: 'Shared', evidence: 'unverified' };
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async ({ anidbId }) => {
+      assert.equal(anidbId, 1234);
+      return ['Canonical Anime', 'Official English', 'Official English',
+        'x'.repeat(121)];
+    },
+    pause: async (ms) => { waits.push(ms); },
+    searchReleases: async ({ query }) => {
+      queries.push(query);
+      return { state: 'candidates', items: query === 'Canonical Anime'
+        ? [shared] : [shared, { indexerId: 7, guid: 'english',
+          title: 'Official English 01', evidence: 'unverified' }] };
+    },
+  });
+  const found = await discover({ requestId: 12 });
+  assert.deepEqual(queries, ['Canonical Anime', 'Official English']);
+  assert.deepEqual(waits, [1000]);
+  assert.deepEqual(found.items.map((item) => item.guid), ['same', 'english']);
+  assert.equal(found.exhaustive, false);
+});

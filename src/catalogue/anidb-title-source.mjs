@@ -88,5 +88,9 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
       return index ? searchAniDbTitleIndex(index, input) :
         { state: 'unavailable' };
     },
+    releaseQueries(anidbId) {
+      return Number.isSafeInteger(anidbId) && anidbId > 0
+        ? [...(index?.get(anidbId)?.releaseQueries ?? [])] : [];
+    },
   };
 }

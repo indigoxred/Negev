@@ -16,6 +16,7 @@ test('loads a bounded compressed AniDB title dump and searches its aliases', asy
   assert.equal(calls[0].url, 'https://anidb.net/api/anime-titles.dat.gz');
   assert.equal(calls[0].init.redirect, 'manual');
   assert.equal(source.search({ query: 'English Name' }).items[0].anidbId, 17);
+  assert.deepEqual(source.releaseQueries(17), ['Main Name', 'English Name']);
   assert.equal(source.search({ query: 'English Name' }).items[0].requestable, false);
 });
 

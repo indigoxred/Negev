@@ -138,6 +138,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
       readRequest: (id) => requests.getRequest(id),
       loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      releaseQueries: async ({ anidbId }) => {
+        const status = await titleSource?.refresh();
+        return status?.state === 'ready' || status?.state === 'stale'
+          ? titleSource.releaseQueries(anidbId) : [];
+      },
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
         indexerIds: prowlarr.indexerIds, query, fetchImpl })),
