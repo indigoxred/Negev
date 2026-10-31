@@ -69,3 +69,46 @@ test('one exact prepared handoff gets one durable publish intent across restart'
     } finally { restarted.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('prepared handoff cannot substitute another episode under a valid torrent claim', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-handoff-claim-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const hash = 'a'.repeat(40);
+  const candidate = { indexerId: 7, guid: 'one-episode-release' };
+  try {
+    const requests = openRequestLedger(dbPath);
+    const saved = requests.submit({ requesterId: 1, requestKey: 'subset', nowMs: 100,
+      intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
+        episodeIds: [1001, 1002] } });
+    requests.close();
+    const acquisition = openAcquisitionLedger(dbPath);
+    const attempt = acquisition.reserve({ requestId: saved.requestId, candidate,
+      episodeIds: [1001], nowMs: 200 });
+    acquisition.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
+    acquisition.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
+    acquisition.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
+    acquisition.beginStart({ attemptId: attempt.attemptId, hash,
+      manifestDigest: 'c'.repeat(64), nowMs: 204 });
+    acquisition.close();
+    const wrong = { anidbId: 42, torrentHash: hash,
+      files: [{ name: '02.mkv', size: 3, ed2k: 'A'.repeat(32),
+        anidbFileId: 52, episodeIds: [1002] }], subtitles: [] };
+    const ledger = openHandoffLedger(dbPath);
+    try {
+      assert.deepEqual(ledger.recordPrepared({ attemptId: attempt.attemptId,
+        prepared: { state: 'handoff_prepared', publishReady: false,
+          holdingPath: path.join(root, 'private-holding'),
+          evidenceDigest: evaluateHandoffEvidence(wrong).digest, ...wrong },
+        nowMs: 205 }),
+      { state: 'held', reason: 'target_claim_mismatch' });
+      assert.equal(ledger.getHandoff(attempt.attemptId), null);
+      const right = { ...wrong, files: [{ ...wrong.files[0],
+        name: '01.mkv', anidbFileId: 51, episodeIds: [1001] }] };
+      assert.equal(ledger.recordPrepared({ attemptId: attempt.attemptId,
+        prepared: { state: 'handoff_prepared', publishReady: false,
+          holdingPath: path.join(root, 'private-holding'),
+          evidenceDigest: evaluateHandoffEvidence(right).digest, ...right },
+        nowMs: 205 }).state, 'prepared');
+    } finally { ledger.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

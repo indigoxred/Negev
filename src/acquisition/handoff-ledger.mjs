@@ -41,7 +41,9 @@ export function openHandoffLedger(dbPath) {
     }
   } catch (error) { db.close(); throw error; }
 
-  const attemptRow = db.prepare('SELECT status,expected_hash,torrent_hash,updated_ms FROM acquisition_attempts WHERE id=?');
+  const attemptRow = db.prepare('SELECT anidb_id,status,expected_hash,torrent_hash,updated_ms FROM acquisition_attempts WHERE id=?');
+  const claimedEpisodes = db.prepare(`SELECT episode_id FROM acquisition_target_claims
+    WHERE attempt_id=? AND active=1 ORDER BY episode_id`);
   const startRow = db.prepare('SELECT torrent_hash FROM acquisition_starts WHERE attempt_id=?');
   const handoffRow = db.prepare(`SELECT torrent_hash,evidence_digest,holding_path,manifest_json,
     publish_name,status,updated_ms
@@ -102,6 +104,14 @@ export function openHandoffLedger(dbPath) {
             attempt.torrent_hash !== torrentHash ||
             startRow.get(attemptId)?.torrent_hash !== torrentHash) {
           return held('start_intent_missing');
+        }
+        const claims = claimedEpisodes.all(attemptId).map((row) => row.episode_id);
+        const covered = evidence.manifest.videos.flatMap((file) => file.episodeIds);
+        if (evidence.manifest.anidbId !== attempt.anidb_id ||
+            claims.length === 0 || covered.length !== claims.length ||
+            new Set(covered).size !== covered.length ||
+            covered.some((episodeId) => !claims.includes(episodeId))) {
+          return held('target_claim_mismatch');
         }
         if (nowMs < attempt.updated_ms) return held('time_before_last_transition');
         const digest = evidenceDigest;
