@@ -23,6 +23,8 @@ A separate pure request-intent planner can select exact AniDB episodes from comp
 
 An isolated SQLite request ledger can now preserve exact user intent across restarts. A submission key makes retries idempotent without preventing a later request for the same scope. Different users retain separate request rows while sharing exact AniDB episode targets. All rows remain held for availability evidence; this is a storage test, not a working request endpoint or download scheduler.
 
+A pure availability evaluator accepts normalized, complete Shoko and Plex observations. It counts an episode Available only when an exact AniDB anime/episode file has a readable media part in an allowed **public** Plex library. A Shoko-only file waits for Plex; a private/test Plex part does not count; observer outages become Unknown. The Shoko-to-Plex storage-key adapter and live observation are **not implemented**, so this evaluator cannot yet report production availability.
+
 A pure release-state helper can infer Airing, Completed, Upcoming or Unknown from AniDB start/end dates and regular episode dates. Its result is labelled **inferred** because AniDB cannot reliably distinguish a hiatus or cancellation from an ongoing release. The installed Shoko API date fields have not yet been sampled for this helper, so it is not connected to request creation or monitoring.
 
 Do not commit credentials, NAS configuration, database copies, logs, operational evidence, or media to this public project.
