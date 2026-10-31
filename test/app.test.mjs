@@ -63,3 +63,22 @@ test('detail route keeps an unowned title pending and never requestable', async 
   } finally { await app.close(); }
 });
 
+test('only the private POST detail-load action may invoke hydration', async () => {
+  let calls = 0;
+  const app = buildTestApp({ testToken, searchTitles: async () => ({ state: 'results', total: 0, page: 1, items: [] }),
+    loadDetail: async () => ({ state: 'detail_pending', anidbId: 1234 }),
+    hydrateTitle: async () => { calls++; return { state: 'pending', reason: 'refresh_queued' }; } });
+  try {
+    const read = await app.inject({ method: 'GET', url: '/api/catalogue/1234', headers: { authorization: `Bearer ${testToken}` } });
+    assert.equal(read.statusCode, 200);
+    assert.equal(calls, 0);
+    const denied = await app.inject({ method: 'POST', url: '/api/catalogue/1234/load-detail' });
+    assert.equal(denied.statusCode, 401);
+    assert.equal(calls, 0);
+    const load = await app.inject({ method: 'POST', url: '/api/catalogue/1234/load-detail', headers: { authorization: `Bearer ${testToken}` } });
+    assert.equal(load.statusCode, 202);
+    assert.deepEqual(load.json(), { state: 'pending', reason: 'refresh_queued' });
+    assert.equal(calls, 1);
+  } finally { await app.close(); }
+});
+

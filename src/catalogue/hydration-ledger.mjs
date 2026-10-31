@@ -5,7 +5,7 @@ const LEASE_MS = 10 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const held = (reason) => ({ state: 'held', reason });
 
-function validDetail(detail, anidbId) {
+export function isCompleteAniDbDetail(detail, anidbId) {
   if (detail?.state !== 'details' || detail.anidbId !== anidbId ||
       detail.complete !== true || !Number.isSafeInteger(detail.total) ||
       detail.total < 1 || !Array.isArray(detail.episodes) ||
@@ -50,6 +50,7 @@ export function openHydrationLedger(dbPath) {
   const recent = db.prepare('SELECT COUNT(*) AS count FROM hydration_claims WHERE claimed_ms>?');
   const insert = db.prepare("INSERT INTO hydration_claims(anidb_id,claimed_ms,lease_until_ms,status) VALUES(?,?,?,'reserved')");
   const find = db.prepare('SELECT id,anidb_id,claimed_ms,lease_until_ms,status FROM hydration_claims WHERE id=?');
+  const latestReserved = db.prepare("SELECT id,anidb_id,claimed_ms,lease_until_ms,status FROM hydration_claims WHERE anidb_id=? AND status='reserved' ORDER BY claimed_ms DESC,id DESC LIMIT 1");
   const finish = db.prepare("UPDATE hydration_claims SET status='completed',completed_ms=? WHERE id=? AND status='reserved'");
 
   function transact(action) {
@@ -64,6 +65,14 @@ export function openHydrationLedger(dbPath) {
       if (begun) db.exec('ROLLBACK');
       throw error;
     }
+  }
+
+  function completeClaim(claim, detail, nowMs) {
+    if (nowMs < claim.claimed_ms || !isCompleteAniDbDetail(detail, claim.anidb_id)) {
+      return held('invalid_detail_evidence');
+    }
+    finish.run(nowMs, claim.id);
+    return { state: 'completed' };
   }
 
   return {
@@ -99,11 +108,15 @@ export function openHydrationLedger(dbPath) {
         const claim = find.get(claimId);
         if (!claim) return held('claim_missing');
         if (claim.status === 'completed') return { state: 'completed' };
-        if (nowMs < claim.claimed_ms || !validDetail(detail, claim.anidb_id)) {
-          return held('invalid_detail_evidence');
-        }
-        finish.run(nowMs, claimId);
-        return { state: 'completed' };
+        return completeClaim(claim, detail, nowMs);
+      });
+    },
+    finishLatestFromDetail(anidbId, detail, nowMs) {
+      if (!Number.isSafeInteger(anidbId) || anidbId <= 0 ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError('Invalid completion');
+      return transact(() => {
+        const claim = latestReserved.get(anidbId);
+        return claim ? completeClaim(claim, detail, nowMs) : { state: 'no_claim' };
       });
     },
     close() { db.close(); },

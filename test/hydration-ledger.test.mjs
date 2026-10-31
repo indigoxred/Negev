@@ -81,6 +81,21 @@ test('only exact completed detail closes a reservation', async () => withDatabas
   } finally { ledger.close(); }
 }));
 
+test('a later detail read closes the latest matching reservation by title', async () => withDatabase(async (dbPath) => {
+  const ledger = openHydrationLedger(dbPath);
+  try {
+    const claim = ledger.reserve(pending(1234));
+    assert.deepEqual(ledger.finishLatestFromDetail(1234, details(9999), nowMs + 1),
+      { state: 'held', reason: 'invalid_detail_evidence' });
+    assert.equal(ledger.getClaim(claim.claimId).status, 'reserved');
+    assert.deepEqual(ledger.finishLatestFromDetail(1234, details(1234), nowMs + 2),
+      { state: 'completed' });
+    assert.equal(ledger.getClaim(claim.claimId).status, 'completed');
+    assert.deepEqual(ledger.finishLatestFromDetail(5678, details(5678), nowMs + 3),
+      { state: 'no_claim' });
+  } finally { ledger.close(); }
+}));
+
 test('rolling daily submission budget survives completion', async () => withDatabase(async (dbPath) => {
   const ledger = openHydrationLedger(dbPath);
   try {

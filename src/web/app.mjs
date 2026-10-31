@@ -10,7 +10,7 @@ function hasTestToken(header, token) {
 
 // Private catalogue contract prototype. No listener, accounts, requests,
 // download controls, or production authentication are provided here.
-export function buildTestApp({ testToken, searchTitles, loadDetail }) {
+export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
   }
@@ -49,6 +49,21 @@ export function buildTestApp({ testToken, searchTitles, loadDetail }) {
     if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue detail unavailable' });
     return { ...result, requestable: false };
+  });
+
+  app.post('/api/catalogue/:id/load-detail', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID' });
+    }
+    if (typeof hydrateTitle !== 'function') {
+      return reply.code(503).send({ error: 'Catalogue hydration unavailable' });
+    }
+    const result = await hydrateTitle({ anidbId: id });
+    if (result.state === 'pending') return reply.code(202).send(result);
+    if (result.state === 'detail_ready') return result;
+    return reply.code(409).send(result);
   });
 
   return app;
