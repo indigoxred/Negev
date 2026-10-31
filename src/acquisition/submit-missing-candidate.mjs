@@ -27,7 +27,7 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
       episodeIds.some((id) => !plannedTargets.has(id))) return false;
   const videos = prepared.files.filter((file) => torrentFileKind(file.name) === 'video');
   if (videos.length !== plannedFiles.length || prepared.files.some((file) =>
-    !['video', 'subtitle'].includes(torrentFileKind(file.name)))) return false;
+    !['video', 'subtitle', 'passive'].includes(torrentFileKind(file.name)))) return false;
   return videos.every((file) => {
     const planned = plannedByName.get(file.name.toLowerCase());
     return planned?.name === file.name && planned.size === file.size;

@@ -50,6 +50,21 @@ test('holds unsafe names even when excluded and any selected unexpected type', (
     'unexpected_selected_file');
 });
 
+test('can identify passive files that need exclusion while torrent stays stopped', () => {
+  const files = [video, { index: 1, name: 'Show/readme.nfo', size: 20,
+    priority: 1, progress: 0 }];
+  assert.deepEqual(evaluateStoppedManifest({ torrent, files, expected,
+    allowSelectedPassive: true }), {
+    state: 'manifest_needs_exclusions', passive: [{ index: 1,
+      name: 'Show/readme.nfo', size: 20 }],
+  });
+  assert.deepEqual(evaluateStoppedManifest({ torrent, files, expected }),
+    { state: 'held', reason: 'unexpected_selected_file' });
+  assert.equal(evaluateStoppedManifest({ torrent, files: [video, {
+    ...files[1], name: 'Show/run.exe' }], expected,
+  allowSelectedPassive: true }).reason, 'unsafe_file');
+});
+
 test('holds duplicate, incomplete, empty, or excessive manifests', () => {
   for (const files of [[], [video, { ...video }], [video, { ...video, index: 1 }],
     [{ ...video, size: 0 }], [{ ...video, progress: 0.1 }],

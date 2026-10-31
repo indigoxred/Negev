@@ -90,8 +90,22 @@ export async function submitStoppedCandidate({
     }
   }
 
-  const observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
-    fetchImpl, timeoutMs });
+  let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
+    fetchImpl, timeoutMs, allowSelectedPassive: true });
+  if (observed.state === 'manifest_needs_exclusions') {
+    const body = new URLSearchParams({ hash: expected.hash,
+      id: observed.passive.map((file) => String(file.index)).join('|'),
+      priority: '0' });
+    try {
+      await fetchImpl(new URL('/api/v2/torrents/filePrio', base), {
+        method: 'POST', headers: { ...headers,
+          'Content-Type': 'application/x-www-form-urlencoded' },
+        body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch { /* An uncertain response is resolved by the exact manifest below. */ }
+    observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
+      fetchImpl, timeoutMs });
+  }
   if (observed.state !== 'manifest_safe') return observed;
   const recorded = ledger.recordTorrent({ attemptId, hash: expected.hash, nowMs });
   if (recorded.state !== 'torrent_observed') return recorded;

@@ -39,7 +39,7 @@ export function planTorrentTargets({ request, detail, prepared } = {}) {
   let totalBytes = 0;
   for (const file of prepared.files) {
     const kind = torrentFileKind(file?.name);
-    if (!['video', 'subtitle'].includes(kind) ||
+    if (!['video', 'subtitle', 'passive'].includes(kind) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
         names.has(file.name.toLowerCase())) return held('unsafe_or_unselected_file');
     names.add(file.name.toLowerCase());

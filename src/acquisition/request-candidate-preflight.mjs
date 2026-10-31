@@ -1,6 +1,7 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -53,5 +54,11 @@ export async function previewRequestCandidate({ requestId, candidate,
     torrentHash: prepared.expected.hash.toLowerCase(),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
+    subtitles: prepared.files.filter((file) =>
+      torrentFileKind(file.name) === 'subtitle').map((file) => ({
+      name: file.name, size: file.size })),
+    filesToExclude: prepared.files.filter((file) =>
+      torrentFileKind(file.name) === 'passive').map((file) => ({
+      name: file.name, size: file.size })),
     registeredInAniDb: false, downloadStarted: false };
 }

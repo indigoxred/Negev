@@ -48,7 +48,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       return { state: 'preflight', requestId, anidbId: 1234,
         torrentHash: 'a'.repeat(40), version: 'v1', totalBytes: 1000,
         episodeIds: [1001], files: [{ name: 'Show - 01.mkv',
-          size: 1000, episodeIds: [1001] }], registeredInAniDb: false,
+          size: 1000, episodeIds: [1001] }], subtitles: [],
+        filesToExclude: [], registeredInAniDb: false,
         downloadStarted: false }; },
     observePublicTarget: async (target) => { observed.push(target);
       return { state: 'available', fileId: 900 }; },

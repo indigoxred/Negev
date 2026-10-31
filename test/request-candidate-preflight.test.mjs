@@ -33,9 +33,27 @@ test('preflight returns only provisional file and target evidence', async () => 
     anidbId: 42, torrentHash: 'a'.repeat(40), version: 'v1',
     totalBytes: 1_000, episodeIds: [1001],
     files: [{ name: 'Example - 01.mkv', size: 1_000,
-      episodeIds: [1001] }], registeredInAniDb: false,
+      episodeIds: [1001] }], subtitles: [], filesToExclude: [],
+    registeredInAniDb: false,
     downloadStarted: false });
   assert.equal(JSON.stringify(result).includes('form'), false);
+});
+
+test('preflight labels passive extras as exclusions, not episode evidence', async () => {
+  const result = await previewRequestCandidate({ requestId: 4, candidate,
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => ({ ...prepared, files: [...prepared.files,
+      { name: 'Example/readme.nfo', size: 20 },
+      { name: 'Example/cover.jpg', size: 100 },
+      { name: 'Example/01.ass', size: 80 }] }),
+  });
+  assert.equal(result.state, 'preflight');
+  assert.deepEqual(result.episodeIds, [1001]);
+  assert.deepEqual(result.subtitles, [{ name: 'Example/01.ass', size: 80 }]);
+  assert.deepEqual(result.filesToExclude, [
+    { name: 'Example/readme.nfo', size: 20 },
+    { name: 'Example/cover.jpg', size: 100 },
+  ]);
 });
 
 test('changed request or catalogue blocks before torrent-byte retrieval', async () => {

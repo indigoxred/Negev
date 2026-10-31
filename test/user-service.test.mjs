@@ -24,17 +24,27 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   const info = Buffer.from(`d6:lengthi1000e4:name${Buffer.byteLength(videoName)}:${videoName}12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae`);
   const torrent = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
   const proxy = 'http://prowlarr.internal:9696/7/download?apikey=synthetic-prowlarr-key&link=abc123&file=Example';
+  const movieName = 'Example Movie.mkv';
+  const movieInfo = Buffer.from(`d6:lengthi1200e4:name${Buffer.byteLength(movieName)}:${movieName}12:piece lengthi16384e6:pieces20:bbbbbbbbbbbbbbbbbbbbe`);
+  const movieTorrent = Buffer.concat([Buffer.from('d4:info'), movieInfo, Buffer.from('e')]);
+  const movieProxy = 'http://prowlarr.internal:9696/7/download?apikey=synthetic-prowlarr-key&link=def456&file=Movie';
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     methods.push(`${init.method} ${parsed.pathname}`);
     if (parsed.pathname === '/api/v1/search') {
       assert.equal(init.headers['X-Api-Key'], 'synthetic-prowlarr-key');
+      if (parsed.searchParams.get('query') === 'Example Movie') {
+        return json([{ guid: 'synthetic-movie', indexerId: 7,
+          title: 'Example Movie', size: 1200, protocol: 'torrent',
+          seeders: 2, downloadUrl: movieProxy }]);
+      }
       return json([{ guid: 'synthetic-release', indexerId: 7,
         title: 'Example Series 01', size: 1000, protocol: 'torrent',
         seeders: 3, downloadUrl: proxy }]);
     }
     if (parsed.pathname === '/7/download') {
-      return new Response(torrent, { headers: {
+      return new Response(parsed.searchParams.get('link') === 'def456'
+        ? movieTorrent : torrent, { headers: {
         'content-type': 'application/x-bittorrent' } });
     }
     if (parsed.pathname.endsWith('/Search')) {
@@ -139,6 +149,20 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.equal(movieRead.json().kind, 'movie');
     assert.equal(movieRead.json().monitorFuture, false);
     assert.deepEqual(movieRead.json().episodeIds, [2001]);
+    const movieCandidates = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${movie.json().requestId}/candidates`,
+      headers: { cookie } });
+    assert.equal(movieCandidates.statusCode, 200, movieCandidates.body);
+    assert.equal(movieCandidates.json().items[0].guid, 'synthetic-movie');
+    const movieInspected = await service.app.inject({ method: 'POST',
+      url: `/api/requests/${movie.json().requestId}/preflight`,
+      headers: auth(cookie, csrf), payload: { candidate: {
+        guid: 'synthetic-movie', indexerId: 7,
+        title: 'Example Movie', size: 1200 } } });
+    assert.equal(movieInspected.statusCode, 200, movieInspected.body);
+    assert.deepEqual(movieInspected.json().episodeIds, [2001]);
+    assert.deepEqual(movieInspected.json().files[0].episodeIds, [2001]);
+    assert.equal(movieInspected.json().downloadStarted, false);
     assert.equal(methods.every((method) => method.startsWith('GET ')), true);
     await service.close();
     service = await createUserService({ ...config, fetchImpl: async () => {

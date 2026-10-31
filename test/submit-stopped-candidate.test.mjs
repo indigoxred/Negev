@@ -107,3 +107,57 @@ test('uncertain POST response never triggers a second add', async () =>
     assert.equal(posts, 1);
     assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
   }));
+
+test('excludes only passive extras before accepting a pristine stopped torrent', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let added = false;
+    let excluded = false;
+    const calls = [];
+    const fetchImpl = async (url, init) => {
+      const endpoint = new URL(url).pathname;
+      calls.push([init.method, endpoint]);
+      if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
+      if (endpoint.endsWith('/filePrio')) {
+        assert.equal(added, true);
+        assert.equal(init.body.get('hash'), hash);
+        assert.equal(init.body.get('id'), '1');
+        assert.equal(init.body.get('priority'), '0');
+        excluded = true;
+        return new Response('Ok.');
+      }
+      if (!added) return Response.json([]);
+      if (endpoint.endsWith('/files')) return Response.json([files[0], {
+        index: 1, name: 'readme.nfo', size: 20,
+        priority: excluded ? 0 : 1, progress: 0,
+      }]);
+      return Response.json([torrent]);
+    };
+    const result = await submitStoppedCandidate({ ...options, ledger,
+      attemptId, fetchImpl });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(excluded, true);
+    assert.equal(calls.filter(([method, endpoint]) =>
+      method === 'POST' && endpoint.endsWith('/filePrio')).length, 1);
+    assert.deepEqual(result.videos, [{ index: 0, name: 'Example.mkv', size: 1000 }]);
+  }));
+
+test('unsafe extra file never receives a priority write or torrent start', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let added = false;
+    let priorityWrites = 0;
+    const fetchImpl = async (url) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
+      if (endpoint.endsWith('/filePrio')) { priorityWrites++; return new Response('Ok.'); }
+      if (!added) return Response.json([]);
+      if (endpoint.endsWith('/files')) return Response.json([...files, {
+        index: 1, name: 'setup.exe', size: 20, priority: 1, progress: 0,
+      }]);
+      return Response.json([torrent]);
+    };
+    const result = await submitStoppedCandidate({ ...options, ledger,
+      attemptId, fetchImpl });
+    assert.deepEqual(result, { state: 'held', reason: 'unsafe_file' });
+    assert.equal(priorityWrites, 0);
+    assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
+  }));

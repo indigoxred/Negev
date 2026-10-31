@@ -345,7 +345,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     if (result?.state === 'held') return reply.code(409).send(result);
     if (result?.state !== 'preflight' || result.requestId !== id ||
         result.registeredInAniDb !== false || result.downloadStarted !== false ||
-        !Array.isArray(result.files) || !Array.isArray(result.episodeIds)) {
+        !Array.isArray(result.files) || !Array.isArray(result.episodeIds) ||
+        !Array.isArray(result.subtitles) || !Array.isArray(result.filesToExclude) ||
+        [...result.subtitles, ...result.filesToExclude].some((file) =>
+          typeof file?.name !== 'string' || !file.name ||
+          !Number.isSafeInteger(file.size) || file.size < 1)) {
       return reply.code(503).send({ error: 'Preflight unavailable' });
     }
     return result;

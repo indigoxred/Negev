@@ -91,6 +91,12 @@ async function loadRequests(append = false) {
                     inspection.append(element('p',
                       `${file.name} → AniDB episode ${file.episodeIds.join(', ')}`));
                   }
+                  for (const file of preview.subtitles) {
+                    inspection.append(element('p', `${file.name} · subtitle`));
+                  }
+                  for (const file of preview.filesToExclude) {
+                    inspection.append(element('p', `${file.name} · will be excluded before download`));
+                  }
                 } catch (error) {
                   inspection.replaceChildren(element('p',
                     `Cannot accept this file list: ${error.message}`, 'error'));

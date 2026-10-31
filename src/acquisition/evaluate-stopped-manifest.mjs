@@ -27,7 +27,8 @@ export function torrentFileKind(name) {
 
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
-export function evaluateStoppedManifest({ torrent, files, expected }) {
+export function evaluateStoppedManifest({ torrent, files, expected,
+  allowSelectedPassive = false }) {
   if (!matchesStagingSavePath(expected) || expected.category !== 'negev') {
     throw new TypeError('Invalid stopped-torrent expectation');
   }
@@ -44,6 +45,7 @@ export function evaluateStoppedManifest({ torrent, files, expected }) {
   const names = new Set();
   const videos = [];
   const subtitles = [];
+  const passive = [];
   for (const file of files) {
     if (!Number.isSafeInteger(file?.index) || file.index < 0 || indexes.has(file.index) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
@@ -58,9 +60,11 @@ export function evaluateStoppedManifest({ torrent, files, expected }) {
     const item = { index: file.index, name: file.name, size: file.size };
     if (kind === 'video') videos.push(item);
     else if (kind === 'subtitle') subtitles.push(item);
+    else if (allowSelectedPassive && kind === 'passive') passive.push(item);
     else return held('unexpected_selected_file');
   }
   if (videos.length === 0) return held('no_selected_video');
+  if (passive.length > 0) return { state: 'manifest_needs_exclusions', passive };
   return { state: 'manifest_safe',
     videos: videos.sort((a, b) => a.index - b.index),
     subtitles: subtitles.sort((a, b) => a.index - b.index) };

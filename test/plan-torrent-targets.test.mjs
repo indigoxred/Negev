@@ -37,6 +37,16 @@ test('a one-video movie uses its one requested AniDB episode identity', () => {
   });
 });
 
+test('passive artwork and notes cannot claim an AniDB episode', () => {
+  const prepared = { ...pack, files: [...pack.files,
+    { name: 'Show/readme.nfo', size: 200 },
+    { name: 'Show/cover.jpg', size: 300 }] };
+  const plan = planTorrentTargets({ request, detail, prepared });
+  assert.equal(plan.state, 'planned_targets');
+  assert.deepEqual(plan.episodeIds, [1001, 1002]);
+  assert.equal(plan.plannedFiles.length, 2);
+});
+
 test('ambiguous pack, duplicate number, foreign target, and special hold without a claim', () => {
   const variants = [
     { ...pack, files: [{ name: 'Show S01E01.mkv', size: 1200 }] },
