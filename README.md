@@ -166,3 +166,5 @@ The account page now invalidates pending request-list responses on sign-out or a
 
 The installed Plex mount review found a deployment detail for the availability witness: Relay symlinks may resolve only inside Plex's parent media mount with a nested VFS bind over it. Reading that VFS symlink directly from its appdata host path can falsely appear broken. A future Negev container must reproduce the effective parent-plus-nested layout read-only, scope its Plex mapping to the parent root, and prove one exact file in that container. This Plex-side observation does not establish the corresponding Shoko AniDB file identity or authorize acquisition.
 
+The synthetic missing-target gate now requires a fresh, target-scoped settled-import fence before reserving a release or starting a stopped torrent. An idle Shoko queue, empty episode response, or empty Plex index cannot supply that fence alone. No installed adapter currently produces it, so this change is a fail-closed contract, not working automatic acquisition. A bounded live import-activity policy and genuine-arrival test remain required before enabling the runtime.
+

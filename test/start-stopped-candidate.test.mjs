@@ -43,6 +43,8 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
   realpathImpl: async () => hostPath, publicLibraryIds: [102],
   readEvidence: async () => ({ anidbId: 42, episodeIds: [1001],
     observedAtMs: 204, shoko: { state: 'ok', complete: true, files: [] },
+    importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
+      beforeObservedAtMs: 203, afterObservedAtMs: 204 },
     plex: { state: 'ok', complete: true, parts: [] } }) };
 
 test('starts only the exact safe stopped manifest once after durable intent', async () =>

@@ -83,6 +83,8 @@ test('a request target removed from fresh AniDB detail holds before provider rea
 
 function absent() {
   return { anidbId: 42, episodeIds: [1001], observedAtMs: 200,
+    importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
+      beforeObservedAtMs: 199, afterObservedAtMs: 200 },
     shoko: { state: 'ok', complete: true, files: [] },
     plex: { state: 'ok', complete: true, parts: [] } };
 }
@@ -141,7 +143,9 @@ test('a one-video AniDB movie request follows the same stopped acquisition path'
   withLedgers(async ({ request, ledger }) => {
     const calls = [];
     const input = options({ request, ledger,
-      readEvidence: async () => ({ ...absent(), episodeIds: [5001] }),
+      readEvidence: async () => ({ ...absent(), episodeIds: [5001],
+        importFence: { state: 'settled', anidbId: 42, episodeIds: [5001],
+          beforeObservedAtMs: 199, afterObservedAtMs: 200 } }),
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
     const detail = { state: 'details', complete: true, total: 1, restricted: false,
       anidbId: 42, kind: 'movie',

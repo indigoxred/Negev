@@ -65,5 +65,21 @@ export async function confirmMissingTargets({ request, episodeIds,
     if (result.state === 'available') return held('target_already_available', episodeId);
     if (result.state !== 'absent') return held('target_not_proven_missing', episodeId);
   }
+  // Empty indexed views can precede Shoko's hashing/recognition of a manual
+  // import. A future installed adapter must supply a target-scoped, bracketing
+  // settled-import observation; the current queue-idle signal is insufficient.
+  const fence = snapshot.importFence;
+  if (fence?.state !== 'settled' || fence.anidbId !== request.anidbId ||
+      !Array.isArray(fence.episodeIds) ||
+      fence.episodeIds.length !== episodeIds.length ||
+      episodeIds.some((id) => !fence.episodeIds.includes(id)) ||
+      !Number.isSafeInteger(fence.beforeObservedAtMs) ||
+      !Number.isSafeInteger(fence.afterObservedAtMs) ||
+      fence.beforeObservedAtMs < 0 ||
+      fence.beforeObservedAtMs > fence.afterObservedAtMs ||
+      fence.afterObservedAtMs > snapshot.observedAtMs ||
+      snapshot.observedAtMs - fence.beforeObservedAtMs > 30_000) {
+    return held('import_activity_unverified');
+  }
   return { state: 'missing_confirmed', checkedAtMs };
 }

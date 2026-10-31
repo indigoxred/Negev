@@ -25,7 +25,10 @@ async function withLedgers(run) {
 }
 
 function evidence(overrides = {}) {
-  return { anidbId: 42, episodeIds: [1001, 1002], observedAtMs: 100,
+  const episodeIds = overrides.episodeIds ?? [1001, 1002];
+  return { anidbId: 42, episodeIds, observedAtMs: 100,
+    importFence: { state: 'settled', anidbId: 42, episodeIds,
+      beforeObservedAtMs: 99, afterObservedAtMs: 100 },
     shoko: { state: 'ok', complete: true, files: [] },
     plex: { state: 'ok', complete: true, parts: [] }, ...overrides };
 }
@@ -37,6 +40,35 @@ test('reserves only when all selected episodes are absent in one fresh complete 
       ledger: acquisitions, now: () => 101 });
     assert.equal(result.state, 'reserved');
     assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds, [1001, 1002]);
+  }));
+
+test('an empty Shoko and Plex snapshot without a settled import fence cannot reserve', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001], readEvidence: async () => evidence({ episodeIds: [1001],
+        importFence: null }),
+      publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held', reason: 'import_activity_unverified' });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
+test('queue idleness, wrong-target and out-of-order import fences do not prove absence', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    for (const importFence of [
+      { state: 'queue_idle_unverified', anidbId: 42,
+        episodeIds: [1001], beforeObservedAtMs: 99, afterObservedAtMs: 100 },
+      { state: 'settled', anidbId: 99,
+        episodeIds: [1001], beforeObservedAtMs: 99, afterObservedAtMs: 100 },
+      { state: 'settled', anidbId: 42,
+        episodeIds: [1001], beforeObservedAtMs: 101, afterObservedAtMs: 102 },
+    ]) {
+      const result = await reserveMissingTargets({ request, candidate,
+        episodeIds: [1001], readEvidence: async () => evidence({
+          episodeIds: [1001], importFence }),
+        publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+      assert.deepEqual(result, { state: 'held', reason: 'import_activity_unverified' });
+    }
+    assert.equal(acquisitions.getAttempt(1), null);
   }));
 
 test('an already playable episode blocks the entire candidate before any claim', async () =>
