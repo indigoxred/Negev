@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeHandoffImport, reconcileHandoffContent } from '../src/acquisition/observe-handoff-import.mjs';
+import { observeHandoffImport, observeHandoffPlacement, reconcileHandoffContent } from '../src/acquisition/observe-handoff-import.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { readShokoEpisodeFiles } from '../src/availability/shoko-episode-files.mjs';
 
@@ -28,6 +28,38 @@ test('each exact claimed video must be identified in Shoko before import is obse
     } });
   assert.deepEqual(calls, [[42, 1001], [42, 1002]]);
   assert.deepEqual(result, { state: 'shoko_files_identified', fileIds: [1800, 1801] });
+});
+
+test('library placement requires every exact Shoko file to have an accessible final-library path', async () => {
+  const readEpisode = async ({ episodeId }) => ({ state: 'ok', complete: true,
+    files: [{ ...observed(episodeId === 1001 ? 800 : 801, [episodeId]),
+      sourcePaths: episodeId === 1001
+        ? ['/pure/Anime/800.mkv'] : ['/pure/Import/801.mkv'] }] });
+  assert.deepEqual(await observeHandoffPlacement({ handoff: row, readEpisode,
+    libraryRoot: '/pure/Anime' }),
+  { state: 'awaiting_shoko_placement', episodeId: 1002 });
+  assert.deepEqual(await observeHandoffImport({ handoff: row, readEpisode }),
+    { state: 'shoko_files_identified', fileIds: [1800, 1801] });
+  assert.deepEqual(await observeHandoffPlacement({ handoff: row,
+    libraryRoot: '/pure/Anime', readEpisode: async ({ episodeId }) => ({
+      state: 'ok', complete: true,
+      files: [observed(episodeId === 1001 ? 800 : 801, [episodeId])] }) }),
+  { state: 'shoko_library_location_reported', fileIds: [1800, 1801] });
+});
+
+test('placement rejects prefix siblings, malformed library roots and unpublished handoffs', async () => {
+  const readEpisode = async ({ episodeId }) => ({ state: 'ok', complete: true,
+    files: [{ ...observed(episodeId === 1001 ? 800 : 801, [episodeId]),
+      sourcePaths: [`/pure/Anime-old/${episodeId}.mkv`] }] });
+  assert.deepEqual(await observeHandoffPlacement({ handoff: row, readEpisode,
+    libraryRoot: '/pure/Anime' }),
+  { state: 'awaiting_shoko_placement', episodeId: 1001 });
+  await assert.rejects(() => observeHandoffPlacement({ handoff: row,
+    readEpisode, libraryRoot: '/pure/Anime/../Import' }), TypeError);
+  assert.deepEqual(await observeHandoffPlacement({
+    handoff: { ...row, status: 'publish_unknown' }, readEpisode,
+    libraryRoot: '/pure/Anime' }),
+  { state: 'held', reason: 'publish_not_observed' });
 });
 
 test('missing, wrong, or partial Shoko identities cannot complete the handoff', async () => {

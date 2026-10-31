@@ -1,4 +1,5 @@
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import path from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -9,7 +10,15 @@ const sameIds = (left, right) => Array.isArray(left) &&
 // result proves Shoko has identified each exact registered video and has an
 // accessible location. The file may still be in Import; this does not prove
 // Shoko moved it, Plex playback, or subtitle import.
-async function inspectExactShokoFiles({ handoff, readEpisode }) {
+const withinLibrary = (root, candidate) => {
+  if (typeof candidate !== 'string' || !path.posix.isAbsolute(candidate) ||
+      path.posix.normalize(candidate) !== candidate) return false;
+  const relative = path.posix.relative(root, candidate);
+  return relative !== '' && relative !== '..' &&
+    !relative.startsWith('../') && !path.posix.isAbsolute(relative);
+};
+
+async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
   if (typeof readEpisode !== 'function') throw new TypeError('Episode reader required');
   const manifest = handoff.manifest;
   const evidence = evaluateHandoffEvidence({ anidbId: manifest?.anidbId,
@@ -47,6 +56,10 @@ async function inspectExactShokoFiles({ handoff, readEpisode }) {
       if (matching.length === 0) return { state: 'awaiting_shoko', episodeId };
       if (matching.length !== 1) return held('ambiguous_shoko_file');
       const file = matching[0];
+      if (libraryRoot && !file.sourcePaths.some((candidate) =>
+        withinLibrary(libraryRoot, candidate))) {
+        return { state: 'awaiting_shoko_placement', episodeId };
+      }
       const prior = observed.get(expected.anidbFileId);
       if (prior !== undefined && prior !== file.fileId) {
         return held('inconsistent_shoko_file');
@@ -61,6 +74,23 @@ async function inspectExactShokoFiles({ handoff, readEpisode }) {
 export async function observeHandoffImport({ handoff, readEpisode } = {}) {
   if (handoff?.status !== 'published_observed') return held('publish_not_observed');
   return inspectExactShokoFiles({ handoff, readEpisode });
+}
+
+// Shoko's accessible final-library location is distinct from identifying a
+// file while it is still in Import. Plex card and playback proof remain later
+// observations; this result does not claim either one.
+export async function observeHandoffPlacement({ handoff, readEpisode,
+  libraryRoot } = {}) {
+  if (typeof libraryRoot !== 'string' || !path.posix.isAbsolute(libraryRoot) ||
+      libraryRoot === '/' || path.posix.normalize(libraryRoot) !== libraryRoot ||
+      /[\0\r\n\\]/.test(libraryRoot)) {
+    throw new TypeError('Invalid Shoko library root');
+  }
+  if (handoff?.status !== 'published_observed') return held('publish_not_observed');
+  const observed = await inspectExactShokoFiles({ handoff, readEpisode, libraryRoot });
+  return observed.state === 'shoko_files_identified'
+    ? { state: 'shoko_library_location_reported', fileIds: observed.fileIds }
+    : observed;
 }
 
 // A saved publish intent can outlive Shoko's rapid move out of Import. This
