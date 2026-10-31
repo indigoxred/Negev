@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../src/availability/shoko-inventory-worker.mjs';
 
@@ -158,4 +159,65 @@ test('page reconciliation announces changed file identities once, not every pass
     assert.deepEqual(changes[1].before.pairs, linked.pairs);
     assert.deepEqual(changes[1].after.pairs, []);
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('new inventory uses 100-file pages while an existing 25-file cursor keeps its position', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-page-size-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 25 });
+    ledger.close();
+    ledger = openShokoInventoryLedger(dbPath);
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 1, pageSize: 25 });
+    const items = Array.from({ length: 25 }, (_, index) => ({
+      ...provisional, fileId: 100 + index,
+    }));
+    assert.deepEqual(ledger.recordPage({ expected: ledger.getCursor(),
+      observedMs: 100, result: { state: 'page', page: 1, total: 26, items } }),
+    { state: 'recorded', page: 1, pass: 1, nextPage: 2 });
+    ledger.close();
+    ledger = openShokoInventoryLedger(path.join(dir, 'new.sqlite'));
+    assert.equal(ledger.getCursor().pageSize, 100);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('legacy path-sorted cursor restarts its pass before switching to file-ID order', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-sort-upgrade-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const old = new DatabaseSync(dbPath);
+  old.exec(`CREATE TABLE shoko_inventory_cursor (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    page INTEGER NOT NULL CHECK(page>0),
+    pass INTEGER NOT NULL CHECK(pass>0),
+    page_size INTEGER NOT NULL CHECK(page_size BETWEEN 1 AND 50)
+  ) STRICT;
+  INSERT INTO shoko_inventory_cursor VALUES (1,2,3,25);
+  CREATE TABLE shoko_inventory_files (
+    file_id INTEGER PRIMARY KEY,
+    updated TEXT NOT NULL,
+    state TEXT NOT NULL,
+    pairs_json TEXT NOT NULL,
+    seen_pass INTEGER NOT NULL,
+    observed_ms INTEGER NOT NULL
+  ) STRICT;
+  INSERT INTO shoko_inventory_files VALUES
+    (10,'2026-10-31T01:00:00Z','linked','[{"anidbId":42,"episodeId":1001}]',3,100);
+  CREATE TABLE shoko_inventory_pairs (
+    file_id INTEGER NOT NULL,
+    anidb_id INTEGER NOT NULL,
+    episode_id INTEGER NOT NULL,
+    PRIMARY KEY(file_id,anidb_id,episode_id)
+  ) STRICT;
+  INSERT INTO shoko_inventory_pairs VALUES (10,42,1001)`);
+  old.close();
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath);
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 4, pageSize: 25 });
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    ledger.close();
+    ledger = openShokoInventoryLedger(dbPath);
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 4, pageSize: 25 });
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });

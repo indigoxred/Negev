@@ -20,12 +20,13 @@ const validItem = (item) => {
 
 // Inventory is positive discovery only. Old rows are never deleted by a
 // partial pass, and they cannot by themselves establish current availability.
-export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
+export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
-      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50) {
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) {
     throw new TypeError('Invalid durable Shoko inventory configuration');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  let activePageSize;
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA foreign_keys=ON');
@@ -33,7 +34,8 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       id INTEGER PRIMARY KEY CHECK(id=1),
       page INTEGER NOT NULL CHECK(page>0),
       pass INTEGER NOT NULL CHECK(pass>0),
-      page_size INTEGER NOT NULL CHECK(page_size BETWEEN 1 AND 50)
+      page_size INTEGER NOT NULL CHECK(page_size BETWEEN 1 AND 100),
+      sort_mode TEXT NOT NULL DEFAULT 'FileID' CHECK(sort_mode='FileID')
     ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_files (
       file_id INTEGER PRIMARY KEY CHECK(file_id>0),
@@ -51,10 +53,32 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_inventory_episode
       ON shoko_inventory_pairs(anidb_id,episode_id,file_id)`);
-    db.prepare(`INSERT INTO shoko_inventory_cursor(id,page,pass,page_size)
-      VALUES (1,1,1,?) ON CONFLICT(id) DO NOTHING`).run(pageSize);
-    const size = db.prepare('SELECT page_size FROM shoko_inventory_cursor WHERE id=1').get()?.page_size;
-    if (size !== pageSize) throw new TypeError('Shoko inventory page size changed');
+    const columns = db.prepare('PRAGMA table_info(shoko_inventory_cursor)').all();
+    if (!columns.some((column) => column.name === 'sort_mode')) {
+      // Older cursors paged in path order. Restart their positive-only pass
+      // rather than interpreting page N as page N in file-ID order.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec(`ALTER TABLE shoko_inventory_cursor ADD COLUMN
+          sort_mode TEXT NOT NULL DEFAULT 'FileID' CHECK(sort_mode='FileID')`);
+        db.exec('UPDATE shoko_inventory_cursor SET page=1,pass=pass+1 WHERE id=1');
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
+    const saved = db.prepare(`SELECT page_size AS pageSize,sort_mode AS sortMode
+      FROM shoko_inventory_cursor WHERE id=1`).get();
+    if (!saved) db.prepare(`INSERT INTO shoko_inventory_cursor(id,page,pass,page_size)
+      VALUES (1,1,1,?)`).run(pageSize);
+    const size = saved?.pageSize ?? pageSize;
+    if (!Number.isSafeInteger(size) || size < 1 || size > 100) {
+      throw new TypeError('Invalid saved Shoko inventory page size');
+    }
+    if (saved && saved.sortMode !== 'FileID') {
+      throw new TypeError('Invalid saved Shoko inventory sort mode');
+    }
+    // Keep an older durable cursor at its original page size. Changing it
+    // mid-pass would skip or repeat file IDs after a restart.
+    activePageSize = size;
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT page,pass,page_size AS pageSize FROM shoko_inventory_cursor WHERE id=1');
   const find = db.prepare(`SELECT file_id AS fileId,updated,state,pairs_json AS pairsJson,
@@ -116,8 +140,9 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
           !Number.isSafeInteger(observedMs) || observedMs < 0 ||
           result?.state !== 'page' || result.page !== expected.page ||
           !Number.isSafeInteger(result.total) || result.total < 0 ||
-          !Array.isArray(result.items) || result.items.length > pageSize ||
-          (result.items.length === 0 && (expected.page - 1) * pageSize < result.total)) {
+          !Array.isArray(result.items) || result.items.length > activePageSize ||
+          (result.items.length === 0 &&
+            (expected.page - 1) * activePageSize < result.total)) {
         return held('invalid_file_page');
       }
       const seen = new Set();
@@ -138,7 +163,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
         for (const item of result.items) {
           saveObservation(item, current.pass, observedMs);
         }
-        const last = current.page * pageSize >= result.total;
+        const last = current.page * activePageSize >= result.total;
         const nextPage = last ? 1 : current.page + 1;
         const nextPass = last ? current.pass + 1 : current.pass;
         advance.run(nextPage, nextPass, current.page, current.pass);

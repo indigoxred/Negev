@@ -32,14 +32,14 @@ export function normalizeShokoFile(file) {
 // One read-only inventory page, including Shoko's import-limbo files that its
 // default list hides. An empty page never proves an older file was deleted.
 export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
-  pageSize = 25, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  pageSize = 100, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
       typeof apiKey !== 'string' || !apiKey ||
       !Number.isSafeInteger(page) || page < 1 || page > 10_000 ||
-      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50 ||
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko file page');
 
@@ -47,6 +47,7 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
   url.searchParams.set('page', String(page));
   url.searchParams.set('pageSize', String(pageSize));
   url.searchParams.append('include', 'XRefs,ImportLimbo');
+  url.searchParams.set('sortOrder', 'FileID');
   let data;
   try {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',

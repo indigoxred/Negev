@@ -45,3 +45,13 @@ test('rejects unbounded pages before contacting Shoko', async () => {
   await assert.rejects(readShokoFilePage({ ...base, pageSize: 1000,
     fetchImpl: async () => { throw new Error('must not fetch'); } }), TypeError);
 });
+
+test('new inventory reads use one stable 100-file page', async () => {
+  const result = await readShokoFilePage({ baseUrl: base.baseUrl,
+    apiKey: base.apiKey, fetchImpl: async (url) => {
+      assert.equal(url.searchParams.get('pageSize'), '100');
+      assert.equal(url.searchParams.get('sortOrder'), 'FileID');
+      return json({ Total: 0, List: [] });
+    } });
+  assert.deepEqual(result, { state: 'page', page: 1, total: 0, items: [] });
+});
