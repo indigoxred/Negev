@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
   '../src/availability/direct-availability-queue.mjs';
 
@@ -105,4 +106,29 @@ test('a fresh Shoko event runs before older inventory backfill without starving 
     assert.deepEqual(ctx.queue.claimNext({ nowMs: 104 }).target,
       { anidbId: 42, episodeId: 1001 });
   });
+});
+
+test('a prior durable queue gains event priority without losing a pending target', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-migrate-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE direct_availability_targets (
+      anidb_id INTEGER NOT NULL, episode_id INTEGER NOT NULL,
+      observed_ms INTEGER NOT NULL, due_ms INTEGER NOT NULL,
+      version INTEGER NOT NULL, state TEXT NOT NULL, verified_ms INTEGER,
+      PRIMARY KEY(anidb_id,episode_id)) STRICT`);
+    db.prepare(`INSERT INTO direct_availability_targets VALUES
+      (42,1001,100,100,1,'pending',NULL)`).run();
+    db.close();
+    const queue = openDirectAvailabilityQueue(dbPath);
+    try {
+      queue.enqueue({ anidbId: 43, episodeId: 2001,
+        observedMs: 101, priority: 'event' });
+      assert.deepEqual(queue.claimNext({ nowMs: 102 }).target,
+        { anidbId: 43, episodeId: 2001 });
+      assert.deepEqual(queue.claimNext({ nowMs: 102 }).target,
+        { anidbId: 42, episodeId: 1001 });
+    } finally { queue.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
