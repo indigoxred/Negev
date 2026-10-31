@@ -47,6 +47,17 @@ test('exact Shoko release plus a readable public Plex Part proves one episode Av
     { state: 'available', fileId: 51 });
 });
 
+test('a valid playable release stays Available beside an unverified Shoko sibling', async () => {
+  const input = await fixture();
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    shoko: { ...input.shoko, complete: false } }),
+  { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    shoko: { ...input.shoko, complete: false },
+    plex: { ...input.plex, parts: [] } }),
+  { state: 'unknown', reason: 'observer_incomplete' });
+});
+
 test('a same-size different Plex file cannot create availability', async () => {
   const input = await fixture();
   const other = path.join(input.plexMount.localRoot, 'other');

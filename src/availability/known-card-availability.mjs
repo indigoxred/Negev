@@ -34,7 +34,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
       !validMount(shokoMount) || !validMount(plexMount) ||
       !Number.isSafeInteger(maxChecks) || maxChecks < 0 || maxChecks > 256 ||
       typeof proveImpl !== 'function') throw new TypeError('Invalid availability mounts or budget');
-  if (shoko?.state !== 'ok' || shoko.complete !== true || !Array.isArray(shoko.files) ||
+  if (shoko?.state !== 'ok' || typeof shoko.complete !== 'boolean' ||
+      !Array.isArray(shoko.files) ||
       plex?.state !== 'ok' || plex.complete !== true || !Array.isArray(plex.parts) ||
       shoko.files.length > 50 || plex.parts.length > 400 ||
       shoko.files.length === 0 || plex.parts.some((part) =>
@@ -89,6 +90,11 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   const result = evaluateExactAvailability({ target,
     shoko: { state: 'ok', complete: true, files },
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds });
+  // A registered playable file is positive proof even if a sibling could
+  // not be parsed. A partial Shoko response cannot support a negative claim.
+  if (shoko.complete === false && result.state !== 'available') {
+    return unknown('observer_incomplete');
+  }
   // One known card cannot establish a complete negative observation.
   if (result.state === 'absent') return unknown('observer_incomplete');
   if (result.state === 'available' || result.state === 'held') return result;

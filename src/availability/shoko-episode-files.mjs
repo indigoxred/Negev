@@ -38,36 +38,43 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   if (episode?.IDs?.AniDB !== episodeId || !Array.isArray(episode.Files) ||
       episode.Files.length > 50) return unavailable();
   const files = [];
+  let incomplete = false;
   for (const file of episode.Files) {
     if (!validId(file?.ID) || !Number.isSafeInteger(file.Size) || file.Size <= 0 ||
         file.IsIgnored !== false || !Array.isArray(file.Hashes) ||
         !Array.isArray(file.Locations) || file.Locations.length === 0 ||
         file.Locations.length > 20 || !Array.isArray(file.Release?.CrossReferences)) {
-      return unavailable();
+      incomplete = true; continue;
     }
-    if (file.Release.IsCorrupted !== false) return unavailable();
+    if (file.Release.IsCorrupted !== false) { incomplete = true; continue; }
     const ed2k = file.Hashes.find((hash) => hash?.Type === 'ED2K')?.Value;
     const refs = file.Release.CrossReferences;
     if (!/^[0-9A-F]{32}$/.test(ed2k) || refs.length === 0 ||
         refs.some((ref) => ref?.AnidbAnimeID !== anidbId || !validId(ref.AnidbEpisodeID)) ||
-        !refs.some((ref) => ref.AnidbEpisodeID === episodeId)) return unavailable();
+        !refs.some((ref) => ref.AnidbEpisodeID === episodeId)) {
+      incomplete = true; continue;
+    }
     const episodeIds = refs.map((ref) => ref.AnidbEpisodeID);
     const identity = evaluatePreview({ status: 200, release: file.Release },
       { ed2k, size: file.Size, animeId: anidbId, episodeIds });
-    if (identity.state !== 'accepted') return unavailable();
+    if (identity.state !== 'accepted') { incomplete = true; continue; }
     const sourcePaths = [];
+    let invalidLocation = false;
     for (const location of file.Locations) {
       if (location?.FileID !== file.ID || typeof location.IsAccessible !== 'boolean') {
-        return unavailable();
+        invalidLocation = true; break;
       }
       if (!location.IsAccessible) continue;
-      if (!validPath(location.AbsolutePath)) return unavailable();
+      if (!validPath(location.AbsolutePath)) { invalidLocation = true; break; }
       sourcePaths.push(location.AbsolutePath);
     }
-    if (sourcePaths.length === 0) return unavailable();
+    if (invalidLocation || sourcePaths.length === 0) {
+      incomplete = true; continue;
+    }
     files.push({ fileId: file.ID, anidbFileId: identity.fileId, ed2k,
       anidbId, episodeIds, coverage: identity.coverage,
       size: file.Size, sourcePaths });
   }
-  return { state: 'ok', complete: true, files };
+  if (incomplete && files.length === 0) return unavailable();
+  return { state: 'ok', complete: !incomplete, files };
 }

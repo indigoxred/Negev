@@ -71,3 +71,14 @@ test('one accessible location remains usable when an old location is inaccessibl
   assert.equal(result.state, 'ok');
   assert.deepEqual(result.files[0].sourcePaths, ['/pure/Anime/Example/01.mkv']);
 });
+
+test('one unregistered sibling does not hide a registered playable file', async () => {
+  const unregistered = { ...episode.Files[0], ID: 52, Release: {
+    ...release, ProviderName: 'User' } };
+  const result = await readShokoEpisodeFiles({ ...base,
+    fetchImpl: async () => json({ ...episode,
+      Files: [unregistered, episode.Files[0]] }) });
+  assert.equal(result.state, 'ok');
+  assert.equal(result.complete, false);
+  assert.deepEqual(result.files.map((file) => file.fileId), [51]);
+});
