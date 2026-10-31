@@ -1,4 +1,5 @@
 import { createRequestKeyStore } from './request-key.mjs';
+import { createEpisodePager } from './episode-pages.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -258,6 +259,7 @@ async function showDetail(item) {
       panel.append(button);
       return;
     }
+    const pager = createEpisodePager(data);
     panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed episode${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
     const relatedButton = element('button', 'Show related installments');
     const relatedList = element('div', undefined, 'related-list');
@@ -287,15 +289,18 @@ async function showDetail(item) {
     panel.append(relatedButton, relatedList);
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
-    if (Array.isArray(data.episodes) && data.episodes.length > 0) {
+    if (pager.episodes.length > 0) {
       const check = element('div', undefined, 'availability-check');
       const label = element('label', 'Check an episode in Plex');
       const select = element('select');
-      for (const episode of data.episodes) {
-        const option = element('option', `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
-        option.value = String(episode.id);
-        select.append(option);
-      }
+      const appendOptions = (episodes) => {
+        for (const episode of episodes) {
+          const option = element('option', `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
+          option.value = String(episode.id);
+          select.append(option);
+        }
+      };
+      appendOptions(pager.episodes);
       label.append(select);
       const button = element('button', 'Check availability');
       const result = element('p', '', 'muted');
@@ -310,12 +315,11 @@ async function showDetail(item) {
         finally { button.disabled = false; }
       });
       check.append(label, button, result);
-      if (data.kind === 'series' && data.restricted === false &&
-          data.episodes.some((episode) => ['Episode', 'Special'].includes(episode.type))) {
+      if (data.kind === 'series' && data.restricted === false) {
         const requestSelected = element('button', 'Request selected episode');
         let requesting = false;
         const updateSelection = () => {
-          const episode = data.episodes.find((entry) => String(entry.id) === select.value);
+          const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           requestSelected.disabled = requesting ||
             !['Episode', 'Special'].includes(episode?.type);
           requestSelected.textContent = episode?.type === 'Special'
@@ -325,7 +329,7 @@ async function showDetail(item) {
         updateSelection();
         requestSelected.addEventListener('click', async () => {
           if (requesting) return;
-          const episode = data.episodes.find((entry) => String(entry.id) === select.value);
+          const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           if (!['Episode', 'Special'].includes(episode?.type)) return;
           const scope = { userId: state.user.id, anidbId: item.anidbId,
             selection: `episode-${episode.id}` };
@@ -344,6 +348,22 @@ async function showDetail(item) {
         check.append(requestSelected);
       }
       panel.append(check);
+      if (pager.nextPage !== null) {
+        const more = element('button', 'Show more episodes');
+        more.addEventListener('click', async () => {
+          more.disabled = true;
+          try {
+            const page = await api(`/api/catalogue/${item.anidbId}?page=${pager.nextPage}`);
+            if (state.selected !== item.anidbId) return;
+            const added = pager.append(page);
+            if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
+            appendOptions(added.episodes);
+            if (pager.nextPage === null) more.remove();
+            else more.disabled = false;
+          } catch (error) { message(error.message, true); more.disabled = false; }
+        });
+        panel.append(more);
+      }
     }
     if (data.restricted !== false) {
       panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));

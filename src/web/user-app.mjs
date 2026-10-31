@@ -45,7 +45,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       maxAge: 24 * 60 * 60 } });
   await app.register(rateLimit, { global: false });
   const pages = await Promise.all(['index.html', 'app.js', 'style.css',
-    'request-key.mjs'].map((name) =>
+    'request-key.mjs', 'episode-pages.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -55,6 +55,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/app.js', 'text/javascript; charset=utf-8', pages[1]],
     ['/style.css', 'text/css; charset=utf-8', pages[2]],
     ['/request-key.mjs', 'text/javascript; charset=utf-8', pages[3]],
+    ['/episode-pages.mjs', 'text/javascript; charset=utf-8', pages[4]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
