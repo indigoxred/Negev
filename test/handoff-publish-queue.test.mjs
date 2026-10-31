@@ -146,6 +146,16 @@ test('an interrupted pre-intent claim waits while another handoff advances', asy
     assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 301_001);
   }));
 
+test('publish recovery reviews every page before declaring reconciliation complete', async () =>
+  fixture(async (ctx) => {
+    for (const attemptId of ctx.ids) {
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, attemptId);
+    }
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_001, limit: 1 }),
+      { state: 'reviewed', resolved: ctx.ids, held: [] });
+  }));
+
 test('a worker cannot record publication without the matching journal state', async () =>
   fixture(async (ctx) => {
     const claim = ctx.queue.claimNext({ nowMs: 1_000 });

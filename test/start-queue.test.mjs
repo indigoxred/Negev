@@ -97,6 +97,16 @@ test('an interrupted pre-intent claim retries later without blocking others', as
     assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).attemptId, ctx.ids[1].attemptId);
   }));
 
+test('start recovery reviews every page before declaring reconciliation complete', async () =>
+  fixture(async (ctx) => {
+    for (const row of ctx.ids) assert.equal(ctx.queue.claimNext({ nowMs: 1_000 })
+      .attemptId, row.attemptId);
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_001, limit: 1 }),
+      { state: 'reviewed', resolved: ctx.ids.map((row) => row.attemptId),
+        held: [] });
+  }));
+
 test('a second queue connection cannot claim the same stopped attempt', async () =>
   fixture(async (ctx) => {
     const other = openStartQueue(ctx.dbPath);

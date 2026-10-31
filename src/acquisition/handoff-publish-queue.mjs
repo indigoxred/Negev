@@ -57,7 +57,7 @@ export function openHandoffPublishQueue(dbPath) {
     state=?,reason=?,checked_ms=?,next_due_ms=?
     WHERE attempt_id=? AND version=? AND state IS NULL`);
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version
-    FROM handoff_publish_checks WHERE state IS NULL
+    FROM handoff_publish_checks WHERE attempt_id>? AND state IS NULL
     ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT attempt_id AS attemptId,reason,
     checked_ms AS checkedMs FROM handoff_publish_checks
@@ -125,21 +125,28 @@ export function openHandoffPublishQueue(dbPath) {
       return transact(() => {
         const resolved = [];
         const remaining = [];
-        for (const row of unresolved.all(limit)) {
-          const status = handoff.get(row.attemptId)?.status;
-          const state = status === 'prepared' ? 'held' :
-            status === 'publish_unknown' ? 'publish_unknown' :
-            status === 'published_observed' ? 'published_observed' : null;
-          if (!state) { remaining.push(row.attemptId); continue; }
-          const reason = state === 'held' ? 'interrupted_before_publish' : null;
-          const due = state === 'held' ? nowMs + UNCERTAIN_RETRY_MS :
-            state === 'publish_unknown' ? nowMs : null;
-          if ((due !== null && !validTime(due)) ||
-              save.run(state, reason, nowMs, due,
-                row.attemptId, row.version).changes !== 1) {
-            remaining.push(row.attemptId); continue;
+        let afterId = 0;
+        while (true) {
+          const rows = unresolved.all(afterId, limit);
+          if (rows.length === 0) break;
+          for (const row of rows) {
+            const status = handoff.get(row.attemptId)?.status;
+            const state = status === 'prepared' ? 'held' :
+              status === 'publish_unknown' ? 'publish_unknown' :
+              status === 'published_observed' ? 'published_observed' : null;
+            if (!state) { remaining.push(row.attemptId); continue; }
+            const reason = state === 'held' ? 'interrupted_before_publish' : null;
+            const due = state === 'held' ? nowMs + UNCERTAIN_RETRY_MS :
+              state === 'publish_unknown' ? nowMs : null;
+            if ((due !== null && !validTime(due)) ||
+                save.run(state, reason, nowMs, due,
+                  row.attemptId, row.version).changes !== 1) {
+              remaining.push(row.attemptId); continue;
+            }
+            resolved.push(row.attemptId);
           }
-          resolved.push(row.attemptId);
+          afterId = rows.at(-1).attemptId;
+          if (rows.length < limit) break;
         }
         return { state: 'reviewed', resolved, held: remaining };
       });

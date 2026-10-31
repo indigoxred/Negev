@@ -83,6 +83,17 @@ test('unfinished claim survives restart and does not stall a later attempt', asy
   });
 });
 
+test('completion recovery reviews every page of interrupted attempts', async () => {
+  await fixture(async (ctx) => {
+    for (const attemptId of ctx.attemptIds) {
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, attemptId);
+    }
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_001, limit: 1 }),
+      { state: 'reviewed', resolved: [], held: ctx.attemptIds });
+  });
+});
+
 test('restart reconciliation accepts durable handoff or rejection evidence only', async () => {
   await fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });

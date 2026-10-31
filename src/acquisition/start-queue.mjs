@@ -57,7 +57,7 @@ export function openStartQueue(dbPath) {
   const save = db.prepare(`UPDATE start_checks SET state=?,reason=?,checked_ms=?,next_due_ms=?
     WHERE attempt_id=? AND version=? AND state IS NULL`);
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version FROM start_checks
-    WHERE state IS NULL ORDER BY attempt_id LIMIT ?`);
+    WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -107,16 +107,23 @@ export function openStartQueue(dbPath) {
       return transact(() => {
         const resolved = [];
         const remaining = [];
-        for (const row of unresolved.all(limit)) {
-          const state = start.get(row.attemptId) ? 'start_unknown' : 'held';
-          const reason = state === 'held' ? 'interrupted_before_intent' : null;
-          const due = state === 'held' ? nowMs + INTERRUPTED_RETRY_MS : null;
-          if (due !== null && !validTime(due)) {
-            remaining.push(row.attemptId); continue;
+        let afterId = 0;
+        while (true) {
+          const rows = unresolved.all(afterId, limit);
+          if (rows.length === 0) break;
+          for (const row of rows) {
+            const state = start.get(row.attemptId) ? 'start_unknown' : 'held';
+            const reason = state === 'held' ? 'interrupted_before_intent' : null;
+            const due = state === 'held' ? nowMs + INTERRUPTED_RETRY_MS : null;
+            if (due !== null && !validTime(due)) {
+              remaining.push(row.attemptId); continue;
+            }
+            if (save.run(state, reason, nowMs, due,
+              row.attemptId, row.version).changes === 1) resolved.push(row.attemptId);
+            else remaining.push(row.attemptId);
           }
-          if (save.run(state, reason, nowMs, due,
-            row.attemptId, row.version).changes === 1) resolved.push(row.attemptId);
-          else remaining.push(row.attemptId);
+          afterId = rows.at(-1).attemptId;
+          if (rows.length < limit) break;
         }
         return { state: 'reviewed', resolved, held: remaining };
       });

@@ -137,17 +137,22 @@ export function openCompletionQueue(dbPath) {
     },
     reconcileUnresolved({ afterId = 0, limit = 20, nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid completion clock');
-      const rows = this.listUnresolved({ afterId, limit });
       const resolved = [];
       const heldAttempts = [];
-      for (const row of rows) {
-        const state = prepared.get(row.attemptId) ? 'handoff_prepared' :
-          rejected.get(row.attemptId) ? 'rejected_held' : null;
-        if (!state) { heldAttempts.push(row.attemptId); continue; }
-        const saved = this.recordResult({ attemptId: row.attemptId,
-          pass: row.pass, state, checkedMs: nowMs });
-        if (saved.state === 'recorded') resolved.push(row.attemptId);
-        else heldAttempts.push(row.attemptId);
+      while (true) {
+        const rows = this.listUnresolved({ afterId, limit });
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          const state = prepared.get(row.attemptId) ? 'handoff_prepared' :
+            rejected.get(row.attemptId) ? 'rejected_held' : null;
+          if (!state) { heldAttempts.push(row.attemptId); continue; }
+          const saved = this.recordResult({ attemptId: row.attemptId,
+            pass: row.pass, state, checkedMs: nowMs });
+          if (saved.state === 'recorded') resolved.push(row.attemptId);
+          else heldAttempts.push(row.attemptId);
+        }
+        afterId = rows.at(-1).attemptId;
+        if (rows.length < limit) break;
       }
       return { state: 'reviewed', resolved, held: heldAttempts };
     },
