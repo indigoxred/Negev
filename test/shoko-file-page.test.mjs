@@ -15,7 +15,7 @@ test('one bounded Shoko file page distinguishes provisional and linked imports',
     assert.equal(url.pathname, '/api/v3/File');
     assert.equal(url.searchParams.get('page'), '2');
     assert.equal(url.searchParams.get('pageSize'), '2');
-    assert.deepEqual(url.searchParams.getAll('include'), ['XRefs']);
+    assert.deepEqual(url.searchParams.getAll('include'), ['XRefs,ImportLimbo']);
     assert.equal(init.method, 'GET');
     assert.equal(init.headers.Authorization, 'Bearer synthetic-key');
     return json({ Total: 4, List: [file(10, null), file(11, linked)] });

@@ -29,8 +29,8 @@ export function normalizeShokoFile(file) {
     pairs: invalid ? [] : pairs };
 }
 
-// One read-only inventory page. It reports positive file IDs only; a page,
-// including an empty one, never proves that an older file was deleted.
+// One read-only inventory page, including Shoko's import-limbo files that its
+// default list hides. An empty page never proves an older file was deleted.
 export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
   pageSize = 25, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
@@ -46,7 +46,7 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
   const url = new URL('/api/v3/File', base);
   url.searchParams.set('page', String(page));
   url.searchParams.set('pageSize', String(pageSize));
-  url.searchParams.append('include', 'XRefs');
+  url.searchParams.append('include', 'XRefs,ImportLimbo');
   let data;
   try {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
