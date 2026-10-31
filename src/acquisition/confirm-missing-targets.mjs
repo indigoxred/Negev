@@ -94,9 +94,14 @@ export async function confirmMissingTargets({ request, episodeIds,
   }
   // Empty indexed views can precede Shoko's hashing/recognition of a manual
   // import. A future installed adapter must supply a target-scoped, bracketing
-  // settled-import observation; the current queue-idle signal is insufficient.
+  // observation; the current queue-idle signal is insufficient. The observed
+  // quiet window is a narrower, explicitly uncertain first-acquisition policy,
+  // never a claim that Shoko has settled.
   const fence = snapshot.importFence;
-  if (fence?.state !== 'settled' || fence.anidbId !== request.anidbId ||
+  const quietWindow = permissiveFirstTime &&
+    fence?.state === 'quiet_window_observed';
+  if (!(fence?.state === 'settled' || quietWindow) ||
+      fence.anidbId !== request.anidbId ||
       !Array.isArray(fence.episodeIds) ||
       fence.episodeIds.length !== episodeIds.length ||
       episodeIds.some((id) => !fence.episodeIds.includes(id)) ||
@@ -105,7 +110,11 @@ export async function confirmMissingTargets({ request, episodeIds,
       fence.beforeObservedAtMs < 0 ||
       fence.beforeObservedAtMs > fence.afterObservedAtMs ||
       fence.afterObservedAtMs > snapshot.observedAtMs ||
-      snapshot.observedAtMs - fence.beforeObservedAtMs > 30_000) {
+      snapshot.observedAtMs - fence.afterObservedAtMs > 30_000 ||
+      (quietWindow ?
+        fence.afterObservedAtMs - fence.beforeObservedAtMs < 120_000 ||
+          fence.afterObservedAtMs - fence.beforeObservedAtMs > 330_000 :
+        snapshot.observedAtMs - fence.beforeObservedAtMs > 30_000)) {
     return held('import_activity_unverified');
   }
   return { state: 'missing_confirmed', checkedAtMs,

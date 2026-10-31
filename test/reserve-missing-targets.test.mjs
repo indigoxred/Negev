@@ -53,6 +53,26 @@ test('an empty Shoko and Plex snapshot without a settled import fence cannot res
     assert.equal(acquisitions.getAttempt(1), null);
   }));
 
+test('an observed quiet window authorizes only the explicit one-attempt first-time policy', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const snapshot = evidence({ episodeIds: [1001], observedAtMs: 120_100,
+      shoko: { state: 'unimported_targets', anidbId: 42, episodeIds: [1001] },
+      plex: { state: 'healthy_unconfirmed', libraryIds: [102], parts: [] },
+      importFence: { state: 'quiet_window_observed', anidbId: 42,
+        episodeIds: [1001], beforeObservedAtMs: 100,
+        afterObservedAtMs: 120_100 } });
+    const input = { request, candidate, episodeIds: [1001],
+      readEvidence: async () => snapshot, publicLibraryIds: [102],
+      ledger: acquisitions, now: () => 120_101 };
+    assert.deepEqual(await reserveMissingTargets(input),
+      { state: 'held', reason: 'target_not_proven_missing', episodeId: 1001 });
+    const allowed = await reserveMissingTargets({ ...input,
+      firstTimePolicy: 'single_uncertain_attempt' });
+    assert.equal(allowed.state, 'reserved');
+    assert.equal(acquisitions.getAttempt(allowed.attemptId).evidencePolicy,
+      'first_time_permissive');
+  }));
+
 test('queue idleness, wrong-target and out-of-order import fences do not prove absence', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     for (const importFence of [
