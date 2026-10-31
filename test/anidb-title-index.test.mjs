@@ -4,11 +4,11 @@ import { parseAniDbTitleDump, searchAniDbTitleIndex } from '../src/catalogue/ani
 
 const fixture = [
   '# aid|type|language|title',
-  '10|main|x-jat|Kimi no Na wa.',
-  '10|official|en|Your Name',
-  '10|synonym|en|Your Name. | The Movie',
-  '11|main|x-jat|Your Name: Another Story',
-  '12|main|x-jat|A Different Show',
+  '10|1|x-jat|Kimi no Na wa.',
+  '10|4|en|Your Name',
+  '10|2|en|Your Name. | The Movie',
+  '11|1|x-jat|Your Name: Another Story',
+  '12|1|x-jat|A Different Show',
 ].join('\n');
 
 test('indexes aliases under one exact AniDB ID and prefers the main title', () => {
@@ -27,9 +27,10 @@ test('pages distinct IDs and rejects a stale or malformed dump rather than parti
   const index = parseAniDbTitleDump(fixture);
   assert.deepEqual(searchAniDbTitleIndex(index, { query: 'name', page: 2, pageSize: 1 }).items,
     [{ anidbId: 11, title: 'Your Name: Another Story', detailState: 'pending', requestable: false }]);
-  for (const bad of ['10|main|en|Title\n0|main|en|Bad',
-    '10|main|en|Title\n10|main|en|Conflicting main',
-    '10|main|en|Title\n11|official|en|Alias']) {
+  for (const bad of ['10|1|x-jat|Title\n0|1|x-jat|Bad',
+    '10|1|x-jat|Title\n10|1|x-jat|Conflicting main',
+    '10|1|x-jat|Title\n11|4|en|Alias',
+    '10|main|x-jat|Title', '10|5|x-jat|Title']) {
     assert.throws(() => parseAniDbTitleDump(bad), TypeError);
   }
   assert.throws(() => parseAniDbTitleDump('x'.repeat(101), { maxBytes: 100 }), TypeError);

@@ -1,4 +1,8 @@
-const TITLE_TYPES = new Set(['main', 'official', 'synonym', 'short']);
+// AniDB's pipe-delimited .dat dump uses numeric title types. These are not
+// the string-valued types in its XML title dump.
+const TITLE_TYPES = new Map([
+  ['1', 'main'], ['2', 'synonym'], ['3', 'short'], ['4', 'official'],
+]);
 
 // Pure parser for a candidate AniDB pipe-delimited title dump. The caller
 // must verify the downloaded format and freshness before using this index.
@@ -19,12 +23,12 @@ export function parseAniDbTitleDump(text, { maxBytes = 32_000_000,
     const third = row.indexOf('|', second + 1);
     if (first < 1 || second < 0 || third < 0) throw new TypeError('Invalid AniDB title row');
     const rawId = row.slice(0, first);
-    const type = row.slice(first + 1, second);
+    const type = TITLE_TYPES.get(row.slice(first + 1, second));
     const language = row.slice(second + 1, third);
     const title = row.slice(third + 1).trim();
     const id = Number(rawId);
     if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id) ||
-        !TITLE_TYPES.has(type) || !/^[a-z0-9-]{2,16}$/i.test(language) ||
+        !type || !/^[a-z0-9-]{2,16}$/i.test(language) ||
         !title || title.length > 500 || /[\u0000-\u001f]/.test(title)) {
       throw new TypeError('Invalid AniDB title row');
     }

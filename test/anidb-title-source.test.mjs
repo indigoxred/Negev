@@ -3,7 +3,7 @@ import test from 'node:test';
 import { gzipSync } from 'node:zlib';
 import { createAniDbTitleSource } from '../src/catalogue/anidb-title-source.mjs';
 
-const dump = gzipSync('# aid|type|language|title\n17|main|x-jat|Main Name\n17|official|en|English Name\n');
+const dump = gzipSync('# aid|type|language|title\n17|1|x-jat|Main Name\n17|4|en|English Name\n');
 const response = (bytes, status = 200) => new Response(bytes, { status });
 
 test('loads a bounded compressed AniDB title dump and searches its aliases', async () => {
