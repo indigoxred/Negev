@@ -16,7 +16,7 @@ const constantEqual = (a, b) => {
 // Account-backed HTTP boundary. Acquisition and availability are injected
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
-  now = Date.now, submitRequest, readRequest, searchTitles, titleRegistry,
+  now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, hydrateTitle } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
@@ -190,6 +190,21 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(202).send(result);
     }
     return reply.code(result.reason === 'invalid_request' ? 400 : 409).send(result);
+  });
+  app.get('/api/requests', { preHandler: requireUser }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof listRequests !== 'function') return reply.code(503).send({ error: 'Request history unavailable' });
+    const { beforeId: rawBefore, limit: rawLimit } = request.query;
+    const beforeId = rawBefore === undefined ? Number.MAX_SAFE_INTEGER : Number(rawBefore);
+    const limit = rawLimit === undefined ? 20 : Number(rawLimit);
+    if (Object.keys(request.query).some((key) => !['beforeId', 'limit'].includes(key)) ||
+        (rawBefore !== undefined && (typeof rawBefore !== 'string' || !/^[1-9]\d*$/.test(rawBefore))) ||
+        (rawLimit !== undefined && (typeof rawLimit !== 'string' || !/^[1-9]\d*$/.test(rawLimit))) ||
+        !Number.isSafeInteger(beforeId) || beforeId < 1 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      return reply.code(400).send({ error: 'Invalid history page' });
+    }
+    return listRequests({ requesterId: request.negevUser.id, beforeId, limit });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

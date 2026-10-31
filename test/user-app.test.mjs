@@ -23,6 +23,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         episodeIds: [1001], monitorFuture: true },
     }),
     readRequest: (id) => requestLedger.getRequest(id),
+    listRequests: (input) => requestLedger.listRequests(input),
   });
   try {
     const page = await app.inject({ method: 'GET', url: '/' });
@@ -59,6 +60,11 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'first' } });
     assert.equal(submitted.statusCode, 202, submitted.body);
     assert.equal(requestLedger.getRequest(1).requesterId, owner.id);
+    const mine = await app.inject({ method: 'GET', url: '/api/requests',
+      headers: { cookie } });
+    assert.deepEqual(mine.json().items.map((item) => item.id), [1]);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests?limit=1000',
+      headers: { cookie } })).statusCode, 400);
     const invited = await app.inject({ method: 'POST', url: '/api/invitations',
       headers: { cookie, origin, 'x-negev-csrf': csrf }, payload: {} });
     assert.equal(invited.statusCode, 201, invited.body);
@@ -69,6 +75,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { username: 'Friend', password: 'long-member-passphrase' } });
     assert.equal(friendLogin.statusCode, 200, friendLogin.body);
     const friendCookie = friendLogin.headers['set-cookie'].split(';')[0];
+    const friendList = await app.inject({ method: 'GET', url: '/api/requests',
+      headers: { cookie: friendCookie } });
+    assert.deepEqual(friendList.json().items, []);
     const friendSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie: friendCookie } });
     const memberInvite = await app.inject({ method: 'POST', url: '/api/invitations',

@@ -89,6 +89,8 @@ export function openRequestLedger(dbPath) {
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
   const get = db.prepare(`SELECT id,requester_id,anidb_id,kind,monitor_future,created_ms,status,reason
     FROM requests WHERE id=?`);
+  const listOwn = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
+    ORDER BY id DESC LIMIT ?`);
   const countRequests = db.prepare('SELECT COUNT(*) AS count FROM requests');
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
   const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed FROM requests WHERE id=?');
@@ -113,6 +115,16 @@ export function openRequestLedger(dbPath) {
   }
 
   return {
+    listRequests({ requesterId, beforeId = Number.MAX_SAFE_INTEGER, limit = 20 }) {
+      if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
+          !Number.isSafeInteger(beforeId) || beforeId < 1 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid request history page');
+      }
+      const rows = listOwn.all(requesterId, beforeId, limit + 1);
+      const items = rows.slice(0, limit).map((row) => this.getRequest(row.id));
+      return { items, nextBeforeId: rows.length > limit ? items.at(-1).id : null };
+    },
     getAiringCursor() { return readAiringCursor.get().after_id; },
     advanceAiringCursor({ expectedAfterId, nextAfterId }) {
       if (![expectedAfterId, nextAfterId].every((id) => Number.isSafeInteger(id) && id >= 0) ||

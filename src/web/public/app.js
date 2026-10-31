@@ -1,5 +1,5 @@
 const byId = (id) => document.getElementById(id);
-const state = { csrf: null, user: null, selected: null };
+const state = { csrf: null, user: null, selected: null, nextBeforeId: null };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -32,9 +32,33 @@ function showSession(data) {
   byId('invite').hidden = data.user.role !== 'admin';
 }
 async function refreshSession() {
-  try { showSession(await api('/api/session')); }
+  try { showSession(await api('/api/session')); await loadRequests(); }
   catch { byId('auth').hidden = false; byId('workspace').hidden = true; }
 }
+async function loadRequests(append = false) {
+  const list = byId('request-list');
+  if (!append) list.replaceChildren(element('p', 'Loading requests…', 'muted'));
+  const suffix = append && state.nextBeforeId ? `?beforeId=${state.nextBeforeId}` : '';
+  try {
+    const page = await api(`/api/requests${suffix}`);
+    if (!append) list.replaceChildren();
+    if (!append && page.items.length === 0) {
+      list.append(element('p', 'No requests yet. Search for an anime to begin.', 'muted'));
+    }
+    for (const item of page.items) {
+      const row = element('div', undefined, 'request-row');
+      const heading = element('div');
+      heading.append(element('strong', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
+        element('small', `Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
+      row.append(heading, element('span', 'Saved · acquisition inactive'));
+      list.append(row);
+    }
+    state.nextBeforeId = page.nextBeforeId;
+    byId('more-requests').hidden = state.nextBeforeId === null;
+  } catch (error) { message(error.message, true); }
+}
+byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
+byId('more-requests').addEventListener('click', () => { void loadRequests(true); });
 function authTab(register) {
   byId('login-form').hidden = register;
   byId('register-form').hidden = !register;
@@ -74,6 +98,8 @@ byId('signout').addEventListener('click', async () => {
   catch (error) { message(error.message, true); return; }
   state.user = null;
   state.csrf = null;
+  state.nextBeforeId = null;
+  byId('request-list').replaceChildren();
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
   byId('workspace').hidden = true;
@@ -154,6 +180,7 @@ async function showDetail(item) {
           anidbId: item.anidbId, scope: 'installment', requestKey,
         }) });
         message(`Request #${saved.requestId} saved. Acquisition is not active in this preview.`);
+        await loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }
     });

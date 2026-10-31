@@ -50,6 +50,26 @@ test('same-user retries are idempotent while different users share targets', asy
   } finally { ledger.close(); }
 }));
 
+test('request history pages only the authenticated owner and survives restart', async () => withPath(async (dbPath) => {
+  const first = openRequestLedger(dbPath);
+  first.submit({ requesterId: 7, requestKey: 'one', intent, nowMs: 1_000 });
+  first.submit({ requesterId: 8, requestKey: 'other', intent, nowMs: 1_001 });
+  first.submit({ requesterId: 7, requestKey: 'two', intent, nowMs: 1_002 });
+  first.submit({ requesterId: 7, requestKey: 'three', intent, nowMs: 1_003 });
+  first.close();
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const firstPage = ledger.listRequests({ requesterId: 7, limit: 2 });
+    assert.deepEqual(firstPage.items.map((item) => item.id), [4, 3]);
+    assert.equal(firstPage.nextBeforeId, 3);
+    assert.deepEqual(ledger.listRequests({ requesterId: 7,
+      beforeId: firstPage.nextBeforeId, limit: 2 }).items.map((item) => item.id), [1]);
+    assert.deepEqual(ledger.listRequests({ requesterId: 8 }).items.map((item) => item.id), [2]);
+    assert.throws(() => ledger.listRequests({ requesterId: 0 }), TypeError);
+    assert.throws(() => ledger.listRequests({ requesterId: 7, limit: 1000 }), TypeError);
+  } finally { ledger.close(); }
+}));
+
 test('overlapping scopes share only common episode targets', async () => withPath(async (dbPath) => {
   const ledger = openRequestLedger(dbPath);
   try {

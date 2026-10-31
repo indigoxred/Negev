@@ -42,6 +42,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       now, submitRequest, readRequest: (id) => requests.getRequest(id),
+      listRequests: (input) => requests.listRequests(input),
       searchTitles: ({ query, page }) => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       }),
