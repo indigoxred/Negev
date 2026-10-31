@@ -26,6 +26,22 @@ test('plans an exact subset from unambiguous AniDB regular episode numbers', () 
   });
 });
 
+test('plans a four-digit regular episode without accepting a range as one target', () => {
+  const longRequest = { ...request, episodeIds: [9001] };
+  const longDetail = { ...detail, total: 1,
+    episodes: [{ id: 9001, number: 1000, type: 'Episode' }] };
+  const video = { name: '[Group] Long Show - 1000 (1080p).mkv', size: 1200 };
+  assert.deepEqual(planTorrentTargets({ request: longRequest, detail: longDetail,
+    prepared: { state: 'prepared_stopped', files: [video] } }), {
+    state: 'planned_targets', episodeIds: [9001],
+    plannedFiles: [{ ...video, episodeIds: [9001] }],
+  });
+  assert.equal(planTorrentTargets({ request: longRequest, detail: longDetail,
+    prepared: { state: 'prepared_stopped', files: [
+      { ...video, name: '[Group] Long Show - 1000-1001.mkv' },
+    ] } }).state, 'held');
+});
+
 test('a one-video movie uses its one requested AniDB episode identity', () => {
   const filmRequest = { ...request, kind: 'movie', episodeIds: [5001] };
   const filmDetail = { ...detail, kind: 'movie', total: 1,

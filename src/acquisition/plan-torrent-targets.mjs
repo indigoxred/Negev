@@ -7,10 +7,11 @@ const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
 
 function episodeNumber(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
-  const plain = /^(?:0*[1-9]\d{0,2})$/.exec(stem);
-  if (plain) return Number(stem);
-  const matches = [...stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d{0,2})(?=\s|$)/g)];
-  return matches.length === 1 ? Number(matches[0][1]) : null;
+  const plain = /^(?:0*[1-9]\d*)$/.exec(stem);
+  if (plain && Number.isSafeInteger(Number(stem))) return Number(stem);
+  const matches = [...stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?=\s|$)/g)];
+  return matches.length === 1 && Number.isSafeInteger(Number(matches[0][1]))
+    ? Number(matches[0][1]) : null;
 }
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
