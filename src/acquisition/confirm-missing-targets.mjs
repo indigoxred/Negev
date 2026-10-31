@@ -45,7 +45,14 @@ export async function confirmMissingTargets({ request, episodeIds,
   if (snapshot.shoko?.state === 'ok' && snapshot.shoko.complete === true &&
       snapshot.plex?.state === 'ok' && snapshot.plex.complete === true &&
       Array.isArray(snapshot.shoko.files) && Array.isArray(snapshot.plex.parts)) {
-    const knownStorage = new Set(snapshot.shoko.files.map((file) => file.storageKey));
+    // A Shoko match for some other anime or episode does not explain a
+    // public Plex part observed for this requested subset. Treat it as an
+    // identity conflict, not permission to acquire another copy.
+    const knownStorage = new Set(snapshot.shoko.files.filter((file) =>
+      file.anidbId === request.anidbId &&
+      Array.isArray(file.episodeIds) &&
+      file.episodeIds.some((id) => episodeIds.includes(id)))
+      .map((file) => file.storageKey));
     if (snapshot.plex.parts.some((part) =>
       publicLibraryIds.includes(part.libraryId) && !knownStorage.has(part.storageKey))) {
       return held('unattributed_plex_part');
