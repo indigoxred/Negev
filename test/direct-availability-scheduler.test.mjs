@@ -29,3 +29,17 @@ test('direct availability runner is opt-in, serial, paced, and drains on stop', 
   assert.equal(stopped, true);
   assert.equal(timers.length, 0);
 });
+
+test('title progress keeps the shared scheduler paced at one minute', async () => {
+  const timers = [];
+  const scheduler = createDirectAvailabilityScheduler({
+    runOnce: async () => ({ state: 'page_loaded' }),
+    idleDelayMs: 60_000,
+    setTimer: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
+    clearTimer: () => {},
+  });
+  scheduler.start();
+  await timers.shift().fn();
+  assert.equal(timers[0].delay, 60_000);
+  await scheduler.close();
+});

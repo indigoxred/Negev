@@ -587,3 +587,58 @@ test('optional public Plex observer stays inert until an explicit account-servic
     assert.equal(calls, 1);
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('opt-in title check survives the HTTP action and advances by explicit ticks', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-title-check-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    titleCheck: true, now: () => 1_000,
+    plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+      publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+    fetchImpl: async (url) => {
+      if (url.pathname === '/api/v3/Series/AniDB/Search') {
+        return json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
+      }
+      if (url.pathname === '/api/v3/Series/AniDB/42') {
+        return json({ ID: 42, Title: 'Example', Type: 'Movie' });
+      }
+      if (url.pathname === '/api/v3/Series/AniDB/42/Episode') {
+        return json({ Total: 1, List: [{ ID: 1001, AnimeID: 42,
+          EpisodeNumber: 1, Type: 'Episode', Title: 'One' }] });
+      }
+      return new Response(null, { status: 404 });
+    },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await service.app.inject({ method: 'GET',
+      url: '/api/session', headers: { cookie } });
+    assert.equal(session.json().capabilities.titleChecks, true);
+    assert.equal((await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Example', headers: { cookie } })).statusCode, 200);
+    const url = '/api/catalogue/42/title-check';
+    const started = await service.app.inject({ method: 'POST', url,
+      headers: auth(cookie, session.json().csrfToken), payload: {} });
+    assert.equal(started.statusCode, 202, started.body);
+    assert.deepEqual(await service.tickTitleCheck(),
+      { state: 'page_loaded', anidbId: 42, page: 1 });
+    assert.deepEqual(await service.tickTitleCheck(),
+      { state: 'target_checked', anidbId: 42,
+        episodeId: 1001, result: 'unknown' });
+    assert.deepEqual((await service.app.inject({ method: 'GET', url,
+      headers: { cookie } })).json(),
+    { state: 'done', generation: 1, totalCount: 1,
+      checkedCount: 1, recentAvailableCount: 0 });
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});

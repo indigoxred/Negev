@@ -144,6 +144,9 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
   assert.equal(parsed.plexIndex, false);
   assert.equal(parsed.directAvailability, false);
+  assert.equal(parsed.titleCheck, false);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
+    NEGEV_TITLE_CHECK: '1' }).titleCheck, true);
   assert.equal(parsed.plex.guidProbe, false);
   assert.equal(parseUserServerConfig({ ...plex,
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
@@ -165,6 +168,8 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     { NEGEV_PLEX_INDEX: 'yes' },
     { NEGEV_DIRECT_AVAILABILITY: '1' },
     { NEGEV_DIRECT_AVAILABILITY: 'yes' },
+    { NEGEV_TITLE_CHECK: '1' },
+    { NEGEV_TITLE_CHECK: 'yes' },
   ]) assert.throws(() => parseUserServerConfig({ ...plex, ...change }), TypeError);
   assert.throws(() => parseUserServerConfig({ ...valid, NEGEV_PLEX_INDEX: '1' }), TypeError);
   assert.throws(() => parseUserServerConfig({ ...valid,

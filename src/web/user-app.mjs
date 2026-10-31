@@ -136,7 +136,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
-      availabilityChecks: publicAvailabilityConfigured } };
+      availabilityChecks: publicAvailabilityConfigured,
+      ...(typeof startTitleCheck === 'function' &&
+        typeof getTitleCheck === 'function' ? { titleChecks: true } : {}) } };
   });
   app.get('/api/admin/review', { preHandler: requireUser,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },

@@ -32,6 +32,8 @@ import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
 import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
   '../availability/direct-availability-queue.mjs';
+import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
+import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
@@ -46,6 +48,7 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   shokoImportRoot = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
+  titleCheck = false,
   shokoRecent = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
@@ -55,6 +58,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
+      typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
       (shokoImportRoot !== null &&
         (typeof shokoImportRoot !== 'string' ||
          !path.isAbsolute(shokoImportRoot) ||
@@ -80,6 +84,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let inventory;
   let recent;
   let directAvailability;
+  let titleChecks;
   let plexObserver;
   try {
     accounts = openAccountLedger(dbPath, { now });
@@ -92,6 +97,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     inventory = openShokoInventoryLedger(dbPath);
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);
     directAvailability = openDirectAvailabilityQueue(dbPath);
+    if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
     const metadata = createMetadataLimiter();
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now }) : null;
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
@@ -137,6 +143,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (detail?.state !== 'details') return { state: 'unknown' };
         return observeCurrentPublic({ ...target, kind: detail.kind });
       } });
+    const titleWorker = titleChecks ? createTitleCheckWorker({
+      ledger: titleChecks, now,
+      loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      observeTarget: (target) => observeCurrentPublic(target),
+    }) : null;
     const hydrator = createCatalogueHydrator({
       isKnownTitle: (input) => titleRegistry.isKnownTitle(input),
       loadDetail, ledger: hydration, now,
@@ -222,6 +233,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             nowMs: now() }).state,
         })) };
       },
+      startTitleCheck: titleChecks ? ({ anidbId }) =>
+        titleChecks.start({ anidbId, nowMs: now() }) : undefined,
+      getTitleCheck: titleChecks ? ({ anidbId }) =>
+        titleChecks.getProgress({ anidbId, nowMs: now() }) : undefined,
       discoverCandidates, previewCandidate,
       listOperationalReview: (input) => listOperationalReview({
         acquisitions, publishQueue: publishReview, ...input }),
@@ -318,6 +333,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           reason: 'observer_not_configured' });
         return track(directWorker.runOnce());
       },
+      tickTitleCheck: () => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        return titleWorker ? track(titleWorker.runOnce()) :
+          Promise.resolve({ state: 'held', reason: 'title_check_disabled' });
+      },
       getDirectAvailabilityStatus: (target) => directAvailability.getStatus({
         ...target, nowMs: now() }),
       tickPublicPlexPage: (input) => {
@@ -354,6 +374,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await Promise.allSettled([...observations]);
               plexObserver?.close();
               directAvailability.close();
+              titleChecks?.close();
               recent?.close();
               inventory.close(); hydration.close(); progress.close();
               publishReview.close(); handoffs.close(); acquisitions.close();
@@ -364,7 +385,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); directAvailability?.close(); recent?.close();
+    plexObserver?.close(); directAvailability?.close(); titleChecks?.close(); recent?.close();
     inventory?.close(); hydration?.close();
     progress?.close(); publishReview?.close(); handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();

@@ -10,7 +10,7 @@ const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
   nextBeforeId: null, releaseSearch: false, detailLoad: false,
-  searchToken: 0 };
+  titleChecks: false, searchToken: 0 };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
@@ -51,6 +51,7 @@ function showSession(data) {
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
+  state.titleChecks = data.capabilities?.titleChecks === true;
   byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
     ? 'Negev is in preview. Requests are saved; automatic downloads are not active. Public Plex availability can be checked, and an unconfirmed result does not mean a file is missing.'
     : 'Negev is in preview. Requests are saved; automatic downloads and public Plex checks are not active.';
@@ -73,6 +74,7 @@ function clearWorkspace() {
   nextReviewAttemptId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
+  state.titleChecks = false;
   byId('service-notice').textContent =
     'Negev is in preview. Requests are saved; automatic downloads are not active.';
   byId('request-list').replaceChildren();
@@ -465,31 +467,44 @@ async function showDetail(item, franchise = null) {
         finally { button.disabled = false; select.disabled = false; }
       });
       check.append(label, button, result);
-      const checkPage = element('button', 'Check next 5 in Plex (once per minute)');
-      const checkedList = element('div', undefined, 'availability-results');
-      let checkedCount = 0;
-      checkPage.addEventListener('click', async () => {
-        if (checkedCount >= pager.episodes.length) return;
-        checkPage.disabled = true;
-        try {
-          const page = Math.floor(checkedCount / 100) + 1;
-          const offset = checkedCount % 100;
-          const checked = await api(`/api/catalogue/${item.anidbId}/availability-page?page=${page}&offset=${offset}`);
+      if (state.titleChecks) {
+        const checkTitle = element('button', 'Check this title in Plex');
+        const progress = element('p', '', 'muted');
+        const url = `/api/catalogue/${item.anidbId}/title-check`;
+        let pollTimer;
+        let progressEpoch = 0;
+        const showProgress = async () => {
           if (state.selected !== item.anidbId) return;
-          for (const entry of checked.items) {
-            const episode = pager.episodes[checkedCount];
-            if (entry.episodeId !== episode?.id) throw new Error('Episode list changed; select the title again');
-            updateOption(entry.episodeId, entry.state);
-            checkedList.append(element('p', `${episode.type} ${episode.number}: ${entry.state === 'available' ? 'Playable in Plex' : 'Not confirmed yet'}`));
-            checkedCount++;
-          }
-          checkPage.disabled = checkedCount >= pager.episodes.length;
-        } catch (error) {
-          message(error.message, true);
-          checkPage.disabled = false;
-        }
-      });
-      check.append(checkPage, checkedList);
+          const epoch = ++progressEpoch;
+          if (pollTimer) clearTimeout(pollTimer);
+          try {
+            const status = await api(url);
+            if (state.selected !== item.anidbId || epoch !== progressEpoch) return;
+            if (status.state === 'not_started') progress.textContent =
+              'Availability has not been checked for this title.';
+            else if (status.state === 'held') progress.textContent =
+              'The title check needs another try. No missing episodes were assumed.';
+            else progress.textContent = status.totalCount === null
+              ? 'Loading the episode list…'
+              : `${status.state === 'done' ? 'Finished: ' : ''}` +
+                `${status.checkedCount} of ${status.totalCount} checked · ` +
+                `${status.recentAvailableCount} recently verified playable`;
+            if (['loading', 'checking'].includes(status.state)) {
+              pollTimer = setTimeout(() => { void showProgress(); }, 15_000);
+            }
+          } catch { progress.textContent = 'Availability progress is temporarily unavailable.'; }
+        };
+        checkTitle.addEventListener('click', async () => {
+          checkTitle.disabled = true;
+          try {
+            await api(url, { method: 'POST', body: JSON.stringify({}) });
+            await showProgress();
+          } catch (error) { message(error.message, true); }
+          finally { checkTitle.disabled = false; }
+        });
+        check.append(checkTitle, progress);
+        void showProgress();
+      }
       if (data.kind === 'series' && data.restricted === false) {
         const requestSelected = element('button', 'Request selected episode');
         let requesting = false;
@@ -533,7 +548,6 @@ async function showDetail(item, franchise = null) {
             const added = pager.append(page);
             if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
             appendOptions(added.episodes);
-            if (checkedCount < pager.episodes.length) checkPage.disabled = false;
             if (pager.nextPage === null) more.remove();
             else more.disabled = false;
           } catch (error) { message(error.message, true); more.disabled = false; }

@@ -158,6 +158,7 @@ export function parseUserServerConfig(env) {
       env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
       env.NEGEV_DIRECT_AVAILABILITY,
+      env.NEGEV_TITLE_CHECK,
       env.NEGEV_SHOKO_HYDRATION,
       env.NEGEV_ANIDB_TITLE_DUMP].some((flag) =>
     flag != null && !['0', '1'].includes(flag))) {
@@ -171,6 +172,11 @@ export function parseUserServerConfig(env) {
        env.NEGEV_SHOKO_INVENTORY !== '1' &&
        env.NEGEV_SHOKO_RECENT !== '1')) {
     throw new TypeError('Direct availability needs a Shoko observer and Plex index');
+  }
+  if (env.NEGEV_TITLE_CHECK === '1' &&
+      (env.NEGEV_PLEX_INDEX !== '1' ||
+       env.NEGEV_PLEX_OBSERVER !== '1')) {
+    throw new TypeError('Title check needs a public Plex index');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
@@ -206,6 +212,7 @@ export function parseUserServerConfig(env) {
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
+    titleCheck: env.NEGEV_TITLE_CHECK === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),

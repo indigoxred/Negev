@@ -14,6 +14,7 @@ import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
 import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
 import { createDirectAvailabilityScheduler } from
   '../availability/direct-availability-scheduler.mjs';
+import { createAvailabilityCycle } from '../availability/availability-cycle.mjs';
 import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
 
 let service;
@@ -93,9 +94,14 @@ try {
     });
     plexScheduler.start();
   }
-  if (config.directAvailability) {
+  if (config.directAvailability || config.titleCheck) {
+    const cycle = createAvailabilityCycle({
+      runDirect: config.directAvailability ? service.tickDirectAvailability : null,
+      runTitle: config.titleCheck ? service.tickTitleCheck : null,
+    });
     directAvailabilityScheduler = createDirectAvailabilityScheduler({
-      runOnce: service.tickDirectAvailability });
+      runOnce: cycle.runOnce,
+      idleDelayMs: config.titleCheck ? 60_000 : 5 * 60_000 });
     directAvailabilityScheduler.start();
   }
   process.stdout.write(`Negev user API listening on ${config.host}:${config.port}\n`);
