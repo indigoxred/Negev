@@ -73,15 +73,19 @@ test('a merely published-unknown handoff cannot claim import completion', async 
 test('durable publish intent permits content observation without inventing publication proof', async () => {
   const unknown = { ...row, status: 'publish_unknown',
     publishName: `negev-7-${row.evidenceDigest.slice(0, 16)}` };
-  const ledger = { getHandoff: (attemptId) => attemptId === 7 ? unknown : null };
-  const result = await reconcileHandoffContent({ attemptId: 7, ledger,
+  let recorded = 0;
+  const ledger = { getHandoff: (attemptId) => attemptId === 7 ? unknown : null,
+    recordContentPresent: ({ fileIds }) => { recorded++;
+      return { state: 'content_present', publicationProven: false, fileIds }; } };
+  const result = await reconcileHandoffContent({ attemptId: 7, ledger, nowMs: 500,
     readEpisode: async ({ episodeId }) => ({ state: 'ok', complete: true,
       files: [observed(episodeId === 1001 ? 800 : 801, [episodeId])] }) });
   assert.deepEqual(result, { state: 'content_present',
     publicationProven: false, fileIds: [1800, 1801] });
+  assert.equal(recorded, 1);
   assert.equal(ledger.getHandoff(7).status, 'publish_unknown');
   let calls = 0;
-  assert.deepEqual(await reconcileHandoffContent({ attemptId: 8, ledger,
+  assert.deepEqual(await reconcileHandoffContent({ attemptId: 8, ledger, nowMs: 501,
     readEpisode: async () => { calls++; return { state: 'ok', complete: true, files: [] }; } }),
   { state: 'held', reason: 'publish_intent_missing' });
   assert.equal(calls, 0);

@@ -65,17 +65,23 @@ export async function observeHandoffImport({ handoff, readEpisode } = {}) {
 
 // A saved publish intent can outlive Shoko's rapid move out of Import. This
 // observes content only; it does not claim that this operation supplied it.
-export async function reconcileHandoffContent({ attemptId, ledger, readEpisode } = {}) {
+export async function reconcileHandoffContent({ attemptId, ledger, readEpisode, nowMs } = {}) {
   if (!validId(attemptId) || typeof ledger?.getHandoff !== 'function' ||
-      typeof readEpisode !== 'function') throw new TypeError('Invalid handoff reconciliation');
+      typeof ledger?.recordContentPresent !== 'function' ||
+      typeof readEpisode !== 'function' ||
+      !Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError('Invalid handoff reconciliation');
+  }
   const handoff = ledger.getHandoff(attemptId);
   if (handoff?.status !== 'publish_unknown') return held('publish_intent_missing');
   if (handoff.publishName !== `negev-${attemptId}-${handoff.evidenceDigest?.slice(0, 16)}`) {
     return held('handoff_evidence_mismatch');
   }
   const observed = await inspectExactShokoFiles({ handoff, readEpisode });
-  return observed.state === 'shoko_files_identified'
-    ? { state: 'content_present', publicationProven: false,
-      fileIds: observed.fileIds }
-    : observed;
+  if (observed.state !== 'shoko_files_identified') return observed;
+  try {
+    return ledger.recordContentPresent({ attemptId,
+      evidenceDigest: handoff.evidenceDigest, publishName: handoff.publishName,
+      fileIds: observed.fileIds, nowMs });
+  } catch { return held('content_record_unavailable'); }
 }

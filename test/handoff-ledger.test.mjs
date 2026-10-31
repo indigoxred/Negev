@@ -7,6 +7,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
+import { reconcileHandoffContent } from '../src/acquisition/observe-handoff-import.mjs';
 
 test('one exact prepared handoff gets one durable publish intent across restart', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-handoff-ledger-'));
@@ -73,14 +74,33 @@ test('one exact prepared handoff gets one durable publish intent across restart'
       assert.deepEqual(restarted.getHandoff(attempt.attemptId), {
         status: 'publish_unknown', torrentHash: hash, evidenceDigest,
         holdingPath, publishName: saved.publishName, manifest: evidence.manifest });
+      assert.deepEqual(await reconcileHandoffContent({ attemptId: attempt.attemptId,
+        ledger: restarted, nowMs: 209,
+        readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+          fileId: 9001, anidbFileId: 51, ed2k: 'A'.repeat(32), size: 3,
+          anidbId: 42, episodeIds: [1001], sourcePaths: ['/pure/Anime/01.mkv'],
+          coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+        }] }) }),
+      { state: 'content_present', publicationProven: false, fileIds: [9001] });
+      assert.equal(restarted.getHandoff(attempt.attemptId).status, 'publish_unknown');
+      assert.deepEqual(restarted.recordContentPresent({ attemptId: attempt.attemptId,
+        evidenceDigest, publishName: saved.publishName, fileIds: [9002], nowMs: 210 }),
+      { state: 'held', reason: 'content_observation_conflict' });
+      assert.equal(restarted.getHandoff(attempt.attemptId).status, 'publish_unknown');
       assert.equal(restarted.markPublishedObserved({ attemptId: attempt.attemptId,
-        evidenceDigest, publishName: saved.publishName, nowMs: 209 }).state,
+        evidenceDigest, publishName: saved.publishName, nowMs: 211 }).state,
       'published_observed');
       assert.equal(restarted.getHandoff(attempt.attemptId).status, 'published_observed');
       assert.deepEqual(restarted.beginPublish({ attemptId: attempt.attemptId,
-        evidenceDigest, nowMs: 210 }),
+        evidenceDigest, nowMs: 212 }),
       { state: 'published_observed', publishName: saved.publishName, sendNow: false });
     } finally { restarted.close(); }
+    const reread = openHandoffLedger(dbPath);
+    try {
+      assert.deepEqual(reread.getContentObservation(attempt.attemptId),
+        { state: 'content_present', publicationProven: false,
+          evidenceDigest, fileIds: [9001] });
+    } finally { reread.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

@@ -34,6 +34,12 @@ export function openHandoffLedger(dbPath) {
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS handoff_content_observations (
+      attempt_id INTEGER PRIMARY KEY REFERENCES handoff_intents(attempt_id),
+      evidence_digest TEXT NOT NULL,
+      file_ids_json TEXT NOT NULL,
+      observed_ms INTEGER NOT NULL CHECK(observed_ms >= 0)
+    ) STRICT`);
     if (!db.prepare('PRAGMA table_info(handoff_intents)').all()
       .some((column) => column.name === 'manifest_json')) {
       // Older private diagnostics remain held; their missing manifest cannot
@@ -58,6 +64,10 @@ export function openHandoffLedger(dbPath) {
     WHERE attempt_id=? AND status='prepared'`);
   const markObserved = db.prepare(`UPDATE handoff_intents SET status='published_observed',updated_ms=?
     WHERE attempt_id=? AND status='publish_unknown'`);
+  const contentRow = db.prepare(`SELECT evidence_digest,file_ids_json FROM handoff_content_observations
+    WHERE attempt_id=?`);
+  const insertContent = db.prepare(`INSERT INTO handoff_content_observations
+    (attempt_id,evidence_digest,file_ids_json,observed_ms) VALUES (?,?,?,?)`);
 
   function transact(action) {
     let begun = false;
@@ -170,6 +180,44 @@ export function openHandoffLedger(dbPath) {
         markObserved.run(nowMs, attemptId);
         return { state: 'published_observed' };
       });
+    },
+    // This records exact downstream content after a durable publish intent.
+    // It does not prove that this handoff supplied it or that Plex can play it.
+    recordContentPresent({ attemptId, evidenceDigest, publishName, fileIds, nowMs }) {
+      if (!validId(attemptId) || !validDigest(evidenceDigest) ||
+          typeof publishName !== 'string' || !/^negev-[1-9]\d*-[0-9a-f]{16}$/.test(publishName) ||
+          !Array.isArray(fileIds) || fileIds.length < 1 || fileIds.length > 100 ||
+          fileIds.some((id) => !validId(id)) ||
+          new Set(fileIds).size !== fileIds.length || !validTime(nowMs)) {
+        throw new TypeError('Invalid content observation');
+      }
+      return transact(() => {
+        const row = handoffRow.get(attemptId);
+        if (!row || row.status !== 'publish_unknown') return held('publish_intent_missing');
+        const manifest = validStoredManifest(row);
+        if (!manifest || row.evidence_digest !== evidenceDigest.toLowerCase() ||
+            row.publish_name !== publishName || fileIds.length !== manifest.videos.length) {
+          return held('handoff_evidence_mismatch');
+        }
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        const prior = contentRow.get(attemptId);
+        if (prior) {
+          if (prior.evidence_digest !== row.evidence_digest ||
+              prior.file_ids_json !== JSON.stringify(fileIds)) {
+            return held('content_observation_conflict');
+          }
+        } else insertContent.run(attemptId, row.evidence_digest,
+          JSON.stringify(fileIds), nowMs);
+        return { state: 'content_present', publicationProven: false, fileIds };
+      });
+    },
+    getContentObservation(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
+      const row = contentRow.get(attemptId);
+      if (!row) return null;
+      const fileIds = JSON.parse(row.file_ids_json);
+      return { state: 'content_present', publicationProven: false,
+        evidenceDigest: row.evidence_digest, fileIds };
     },
     getHandoff(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
