@@ -15,13 +15,16 @@ export function createQbittorrentSessionFetch({ baseUrl, sessionId,
   }
   return async (input, init = {}) => {
     let target;
-    try { target = new URL(input); }
+    try { target = new URL(input instanceof Request ? input.url : input); }
     catch { throw new TypeError('Invalid provider URL'); }
-    const cookie = new Headers(init.headers).get('cookie');
+    const cookie = new Headers(init.headers ??
+      (input instanceof Request ? input.headers : undefined)).get('cookie');
     const usesSession = cookie === `SID=${sessionId}`;
-    if (usesSession && (target.origin !== base.origin ||
-        !target.pathname.startsWith('/api/v2/'))) {
-      throw new TypeError('qBittorrent SID outside its API');
+    if (cookie !== null && (!usesSession || target.origin !== base.origin ||
+        !target.pathname.startsWith('/api/v2/') ||
+        (init.redirect ?? (input instanceof Request ? input.redirect :
+          'follow')) !== 'manual')) {
+      throw new TypeError('Unsafe qBittorrent cookie request');
     }
     const response = await fetchImpl(input, init);
     if (usesSession && response.status === 403) {

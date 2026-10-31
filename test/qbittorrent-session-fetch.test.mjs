@@ -15,7 +15,7 @@ test('qBittorrent 403 invalidates only the matching SID', async () => {
     fetchImpl: async () => new Response('Forbidden', { status: 403 }),
   });
   const result = await scopedFetch(new URL('/api/v2/torrents/info', baseUrl), {
-    headers: { Cookie: `SID=${sessionId}` }, method: 'GET',
+    headers: { Cookie: `SID=${sessionId}` }, method: 'GET', redirect: 'manual',
   });
   assert.equal(result.status, 403);
   assert.deepEqual(invalidated, [sessionId]);
@@ -45,6 +45,34 @@ test('a qBittorrent SID cannot be forwarded to another origin', async () => {
   assert.equal(calls, 0);
 });
 
+test('noncanonical and Request-carried cookies cannot bypass SID scoping', async () => {
+  let calls = 0;
+  const scopedFetch = createQbittorrentSessionFetch({ baseUrl, sessionId,
+    sessionGate: { invalidate: () => {} },
+    fetchImpl: async () => { calls++; return new Response('Ok.'); },
+  });
+  await assert.rejects(() => scopedFetch('http://other.internal/api/v2/torrents/info', {
+    headers: { Cookie: `SID=${sessionId}; extra=1` }, method: 'GET',
+  }), TypeError);
+  await assert.rejects(() => scopedFetch(new Request(
+    'http://other.internal/api/v2/torrents/info', {
+      headers: { Cookie: `SID=${sessionId}` }, method: 'GET',
+    })), TypeError);
+  assert.equal(calls, 0);
+});
+
+test('an authenticated qBittorrent call cannot follow a redirect', async () => {
+  let calls = 0;
+  const scopedFetch = createQbittorrentSessionFetch({ baseUrl, sessionId,
+    sessionGate: { invalidate: () => {} },
+    fetchImpl: async () => { calls++; return new Response('Ok.'); },
+  });
+  await assert.rejects(() => scopedFetch(new URL('/api/v2/torrents/info', baseUrl), {
+    headers: { Cookie: `SID=${sessionId}` }, method: 'GET',
+  }), TypeError);
+  assert.equal(calls, 0);
+});
+
 test('successful qBittorrent calls leave the cached session intact', async () => {
   let calls = 0;
   const scopedFetch = createQbittorrentSessionFetch({ baseUrl, sessionId,
@@ -52,7 +80,7 @@ test('successful qBittorrent calls leave the cached session intact', async () =>
     fetchImpl: async () => { calls++; return Response.json([]); },
   });
   assert.equal((await scopedFetch(new URL('/api/v2/torrents/info', baseUrl), {
-    headers: { Cookie: `SID=${sessionId}` }, method: 'GET',
+    headers: { Cookie: `SID=${sessionId}` }, method: 'GET', redirect: 'manual',
   })).status, 200);
   assert.equal(calls, 1);
 });

@@ -42,7 +42,7 @@ test('one authenticated session is scoped to qBittorrent and invalidated on 403'
       assert.deepEqual(qbittorrent,
         { baseUrl: 'http://qb:8080/', sessionId: 'session_1' });
       await fetchImpl(new URL('http://qb:8080/api/v2/torrents/info'), {
-        headers: { Cookie: 'SID=session_1' } });
+        headers: { Cookie: 'SID=session_1' }, redirect: 'manual' });
       return { state: 'held', reason: 'provider_unavailable', requestId };
     },
     processStart: async ({ qbittorrent }) => ({ state: 'started',
