@@ -23,6 +23,12 @@ async function fixture() {
         Directory: [{ type: '4', key: '/library/sections/102/all?type=4' }] } });
     }
     if (url.hostname === 'plex' && url.pathname === '/library/sections/102/all') {
+      if (url.searchParams.has('guid')) {
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          offset: 0, totalSize: 1, size: 1,
+          Metadata: [{ ratingKey: '500', type: 'episode',
+            librarySectionID: 102, guid: url.searchParams.get('guid') }] } });
+      }
       return Response.json({ MediaContainer: { librarySectionID: 102, offset: 0,
         totalSize: 1, size: 1, Metadata: [{ ratingKey: '500', type: 'episode',
           librarySectionID: 102 }] } });
@@ -88,5 +94,15 @@ test('unlisted private library cannot be scanned by the public observer', async 
   assert.deepEqual(await service.scanRecent({ libraryId: 103, kind: 'episode' }),
     { state: 'held', reason: 'library_not_allowed' });
   assert.deepEqual(calls, []);
+  service.close();
+});
+
+test('opt-in exact GUID probe can find a direct import before the paced index reaches it', async () => {
+  const { config, calls } = await fixture();
+  const service = createPlexAvailabilityService({ ...config, guidProbe: true });
+  const result = await service.observeTarget({ anidbId: 42,
+    episodeId: 1001, kind: 'series' });
+  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.equal(calls.includes('plex/library/sections/102/all'), true);
   service.close();
 });

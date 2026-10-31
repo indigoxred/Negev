@@ -27,7 +27,8 @@ const within = (root, candidate) => candidate === root ||
 function plexConfig(env, dataDir) {
   const names = ['NEGEV_PLEX_URL', 'NEGEV_PLEX_TOKEN_FILE',
     'NEGEV_PLEX_SECTIONS', 'NEGEV_SHOKO_MEDIA_MOUNT',
-    'NEGEV_PLEX_MEDIA_MOUNTS', 'NEGEV_PLEX_TOKEN'];
+    'NEGEV_PLEX_MEDIA_MOUNTS', 'NEGEV_PLEX_TOKEN',
+    'NEGEV_PLEX_GUID_PROBE'];
   if (env.NEGEV_PLEX_OBSERVER != null &&
       !['0', '1'].includes(env.NEGEV_PLEX_OBSERVER)) {
     throw new TypeError('Invalid Plex observer flag');
@@ -37,6 +38,10 @@ function plexConfig(env, dataDir) {
       throw new TypeError('Plex observer is disabled');
     }
     return null;
+  }
+  if (env.NEGEV_PLEX_GUID_PROBE != null &&
+      !['0', '1'].includes(env.NEGEV_PLEX_GUID_PROBE)) {
+    throw new TypeError('Invalid Plex GUID probe flag');
   }
   if (Object.hasOwn(env, 'NEGEV_PLEX_TOKEN')) {
     throw new TypeError('Plex token must use a private file');
@@ -59,6 +64,8 @@ function plexConfig(env, dataDir) {
         sections[kind].every(validId) &&
         new Set(sections[kind]).size === sections[kind].length) ||
       sections.episode.length + sections.movie.length === 0 ||
+      (env.NEGEV_PLEX_GUID_PROBE === '1' &&
+        sections.episode.length + sections.movie.length > 4) ||
       new Set([...sections.episode, ...sections.movie]).size !==
         sections.episode.length + sections.movie.length ||
       !mount(shokoMount) || !Array.isArray(plexMounts) ||
@@ -69,7 +76,8 @@ function plexConfig(env, dataDir) {
     throw new TypeError('Invalid scoped Plex observer');
   }
   return { plexBaseUrl: env.NEGEV_PLEX_URL, plexTokenPath,
-    publicSections: sections, shokoMount, plexMounts };
+    publicSections: sections, shokoMount, plexMounts,
+    guidProbe: env.NEGEV_PLEX_GUID_PROBE === '1' };
 }
 
 export function dateInZone(timeZone, instant = new Date()) {

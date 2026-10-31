@@ -5,6 +5,8 @@ import { openPlexCardIndex } from './plex-card-index.mjs';
 import { createPlexCardPageWorker, indexPlexCardPage,
   retryOnePlexCard } from './plex-card-page-worker.mjs';
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
+import { observePublicTarget } from './observe-public-target.mjs';
+import { readPlexGuidCards } from './plex-guid-cards.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validSections = (sections) => sections &&
@@ -19,13 +21,16 @@ const validSections = (sections) => sections &&
 // service credentials. Nothing schedules its ticks or exposes it to users yet.
 export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   shokoApiKey, plexBaseUrl, plexToken, publicSections, shokoMount,
-  plexMount, plexMounts, fetchImpl = fetch, now = Date.now } = {}) {
+  plexMount, plexMounts, guidProbe = false,
+  fetchImpl = fetch, now = Date.now } = {}) {
   if (!validSections(publicSections) ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof plexBaseUrl !== 'string' || !plexBaseUrl ||
       typeof plexToken !== 'string' || !plexToken ||
-      typeof fetchImpl !== 'function' || typeof now !== 'function') {
+      typeof fetchImpl !== 'function' || typeof now !== 'function' ||
+      typeof guidProbe !== 'boolean' ||
+      (guidProbe && publicSections.episode.length + publicSections.movie.length > 4)) {
     throw new TypeError('Invalid Plex availability service');
   }
   const index = openPlexCardIndex(dbPath);
@@ -35,6 +40,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     token: plexToken, ...input, fetchImpl });
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
     token: plexToken, ...input, fetchImpl });
+  const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
+    apiKey: shokoApiKey, ...input, fetchImpl });
   return {
     async tick({ libraryId, kind }) {
       if (!allowed({ libraryId, kind })) {
@@ -54,7 +61,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       return indexPlexCardPage({ libraryId, kind, offset: 0,
         index, now, readPage, readCard });
     },
-    observeTarget(target) {
+    async observeTarget(target) {
       if (!validId(target?.anidbId) || !validId(target.episodeId) ||
           !['series', 'movie'].includes(target.kind)) {
         throw new TypeError('Invalid availability target');
@@ -63,14 +70,43 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         ? [...publicSections.episode, ...publicSections.movie]
         : publicSections.episode;
       if (publicLibraryIds.length === 0) {
-        return Promise.resolve({ state: 'unknown', reason: 'public_library_unconfigured' });
+        return { state: 'unknown', reason: 'public_library_unconfigured' };
+      }
+      let shoko;
+      if (guidProbe) {
+        try { shoko = await readShoko(target); }
+        catch { return { state: 'unknown', reason: 'observer_incomplete' }; }
+        if (shoko?.state === 'ok' && validId(shoko.shokoEpisodeId) &&
+            validId(shoko.shokoSeriesId)) {
+          const lookups = publicSections.episode.map((libraryId) => ({
+            libraryId, kind: 'episode',
+            guid: `tv.plex.agents.custom.shoko://episode/e${shoko.shokoEpisodeId}` }));
+          if (target.kind === 'movie' && shoko.tmdbMovieIds?.length === 1 &&
+              validId(shoko.tmdbMovieIds[0])) {
+            lookups.push(...publicSections.movie.map((libraryId) => ({
+              libraryId, kind: 'movie', guid: `tmdb://${shoko.tmdbMovieIds[0]}` })));
+          }
+          const cards = [];
+          for (const lookup of lookups) {
+            const found = await readPlexGuidCards({ baseUrl: plexBaseUrl,
+              token: plexToken, ...lookup, fetchImpl });
+            if (found.state !== 'cards' || found.complete !== true) break;
+            cards.push(...found.cards);
+            if (cards.length > 10) return { state: 'unknown',
+              reason: 'card_discovery_incomplete' };
+          }
+          if (cards.length > 0) {
+            const result = await observePublicTarget({ target, publicLibraryIds,
+              knownCards: cards, shokoMount, plexMount, plexMounts,
+              readShoko: async () => shoko, readPlex: readCard });
+            if (result.state === 'available') return result;
+          }
+        }
       }
       return observeIndexedTarget({ target, publicLibraryIds,
         cardIndex: index, shokoMount, plexMount, plexMounts,
-        readShoko: (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
-          apiKey: shokoApiKey, ...input, fetchImpl }),
-        readPlex: (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
-          token: plexToken, ...input, fetchImpl }) });
+        readShoko: shoko ? async () => shoko : readShoko,
+        readPlex: readCard });
     },
     close() { index.close(); },
   };

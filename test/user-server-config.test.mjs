@@ -86,6 +86,9 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.deepEqual(parsed.plex.publicSections, { episode: [102], movie: [9] });
   assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
   assert.equal(parsed.plexIndex, false);
+  assert.equal(parsed.plex.guidProbe, false);
+  assert.equal(parseUserServerConfig({ ...plex,
+    NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
   for (const change of [
     { NEGEV_PLEX_TOKEN: 'secret' },
@@ -98,4 +101,6 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     { NEGEV_PLEX_INDEX: 'yes' },
   ]) assert.throws(() => parseUserServerConfig({ ...plex, ...change }), TypeError);
   assert.throws(() => parseUserServerConfig({ ...valid, NEGEV_PLEX_INDEX: '1' }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_PLEX_GUID_PROBE: '1' }), TypeError);
 });
