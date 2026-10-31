@@ -28,7 +28,7 @@ export async function observeTorrentCompletion({
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     return readBoundedJson(response, maxChars);
   };
-  let before, files, after, filesAfter;
+  let before, beforePaths, files, after, afterPaths, filesAfter;
   try {
     const first = await read('info', 'hashes', 100_000);
     if (!Array.isArray(first) || first.length !== 1 ||
@@ -36,6 +36,7 @@ export async function observeTorrentCompletion({
       return held('torrent_unavailable');
     }
     before = first[0];
+    beforePaths = await read('properties', 'hash', 100_000);
     files = await read('files', 'hash', 2_000_000);
     const final = await read('info', 'hashes', 100_000);
     if (!Array.isArray(final) || final.length !== 1 ||
@@ -43,8 +44,21 @@ export async function observeTorrentCompletion({
       return held('torrent_changed');
     }
     after = final[0];
+    afterPaths = await read('properties', 'hash', 100_000);
     filesAfter = await read('files', 'hash', 2_000_000);
   } catch { return held('provider_unavailable'); }
+  if ([beforePaths, afterPaths].some((value) =>
+    typeof value?.save_path !== 'string' ||
+    typeof value?.download_path !== 'string')) return held('storage_path_unverified');
+  const safePath = (value) => value.save_path === expected.savePath &&
+    (value.download_path === '' || value.download_path === expected.savePath);
+  if (beforePaths?.save_path !== afterPaths?.save_path ||
+      beforePaths?.download_path !== afterPaths?.download_path) {
+    return held('storage_path_changed');
+  }
+  if (!safePath(beforePaths) || !safePath(afterPaths)) {
+    return held('incomplete_path_outside_staging');
+  }
   if (!Array.isArray(files) || !Array.isArray(filesAfter) ||
       files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
   if (before.hash !== after.hash || before.category !== after.category ||
