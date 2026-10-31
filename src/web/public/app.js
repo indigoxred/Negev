@@ -67,9 +67,37 @@ async function loadRequests(append = false) {
               candidates.append(element('p', 'No candidates returned by this search.', 'muted'));
             }
             for (const candidate of result.items) {
-              candidates.append(element('p',
+              const entry = element('div');
+              entry.append(element('p',
                 `${candidate.title} · ${Math.round(candidate.size / 1_000_000)} MB · ` +
                 `${candidate.seeders ?? '?'} seeders`));
+              const inspect = element('button', 'Inspect files');
+              const inspection = element('div');
+              inspect.addEventListener('click', async () => {
+                inspect.disabled = true;
+                inspection.replaceChildren(element('p', 'Reading torrent file list…', 'muted'));
+                try {
+                  const preview = await api(`/api/requests/${item.id}/preflight`, {
+                    method: 'POST', body: JSON.stringify({ candidate: {
+                      guid: candidate.guid, indexerId: candidate.indexerId,
+                      title: candidate.title, size: candidate.size,
+                    } }),
+                  });
+                  inspection.replaceChildren(element('p',
+                    `Torrent file list: ${preview.files.length} video file(s). ` +
+                    'Episode identities are provisional. AniDB file registration is unverified. ' +
+                    'No download has started.', 'muted'));
+                  for (const file of preview.files) {
+                    inspection.append(element('p',
+                      `${file.name} → AniDB episode ${file.episodeIds.join(', ')}`));
+                  }
+                } catch (error) {
+                  inspection.replaceChildren(element('p',
+                    `Cannot accept this file list: ${error.message}`, 'error'));
+                } finally { inspect.disabled = false; }
+              });
+              entry.append(inspect, inspection);
+              candidates.append(entry);
             }
           } catch {
             candidates.replaceChildren(element('p', 'Release search is unavailable right now.', 'muted'));

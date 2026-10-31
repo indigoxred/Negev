@@ -17,6 +17,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
   const observed = [];
   const discovered = [];
+  const previewed = [];
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
     submitRequest: async (command) => requestLedger.submit({
@@ -34,6 +35,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       return { state: 'candidates', requestId, anidbId: 1234,
         exhaustive: false, items: [{ guid: 'synthetic', indexerId: 7,
           title: 'Unverified release', size: 1000, evidence: 'unverified' }] }; },
+    previewCandidate: async ({ requestId, candidate }) => { previewed.push(requestId);
+      assert.equal(candidate.guid, 'synthetic');
+      return { state: 'preflight', requestId, anidbId: 1234,
+        torrentHash: 'a'.repeat(40), version: 'v1', totalBytes: 1000,
+        episodeIds: [1001], files: [{ name: 'Show - 01.mkv',
+          size: 1000, episodeIds: [1001] }], registeredInAniDb: false,
+        downloadStarted: false }; },
     observePublicTarget: async (target) => { observed.push(target);
       return { state: 'available', fileId: 900 }; },
   });
@@ -86,6 +94,17 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(candidates.statusCode, 200);
     assert.equal(candidates.json().items[0].evidence, 'unverified');
     assert.deepEqual(discovered, [1]);
+    const preflight = await app.inject({ method: 'POST',
+      url: '/api/requests/1/preflight', headers: { cookie, origin,
+        'x-negev-csrf': csrf }, payload: { candidate: { guid: 'synthetic',
+        indexerId: 7, title: 'Unverified release', size: 1000 } } });
+    assert.equal(preflight.statusCode, 200, preflight.body);
+    assert.equal(preflight.json().downloadStarted, false);
+    assert.deepEqual(previewed, [1]);
+    assert.equal((await app.inject({ method: 'POST',
+      url: '/api/requests/1/preflight', headers: { cookie, origin },
+      payload: { candidate: { guid: 'synthetic', indexerId: 7,
+        title: 'Unverified release', size: 1000 } } })).statusCode, 403);
     const available = await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1001/availability', headers: { cookie } });
     assert.equal(available.statusCode, 200);
@@ -133,6 +152,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/candidates', headers: { cookie: friendCookie } })).statusCode, 403);
     assert.deepEqual(discovered, [1]);
+    assert.equal((await app.inject({ method: 'POST',
+      url: '/api/requests/1/preflight', headers: { cookie: friendCookie,
+        origin, 'x-negev-csrf': friendSession.json().csrfToken },
+      payload: { candidate: { guid: 'synthetic', indexerId: 7,
+        title: 'Unverified release', size: 1000 } } })).statusCode, 403);
+    assert.deepEqual(previewed, [1]);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1001/availability',
       headers: { cookie: friendCookie } })).statusCode, 404);

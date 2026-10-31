@@ -18,7 +18,7 @@ const constantEqual = (a, b) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
-  discoverCandidates } = {}) {
+  discoverCandidates, previewCandidate } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -308,6 +308,36 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       items: result.items.map((item) => ({ guid: item.guid,
         indexerId: item.indexerId, title: item.title, size: item.size,
         seeders: item.seeders ?? null, evidence: 'unverified' })) };
+  });
+  app.post('/api/requests/:id/preflight', { preHandler: writeGuards,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 || Object.keys(request.query).length ||
+        !allowedBody(request.body, ['candidate']) ||
+        !allowedBody(request.body.candidate, ['guid', 'indexerId', 'title', 'size']) ||
+        Object.keys(request.body.candidate).length !== 4) {
+      return reply.code(400).send({ error: 'Invalid preflight' });
+    }
+    const candidate = request.body.candidate;
+    if (typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
+        !Number.isSafeInteger(candidate.indexerId) || candidate.indexerId < 1 ||
+        typeof candidate.title !== 'string' || !candidate.title.trim() ||
+        candidate.title.length > 500 || !Number.isSafeInteger(candidate.size) ||
+        candidate.size < 1) return reply.code(400).send({ error: 'Invalid preflight' });
+    if (!readRequest(id)) return reply.code(404).send({ error: 'Request not found' });
+    if (typeof previewCandidate !== 'function') {
+      return reply.code(503).send({ error: 'Preflight unavailable' });
+    }
+    const result = await previewCandidate({ requestId: id, candidate });
+    if (result?.state === 'held') return reply.code(409).send(result);
+    if (result?.state !== 'preflight' || result.requestId !== id ||
+        result.registeredInAniDb !== false || result.downloadStarted !== false ||
+        !Array.isArray(result.files) || !Array.isArray(result.episodeIds)) {
+      return reply.code(503).send({ error: 'Preflight unavailable' });
+    }
+    return result;
   });
   // A status read belongs to an existing exact request target. Keep internal
   // file IDs, mount paths and Plex rating keys out of the end-user response.

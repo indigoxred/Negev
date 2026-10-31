@@ -23,6 +23,8 @@ import { createPlexAvailabilityService } from
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
+import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
+import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
@@ -79,6 +81,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
         indexerIds: prowlarr.indexerIds, query, fetchImpl })),
     }) : undefined;
+    const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
+      previewRequestCandidate({ requestId, candidate,
+        readRequest: (id) => requests.getRequest(id),
+        loadDetail: (input) => metadata.run(() => loadDetail(input)),
+        prepare: (input) => metadata.run(() => prepareStoppedCandidate({
+          baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
+          indexerIds: prowlarr.indexerIds, ...input, fetchImpl,
+        })),
+      }) : undefined;
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
         ledger: requests, afterId, limit, today: today(),
@@ -101,7 +112,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
-      discoverCandidates,
+      discoverCandidates, previewCandidate,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?
