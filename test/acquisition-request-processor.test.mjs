@@ -108,3 +108,28 @@ test('later candidate batches can reach a fourth release without rechecking the 
   assert.deepEqual(seen, ['candidate-1', 'candidate-2',
     'candidate-3', 'candidate-4']);
 });
+
+test('an already playable first candidate does not hide a later missing episode', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-1' ? preflight : {
+        ...preflight, episodeIds: [1002],
+        files: [{ name: 'Example - 02.mkv', size: 1000, episodeIds: [1002] }],
+      };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => item.guid === 'candidate-1'
+      ? { state: 'held', reason: 'target_already_available' }
+      : { state: 'stopped_observed', attemptId: 12 },
+  });
+  assert.deepEqual(await process({ requestId: 4 }),
+    { state: 'held', reason: 'target_already_available', nextCandidateOffset: 1 });
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1 }),
+    { state: 'stopped_observed', attemptId: 12 });
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
