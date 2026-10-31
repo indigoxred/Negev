@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ed2kBuffer, ed2kFile } from '../src/identity/ed2k.mjs';
+import { createHash } from 'node:crypto';
 import { prepareHandoffBatch } from '../src/acquisition/prepare-handoff-batch.mjs';
 
 async function withRoots(run) {
@@ -76,11 +77,32 @@ test('holding inside watched Import and unsafe names hold before copying', async
     assert.deepEqual(await readdir(roots.importRoot), []);
   }));
 
-test('selected subtitles cannot be silently omitted from a prepared batch', async () =>
+test('copies a bounded verified subtitle with its video, without exposing either to Import', async () =>
   withRoots(async (roots) => {
-    assert.deepEqual(await prepareHandoffBatch({ ...roots,
-      verified: { ...verified, subtitles: [{ index: 1, name: 'Show/01.en.srt', size: 5 }] } }),
-    { state: 'held', reason: 'subtitle_handoff_not_ready' });
+    const subtitle = Buffer.from('hello');
+    const sidecar = { index: 1, name: 'Show/01.en.srt', size: subtitle.length,
+      sha256: createHash('sha256').update(subtitle).digest('hex').toUpperCase() };
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), bytes);
+    await writeFile(path.join(roots.stagingRoot, sidecar.name), subtitle);
+    const result = await prepareHandoffBatch({ ...roots,
+      verified: { ...verified, subtitles: [sidecar] } });
+    assert.equal(result.state, 'handoff_prepared');
+    assert.deepEqual(result.subtitles, [sidecar]);
+    assert.deepEqual(await readFile(path.join(result.holdingPath, sidecar.name)), subtitle);
     assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
+
+test('a changed subtitle removes the whole private copy and leaves sources intact', async () =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), bytes);
+    await writeFile(path.join(roots.stagingRoot, 'Show/01.en.srt'), 'wrong');
+    const sidecar = { index: 1, name: 'Show/01.en.srt', size: 5,
+      sha256: createHash('sha256').update('hello').digest('hex').toUpperCase() };
+    assert.deepEqual(await prepareHandoffBatch({ ...roots,
+      verified: { ...verified, subtitles: [sidecar] } }),
+    { state: 'held', reason: 'source_changed' });
     assert.deepEqual(await readdir(roots.holdingRoot), []);
+    assert.deepEqual(await readdir(roots.importRoot), []);
   }));

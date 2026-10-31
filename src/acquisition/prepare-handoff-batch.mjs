@@ -2,6 +2,7 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { ed2kFile } from '../identity/ed2k.mjs';
+import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
@@ -36,6 +37,20 @@ function validEvidence(verified, budget) {
     total += file.size;
     if (!Number.isSafeInteger(total) || total > budget) return false;
   }
+  if (verified.subtitles.length > 50) return false;
+  let subtitleBytes = 0;
+  const indexes = new Set();
+  for (const file of verified.subtitles) {
+    if (torrentFileKind(file?.name) !== 'subtitle' ||
+        names.has(file.name.toLowerCase()) ||
+        !Number.isSafeInteger(file.index) || file.index < 0 || indexes.has(file.index) ||
+        !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 16 * 1024 ** 2 ||
+        !/^[0-9A-F]{64}$/.test(file.sha256)) return false;
+    names.add(file.name.toLowerCase());
+    indexes.add(file.index);
+    subtitleBytes += file.size;
+    if (subtitleBytes > 64 * 1024 ** 2) return false;
+  }
   return true;
 }
 
@@ -56,7 +71,7 @@ async function inspectRoots(stagingRoot, holdingRoot, importRoot) {
   } catch { return null; }
 }
 
-async function copyVerifiedFile({ stagingRoot, holdingPath, file, pacer }) {
+async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer }) {
   const parts = file.name.split('/');
   let cursor = stagingRoot;
   for (const [index, part] of parts.entries()) {
@@ -104,13 +119,16 @@ async function copyVerifiedFile({ stagingRoot, holdingPath, file, pacer }) {
     if (destination) await destination.close();
     await source.close();
   }
-  const copiedHash = await ed2kFile(destinationPath, { pacer });
-  if (copiedHash.size !== file.size || copiedHash.ed2k !== file.ed2k) {
+  const copiedHash = kind === 'subtitle'
+    ? await verifyStagedSubtitle({ root: holdingPath, relativePath: file.name, readPacer: pacer })
+    : await ed2kFile(destinationPath, { pacer });
+  if (copiedHash.size !== file.size ||
+      (kind === 'subtitle' ? copiedHash.sha256 !== file.sha256 : copiedHash.ed2k !== file.ed2k)) {
     throw new Error('source_changed');
   }
 }
 
-// Copies only exact AniDB-verified videos to a private, unwatched holding root.
+// Copies exact AniDB-verified videos and bounded hashed subtitles to private holding.
 // This never publishes a file into Shoko Import or changes the source torrent.
 export async function prepareHandoffBatch({
   stagingRoot, holdingRoot, importRoot, verified,
@@ -123,7 +141,6 @@ export async function prepareHandoffBatch({
     throw new TypeError('Invalid handoff preparation configuration');
   }
   if (!validEvidence(verified, maxTotalBytes)) return held('invalid_verified_batch');
-  if (verified.subtitles.length > 0) return held('subtitle_handoff_not_ready');
   const roots = await inspectRoots(stagingRoot, holdingRoot, importRoot);
   if (!roots) return held('unsafe_handoff_roots');
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
@@ -131,10 +148,14 @@ export async function prepareHandoffBatch({
   try {
     holdingPath = await mkdtemp(path.join(holdingRoot, '.negev-prep-'));
     for (const file of verified.files) {
-      await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, pacer });
+      await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'video', pacer });
+    }
+    for (const file of verified.subtitles) {
+      await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'subtitle', pacer });
     }
     return { state: 'handoff_prepared', holdingPath,
       files: verified.files.map((file) => ({ ...file, episodeIds: [...file.episodeIds] })),
+      subtitles: verified.subtitles.map((file) => ({ ...file })),
       publishReady: false };
   } catch (error) {
     if (holdingPath) await rm(holdingPath, { recursive: true, force: true });

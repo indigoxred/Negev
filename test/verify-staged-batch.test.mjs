@@ -83,6 +83,7 @@ test('a changed selected subtitle after video hashing holds the pack', async () 
       subtitles: [{ ...subtitle, size: ++observations === 1 ? 120 : 121 }] }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
+    verifySubtitle: async () => ({ state: 'subtitle_verified', sha256: 'A'.repeat(64), size: 120 }),
     lookup: async () => null,
   });
   assert.deepEqual(result, { state: 'held', reason: 'torrent_changed_after_hash' });
@@ -94,10 +95,11 @@ test('unchanged selected subtitles are recorded in identity evidence', async () 
     observe: async () => ({ state: 'complete', files, subtitles: [subtitle] }),
     verify: async ({ relativePath }) => ({ state: 'identity_verified',
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
+    verifySubtitle: async () => ({ state: 'subtitle_verified', sha256: 'A'.repeat(64), size: 120 }),
     lookup: async () => null,
   });
   assert.equal(result.state, 'batch_identity_verified');
-  assert.deepEqual(result.subtitles, [subtitle]);
+  assert.deepEqual(result.subtitles, [{ ...subtitle, sha256: 'A'.repeat(64) }]);
 });
 
 test('synthetic staged bytes pass only through exact AniDB file identities', async () => {

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
+import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
@@ -9,12 +10,14 @@ const held = (reason) => ({ state: 'held', reason });
 // before exposing any file to Shoko; this function never moves media.
 export async function verifyStagedBatch({
   root, request, expectedTorrent, plannedFiles, observe,
-  lookup, verify = verifyStagedFile, maxTotalBytes = 64 * 1024 ** 3,
+  lookup, verify = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
+  maxTotalBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
 }) {
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       typeof observe !== 'function' || typeof lookup !== 'function' ||
-      typeof verify !== 'function' || !Number.isSafeInteger(maxTotalBytes) ||
+      typeof verify !== 'function' || typeof verifySubtitle !== 'function' ||
+      !Number.isSafeInteger(maxTotalBytes) ||
       maxTotalBytes < 1 || maxTotalBytes > 1024 ** 4) {
     throw new TypeError('Invalid staged batch configuration');
   }
@@ -58,10 +61,12 @@ export async function verifyStagedBatch({
       selected.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) {
     return held('manifest_or_budget_mismatch');
   }
-  if (!Array.isArray(subtitles) || subtitles.length > 50 || subtitles.some((file) =>
+  if (!Array.isArray(subtitles) || subtitles.length > 50 ||
+    subtitles.reduce((sum, file) => sum + (file?.size ?? 0), 0) > 64 * 1024 ** 2 ||
+    subtitles.some((file) =>
     !Number.isSafeInteger(file?.index) || file.index < 0 ||
     torrentFileKind(file.name) !== 'subtitle' ||
-    !Number.isSafeInteger(file.size) || file.size < 1) ||
+    !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 16 * 1024 ** 2) ||
     new Set([...selected, ...subtitles].map((file) => file.index)).size !==
       selected.length + subtitles.length ||
     new Set([...selected, ...subtitles].map((file) => file.name.toLowerCase())).size !==
@@ -88,6 +93,18 @@ export async function verifyStagedBatch({
       anidbFileId: result.fileId, ed2k: result.ed2k, size: result.size });
   }
 
+  const verifiedSubtitles = [];
+  for (const subtitle of subtitles) {
+    let result;
+    try {
+      result = await verifySubtitle({ root, relativePath: subtitle.name, readPacer: pacer });
+    } catch { return held('subtitle_unavailable'); }
+    if (result?.state !== 'subtitle_verified' || result.size !== subtitle.size ||
+        !/^[0-9A-F]{64}$/.test(result.sha256)) return held('subtitle_unavailable');
+    verifiedSubtitles.push({ index: subtitle.index, name: subtitle.name,
+      size: subtitle.size, sha256: result.sha256 });
+  }
+
   let final;
   try { final = await observe({ expected: expectedTorrent }); }
   catch { return held('torrent_changed_after_hash'); }
@@ -99,6 +116,6 @@ export async function verifyStagedBatch({
     return held('torrent_changed_after_hash');
   }
   return { state: 'batch_identity_verified', files: verified,
-    subtitles: subtitles.map((file) => ({ index: file.index, name: file.name, size: file.size })),
+    subtitles: verifiedSubtitles,
     handoffReady: false };
 }
