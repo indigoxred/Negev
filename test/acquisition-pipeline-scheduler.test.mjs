@@ -73,12 +73,15 @@ test('shutdown drains an active stage and never starts another stage', async () 
   assert.deepEqual(timer.delays(), []);
 });
 
-test('failed reconciliation never schedules work', async () => {
+test('held reconciliation retries without scheduling acquisition work', async () => {
   const timer = clock();
   let closed = false;
+  let attempts = 0;
   const pipeline = {
-    initialize: async () => ({ state: 'held', reason: 'reconciliation_unavailable' }),
-    tickPublish: async () => { throw new Error('must not tick'); },
+    initialize: async () => ++attempts === 1
+      ? { state: 'held', reason: 'reconciliation_unavailable' }
+      : { state: 'reconciled' },
+    tickPublish: async () => ({ state: 'idle' }),
     tickCompletions: async () => { throw new Error('must not tick'); },
     tickStarts: async () => { throw new Error('must not tick'); },
     tickRequests: async () => { throw new Error('must not tick'); },
@@ -88,9 +91,37 @@ test('failed reconciliation never schedules work', async () => {
     setTimer: timer.setTimer, clearTimer: timer.clearTimer });
   assert.deepEqual(await scheduler.start(),
     { state: 'held', reason: 'reconciliation_unavailable' });
-  assert.deepEqual(timer.delays(), []);
+  assert.equal(scheduler.getStatus().state, 'reconciliation_held');
+  assert.deepEqual(timer.delays(), [5 * 60_000]);
+  await timer.advance();
+  assert.equal(attempts, 2);
+  assert.equal(scheduler.getStatus().state, 'waiting');
+  assert.deepEqual(timer.delays(), [60_000]);
   await scheduler.stop();
   assert.equal(closed, true);
+});
+
+test('failed reconciliation retries safely and shutdown cancels that retry', async () => {
+  const timer = clock();
+  let attempts = 0;
+  let ticks = 0;
+  const pipeline = {
+    initialize: async () => { attempts++; throw new Error('database busy'); },
+    tickPublish: async () => { ticks++; },
+    tickCompletions: async () => { ticks++; },
+    tickStarts: async () => { ticks++; },
+    tickRequests: async () => { ticks++; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await assert.rejects(scheduler.start(), /database busy/);
+  assert.equal(scheduler.getStatus().state, 'reconciliation_failed');
+  assert.deepEqual(timer.delays(), [5 * 60_000]);
+  await scheduler.stop();
+  assert.deepEqual(timer.delays(), []);
+  assert.equal(attempts, 1);
+  assert.equal(ticks, 0);
 });
 
 test('a held target does not delay unrelated acquisition stages', async () => {

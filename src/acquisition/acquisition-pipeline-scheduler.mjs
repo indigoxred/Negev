@@ -55,24 +55,36 @@ export function createPipelineScheduler({ pipeline,
     // Reserve the longer backoff for an actual worker failure.
     schedule(workerFailed ? failureDelayMs : stepDelayMs);
   };
+  const scheduleRecovery = () => {
+    if (closed) return;
+    timer = setTimer(() => {
+      timer = undefined;
+      return reconcile().catch(() => {});
+    }, failureDelayMs);
+  };
+  const reconcile = () => {
+    recoveryState = 'reconciling';
+    initialization = (async () => {
+      try {
+        const result = await pipeline.initialize();
+        recoveryState = result?.state === 'reconciled'
+          ? 'waiting' : 'reconciliation_held';
+        if (result?.state === 'reconciled') schedule(initialDelayMs);
+        else scheduleRecovery();
+        return result;
+      } catch (error) {
+        recoveryState = 'reconciliation_failed';
+        scheduleRecovery();
+        throw error;
+      }
+    })();
+    return initialization;
+  };
   return {
     start() {
       if (started || closed) throw new Error('Pipeline scheduler already started or stopped');
       started = true;
-      recoveryState = 'reconciling';
-      initialization = (async () => {
-        try {
-          const result = await pipeline.initialize();
-          recoveryState = result?.state === 'reconciled'
-            ? 'waiting' : 'reconciliation_held';
-          if (result?.state === 'reconciled') schedule(initialDelayMs);
-          return result;
-        } catch (error) {
-          recoveryState = 'reconciliation_failed';
-          throw error;
-        }
-      })();
-      return initialization;
+      return reconcile();
     },
     stop() {
       if (!stopping) {
