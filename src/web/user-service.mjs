@@ -34,6 +34,7 @@ import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
   '../availability/direct-availability-queue.mjs';
 import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
 import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
+import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs';
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
@@ -198,11 +199,23 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);
+        const checkedMs = now();
+        const positivesByTitle = new Map();
         return { ...page, items: page.items.map((item) => {
           const local = progress.read(item.id);
-          const coverage = plexObserver ? directAvailability.getCoverage({
-            anidbId: item.anidbId, episodeIds: item.episodeIds,
-            nowMs: now() }) : null;
+          let coverage = null;
+          if (plexObserver) {
+            if (!positivesByTitle.has(item.anidbId)) {
+              positivesByTitle.set(item.anidbId, {
+                directIds: directAvailability.getRecentAvailableIds({
+                  anidbId: item.anidbId, nowMs: checkedMs }),
+                titleIds: titleChecks?.getRecentAvailableIds({
+                  anidbId: item.anidbId, nowMs: checkedMs }) ?? [],
+              });
+            }
+            coverage = recentPublicCoverage({ episodeIds: item.episodeIds,
+              ...positivesByTitle.get(item.anidbId) });
+          }
           return { ...item, progress: coverage?.verifiedTargets > 0
             ? { ...local, publicAvailability: 'verified_recently',
               publicVerifiedTargets: coverage.verifiedTargets }

@@ -97,6 +97,10 @@ export function openTitleCheckLedger(dbPath) {
       checked_ms<=? THEN 1 ELSE 0 END),0) AS recentAvailableCount
     FROM title_check_targets WHERE anidb_id=? AND generation=?
       AND state<>'pending'`);
+  const recentPositiveIds = db.prepare(`SELECT episode_id AS episodeId
+    FROM title_check_targets WHERE anidb_id=? AND generation=?
+      AND state='available' AND checked_ms>? AND checked_ms<=?
+    ORDER BY episode_id LIMIT 10001`);
   const validReceipt = (receipt, state) =>
     receipt?.state === state && validId(receipt.anidbId) &&
     validId(receipt.generation) && validId(receipt.version);
@@ -269,6 +273,16 @@ export function openTitleCheckLedger(dbPath) {
       return row?.state === 'available' && validTime(row.checkedMs) &&
         row.checkedMs <= nowMs && row.checkedMs + positiveLifetimeMs > nowMs
         ? { state: 'available' } : { state: 'unknown' };
+    },
+    getRecentAvailableIds({ anidbId, nowMs }) {
+      if (!validId(anidbId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid title coverage query');
+      }
+      const job = find.get(anidbId);
+      if (!job) return [];
+      const rows = recentPositiveIds.all(anidbId, job.generation,
+        nowMs - positiveLifetimeMs, nowMs);
+      return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
     },
     close() { db.close(); },
   };

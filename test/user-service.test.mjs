@@ -7,6 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 import { openShokoRecentLedger } from '../src/availability/shoko-recent-ledger.mjs';
+import { openTitleCheckLedger } from '../src/availability/title-check-ledger.mjs';
+import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
 const origin = 'http://localhost:3000';
@@ -640,5 +642,50 @@ test('opt-in title check survives the HTTP action and advances by explicit ticks
       headers: { cookie } })).json(),
     { state: 'done', generation: 1, totalCount: 1,
       checkedCount: 1, recentAvailableCount: 0 });
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('request history reflects recent title-check proof and loses it on expiry', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-progress-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  const owner = await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: owner.id, requestKey: 'film', nowMs: 900,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      monitorFuture: false, episodeIds: [1001] } });
+  requests.close();
+  const titles = openTitleCheckLedger(dbPath);
+  titles.start({ anidbId: 42, nowMs: 901 });
+  const page = titles.claimNext({ nowMs: 902 });
+  titles.recordPage({ claim: page, detail: { state: 'details',
+    anidbId: 42, kind: 'movie', page: 1, total: 1,
+    nextPage: null, episodes: [{ id: 1001 }] }, checkedMs: 903 });
+  const target = titles.claimNext({ nowMs: 904 });
+  titles.recordTarget({ claim: target, status: 'available', checkedMs: 905 });
+  titles.close();
+  let clock = 1_000;
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    titleCheck: true, now: () => clock,
+    plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+      publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+    fetchImpl: async () => { throw Error('request history must not scan Plex'); },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const read = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } })).json().items[0].progress;
+    assert.equal((await read()).publicVerifiedTargets, 1);
+    clock = 30 * 60_000 + 906;
+    assert.equal((await read()).publicAvailability, 'unverified');
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });

@@ -85,10 +85,14 @@ test('finished positive results expire without turning Unknown into Missing', as
       recentAvailableCount: 1 });
   assert.deepEqual(job.getTargetStatus({ anidbId: 42,
     episodeId: 1001, nowMs: 6 }), { state: 'available' });
+  assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42,
+    nowMs: 6 }), [1001]);
   assert.equal(job.getProgress({ anidbId: 42,
     nowMs: 30 * 60_000 + 6 }).recentAvailableCount, 0);
   assert.deepEqual(job.getTargetStatus({ anidbId: 42,
     episodeId: 1001, nowMs: 30 * 60_000 + 6 }), { state: 'unknown' });
+  assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42,
+    nowMs: 30 * 60_000 + 6 }), []);
   assert.deepEqual(job.start({ anidbId: 42, nowMs: 30 * 60_000 + 7 }),
     { state: 'queued', generation: 2 });
   job.close();

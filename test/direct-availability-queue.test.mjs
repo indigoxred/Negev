@@ -143,6 +143,10 @@ test('coverage counts only current exact positives and never counts unknown targ
     assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
       episodeIds: [1001, 1002], nowMs: 101 }),
     { verifiedTargets: 1, targetCount: 2 });
+    assert.deepEqual(ctx.queue.getRecentAvailableIds({ anidbId: 42,
+      nowMs: 101 }), [1001]);
+    assert.deepEqual(ctx.queue.getRecentAvailableIds({ anidbId: 42,
+      nowMs: 101 + 30 * 60_000 }), []);
     assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
       episodeIds: [1001, 1002], nowMs: 100 }),
     { verifiedTargets: 0, targetCount: 2 });
