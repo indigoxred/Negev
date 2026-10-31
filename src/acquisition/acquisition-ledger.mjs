@@ -48,6 +48,14 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS active_acquisition_target
       ON acquisition_target_claims(anidb_id,episode_id) WHERE active=1`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_starts (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      torrent_hash TEXT NOT NULL,
+      manifest_digest TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('start_unknown','started_observed')),
+      created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
+      updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
+    ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
@@ -66,6 +74,10 @@ export function openAcquisitionLedger(dbPath) {
   const prepare = db.prepare("UPDATE acquisition_attempts SET expected_hash=?,updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NULL");
   const begin = db.prepare("UPDATE acquisition_attempts SET status='dispatch_unknown',updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NOT NULL");
   const observe = db.prepare("UPDATE acquisition_attempts SET status='torrent_observed',torrent_hash=?,updated_ms=? WHERE id=? AND status='dispatch_unknown'");
+  const findStart = db.prepare('SELECT torrent_hash,manifest_digest,status,updated_ms FROM acquisition_starts WHERE attempt_id=?');
+  const insertStart = db.prepare(`INSERT INTO acquisition_starts
+    (attempt_id,torrent_hash,manifest_digest,status,created_ms,updated_ms)
+    VALUES (?,?,?,'start_unknown',?,?)`);
 
   function transact(action) {
     let begun = false;
@@ -158,6 +170,37 @@ export function openAcquisitionLedger(dbPath) {
         observe.run(hash.toLowerCase(), nowMs, attemptId);
         return { state: 'torrent_observed' };
       });
+    },
+    beginStart({ attemptId, hash, manifestDigest, nowMs }) {
+      if (!validId(attemptId) || typeof hash !== 'string' ||
+          !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
+          typeof manifestDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(manifestDigest) ||
+          !validTime(nowMs)) throw new TypeError('Invalid start intent');
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        const normalizedHash = hash.toLowerCase();
+        const normalizedDigest = manifestDigest.toLowerCase();
+        if (row.expected_hash && row.expected_hash !== normalizedHash) return held('torrent_conflict');
+        if (row.status !== 'torrent_observed' || row.torrent_hash !== normalizedHash) {
+          return held('torrent_not_observed');
+        }
+        const existing = findStart.get(attemptId);
+        if (existing) {
+          if (existing.torrent_hash !== normalizedHash) return held('torrent_conflict');
+          if (existing.manifest_digest !== normalizedDigest) return held('start_manifest_conflict');
+          return { state: existing.status, sendNow: false };
+        }
+        insertStart.run(attemptId, normalizedHash, normalizedDigest, nowMs, nowMs);
+        return { state: 'start_unknown', sendNow: true };
+      });
+    },
+    getStart(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
+      const row = findStart.get(attemptId);
+      return row ? { status: row.status, torrentHash: row.torrent_hash,
+        manifestDigest: row.manifest_digest } : null;
     },
     getAttempt(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');

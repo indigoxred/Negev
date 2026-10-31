@@ -48,3 +48,5 @@ Do not commit credentials, NAS configuration, database copies, logs, operational
 
 A pure staging-mount check evaluates Docker inspect `Mounts` arrays for qBittorrent, Shoko and Plex. It requires one writable `/negev-staging` bind from the configured host directory and rejects any Shoko or Plex mount that covers it. The low-level submitter also requires an exact host realpath. Neither module inspects the running NAS on its own, creates the directory, reconfigures a container or proves that supplied mount data is fresh. Live mount proof remains required before operational use.
 
+A separate low-level start gate repeats that isolation proof and the double stopped-manifest check, records one durable start intent, then sends one exact-hash `torrents/start` POST. Repeated calls cannot resend it. The result remains `start_unknown` until a later observer proves qBittorrent activity; an HTTP response is not a completed download. This gate is not connected to a route or worker, and the finished bytes still require the AniDB file check before Shoko handoff.
+

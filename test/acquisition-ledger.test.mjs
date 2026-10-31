@@ -159,3 +159,39 @@ test('an old uncertain attempt remains unsendable after the hash-column migratio
         { state: 'held', reason: 'torrent_conflict' });
     } finally { ledger.close(); }
   }));
+
+test('only an observed stopped torrent can receive one durable start intent', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    const attempt = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+    const hash = 'a'.repeat(40);
+    const manifestDigest = 'b'.repeat(64);
+    try {
+      assert.deepEqual(ledger.beginStart({ attemptId: attempt.attemptId, hash,
+        manifestDigest, nowMs: 201 }), { state: 'held', reason: 'torrent_not_observed' });
+      ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
+      ledger.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
+      ledger.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
+      assert.deepEqual(ledger.beginStart({ attemptId: attempt.attemptId, hash,
+        manifestDigest, nowMs: 204 }), { state: 'start_unknown', sendNow: true });
+      assert.deepEqual(ledger.getStart(attempt.attemptId), {
+        status: 'start_unknown', torrentHash: hash, manifestDigest,
+      });
+      assert.deepEqual(ledger.beginStart({ attemptId: attempt.attemptId, hash,
+        manifestDigest, nowMs: 205 }), { state: 'start_unknown', sendNow: false });
+      const restarted = openAcquisitionLedger(dbPath);
+      try {
+        assert.deepEqual(restarted.getStart(attempt.attemptId), {
+          status: 'start_unknown', torrentHash: hash, manifestDigest,
+        });
+        assert.deepEqual(restarted.beginStart({ attemptId: attempt.attemptId, hash,
+          manifestDigest, nowMs: 205 }), { state: 'start_unknown', sendNow: false });
+      } finally { restarted.close(); }
+      assert.deepEqual(ledger.beginStart({ attemptId: attempt.attemptId, hash,
+        manifestDigest: 'c'.repeat(64), nowMs: 206 }),
+      { state: 'held', reason: 'start_manifest_conflict' });
+      assert.deepEqual(ledger.beginStart({ attemptId: attempt.attemptId,
+        hash: 'd'.repeat(40), manifestDigest, nowMs: 207 }),
+      { state: 'held', reason: 'torrent_conflict' });
+    } finally { ledger.close(); }
+  }));
