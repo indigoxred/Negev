@@ -33,6 +33,15 @@ test('a started movie or all expected regular episodes aired is completed', () =
   ] }).state, 'completed');
 });
 
+test('a one-episode series waits for its actual episode air date', () => {
+  assert.equal(inferReleaseState({ ...base, episodeCount: 1,
+    episodes: [{ type: 'Episode', airDate: '2026-11-01' }] }).state, 'airing');
+  assert.equal(inferReleaseState({ ...base, episodeCount: 1,
+    episodes: [{ type: 'Episode', airDate: null }] }).state, 'airing');
+  assert.equal(inferReleaseState({ ...base, episodeCount: 1,
+    episodes: [{ type: 'Episode', airDate: '2026-10-30' }] }).state, 'completed');
+});
+
 test('missing start, impossible dates and contradictory date order remain unknown', () => {
   for (const input of [
     { ...base, airDate: null },
