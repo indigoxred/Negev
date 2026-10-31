@@ -179,7 +179,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             : local };
         }) };
       },
-      searchTitles: ({ query, page }) => metadata.run(async () => {
+      searchTitles: async ({ query, page }) => {
         const sourceStatus = await titleSource?.refresh();
         if (sourceStatus?.state === 'ready' || sourceStatus?.state === 'stale') {
           const result = titleSource.search({ query, page });
@@ -187,11 +187,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             ? { ...result, catalogueSource: 'anidb_dump', catalogueStale: true }
             : { ...result, catalogueSource: 'anidb_dump' };
         }
-        const result = await searchAniDbTitles({
+        const result = await metadata.run(() => searchAniDbTitles({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
-        });
+        }));
         return { ...result, catalogueSource: 'shoko_cache' };
-      }),
+      },
       loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),

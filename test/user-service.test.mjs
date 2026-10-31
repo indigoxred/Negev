@@ -88,6 +88,56 @@ test('a first-load AniDB dump failure falls back to bounded Shoko search', async
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a slow AniDB title refresh does not occupy the Shoko metadata slot', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-load-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let finishDump;
+  let dumpStarted;
+  const started = new Promise((resolve) => { dumpStarted = resolve; });
+  const pending = new Promise((resolve) => { finishDump = resolve; });
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    anidbTitleDump: true, now: () => 1_000,
+    fetchImpl: async (url) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === '/api/anime-titles.dat.gz') {
+        dumpStarted();
+        return pending;
+      }
+      if (pathname === '/api/v3/Series/AniDB/1234') return json({
+        ID: 1234, Title: 'Example Series', Type: 'TV', AirDate: '2026-01-01',
+        EndDate: null, EpisodeCount: 1, Restricted: false,
+      });
+      if (pathname.endsWith('/Episode')) return json({ Total: 1,
+        List: [{ ID: 1001, AnimeID: 1234, EpisodeNumber: 1,
+          Type: 'Episode', Title: 'First', AirDate: '2026-01-01' }] });
+      throw new Error('Unexpected provider request');
+    },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const search = service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    await started;
+    const detail = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/1234', headers: { cookie } });
+    assert.equal(detail.statusCode, 200, detail.body);
+    assert.equal(detail.json().state, 'details');
+    finishDump(new Response(gzipSync('4158|1|x-jat|Pale Cocoon\n')));
+    assert.equal((await search).statusCode, 200);
+  } finally {
+    finishDump?.(new Response(null, { status: 503 }));
+    await service.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('signed-in user searches AniDB and saves an exact held request across restart', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-service-'));
   const dbPath = path.join(dir, 'negev.sqlite');
