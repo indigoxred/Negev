@@ -109,9 +109,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     // This result is issued before any reservation or torrent dispatch. A
     // later candidate may cover another requested episode that is still
-    // missing. All uncertain outcomes retry the same selected candidate.
-    if (outcome?.state === 'held' && outcome.reason === 'target_already_available') {
-      return { ...held('target_already_available'),
+    // missing. Provider-wide uncertainty retries the same selected candidate.
+    if (outcome?.state === 'held' &&
+        (outcome.reason === 'target_already_available' ||
+          outcome.reason === 'target_not_proven_missing' &&
+          selected.preview.episodeIds.includes(outcome.episodeId))) {
+      return { ...held(outcome.reason),
         nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0 };
     }
     return held(validReason(outcome?.reason) ? outcome.reason :
