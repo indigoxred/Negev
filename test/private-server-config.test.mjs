@@ -29,3 +29,19 @@ test('missing test flag or credentials and invalid ports fail before listening',
     { ...env, NEGEV_PORT: '3000x' },
   ]) assert.throws(() => parsePrivateServerConfig(invalid), TypeError);
 });
+
+test('optional Plex discovery requires a complete explicit section allowlist', () => {
+  assert.deepEqual(parsePrivateServerConfig({ ...env,
+    NEGEV_PLEX_URL: 'http://plex.internal:32400/',
+    NEGEV_PLEX_TOKEN: 'synthetic-plex-token',
+    NEGEV_PLEX_SECTIONS: 'episode:102,episode:103,movie:9',
+  }).plexSections, { episode: [102, 103], movie: [9] });
+  for (const invalid of [
+    { NEGEV_PLEX_URL: 'http://plex.internal:32400/' },
+    { NEGEV_PLEX_URL: 'http://plex.internal:32400/', NEGEV_PLEX_TOKEN: 'token' },
+    { NEGEV_PLEX_URL: 'http://plex.internal:32400/', NEGEV_PLEX_TOKEN: 'token',
+      NEGEV_PLEX_SECTIONS: 'episode:102,episode:102' },
+    { NEGEV_PLEX_URL: 'http://plex.internal:32400/', NEGEV_PLEX_TOKEN: 'token',
+      NEGEV_PLEX_SECTIONS: 'show:102' },
+  ]) assert.throws(() => parsePrivateServerConfig({ ...env, ...invalid }), TypeError);
+});

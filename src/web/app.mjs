@@ -11,7 +11,8 @@ function hasTestToken(header, token) {
 // Private catalogue contract prototype. No accounts, download controls, or
 // production authentication are provided here.
 export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle,
-  titleRegistry, submitRequest, readRequest, searchReleases, discoverCandidates }) {
+  titleRegistry, submitRequest, readRequest, searchReleases, discoverCandidates,
+  listPlexKeys }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
   }
@@ -27,6 +28,29 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
   };
 
   app.get('/health/live', async () => ({ status: 'ok' }));
+  app.get('/api/availability/plex/keys', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const { kind, libraryId: rawLibraryId, offset: rawOffset } = request.query;
+    const libraryId = Number(rawLibraryId);
+    const offset = rawOffset === undefined ? 0 : Number(rawOffset);
+    if (Object.keys(request.query).some((key) => !['kind', 'libraryId', 'offset'].includes(key)) ||
+        !['episode', 'movie'].includes(kind) ||
+        !/^[1-9]\d*$/.test(rawLibraryId ?? '') ||
+        !Number.isSafeInteger(libraryId) ||
+        (rawOffset !== undefined && !/^(0|[1-9]\d*)$/.test(rawOffset)) ||
+        !Number.isSafeInteger(offset) || offset < 0 || offset > 100_000) {
+      return reply.code(400).send({ error: 'Invalid Plex key page' });
+    }
+    if (typeof listPlexKeys !== 'function') {
+      return reply.code(503).send({ error: 'Plex discovery unavailable' });
+    }
+    const result = await listPlexKeys({ kind, libraryId, offset });
+    if (result.state === 'page') return result;
+    if (result.reason === 'section_not_allowed') {
+      return reply.code(403).send({ error: 'Plex section not allowed' });
+    }
+    return reply.code(503).send({ error: 'Plex discovery unavailable' });
+  });
   app.get('/api/catalogue/search', { preHandler: requireTestToken }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { q, page: rawPage } = request.query;

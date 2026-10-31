@@ -46,5 +46,34 @@ export function parsePrivateServerConfig(env) {
     prowlarr = { prowlarrBaseUrl: env.NEGEV_PROWLARR_URL,
       prowlarrApiKey: env.NEGEV_PROWLARR_API_KEY, prowlarrIndexerIds: ids };
   }
-  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port, ...prowlarr };
+  const plexValues = [env.NEGEV_PLEX_URL, env.NEGEV_PLEX_TOKEN,
+    env.NEGEV_PLEX_SECTIONS];
+  let plex = {};
+  if (plexValues.some((value) => value !== undefined)) {
+    let plexUrl;
+    try { plexUrl = new URL(env.NEGEV_PLEX_URL); }
+    catch { throw new TypeError('Invalid Plex URL'); }
+    const entries = typeof env.NEGEV_PLEX_SECTIONS === 'string' &&
+      /^(episode|movie):[1-9]\d*(,(episode|movie):[1-9]\d*)*$/.test(env.NEGEV_PLEX_SECTIONS)
+      ? env.NEGEV_PLEX_SECTIONS.split(',') : [];
+    const sections = { episode: [], movie: [] };
+    for (const entry of entries) {
+      const [kind, id] = entry.split(':');
+      sections[kind].push(Number(id));
+    }
+    const ids = [...sections.episode, ...sections.movie];
+    if (!['http:', 'https:'].includes(plexUrl.protocol) || plexUrl.username ||
+        plexUrl.password || plexUrl.search || plexUrl.hash || plexUrl.pathname !== '/' ||
+        typeof env.NEGEV_PLEX_TOKEN !== 'string' || !env.NEGEV_PLEX_TOKEN ||
+        /[\r\n]/.test(env.NEGEV_PLEX_TOKEN) ||
+        ids.length === 0 || ids.length > 20 ||
+        ids.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+        new Set(ids).size !== ids.length) {
+      throw new TypeError('Invalid Plex discovery configuration');
+    }
+    plex = { plexBaseUrl: env.NEGEV_PLEX_URL,
+      plexToken: env.NEGEV_PLEX_TOKEN, plexSections: sections };
+  }
+  return { shokoBaseUrl, shokoApiKey, testToken, dataDir, host, port,
+    ...prowlarr, ...plex };
 }

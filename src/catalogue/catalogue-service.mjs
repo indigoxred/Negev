@@ -9,6 +9,7 @@ import { openRequestLedger } from '../requests/request-ledger.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { createRequestCandidateDiscovery } from '../acquisition/request-candidate-discovery.mjs';
+import { readPlexSectionKeys } from '../availability/plex-section-keys.mjs';
 
 // An injectable private prototype. No listener, account system, download
 // client or production configuration is provided here.
@@ -16,12 +17,27 @@ export function createCatalogueTestService({
   shokoBaseUrl, shokoApiKey, dbPath, testToken, fetchImpl = fetch, now = Date.now,
   today = () => new Date().toISOString().slice(0, 10),
   prowlarrBaseUrl, prowlarrApiKey, prowlarrIndexerIds,
+  plexBaseUrl, plexToken, plexSections,
 }) {
   if (typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof dbPath !== 'string' || !dbPath ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' || typeof today !== 'function') {
     throw new TypeError('Invalid private catalogue service configuration');
+  }
+  const plexConfigured = [plexBaseUrl, plexToken, plexSections]
+    .some((value) => value !== undefined);
+  const configuredPlexIds = plexSections &&
+    Array.isArray(plexSections.episode) && Array.isArray(plexSections.movie)
+    ? [...plexSections.episode, ...plexSections.movie] : [];
+  if (plexConfigured && (typeof plexBaseUrl !== 'string' || !plexBaseUrl ||
+      typeof plexToken !== 'string' || !plexToken ||
+      !plexSections || !Array.isArray(plexSections.episode) ||
+      !Array.isArray(plexSections.movie) ||
+      configuredPlexIds.length === 0 || configuredPlexIds.length > 20 ||
+      configuredPlexIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
+      new Set(configuredPlexIds).size !== configuredPlexIds.length)) {
+    throw new TypeError('Invalid private Plex discovery configuration');
   }
   const ledger = openHydrationLedger(dbPath);
   let requestLedger;
@@ -49,12 +65,22 @@ export function createCatalogueTestService({
       baseUrl: prowlarrBaseUrl, apiKey: prowlarrApiKey, indexerIds: prowlarrIndexerIds,
       query, fetchImpl,
     });
+    const listPlexKeys = !plexConfigured ? undefined : ({ kind, libraryId, offset }) => {
+      const allowed = kind === 'episode' ? plexSections.episode :
+        kind === 'movie' ? plexSections.movie : [];
+      if (!allowed.includes(libraryId)) {
+        return { state: 'held', reason: 'section_not_allowed' };
+      }
+      return readPlexSectionKeys({ baseUrl: plexBaseUrl, token: plexToken,
+        libraryId, kind, offset, fetchImpl });
+    };
     const app = buildTestApp({
       testToken, titleRegistry,
       searchTitles: ({ query, page }) => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       }),
       searchReleases,
+      listPlexKeys,
       loadDetail,
       hydrateTitle: (input) => hydrator.load(input),
       submitRequest: (input) => submitHeld({ ...input, requesterId: 1 }),
