@@ -19,7 +19,7 @@ const torrent = { hash, category: 'negev', save_path: '/negev-staging',
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
 
-async function withObservedTorrent(run) {
+async function withObservedTorrent(run, { withPlan = true } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-start-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -29,6 +29,8 @@ async function withObservedTorrent(run) {
   const attempt = ledger.reserve({ requestId: request.requestId, candidate,
     episodeIds: [1001], nowMs: 200 });
   ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
+  if (withPlan) ledger.recordFilePlan({ attemptId: attempt.attemptId, hash,
+    plannedFiles: [{ name: 'Example.mkv', size: 1000, episodeIds: [1001] }], nowMs: 201 });
   ledger.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
   ledger.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
   try { await run({ ledger, attemptId: attempt.attemptId }); }
@@ -104,6 +106,33 @@ test('a stopped torrent whose incomplete path escapes staging cannot start', asy
     assert.deepEqual(result, { state: 'held', reason: 'incomplete_path_outside_staging' });
     assert.equal(posts, 0);
   }));
+
+test('a changed video filename or size cannot start against the saved plan', async () =>
+  withObservedTorrent(async ({ ledger, attemptId }) => {
+    for (const altered of [{ ...files[0], name: 'Other.mkv' }, { ...files[0], size: 999 }]) {
+      let posts = 0;
+      const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+        fetchImpl: async (url) => {
+          const endpoint = new URL(url).pathname;
+          if (endpoint.endsWith('/start')) { posts++; throw Error('unexpected start'); }
+          if (endpoint.endsWith('/properties')) return Response.json({
+            save_path: '/negev-staging', download_path: '',
+          });
+          return Response.json(endpoint.endsWith('/files') ? [altered] : [torrent]);
+        } });
+      assert.deepEqual(result, { state: 'held', reason: 'file_plan_mismatch' });
+      assert.equal(posts, 0);
+    }
+  }));
+
+test('an older observed torrent without a durable file plan cannot start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId }) => {
+    let calls = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async () => { calls++; throw Error('unexpected API call'); } });
+    assert.deepEqual(result, { state: 'held', reason: 'file_plan_missing' });
+    assert.equal(calls, 0);
+  }, { withPlan: false }));
 
 test('a lost start response remains unknown and cannot trigger a second POST', async () =>
   withObservedTorrent(async ({ ledger, attemptId }) => {

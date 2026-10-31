@@ -22,9 +22,16 @@ export async function startStoppedCandidate({
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function' ||
-      typeof fetchImpl !== 'function' || typeof ledger?.beginStart !== 'function') {
+      typeof fetchImpl !== 'function' || typeof ledger?.beginStart !== 'function' ||
+      typeof ledger?.getAttempt !== 'function' ||
+      typeof ledger?.getFilePlan !== 'function') {
     throw new TypeError('Invalid torrent start configuration');
   }
+  const attempt = ledger.getAttempt(attemptId);
+  if (attempt?.status !== 'torrent_observed' ||
+      attempt.torrentHash !== expected.hash.toLowerCase()) return held('torrent_not_observed');
+  const plannedFiles = ledger.getFilePlan(attemptId);
+  if (!plannedFiles) return held('file_plan_missing');
   let mounts, realPath;
   try {
     mounts = await inspectMounts();
@@ -37,6 +44,11 @@ export async function startStoppedCandidate({
   const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs });
   if (manifest.state !== 'manifest_safe') return manifest;
+  const sorted = (files) => files.map((file) => [file.name, file.size])
+    .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  if (JSON.stringify(sorted(manifest.videos)) !== JSON.stringify(sorted(plannedFiles))) {
+    return held('file_plan_mismatch');
+  }
   let paths;
   try {
     const url = new URL('/api/v2/torrents/properties', base);

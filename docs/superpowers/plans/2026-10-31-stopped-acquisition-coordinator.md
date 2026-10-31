@@ -61,4 +61,15 @@
 - [x] Write and run failing restart, missing-plan/start, and changed-size tests.
 - [x] Implement the saved-ledger adapter and size comparison.
 - [x] Run focused tests; verify no hash is attempted on missing or changed evidence.
+- [x] Run full tests, publish, and verify Linux CI.
+
+### Task 4: Recheck the saved video plan before torrent start
+
+**Files:** Modify `src/acquisition/start-stopped-candidate.mjs`, `test/start-stopped-candidate.test.mjs`, and `README.md`.
+
+**Interfaces:** The existing `startStoppedCandidate` requires `ledger.getAttempt` and `ledger.getFilePlan`. It returns a hold before `beginStart` or the qBittorrent start POST when the observed stopped video manifest differs from the persisted plan.
+
+- [x] Write failing wrong-name, wrong-size, and missing-plan tests.
+- [x] Require the observed stopped torrent's selected video names and sizes to match the durable plan.
+- [x] Verify focused tests pass and no second start POST is sent.
 - [ ] Run full tests, publish, and verify Linux CI.
