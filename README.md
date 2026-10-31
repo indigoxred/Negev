@@ -2,6 +2,8 @@
 
 Negev is an early, self-hosted anime request and acquisition prototype. Its account-backed page can search AniDB titles through Shoko and record series and movie requests in a **held** state. It cannot acquire, import, or report live availability yet; the end-user pages remain an early preview.
 
+A bounded read-only Shoko AniDB relation adapter and pure franchise graph can group verified prequels, sequels, side stories, films and alternative versions transitively while leaving each AniDB installment separately requestable. Missing relation rows, unverified links and asymmetric edges hold the group rather than presenting an incomplete family as final. Shared-character and unexplained `Other` links do not merge franchises. The graph is not yet persisted, scheduled, connected to the account page, or proved against installed Shoko relation responses.
+
 An optional `NEGEV_SHOKO_EVENTS=1` account-server setting connects to Shoko's supported SignalR `file` feed. It starts disabled, requires a confirmed subscription, bounds file-ID rechecks, and records gaps for later reconciliation. Detection events have no file ID; this feed alone does not prove Plex availability or perform a full reconciliation. The installed subscription and real import timing still need a controlled test before enabling it on the NAS.
 
 An independent `NEGEV_SHOKO_INVENTORY=1` setting opts into paced read-only reconciliation: one page of 25 Shoko files per minute, a 24-hour rest after a complete pass, and a five-minute retry after an error. The SQLite cursor survives restart. Both observer flags remain off by default; the inventory records positive identities only and cannot claim a missing file was deleted. Neither observer starts downloads or reports Plex availability.

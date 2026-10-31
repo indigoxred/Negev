@@ -1,0 +1,59 @@
+const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const FAMILY_TYPES = new Set(['SameSetting', 'AlternativeSetting',
+  'AlternativeVersion', 'Prequel', 'Sequel', 'MainStory', 'SideStory',
+  'FullStory', 'Summary']);
+const NON_FAMILY_TYPES = new Set(['Other', 'SharedCharacters']);
+const held = (reason) => ({ state: 'held', reason });
+
+// Assemble only from complete, verified AniDB relation rows. Every member
+// remains its own requestable installment; this graph never merges episodes.
+export function assembleAniDbFranchise({ seedId, relationRows,
+  maxMembers = 50 } = {}) {
+  if (!validId(seedId) || !Array.isArray(relationRows) ||
+      relationRows.length > 200 || !Number.isSafeInteger(maxMembers) ||
+      maxMembers < 1 || maxMembers > 100) {
+    throw new TypeError('Invalid franchise graph input');
+  }
+  const rows = new Map();
+  for (const row of relationRows) {
+    if (!validId(row?.anidbId) || rows.has(row.anidbId) ||
+        row.state !== 'relations' || !Array.isArray(row.items) ||
+        row.items.length > 200) return held('invalid_relation_row');
+    const seen = new Set();
+    for (const item of row.items) {
+      if (!validId(item?.relatedId) || item.relatedId === row.anidbId ||
+          seen.has(item.relatedId) || typeof item.verified !== 'boolean' ||
+          !(FAMILY_TYPES.has(item.type) || NON_FAMILY_TYPES.has(item.type))) {
+        return held('invalid_relation_row');
+      }
+      seen.add(item.relatedId);
+    }
+    rows.set(row.anidbId, row.items);
+  }
+  const members = new Set([seedId]);
+  const queue = [seedId];
+  const frontier = new Set();
+  for (let cursor = 0; cursor < queue.length; cursor++) {
+    const id = queue[cursor];
+    const edges = rows.get(id);
+    if (!edges) { frontier.add(id); continue; }
+    for (const edge of edges) {
+      if (!FAMILY_TYPES.has(edge.type)) continue;
+      if (!edge.verified) return held('unverified_relation');
+      const opposite = rows.get(edge.relatedId);
+      if (opposite && !opposite.some((item) =>
+        item.relatedId === id && FAMILY_TYPES.has(item.type) && item.verified)) {
+        return held('relation_not_reciprocal');
+      }
+      if (!members.has(edge.relatedId)) {
+        members.add(edge.relatedId);
+        if (members.size > maxMembers) return held('franchise_budget_exceeded');
+        queue.push(edge.relatedId);
+      }
+    }
+  }
+  if (frontier.size) return { state: 'pending',
+    reason: 'relation_rows_missing', frontier: [...frontier].sort((a, b) => a - b) };
+  return { state: 'franchise', seedId,
+    installmentIds: [...members].sort((a, b) => a - b) };
+}
