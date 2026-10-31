@@ -48,6 +48,22 @@ test('a partial movie episode page remains unrequestable', async () => {
   assert.equal(result.requestable, false);
 });
 
+test('keeps a trailer distinct from a regular OVA episode with the same number', async () => {
+  const result = await loadAniDbDetail({ ...config, fetchImpl: async (url) =>
+    String(url).endsWith('/AniDB/1234')
+      ? { status: 200, text: async () => JSON.stringify({ ...anime, Type: 'OVA' }) }
+      : { status: 200, text: async () => JSON.stringify({ Total: 2, List: [
+        episode, { ...episode, ID: 1002, EpisodeNumber: 1, Type: 'Trailer', Title: 'Trailer' },
+      ] }) },
+  });
+  assert.equal(result.kind, 'series');
+  assert.deepEqual(result.episodes.map(({ id, number, type }) => ({ id, number, type })), [
+    { id: 1001, number: 1, type: 'Episode' },
+    { id: 1002, number: 1, type: 'Trailer' },
+  ]);
+  assert.equal(result.requestable, false);
+});
+
 test('wrong anime episode or malformed response fails closed', async () => {
   const result = await loadAniDbDetail({ ...config, fetchImpl: async (url) =>
     String(url).endsWith('/AniDB/1234')
