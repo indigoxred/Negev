@@ -132,3 +132,30 @@ test('a page fetched before a file event cannot overwrite that newer event', asy
     assert.equal(ledger.getFile(10).state, 'linked');
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('page reconciliation announces changed file identities once, not every pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-page-change-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    let item = linked;
+    let instant = 100;
+    const changes = [];
+    const worker = createShokoInventoryWorker({ ledger, now: () => instant,
+      readPage: async () => ({ state: 'page', page: 1,
+        total: 1, items: [item] }),
+      onChangedFile: (change) => changes.push(change) });
+    assert.equal((await worker.tick()).state, 'recorded');
+    instant++;
+    assert.equal((await worker.tick()).state, 'recorded');
+    item = { ...linked, updated: '2026-10-31T02:00:00Z',
+      state: 'unverified', pairs: [] };
+    instant++;
+    assert.equal((await worker.tick()).state, 'recorded');
+    assert.equal(changes.length, 2);
+    assert.equal(changes[0].before, null);
+    assert.deepEqual(changes[0].after.pairs, linked.pairs);
+    assert.deepEqual(changes[1].before.pairs, linked.pairs);
+    assert.deepEqual(changes[1].after.pairs, []);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});

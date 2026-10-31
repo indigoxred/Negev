@@ -136,12 +136,18 @@ export function parseUserServerConfig(env) {
   baseUrl(shokoBaseUrl, 'Shoko URL');
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
+      env.NEGEV_DIRECT_AVAILABILITY,
       env.NEGEV_SHOKO_HYDRATION].some((flag) =>
     flag != null && !['0', '1'].includes(flag))) {
     throw new TypeError('Invalid observer flag');
   }
   if (env.NEGEV_PLEX_INDEX === '1' && env.NEGEV_PLEX_OBSERVER !== '1') {
     throw new TypeError('Plex index needs observer configuration');
+  }
+  if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
+      (env.NEGEV_PLEX_INDEX !== '1' ||
+       (env.NEGEV_SHOKO_EVENTS !== '1' && env.NEGEV_SHOKO_INVENTORY !== '1'))) {
+    throw new TypeError('Direct availability needs Shoko discovery and Plex index');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
@@ -174,6 +180,7 @@ export function parseUserServerConfig(env) {
     shokoBaseUrl, shokoApiKeyPath,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
+    directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),
     prowlarr: prowlarrConfig(env, dataDir),

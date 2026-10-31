@@ -18,7 +18,22 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
     accounts.close();
     const digest = 'A'.repeat(32);
+    let linked = true;
     const fetchImpl = async (url) => {
+      if (url.hostname === 'shoko' && url.pathname === '/api/v3/File/51') {
+        return Response.json({ ID: 51, Updated: linked
+          ? '2026-10-31T00:00:00Z' : '2026-10-31T00:01:00Z',
+        SeriesIDs: linked ? [{ SeriesID: { AniDB: 42 },
+          EpisodeIDs: [{ AniDB: 1001 }] }] : [] });
+      }
+      if (url.hostname === 'shoko' && url.pathname === '/api/v3/Series/AniDB/42') {
+        return Response.json({ ID: 42, Title: 'Example', Type: 'TV' });
+      }
+      if (url.hostname === 'shoko' &&
+          url.pathname === '/api/v3/Series/AniDB/42/Episode') {
+        return Response.json({ Total: 1, List: [{ ID: 1001, AnimeID: 42,
+          EpisodeNumber: 1, Type: 'Episode', Title: 'One' }] });
+      }
       if (url.hostname === 'shoko' && url.pathname === '/api/v3/Series/AniDB/Search') {
         return Response.json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
       }
@@ -74,10 +89,27 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     assert.equal(search.statusCode, 200);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
       headers: { cookie } })).json().state, 'unknown');
+    assert.deepEqual(await service.refreshShokoFile(51),
+      { state: 'recorded_file', fileId: 51 });
+    assert.deepEqual(service.getDirectAvailabilityStatus({
+      anidbId: 42, episodeId: 1001 }), { state: 'unknown' });
     assert.equal((await service.tickPublicPlexPage({ libraryId: 102,
       kind: 'episode' })).state, 'page_indexed');
+    assert.deepEqual(await service.tickDirectAvailability(), {
+      state: 'checked', target: { anidbId: 42, episodeId: 1001 },
+      result: 'available' });
+    assert.equal(service.getDirectAvailabilityStatus({
+      anidbId: 42, episodeId: 1001 }).state, 'available');
+    linked = false;
+    assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
+    assert.deepEqual(service.getDirectAvailabilityStatus({
+      anidbId: 42, episodeId: 1001 }), { state: 'unknown' });
+    assert.deepEqual(await service.tickDirectAvailability(), {
+      state: 'checked', target: { anidbId: 42, episodeId: 1001 },
+      result: 'unknown' });
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
-      headers: { cookie } })).json(), { state: 'available' });
+      headers: { cookie } })).json(), { state: 'unknown',
+      reason: 'evidence_incomplete' });
   } finally {
     await service?.close();
     await rm(root, { recursive: true, force: true });

@@ -155,9 +155,11 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
 
 // One explicitly called tick reads at most one bounded Shoko page. There is
 // no timer and no acquisition or Plex status side effect.
-export function createShokoInventoryWorker({ ledger, readPage, now = Date.now } = {}) {
+export function createShokoInventoryWorker({ ledger, readPage, now = Date.now,
+  onChangedFile } = {}) {
   if (typeof ledger?.getCursor !== 'function' || typeof ledger?.recordPage !== 'function' ||
-      typeof readPage !== 'function' || typeof now !== 'function') {
+      typeof readPage !== 'function' || typeof now !== 'function' ||
+      (onChangedFile !== undefined && typeof onChangedFile !== 'function')) {
     throw new TypeError('Invalid Shoko inventory worker');
   }
   return {
@@ -170,7 +172,22 @@ export function createShokoInventoryWorker({ ledger, readPage, now = Date.now } 
       try { result = await readPage({ page: expected.page, pageSize: expected.pageSize }); }
       catch { return held('file_page_unavailable'); }
       if (result?.state !== 'page') return held('file_page_unavailable');
-      return ledger.recordPage({ expected, result, observedMs });
+      const previous = onChangedFile ? result.items.map((item) =>
+        ledger.getFile(item.fileId)) : [];
+      const saved = ledger.recordPage({ expected, result, observedMs });
+      if (saved.state === 'recorded' && onChangedFile) {
+        for (let i = 0; i < result.items.length; i++) {
+          const item = result.items[i];
+          const current = ledger.getFile(item.fileId);
+          if (current?.observedMs === observedMs &&
+              (previous[i]?.updated !== current.updated ||
+               previous[i]?.state !== current.state ||
+               JSON.stringify(previous[i]?.pairs) !== JSON.stringify(current.pairs))) {
+            onChangedFile({ before: previous[i], after: current, observedMs });
+          }
+        }
+      }
+      return saved;
     },
   };
 }

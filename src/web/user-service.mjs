@@ -23,6 +23,8 @@ import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
 import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
+import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
+  '../availability/direct-availability-queue.mjs';
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
@@ -53,6 +55,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let progress;
   let hydration;
   let inventory;
+  let directAvailability;
   let plexObserver;
   try {
     accounts = openAccountLedger(dbPath, { now });
@@ -62,10 +65,23 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     progress = openRequestProgress(dbPath);
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
+    directAvailability = openDirectAvailabilityQueue(dbPath);
     const metadata = createMetadataLimiter();
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
+    const enqueueChangedFile = ({ before, after, observedMs }) => {
+      const pairs = new Map();
+      for (const pair of [...(before?.pairs ?? []), ...(after?.pairs ?? [])]) {
+        pairs.set(`${pair.anidbId}:${pair.episodeId}`, pair);
+      }
+      for (const pair of pairs.values()) {
+        const previous = directAvailability.getObservation(pair);
+        directAvailability.enqueue({ ...pair,
+          observedMs: Math.max(observedMs, (previous?.observedMs ?? -1) + 1) });
+      }
+    };
     const inventoryWorker = createShokoInventoryWorker({ ledger: inventory, now,
+      onChangedFile: enqueueChangedFile,
       readPage: (input) => metadata.run(() => readShokoFilePage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })) });
@@ -73,6 +89,24 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
+    const observeCurrentPublic = (target) => {
+      if (directAvailability.getObservation(target) &&
+          inventory.getObservedFileIds(target).length === 0) {
+        return Promise.resolve({ state: 'unknown', reason: 'shoko_identity_changed' });
+      }
+      return metadata.run(() => plexObserver.observeTarget(target));
+    };
+    const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
+      now, observeTarget: async (target) => {
+        if (!plexObserver) return { state: 'unknown' };
+        if (inventory.getObservedFileIds(target).length === 0) {
+          return { state: 'unknown' };
+        }
+        const detail = await metadata.run(() => loadDetail({
+          anidbId: target.anidbId, page: 1 }));
+        if (detail?.state !== 'details') return { state: 'unknown' };
+        return observeCurrentPublic({ ...target, kind: detail.kind });
+      } });
     const hydrator = createCatalogueHydrator({
       isKnownTitle: (input) => titleRegistry.isKnownTitle(input),
       loadDetail, ledger: hydration, now,
@@ -130,7 +164,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?
-        metadata.run(() => plexObserver.observeTarget(target)) :
+        observeCurrentPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
     });
     const observations = new Set();
@@ -147,11 +181,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
       }
       return track((async () => {
+        const before = inventory.getFile(fileId);
         const result = await metadata.run(() => readShokoOneFile({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
         }));
         if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
-        return inventory.recordFileObservation({ item: result.item, observedMs: now() });
+        const observedMs = now();
+        const saved = inventory.recordFileObservation({ item: result.item, observedMs });
+        const after = inventory.getFile(fileId);
+        if (saved.state === 'recorded_file' && after?.observedMs === observedMs &&
+            (before?.updated !== after.updated || before?.state !== after.state ||
+             JSON.stringify(before?.pairs) !== JSON.stringify(after.pairs))) {
+          enqueueChangedFile({ before, after, observedMs });
+        }
+        return saved;
       })());
     };
     const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile });
@@ -164,6 +207,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(inventoryWorker.tick());
       },
+      tickDirectAvailability: () => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        if (!plexObserver) return Promise.resolve({ state: 'held',
+          reason: 'observer_not_configured' });
+        return track(directWorker.runOnce());
+      },
+      getDirectAvailabilityStatus: (target) => directAvailability.getStatus({
+        ...target, nowMs: now() }),
       tickPublicPlexPage: (input) => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         if (!plexObserver) return Promise.resolve({ state: 'held',
@@ -181,7 +232,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           reason: 'service_stopping' });
         if (!plexObserver) return Promise.resolve({ state: 'unknown',
           reason: 'observer_not_configured' });
-        return track(metadata.run(() => plexObserver.observeTarget(target)));
+        return track(observeCurrentPublic(target));
       },
       refreshShokoFile,
       acceptShokoEvent: (target, args) => eventConsumer.accept(target, args),
@@ -197,6 +248,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
               plexObserver?.close();
+              directAvailability.close();
               inventory.close(); hydration.close(); progress.close();
               handoffs.close(); acquisitions.close(); requests.close(); accounts.close();
             }
@@ -205,7 +257,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); inventory?.close(); hydration?.close();
+    plexObserver?.close(); directAvailability?.close(); inventory?.close(); hydration?.close();
     progress?.close(); handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();
     throw error;

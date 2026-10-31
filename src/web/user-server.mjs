@@ -8,12 +8,15 @@ import { createShokoInventoryScheduler } from
   '../availability/shoko-inventory-scheduler.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
 import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
+import { createDirectAvailabilityScheduler } from
+  '../availability/direct-availability-scheduler.mjs';
 
 let service;
 let shokoFeed;
 let shokoInventory;
 let airingScheduler;
 let plexScheduler;
+let directAvailabilityScheduler;
 try {
   const config = parseUserServerConfig(process.env);
   const store = await openUserStore({ dataDir: config.dataDir });
@@ -55,6 +58,11 @@ try {
     });
     plexScheduler.start();
   }
+  if (config.directAvailability) {
+    directAvailabilityScheduler = createDirectAvailabilityScheduler({
+      runOnce: service.tickDirectAvailability });
+    directAvailabilityScheduler.start();
+  }
   process.stdout.write(`Negev user API listening on ${config.host}:${config.port}\n`);
   let stopping = false;
   const stop = async () => {
@@ -63,6 +71,7 @@ try {
     try {
       await airingScheduler?.stop();
       await plexScheduler?.close();
+      await directAvailabilityScheduler?.close();
       await shokoInventory?.close();
       await shokoFeed?.close();
     }
@@ -74,6 +83,7 @@ try {
   try {
     await airingScheduler?.stop();
     await plexScheduler?.close();
+    await directAvailabilityScheduler?.close();
     await shokoInventory?.close();
     await shokoFeed?.close();
   }
