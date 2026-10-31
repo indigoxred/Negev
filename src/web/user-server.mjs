@@ -6,11 +6,13 @@ import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
 import { createShokoInventoryScheduler } from
   '../availability/shoko-inventory-scheduler.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
+import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
 
 let service;
 let shokoFeed;
 let shokoInventory;
 let airingScheduler;
+let plexScheduler;
 try {
   const config = parseUserServerConfig(process.env);
   const store = await openUserStore({ dataDir: config.dataDir });
@@ -40,6 +42,14 @@ try {
       pageDelayMs: 60_000 });
     airingScheduler.start();
   }
+  if (config.plexIndex) {
+    plexScheduler = createPlexIndexScheduler({
+      sections: config.plex.publicSections,
+      tickPage: service.tickPublicPlexPage,
+      tickRecent: service.tickPublicPlexRecent,
+    });
+    plexScheduler.start();
+  }
   process.stdout.write(`Negev user API listening on ${config.host}:${config.port}\n`);
   let stopping = false;
   const stop = async () => {
@@ -47,6 +57,7 @@ try {
     stopping = true;
     try {
       await airingScheduler?.stop();
+      await plexScheduler?.close();
       await shokoInventory?.close();
       await shokoFeed?.close();
     }
@@ -57,6 +68,7 @@ try {
 } catch (error) {
   try {
     await airingScheduler?.stop();
+    await plexScheduler?.close();
     await shokoInventory?.close();
     await shokoFeed?.close();
   }

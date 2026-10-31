@@ -119,6 +119,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           reason: 'observer_not_configured' });
         return track(metadata.run(() => plexObserver.tick(input)));
       },
+      tickPublicPlexRecent: (input) => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        if (!plexObserver) return Promise.resolve({ state: 'held',
+          reason: 'observer_not_configured' });
+        return track(metadata.run(() => plexObserver.scanRecent(input)));
+      },
       observePublicTarget: (target) => {
         if (stopping) return Promise.resolve({ state: 'unknown',
           reason: 'service_stopping' });

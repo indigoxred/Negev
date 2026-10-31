@@ -32,7 +32,7 @@ test('a final short page wraps but never claims a complete Plex catalogue', asyn
   assert.deepEqual(result, { state: 'page_indexed', processed: 1, nextOffset: 0 });
 });
 
-test('card outage holds the page so a later tick can retry it', async () => {
+test('card outage skips one card while later pages remain reachable', async () => {
   const recorded = [];
   const result = await indexPlexCardPage({ libraryId: 102, kind: 'episode',
     offset: 0, pageSize: 2, now: () => 50,
@@ -41,7 +41,8 @@ test('card outage holds the page so a later tick can retry it', async () => {
     readCard: async ({ ratingKey }) => ratingKey === 500 ? card(500) :
       { state: 'unavailable' },
     index: { recordCard: (input) => { recorded.push(input); return { state: 'recorded_card' }; } } });
-  assert.deepEqual(result, { state: 'held', reason: 'card_unavailable' });
+  assert.deepEqual(result, { state: 'page_indexed', processed: 1,
+    skipped: 1, nextOffset: 2 });
   assert.deepEqual(recorded.map((row) => row.ratingKey), [500]);
 });
 
@@ -57,7 +58,7 @@ test('malformed key page does not record or advance', async () => {
   assert.equal(cardReads, 0);
 });
 
-test('page worker advances only after every card was indexed', async () => {
+test('page worker advances after a skipped card and later pages remain reachable', async () => {
   let offset = 0;
   let failSecond = true;
   const index = {
@@ -76,13 +77,14 @@ test('page worker advances only after every card was indexed', async () => {
       keys: current === 0 ? [500, 501] : [502, 503], complete: false }),
     readCard: async ({ ratingKey }) => ratingKey === 501 && failSecond
       ? { state: 'unavailable' } : card(ratingKey) });
-  assert.deepEqual(await worker.tick(), { state: 'held', reason: 'card_unavailable' });
-  assert.equal(offset, 0);
-  failSecond = false;
-  assert.deepEqual(await worker.tick(), { state: 'page_indexed', processed: 2,
-    nextOffset: 2 });
+  assert.deepEqual(await worker.tick(), { state: 'page_indexed', processed: 1,
+    skipped: 1, nextOffset: 2 });
   assert.equal(offset, 2);
+  failSecond = false;
   assert.deepEqual(await worker.tick(), { state: 'page_indexed', processed: 2,
     nextOffset: 0 });
   assert.equal(offset, 0);
+  assert.deepEqual(await worker.tick(), { state: 'page_indexed', processed: 2,
+    nextOffset: 2 });
+  assert.equal(offset, 2);
 });

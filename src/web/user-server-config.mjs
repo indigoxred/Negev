@@ -95,9 +95,12 @@ export function parseUserServerConfig(env) {
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
-      env.NEGEV_AIRING_WATCH].some((flag) =>
+      env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX].some((flag) =>
     flag != null && !['0', '1'].includes(flag))) {
-    throw new TypeError('Invalid Shoko observer flag');
+    throw new TypeError('Invalid observer flag');
+  }
+  if (env.NEGEV_PLEX_INDEX === '1' && env.NEGEV_PLEX_OBSERVER !== '1') {
+    throw new TypeError('Plex index needs observer configuration');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
@@ -130,6 +133,7 @@ export function parseUserServerConfig(env) {
     shokoBaseUrl, shokoApiKeyPath,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
-    airingWatch, timeZone, plex: plexConfig(env, dataDir), publicOrigin,
+    airingWatch, timeZone, plex: plexConfig(env, dataDir),
+    plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,
     secureCookies: exposed, host, port };
 }

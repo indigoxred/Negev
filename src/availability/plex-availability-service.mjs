@@ -2,7 +2,7 @@ import { readShokoEpisodeFiles } from './shoko-episode-files.mjs';
 import { readPlexSectionKeys } from './plex-section-keys.mjs';
 import { readPlexItemParts } from './plex-item-parts.mjs';
 import { openPlexCardIndex } from './plex-card-index.mjs';
-import { createPlexCardPageWorker } from './plex-card-page-worker.mjs';
+import { createPlexCardPageWorker, indexPlexCardPage } from './plex-card-page-worker.mjs';
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -28,18 +28,27 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     throw new TypeError('Invalid Plex availability service');
   }
   const index = openPlexCardIndex(dbPath);
+  const allowed = ({ libraryId, kind }) =>
+    ['episode', 'movie'].includes(kind) && publicSections[kind].includes(libraryId);
+  const readPage = (input) => readPlexSectionKeys({ baseUrl: plexBaseUrl,
+    token: plexToken, ...input, fetchImpl });
+  const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
+    token: plexToken, ...input, fetchImpl });
   return {
     tick({ libraryId, kind }) {
-      if (!['episode', 'movie'].includes(kind) ||
-          !publicSections[kind].includes(libraryId)) {
+      if (!allowed({ libraryId, kind })) {
         return Promise.resolve({ state: 'held', reason: 'library_not_allowed' });
       }
       const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
-        readPage: (input) => readPlexSectionKeys({ baseUrl: plexBaseUrl,
-          token: plexToken, ...input, fetchImpl }),
-        readCard: (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
-          token: plexToken, ...input, fetchImpl }) });
+        readPage, readCard });
       return worker.tick();
+    },
+    scanRecent({ libraryId, kind }) {
+      if (!allowed({ libraryId, kind })) {
+        return Promise.resolve({ state: 'held', reason: 'library_not_allowed' });
+      }
+      return indexPlexCardPage({ libraryId, kind, offset: 0,
+        index, now, readPage, readCard });
     },
     observeTarget(target) {
       if (!validId(target?.anidbId) || !validId(target.episodeId) ||

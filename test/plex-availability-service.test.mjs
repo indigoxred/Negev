@@ -74,7 +74,9 @@ test('a direct Shoko import becomes Available only after public Plex card discov
     { state: 'available', fileId: 51 });
   assert.deepEqual(await service.observeTarget({ ...target, kind: 'movie' }),
     { state: 'available', fileId: 51 });
-  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 3);
+  assert.deepEqual(await service.scanRecent({ libraryId: 102, kind: 'episode' }),
+    { state: 'page_indexed', processed: 1, nextOffset: 0 });
+  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 4);
   service.close();
 });
 
@@ -82,6 +84,8 @@ test('unlisted private library cannot be scanned by the public observer', async 
   const { config, calls } = await fixture();
   const service = createPlexAvailabilityService(config);
   assert.deepEqual(await service.tick({ libraryId: 103, kind: 'episode' }),
+    { state: 'held', reason: 'library_not_allowed' });
+  assert.deepEqual(await service.scanRecent({ libraryId: 103, kind: 'episode' }),
     { state: 'held', reason: 'library_not_allowed' });
   assert.deepEqual(calls, []);
   service.close();

@@ -28,27 +28,31 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
           page.totalSize < offset + page.keys.length))) {
     return held('key_page_unavailable');
   }
+  let processed = 0;
+  let skipped = 0;
   for (const ratingKey of page.keys) {
     let card;
     try { card = await readCard({ libraryId, ratingKey,
       expectedType: kind }); }
-    catch { return held('card_unavailable'); }
+    catch { skipped++; continue; }
     if (card?.state !== 'ok' || card.complete !== true ||
         !Array.isArray(card.parts) || card.parts.length < 1) {
-      return held('card_unavailable');
+      skipped++; continue;
     }
     try {
       const saved = index.recordCard({ libraryId, ratingKey, kind,
         parts: card.parts, observedMs });
       if (!['recorded_card', 'stale_card'].includes(saved?.state)) {
-        return held('card_record_unavailable');
+        skipped++; continue;
       }
-    } catch { return held('card_record_unavailable'); }
+      processed++;
+    } catch { skipped++; }
   }
   const nextOffset = page.keys.length < pageSize ||
     (page.totalSize !== null && offset + page.keys.length >= page.totalSize)
     ? 0 : offset + page.keys.length;
-  return { state: 'page_indexed', processed: page.keys.length, nextOffset };
+  return { state: 'page_indexed', processed,
+    ...(skipped ? { skipped } : {}), nextOffset };
 }
 
 export function createPlexCardPageWorker({ libraryId, kind, pageSize = 5,

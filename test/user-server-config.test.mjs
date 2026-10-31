@@ -80,6 +80,8 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parsed.plex.plexTokenPath, plex.NEGEV_PLEX_TOKEN_FILE);
   assert.deepEqual(parsed.plex.publicSections, { episode: [102], movie: [9] });
   assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
+  assert.equal(parsed.plexIndex, false);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
   for (const change of [
     { NEGEV_PLEX_TOKEN: 'secret' },
     { NEGEV_PLEX_TOKEN_FILE: path.join(dataDir, 'secrets', 'shoko.token') },
@@ -88,5 +90,7 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     { NEGEV_PLEX_MEDIA_MOUNTS: JSON.stringify([{ appRoot: '/',
       localRoot: dataDir }]) },
     { NEGEV_PLEX_OBSERVER: '0' },
+    { NEGEV_PLEX_INDEX: 'yes' },
   ]) assert.throws(() => parseUserServerConfig({ ...plex, ...change }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid, NEGEV_PLEX_INDEX: '1' }), TypeError);
 });
