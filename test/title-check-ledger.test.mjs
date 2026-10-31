@@ -199,3 +199,17 @@ test('a Shoko file change withdraws its recent positive and rechecks it', async 
   assert.equal(job.claimNext({ nowMs: 7 }).episodeId, 1001);
   job.close();
 });
+
+test('a change in the same clock millisecond cannot leave a positive visible', async () => {
+  const { job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const page = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: page, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const target = job.claimNext({ nowMs: 4 });
+  job.recordTarget({ claim: target, status: 'available', checkedMs: 5 });
+  assert.deepEqual(job.invalidateTarget({ anidbId: 42,
+    episodeId: 1001, observedMs: 5 }), { state: 'queued' });
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 5 }), { state: 'unknown' });
+  job.close();
+});

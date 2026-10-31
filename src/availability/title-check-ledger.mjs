@@ -261,11 +261,11 @@ export function openTitleCheckLedger(dbPath) {
         const job = find.get(anidbId);
         if (!job) return { state: 'unchanged' };
         const proof = proofStatus.get(anidbId, episodeId);
-        const proofWithdrawn = proof && proof.checkedMs < observedMs &&
+        const proofWithdrawn = proof && proof.checkedMs <= observedMs &&
           removeProof.run(anidbId, episodeId, observedMs).changes === 1;
         const target = targetStatus.get(anidbId, job.generation, episodeId);
         if (!target || target.state === 'pending' ||
-            !validTime(target.checkedMs) || target.checkedMs >= observedMs) {
+            !validTime(target.checkedMs) || target.checkedMs > observedMs) {
           return { state: proofWithdrawn ? 'queued' : 'unchanged' };
         }
         resetTarget.run(anidbId, job.generation, episodeId);
