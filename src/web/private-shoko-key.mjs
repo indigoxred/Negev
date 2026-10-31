@@ -2,9 +2,9 @@ import { constants } from 'node:fs';
 import { lstat, open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
-// Keep service credentials out of Docker inspect and logs. Only two fixed
+// Keep service credentials out of Docker inspect and logs. Only fixed
 // filenames under the private data directory are accepted.
-async function readPrivateKey({ dataDir, keyPath, filename } = {}) {
+async function readPrivateKey({ dataDir, keyPath, filename, password = false } = {}) {
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir) ||
       typeof keyPath !== 'string' ||
       keyPath !== path.join(dataDir, 'secrets', filename)) {
@@ -36,13 +36,15 @@ async function readPrivateKey({ dataDir, keyPath, filename } = {}) {
         current.ino !== file.ino || current.size !== file.size) {
       throw new TypeError('Private key file changed');
     }
-    const key = (await handle.readFile({ encoding: 'utf8' })).trim();
+    const raw = await handle.readFile({ encoding: 'utf8' });
+    const key = password ? raw.replace(/\r?\n$/, '') : raw.trim();
     const after = await handle.stat({ bigint: true });
     if (after.dev !== current.dev || after.ino !== current.ino ||
         after.size !== current.size || after.mtimeNs !== current.mtimeNs) {
       throw new TypeError('Private key file changed');
     }
-    if (key.length < 1 || key.length > 512 || /[\s\x00-\x1f]/.test(key)) {
+    if (key.length < 1 || key.length > 512 ||
+        (password ? /[\x00-\x1f\x7f]/.test(key) : /[\s\x00-\x1f]/.test(key))) {
       throw new TypeError('Invalid private key');
     }
     return key;
@@ -57,3 +59,6 @@ export const readPrivatePlexToken = ({ dataDir, keyPath } = {}) =>
 
 export const readPrivateProwlarrKey = ({ dataDir, keyPath } = {}) =>
   readPrivateKey({ dataDir, keyPath, filename: 'prowlarr.token' });
+
+export const readPrivateQbittorrentPassword = ({ dataDir, keyPath } = {}) =>
+  readPrivateKey({ dataDir, keyPath, filename: 'qbittorrent.password', password: true });

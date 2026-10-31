@@ -3,7 +3,7 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readPrivatePlexToken, readPrivateProwlarrKey,
+import { readPrivatePlexToken, readPrivateProwlarrKey, readPrivateQbittorrentPassword,
   readPrivateShokoKey } from '../src/web/private-shoko-key.mjs';
 
 test('account server reads a restricted Shoko token file without using Docker env secrets', async () => {
@@ -26,6 +26,22 @@ test('account server reads a restricted Shoko token file without using Docker en
       await symlink(path.join(dataDir, 'session.key'), keyPath);
       await assert.rejects(readPrivateShokoKey({ dataDir, keyPath }), TypeError);
     }
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test('qBittorrent password retains spaces and stays in its restricted file', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-qbit-key-'));
+  try {
+    const secretDir = path.join(dataDir, 'secrets');
+    await mkdir(secretDir, { mode: 0o700 });
+    const keyPath = path.join(secretDir, 'qbittorrent.password');
+    await writeFile(keyPath, ' synthetic phrase with spaces \n', { mode: 0o600 });
+    assert.equal(await readPrivateQbittorrentPassword({ dataDir, keyPath }),
+      ' synthetic phrase with spaces ');
+    await writeFile(keyPath, 'bad\nsecond line', { mode: 0o600 });
+    await assert.rejects(readPrivateQbittorrentPassword({ dataDir, keyPath }), TypeError);
+    await assert.rejects(readPrivateQbittorrentPassword({ dataDir,
+      keyPath: path.join(secretDir, 'shoko.token') }), TypeError);
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 
