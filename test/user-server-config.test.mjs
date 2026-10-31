@@ -65,3 +65,28 @@ test('Airing date uses the configured local calendar day', () => {
   assert.equal(dateInZone('Australia/Sydney', moment), '2026-11-01');
   assert.equal(dateInZone('UTC', moment), '2026-10-31');
 });
+
+test('opt-in Plex observer requires scoped public sections, mounts and a private token file', () => {
+  const plex = { ...valid, NEGEV_PLEX_OBSERVER: '1',
+    NEGEV_PLEX_URL: 'http://plex.internal:32400',
+    NEGEV_PLEX_TOKEN_FILE: path.join(dataDir, 'secrets', 'plex.token'),
+    NEGEV_PLEX_SECTIONS: JSON.stringify({ episode: [102], movie: [9] }),
+    NEGEV_SHOKO_MEDIA_MOUNT: JSON.stringify({ appRoot: '/pure',
+      localRoot: path.join(dataDir, 'media') }),
+    NEGEV_PLEX_MEDIA_MOUNTS: JSON.stringify([{ appRoot: '/source-pure',
+      localRoot: path.join(dataDir, 'media') }]) };
+  const parsed = parseUserServerConfig(plex);
+  assert.equal(parsed.plex.plexBaseUrl, plex.NEGEV_PLEX_URL);
+  assert.equal(parsed.plex.plexTokenPath, plex.NEGEV_PLEX_TOKEN_FILE);
+  assert.deepEqual(parsed.plex.publicSections, { episode: [102], movie: [9] });
+  assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
+  for (const change of [
+    { NEGEV_PLEX_TOKEN: 'secret' },
+    { NEGEV_PLEX_TOKEN_FILE: path.join(dataDir, 'secrets', 'shoko.token') },
+    { NEGEV_PLEX_SECTIONS: '{bad' },
+    { NEGEV_PLEX_SECTIONS: JSON.stringify({ episode: [102], movie: [102] }) },
+    { NEGEV_PLEX_MEDIA_MOUNTS: JSON.stringify([{ appRoot: '/',
+      localRoot: dataDir }]) },
+    { NEGEV_PLEX_OBSERVER: '0' },
+  ]) assert.throws(() => parseUserServerConfig({ ...plex, ...change }), TypeError);
+});

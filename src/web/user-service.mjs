@@ -17,11 +17,13 @@ import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
 import { createShokoEventConsumer } from '../availability/shoko-event-consumer.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
+import { createPlexAvailabilityService } from
+  '../availability/plex-availability-service.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
-  sessionKey, publicOrigin, secureCookies = true, fetchImpl = fetch,
+  sessionKey, publicOrigin, secureCookies = true, plex = null, fetchImpl = fetch,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
@@ -32,12 +34,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let requests;
   let hydration;
   let inventory;
+  let plexObserver;
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     const metadata = createMetadataLimiter();
+    if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
+      shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
     const inventoryWorker = createShokoInventoryWorker({ ledger: inventory, now,
       readPage: (input) => metadata.run(() => readShokoFilePage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
@@ -108,6 +113,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(inventoryWorker.tick());
       },
+      tickPublicPlexPage: (input) => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        if (!plexObserver) return Promise.resolve({ state: 'held',
+          reason: 'observer_not_configured' });
+        return track(metadata.run(() => plexObserver.tick(input)));
+      },
+      observePublicTarget: (target) => {
+        if (stopping) return Promise.resolve({ state: 'unknown',
+          reason: 'service_stopping' });
+        if (!plexObserver) return Promise.resolve({ state: 'unknown',
+          reason: 'observer_not_configured' });
+        return track(metadata.run(() => plexObserver.observeTarget(target)));
+      },
       refreshShokoFile,
       acceptShokoEvent: (target, args) => eventConsumer.accept(target, args),
       flagShokoReconciliation: (reason) => eventConsumer.flagReconciliation(reason),
@@ -121,6 +139,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             finally {
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
+              plexObserver?.close();
               inventory.close(); hydration.close(); requests.close(); accounts.close();
             }
           })();
@@ -128,7 +147,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return stopPromise;
       } };
   } catch (error) {
-    inventory?.close(); hydration?.close(); requests?.close(); accounts?.close();
+    plexObserver?.close(); inventory?.close(); hydration?.close();
+    requests?.close(); accounts?.close();
     throw error;
   }
 }

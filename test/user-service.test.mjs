@@ -239,3 +239,29 @@ test('service shutdown drains an in-flight inventory page before closing SQLite'
     assert.equal(closed, true);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('optional public Plex observer stays inert until an explicit account-service tick', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-plex-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let calls = 0;
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+      publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+    fetchImpl: async () => { calls++; return new Response(null, { status: 503 }); } });
+  try {
+    assert.equal(calls, 0);
+    assert.deepEqual(await service.tickPublicPlexPage({ libraryId: 103, kind: 'episode' }),
+      { state: 'held', reason: 'library_not_allowed' });
+    assert.equal(calls, 0);
+    assert.deepEqual(await service.tickPublicPlexPage({ libraryId: 102, kind: 'episode' }),
+      { state: 'held', reason: 'key_page_unavailable' });
+    assert.equal(calls, 1);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
