@@ -162,8 +162,9 @@ export function openHandoffLedger(dbPath) {
         return { state: row.status, publishName: row.publish_name, sendNow: false };
       });
     },
-    // Caller must first prove the exact published directory and file identities.
-    // This state records watched-folder exposure, not Shoko import or playback.
+    // Caller must first prove the exact pre-rename bytes and a successful
+    // watched-folder rename, or reconcile an unknown outcome by proving the
+    // exact published directory. This records exposure, not Shoko import or playback.
     markPublishedObserved({ attemptId, evidenceDigest, publishName, nowMs }) {
       if (!validId(attemptId) || !validDigest(evidenceDigest) ||
           typeof publishName !== 'string' || !/^negev-[1-9]\d*-[0-9a-f]{16}$/.test(publishName) ||

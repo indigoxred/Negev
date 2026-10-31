@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -137,7 +137,22 @@ test('a failed durable observation stays unknown after exact bytes are checked',
     assert.equal(sample.getBegins(), 1);
   }));
 
-test('one final exact check exposes a complete directory, then observes it on retry',
+test('a successful same-process handoff records exposure before Shoko can move it', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      },
+      attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed',
+      destination: path.join(sample.importRoot, sample.publishName) });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+    assert.deepEqual(await readdir(sample.holdingRoot), []);
+  }));
+
+test('one final exact check exposes a complete directory and records it before returning',
   { skip: process.platform === 'win32' ? 'Windows sandbox denies directory rename' : false },
   async () =>
   withBatch(async (sample) => {
@@ -146,7 +161,7 @@ test('one final exact check exposes a complete directory, then observes it on re
     assert.equal(restored.state, 'handoff_prepared');
     const result = await processRecordedHandoff({ ...sample,
       attemptId: 1, nowMs: 500 });
-    assert.equal(result.state, 'publish_unknown', JSON.stringify({ result,
+    assert.equal(result.state, 'published_observed', JSON.stringify({ result,
       begins: sample.getBegins(), entries: await readdir(sample.importRoot) }));
     assert.equal(sample.getBegins(), 1);
     assert.deepEqual(await readdir(sample.importRoot), [sample.publishName]);
@@ -155,6 +170,7 @@ test('one final exact check exposes a complete directory, then observes it on re
     assert.deepEqual(await readFile(path.join(sample.importRoot, sample.publishName, '01.en.srt')),
       sample.subtitle);
     assert.deepEqual(await readdir(sample.holdingRoot), []);
+    assert.equal(sample.getObservations(), 1);
     assert.deepEqual(await processRecordedHandoff({ ...sample,
       attemptId: 1, nowMs: 501 }),
       { state: 'published_observed', destination: path.join(sample.importRoot, sample.publishName) });

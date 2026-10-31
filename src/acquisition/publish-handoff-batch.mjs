@@ -141,13 +141,15 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
+  renamePrepared = rename,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       typeof ledger?.getHandoff !== 'function' ||
       typeof ledger?.beginPublish !== 'function' ||
+      typeof ledger?.markPublishedObserved !== 'function' ||
       typeof lookup !== 'function' || typeof verifyVideo !== 'function' ||
-      typeof verifySubtitle !== 'function' ||
+      typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
   }
@@ -245,8 +247,19 @@ export async function publishPreparedHandoff({
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');
   try {
-    await rename(holdingPath, destination);
+    await renamePrepared(holdingPath, destination);
     await syncDirectory(path.dirname(destination));
   } catch { return held('publish_outcome_unknown'); }
-  return { state: 'publish_unknown', destination };
+  // The exact tree and file identities were checked immediately before the
+  // same-filesystem rename. Once it succeeds, watched-folder exposure is a
+  // known outcome in this process even if Shoko moves the directory before
+  // a later tick. A crash in the intent-to-rename window still follows the
+  // separate conservative unknown-outcome reconciliation path.
+  try {
+    const observed = ledger.markPublishedObserved({ attemptId,
+      evidenceDigest: evidence.digest, publishName: row.publishName, nowMs });
+    return observed?.state === 'published_observed'
+      ? { state: 'published_observed', destination }
+      : held('publish_outcome_unknown');
+  } catch { return held('publish_outcome_unknown'); }
 }
