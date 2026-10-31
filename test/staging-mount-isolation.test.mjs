@@ -16,6 +16,22 @@ test('accepts a narrow writable qBittorrent bind outside Shoko and Plex mounts',
     { state: 'isolated_mount', hostPath: staging, containerPath: '/negev-staging' });
 });
 
+test('accepts a dedicated subdirectory of an existing qBittorrent download root', () => {
+  const hostPath = '/srv/downloads/negev';
+  const existingRoot = { Type: 'bind', Source: '/srv/downloads',
+    Destination: '/Downloads', RW: true };
+  const dedicated = { Type: 'bind', Source: hostPath,
+    Destination: '/negev-staging', RW: true };
+  const evidence = { ...mounts, qbittorrent: [existingRoot, dedicated,
+    mounts.qbittorrent[1]] };
+  assert.deepEqual(evaluateStagingMountIsolation(evidence, { hostPath }),
+    { state: 'isolated_mount', hostPath, containerPath: '/negev-staging' });
+  assert.deepEqual(evaluateStagingMountIsolation({ ...evidence,
+    shoko: [{ Type: 'bind', Source: '/srv/downloads',
+      Destination: '/watched', RW: true }] }, { hostPath }),
+  { state: 'held', reason: 'staging_visible_to_shoko' });
+});
+
 test('holds missing, broad, duplicate, or wrong qBittorrent staging mounts', () => {
   const withQbit = (qbittorrent) => check({ ...mounts, qbittorrent });
   assert.deepEqual(withQbit([]), { state: 'held', reason: 'staging_bind_missing' });
