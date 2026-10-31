@@ -8,6 +8,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 
 const details = (anidbId, extra = {}) => ({ state: 'details', anidbId,
   kind: 'series', airDate: '2026-01-01', endDate: null, episodeCount: 12,
+  restricted: false,
   complete: true, total: 2, episodes: [
     { id: 1001, type: 'Episode', airDate: '2026-01-01' },
     { id: 1002, type: 'Episode', airDate: '2026-02-01' },
@@ -27,6 +28,20 @@ test('one unavailable show holds while the next airing show advances', async () 
   assert.equal(calls[0].releaseState, 'airing');
   assert.deepEqual(result.results.map((item) => item.state), ['held', 'advanced']);
   assert.equal(result.nextAfterId, null);
+});
+
+test('a newly restricted title holds without blocking the next watch', async () => {
+  const advanced = [];
+  const result = await pollAiringWatches({ today: '2026-02-20', intervalMs: 0,
+    ledger: { listActiveAirings: () => [
+      { requestId: 1, anidbId: 42 }, { requestId: 2, anidbId: 43 }],
+    advanceAiring: ({ requestId }) => { advanced.push(requestId);
+      return { state: 'advanced' }; } },
+    loadDetail: async ({ anidbId }) => details(anidbId,
+      { restricted: anidbId === 42 }) });
+  assert.deepEqual(advanced, [2]);
+  assert.deepEqual(result.results.map((item) => [item.state, item.reason]),
+    [['held', 'restricted_or_unverified'], ['advanced', undefined]]);
 });
 
 test('episode-count inference alone cannot close a watch; explicit past end date can', async () => {

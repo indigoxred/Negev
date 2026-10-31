@@ -42,6 +42,10 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       results.push({ ...watch, ...held('detail_incomplete') });
       continue;
     }
+    if (detail.restricted !== false) {
+      results.push({ ...watch, ...held('restricted_or_unverified') });
+      continue;
+    }
     const release = inferReleaseState({ today, kind: detail.kind,
       airDate: detail.airDate, endDate: detail.endDate,
       episodeCount: detail.episodeCount, episodes: detail.episodes });
