@@ -127,6 +127,10 @@ export function dateInZone(timeZone, instant = new Date()) {
 // or public-availability worker and does not replace the private diagnostic.
 export function parseUserServerConfig(env) {
   if (env?.NEGEV_USER_SERVER !== '1') throw new TypeError('User server mode required');
+  if (Object.hasOwn(env, 'NEGEV_QBITTORRENT_PASSWORD') ||
+      Object.hasOwn(env, 'NEGEV_QBITTORRENT_SID')) {
+    throw new TypeError('qBittorrent credentials cannot use environment variables');
+  }
   if (env.NEGEV_ACQUISITION_RUNTIME != null &&
       !['0', '1'].includes(env.NEGEV_ACQUISITION_RUNTIME)) {
     throw new TypeError('Invalid acquisition runtime flag');

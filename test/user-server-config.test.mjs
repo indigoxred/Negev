@@ -96,6 +96,11 @@ test('incomplete or ambiguous user-server configuration fails closed', () => {
 });
 
 test('acquisition cannot be advertised as enabled before installed safety gates pass', () => {
+  for (const secret of ['NEGEV_QBITTORRENT_PASSWORD',
+    'NEGEV_QBITTORRENT_SID']) {
+    assert.throws(() => parseUserServerConfig({ ...valid,
+      [secret]: 'synthetic-secret' }), /qBittorrent credentials cannot use environment variables/);
+  }
   assert.throws(() => parseUserServerConfig({ ...valid,
     NEGEV_ACQUISITION_RUNTIME: '1' }), /Acquisition runtime is unavailable/);
   assert.throws(() => parseUserServerConfig({ ...valid,
