@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { verifyStagedBatch } from './verify-staged-batch.mjs';
 import { stagingSavePath } from './staging-save-path.mjs';
 
@@ -6,8 +7,10 @@ const held = (reason) => ({ state: 'held', reason });
 // Recover the exact saved request, attempt, and provisional filename plan
 // before hashing. A caller may supply observers, but cannot replace that plan.
 export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
-  root, observe, lookup, verify, verifySubtitle, readPacer }) {
+  stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
+      typeof stagingHostPath !== 'string' || !path.isAbsolute(stagingHostPath) ||
+      path.resolve(stagingHostPath) !== stagingHostPath ||
       typeof requests?.getRequest !== 'function' ||
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof acquisitions?.getFilePlan !== 'function' ||
@@ -24,6 +27,7 @@ export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
   if (!plannedFiles) return held('file_plan_missing');
   const request = requests.getRequest(attempt.requestId);
   if (!request) return held('request_missing');
+  const root = path.join(stagingHostPath, attempt.torrentHash);
   return verifyStagedBatch({ root, request, attempt,
     expectedTorrent: { hash: attempt.torrentHash, category: 'negev',
       savePath: stagingSavePath(attempt.torrentHash) },

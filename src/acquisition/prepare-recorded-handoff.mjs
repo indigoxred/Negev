@@ -1,4 +1,5 @@
 import { rm } from 'node:fs/promises';
+import path from 'node:path';
 import { verifyRecordedBatch } from './verify-recorded-batch.mjs';
 import { prepareHandoffBatch } from './prepare-handoff-batch.mjs';
 
@@ -8,7 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // separate, durable operation and must be explicitly reconciled afterward.
 export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
-  stagingRoot, holdingRoot, importRoot, observe, lookup,
+  stagingHostPath, holdingRoot, importRoot, observe, lookup,
   nowMs, verify, verifySubtitle, readPacer,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
@@ -19,13 +20,14 @@ export async function prepareRecordedHandoff({
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
-    root: stagingRoot, observe, lookup, verify, verifySubtitle, readPacer });
+    stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);
     return acquisitions.recordTerminalRejection({ attemptId,
       hash: attempt.torrentHash, reason: verified.reason, nowMs });
   }
   if (verified.state !== 'batch_identity_verified') return verified;
+  const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
     verified, readPacer });
   if (prepared.state !== 'handoff_prepared') return prepared;

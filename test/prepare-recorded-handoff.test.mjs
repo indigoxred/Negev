@@ -13,11 +13,13 @@ import { ed2kFile } from '../src/identity/ed2k.mjs';
 test('recorded exact batch is copied privately and journaled once, without publishing', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-recorded-handoff-'));
   const dbPath = path.join(root, 'state.sqlite');
-  const stagingRoot = path.join(root, 'staging');
+  const torrentHash = 'a'.repeat(40);
+  const stagingHostPath = path.join(root, 'staging');
+  const stagingRoot = path.join(stagingHostPath, torrentHash);
   const holdingRoot = path.join(root, 'holding');
   const importRoot = path.join(root, 'import');
   const { mkdir } = await import('node:fs/promises');
-  await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) => mkdir(dir)));
+  await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) => mkdir(dir, { recursive: true })));
   const name = '01.mkv';
   const source = path.join(stagingRoot, name);
   await writeFile(source, Buffer.from('registered sample'));
@@ -27,7 +29,6 @@ test('recorded exact batch is copied privately and journaled once, without publi
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
       episodeIds: [1001] } });
   const acquisitions = openAcquisitionLedger(dbPath);
-  const torrentHash = 'a'.repeat(40);
   const candidate = { indexerId: 7, guid: 'one' };
   const reserved = acquisitions.reserve({ requestId: saved.requestId, candidate,
     episodeIds: [1001], nowMs: 200 });
@@ -42,7 +43,7 @@ test('recorded exact batch is copied privately and journaled once, without publi
   const handoffs = openHandoffLedger(dbPath);
   let observations = 0;
   const run = () => prepareRecordedHandoff({ requests, acquisitions, handoffs,
-    attemptId: reserved.attemptId, stagingRoot, holdingRoot, importRoot,
+    attemptId: reserved.attemptId, stagingHostPath, holdingRoot, importRoot,
     observe: async () => { observations++; return { state: 'complete', files: [
       { index: 0, name, size: hash.size }], subtitles: [] }; },
     lookup: async () => null,
@@ -89,11 +90,11 @@ test('only a confirmed wrong identity records a terminal hold; outage keeps the 
     manifestDigest: 'b'.repeat(64), nowMs: 205 });
   const handoffs = openHandoffLedger(dbPath);
   const { mkdir } = await import('node:fs/promises');
-  const [stagingRoot, holdingRoot, importRoot] = ['staging', 'holding', 'import']
+  const [stagingHostPath, holdingRoot, importRoot] = ['staging', 'holding', 'import']
     .map((name) => path.join(root, name));
-  await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) => mkdir(dir)));
+  await Promise.all([stagingHostPath, holdingRoot, importRoot].map((dir) => mkdir(dir)));
   const base = { requests, acquisitions, handoffs, attemptId: claim.attemptId,
-    stagingRoot, holdingRoot, importRoot, nowMs: 206,
+    stagingHostPath, holdingRoot, importRoot, nowMs: 206,
     observe: async () => ({ state: 'complete', files: [
       { index: 0, name: '01.mkv', size: 1000 }], subtitles: [] }),
     lookup: async () => null };

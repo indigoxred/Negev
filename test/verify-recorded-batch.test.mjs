@@ -39,7 +39,7 @@ async function withSavedAttempt(run, { plan = true, started = true } = {}) {
 }
 
 function options({ requests, acquisitions, attemptId, observe, verify }) {
-  return { requests, acquisitions, attemptId, root: '/staging', observe,
+  return { requests, acquisitions, attemptId, stagingHostPath: path.resolve('/staging'), observe,
     lookup: async () => null, verify };
 }
 
@@ -47,8 +47,9 @@ test('restart verification uses the stored file plan and exact target', async ()
   withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {
     const result = await verifyRecordedBatch(options({ requests, acquisitions, attemptId,
       observe: async () => complete,
-      verify: async ({ expected }) => {
+      verify: async ({ expected, root }) => {
         assert.deepEqual(expected, { animeId: 42, episodeIds: [1001] });
+        assert.equal(root, path.join(path.resolve('/staging'), hash));
         return { state: 'identity_verified', fileId: 88, size: 1000,
           ed2k: 'A'.repeat(32), coverage: [{ episodeId: 1001, start: 0, end: 100 }] };
       } }));
