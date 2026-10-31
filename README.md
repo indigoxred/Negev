@@ -15,6 +15,6 @@ Run the local tests with `node --test` using Node.js 24 or later. No external pa
 - Direct Shoko imports must update availability without creating a Negev request.
 - Negev must not expose incomplete downloads to Shoko or Plex.
 
-The staging path guard checks regular video files inside an app-owned directory, rejects path escapes and symlinks, then performs the read-only identity check. It does **not** prove qBittorrent completion or move a file. The web app, catalogue detail source, qBittorrent staging, Shoko handoff, Plex observation, persistence, and Docker image are **not implemented yet**. No production service has been changed for this repository.
+The staging path guard checks regular video files inside an app-owned directory, rejects path escapes and symlinks, then performs the read-only identity check. A separate pure qBittorrent v5 evaluator checks torrent ownership, completion, selected files, and the staging save path. It holds an entire pack if any selected video is unfinished or an unexpected file is selected. These pieces are not yet wired to a live qBittorrent session and do not move a file. The web app, catalogue detail source, downloader control, Shoko handoff, Plex observation, persistence, and Docker image are **not implemented yet**. No production service has been changed for this repository.
 
 Do not commit credentials, NAS configuration, database copies, logs, operational evidence, or media to this public project.

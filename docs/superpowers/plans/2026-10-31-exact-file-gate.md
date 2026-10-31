@@ -66,4 +66,13 @@
 - [x] Write tests for a staged file with matching identity, a path traversal, a symlink, a non-regular file, an executable extension, and a provider failure.
 - [x] Run the tests and observe their expected failure.
 - [x] Implement a check that walks only an app-owned staging root, hashes a regular file, calls the injected preview transport and evaluates identity. It never moves/imports/deletes the file.
-- [ ] Run the full suite locally and on Linux CI; inspect the symlink result there.
+- [x] Run the full suite locally and on Linux CI; Linux run `41153838572` passed 19/19, including symlinks.
+
+### Task 6: qBittorrent completion evidence
+
+**Files:** `src/acquisition/evaluate-completion.mjs`, `test/evaluate-completion.test.mjs`
+
+- [x] Write tests for a selected completed video, incomplete file, wrong category/path, selected executable, excluded extra file, and incomplete pack.
+- [x] Observe the expected failure.
+- [x] Implement a pure decision from qBittorrent v5 torrent and file snapshots; never download, pause, move or delete a torrent.
+- [ ] Run local tests, then Linux CI. A live installed-version sample remains a separate Phase 0 proof.
