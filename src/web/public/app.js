@@ -1,11 +1,13 @@
 import { createRequestKeyStore } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
+import { createSearchPager } from './search-pages.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
-  nextBeforeId: null, releaseSearch: false, detailLoad: false };
+  nextBeforeId: null, releaseSearch: false, detailLoad: false,
+  searchToken: 0 };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -212,13 +214,11 @@ byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = byId('query').value.trim();
   if (query.length < 2) return;
+  const token = ++state.searchToken;
   const results = byId('results');
   results.replaceChildren(element('p', 'Searching…', 'muted'));
-  try {
-    const data = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}`);
-    results.replaceChildren();
-    if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
-    for (const item of data.items) {
+  const appendItems = (items) => {
+    for (const item of items) {
       const button = element('button', undefined, 'result');
       button.type = 'button';
       button.append(element('strong', item.title),
@@ -226,8 +226,44 @@ byId('search-form').addEventListener('submit', async (event) => {
       button.addEventListener('click', () => { void showDetail(item); });
       results.append(button);
     }
+  };
+  try {
+    const data = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}`);
+    if (token !== state.searchToken) return;
+    const pager = createSearchPager(data);
+    results.replaceChildren();
+    if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
+    appendItems(data.items);
+    const addMore = () => {
+      if (pager.nextPage === null) return;
+      const button = element('button', 'Show more results');
+      button.type = 'button';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          const page = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}&page=${pager.nextPage}`);
+          if (token !== state.searchToken) return;
+          const appended = pager.append(page);
+          if (appended.state !== 'appended') {
+            button.textContent = 'Results changed. Search again.';
+            return;
+          }
+          button.remove();
+          appendItems(appended.items);
+          addMore();
+        } catch {
+          if (token === state.searchToken) {
+            button.disabled = false;
+            message('More results are unavailable right now.', true);
+          }
+        }
+      });
+      results.append(button);
+    };
+    addMore();
     message(`${data.total} catalogue result${data.total === 1 ? '' : 's'}.`);
   } catch (error) {
+    if (token !== state.searchToken) return;
     results.replaceChildren(element('p', 'Search is unavailable right now.', 'muted'));
     message(error.message, true);
   }
