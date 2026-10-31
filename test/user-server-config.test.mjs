@@ -6,7 +6,7 @@ import { parseUserServerConfig } from '../src/web/user-server-config.mjs';
 const dataDir = path.resolve('private-negev-test');
 const valid = { NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
   NEGEV_SHOKO_URL: 'http://shoko.internal:8111',
-  NEGEV_SHOKO_API_KEY: 'synthetic-key',
+  NEGEV_SHOKO_API_KEY_FILE: path.join(dataDir, 'secrets', 'shoko.token'),
   NEGEV_PUBLIC_ORIGIN: 'http://localhost:3000' };
 
 test('account-backed listener starts loopback only with explicit mode and data', () => {
@@ -16,6 +16,8 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parsed.secureCookies, false);
   assert.equal(parsed.dbPath, path.join(dataDir, 'negev.sqlite'));
   assert.equal(parsed.sessionKeyPath, path.join(dataDir, 'session.key'));
+  assert.equal(parsed.shokoApiKeyPath, path.join(dataDir, 'secrets', 'shoko.token'));
+  assert.equal(Object.hasOwn(parsed, 'shokoApiKey'), false);
 });
 
 test('non-loopback listener requires explicit exposure and HTTPS origin', () => {
@@ -35,7 +37,11 @@ test('non-loopback listener requires explicit exposure and HTTPS origin', () => 
 test('incomplete or ambiguous user-server configuration fails closed', () => {
   for (const change of [
     { NEGEV_USER_SERVER: undefined }, { NEGEV_DATA_DIR: 'relative' },
-    { NEGEV_SHOKO_API_KEY: '' }, { NEGEV_SHOKO_URL: 'http://user:pass@shoko.internal/' },
+    { NEGEV_SHOKO_API_KEY_FILE: '' },
+    { NEGEV_SHOKO_API_KEY_FILE: 'relative.token' },
+    { NEGEV_SHOKO_API_KEY_FILE: path.resolve('outside.token') },
+    { NEGEV_SHOKO_API_KEY: 'synthetic-key' },
+    { NEGEV_SHOKO_URL: 'http://user:pass@shoko.internal/' },
     { NEGEV_PUBLIC_ORIGIN: 'https://negev.example.test' },
     { NEGEV_PORT: '0' }, { NEGEV_PORT: '3000x' },
     { NEGEV_LISTEN_HOST: '192.168.1.1' },

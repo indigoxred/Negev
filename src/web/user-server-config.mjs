@@ -21,9 +21,10 @@ export function parseUserServerConfig(env) {
   }
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
-  const shokoApiKey = env.NEGEV_SHOKO_API_KEY;
-  if (typeof shokoApiKey !== 'string' || !shokoApiKey || /[\r\n]/.test(shokoApiKey)) {
-    throw new TypeError('Shoko key required');
+  const shokoApiKeyPath = path.join(dataDir, 'secrets', 'shoko.token');
+  if (Object.hasOwn(env, 'NEGEV_SHOKO_API_KEY') ||
+      env.NEGEV_SHOKO_API_KEY_FILE !== shokoApiKeyPath) {
+    throw new TypeError('Private Shoko key file required');
   }
   const publicOrigin = env.NEGEV_PUBLIC_ORIGIN;
   const origin = baseUrl(publicOrigin, 'public origin');
@@ -42,6 +43,6 @@ export function parseUserServerConfig(env) {
   if (port > 65_535) throw new TypeError('Invalid user server port');
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
     sessionKeyPath: path.join(dataDir, 'session.key'),
-    shokoBaseUrl, shokoApiKey, publicOrigin,
+    shokoBaseUrl, shokoApiKeyPath, publicOrigin,
     secureCookies: exposed, host, port };
 }

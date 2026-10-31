@@ -1,6 +1,7 @@
 import { openUserStore } from '../auth/user-store.mjs';
 import { createUserService } from './user-service.mjs';
 import { parseUserServerConfig } from './user-server-config.mjs';
+import { readPrivateShokoKey } from './private-shoko-key.mjs';
 
 let service;
 try {
@@ -8,7 +9,9 @@ try {
   const store = await openUserStore({ dataDir: config.dataDir });
   const sessionKey = store.sessionKey;
   store.accounts.close();
-  service = await createUserService({ ...config, sessionKey });
+  const shokoApiKey = await readPrivateShokoKey({ dataDir: config.dataDir,
+    keyPath: config.shokoApiKeyPath });
+  service = await createUserService({ ...config, shokoApiKey, sessionKey });
   await service.app.listen({ host: config.host, port: config.port });
   process.stdout.write(`Negev user API listening on ${config.host}:${config.port}\n`);
   let stopping = false;

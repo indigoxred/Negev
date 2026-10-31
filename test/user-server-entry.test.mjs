@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -24,12 +24,16 @@ test('offline-initialized account service starts locally without an acquisition 
   try {
     await initializeUserStore({ dataDir, username: 'Owner',
       password: 'a-long-test-passphrase' });
+    const secretDir = path.join(dataDir, 'secrets');
+    await mkdir(secretDir, { mode: 0o700 });
+    const shokoKeyPath = path.join(secretDir, 'shoko.token');
+    await writeFile(shokoKeyPath, 'synthetic-key', { mode: 0o600 });
     const port = await availablePort();
     child = spawn(process.execPath, ['src/web/user-server.mjs'], {
       cwd: path.resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
         NEGEV_SHOKO_URL: 'http://shoko.invalid:8111',
-        NEGEV_SHOKO_API_KEY: 'synthetic-key',
+        NEGEV_SHOKO_API_KEY_FILE: shokoKeyPath,
         NEGEV_PUBLIC_ORIGIN: `http://localhost:${port}`,
         NEGEV_PORT: String(port) },
     });
