@@ -9,6 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function createShokoRecentWorker({ ledger, readPage, refreshFile,
   now = Date.now, pageSize = 100, maxPages = 5 } = {}) {
   if (typeof ledger?.getCursor !== 'function' ||
+      typeof ledger?.getCapacity !== 'function' ||
       typeof ledger?.recordBatch !== 'function' ||
       typeof ledger?.nextDue !== 'function' ||
       typeof ledger?.recordResult !== 'function' ||
@@ -26,6 +27,12 @@ export function createShokoRecentWorker({ ledger, readPage, refreshFile,
       try {
         const since = ledger.getCursor();
         if (!since) return held('recent_baseline_required');
+        const capacity = ledger.getCapacity();
+        if (!Number.isSafeInteger(capacity?.pending) || capacity.pending < 0 ||
+            !Number.isSafeInteger(capacity.maxPending) || capacity.maxPending < 1 ||
+            capacity.pending >= capacity.maxPending) {
+          return held('recent_backlog_full');
+        }
         const batch = await scanShokoRecentSince({ readPage, since,
           pageSize, maxPages });
         if (batch.state !== 'complete') return batch;

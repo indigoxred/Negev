@@ -9,9 +9,9 @@ import { createShokoRecentWorker } from '../src/availability/shoko-recent-worker
 const cursor = (fileId) => ({ fileId,
   importedNs: String(1_800_000_000_000_000_000n + BigInt(fileId)) });
 
-async function withLedger(run) {
+async function withLedger(run, options) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-recent-worker-'));
-  const ledger = openShokoRecentLedger(path.join(dir, 'negev.sqlite'));
+  const ledger = openShokoRecentLedger(path.join(dir, 'negev.sqlite'), options);
   try { await run(ledger); }
   finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 }
@@ -32,6 +32,30 @@ test('one bounded scan journals new IDs before moving the cursor', async () => {
     assert.deepEqual(ledger.getCursor(), cursor(13));
     assert.deepEqual(ledger.nextDue(100), { fileId: 11 });
   });
+});
+
+test('a full durable queue holds before any expensive Shoko page read', async () => {
+  await withLedger(async (ledger) => {
+    ledger.bootstrap(cursor(10));
+    ledger.recordBatch({ state: 'complete', fileIds: [11], newest: cursor(11) });
+    let reads = 0;
+    const worker = createShokoRecentWorker({ ledger, now: () => 100,
+      readPage: async ({ page }) => {
+        reads++;
+        return { state: 'page', page, total: 3,
+          items: [cursor(12), cursor(11), cursor(10)] };
+      },
+      refreshFile: async () => ({ state: 'recorded_file', recognition: 'linked' }) });
+    assert.deepEqual(await worker.scan(),
+      { state: 'held', reason: 'recent_backlog_full' });
+    assert.equal(reads, 0);
+    assert.deepEqual(ledger.getCursor(), cursor(11));
+    assert.deepEqual(await worker.drainOne(),
+      { state: 'acknowledged', fileId: 11 });
+    assert.deepEqual(await worker.scan(), { state: 'caught_up', added: 1 });
+    assert.equal(reads, 2);
+    assert.deepEqual(ledger.getCursor(), cursor(12));
+  }, { maxPending: 1 });
 });
 
 test('failed targeted recheck waits while a later file is processed', async () => {

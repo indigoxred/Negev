@@ -54,6 +54,7 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
     SET retry_after_ms=? WHERE file_id=?`);
   const rollback = () => { db.exec('ROLLBACK'); };
   return {
+    getCapacity() { return { pending: countPending.get().total, maxPending }; },
     getCursor() {
       const saved = readCursor.get();
       return saved ? { ...saved } : null;
