@@ -164,3 +164,5 @@ When the public Plex observer is configured, catalogue episode pages now include
 
 The account page now invalidates pending request-list responses on sign-out or account switch and ignores an older list response after a newer refresh. This prevents an old account's delayed request page from repopulating the next account's view in a shared browser. The response-generation check and account route passed local tests; browser interaction still needs an end-to-end review before outside access.
 
+The installed Plex mount review found a deployment detail for the availability witness: Relay symlinks may resolve only inside Plex's parent media mount with a nested VFS bind over it. Reading that VFS symlink directly from its appdata host path can falsely appear broken. A future Negev container must reproduce the effective parent-plus-nested layout read-only, scope its Plex mapping to the parent root, and prove one exact file in that container. This Plex-side observation does not establish the corresponding Shoko AniDB file identity or authorize acquisition.
+

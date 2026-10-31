@@ -78,6 +78,19 @@ test('a symlink into the approved Shoko backing root may identify the same file'
   assert.equal((await provePhysicalPlexPart(input)).state, 'same_file');
 });
 
+test('a Relay link resolving through its parent Plex mount proves the same file',
+  { skip: process.platform === 'win32' }, async () => {
+    const input = await fixture();
+    const relay = path.join(input.plexRoot, 'relay', 'show', 'season');
+    await mkdir(relay, { recursive: true });
+    await rm(input.plexPath);
+    await link(input.shokoPath, input.plexPath);
+    const plexPath = path.join(relay, 'S01E12.mkv');
+    await symlink(path.relative(relay, input.plexPath), plexPath);
+    assert.equal((await provePhysicalPlexPart({ ...input, plexPath })).state,
+      'same_file');
+  });
+
 test('a changed expected file size cannot establish the join', async () => {
   const input = await fixture();
   assert.deepEqual(await provePhysicalPlexPart({ ...input, expectedSize: 6 }),
