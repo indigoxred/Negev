@@ -8,7 +8,19 @@ export function evaluatePreview(preview, expected) {
   if (preview?.status === 204) return held('lookup_inconclusive');
   if (preview?.status !== 200) return held('provider_unavailable');
 
-  const release = preview.release;
+  const raw = preview.release;
+  const pascal = raw && Object.hasOwn(raw, 'ProviderName');
+  const release = pascal ? {
+    id: raw.ID,
+    providerName: raw.ProviderName,
+    releaseURI: raw.ReleaseURI,
+    fileSize: raw.FileSize,
+    hashes: Array.isArray(raw.Hashes) ? raw.Hashes.map((hash) => ({ type: hash?.Type, value: hash?.Value })) : null,
+    crossReferences: Array.isArray(raw.CrossReferences) ? raw.CrossReferences.map((xref) => ({
+      anidbAnimeID: xref?.AnidbAnimeID,
+      anidbEpisodeID: xref?.AnidbEpisodeID,
+    })) : null,
+  } : raw;
   const digest = expected?.ed2k;
   const size = expected?.size;
   if (!/^[0-9A-F]{32}$/.test(digest) || !Number.isSafeInteger(size) || size <= 0 ||

@@ -24,6 +24,20 @@ test('accepts only an exact registered file and requested episode', () => {
   });
 });
 
+test('accepts the installed Shoko v3 PascalCase JSON shape', () => {
+  const shokoRelease = {
+    ID: registered.id,
+    ProviderName: 'AniDB',
+    ReleaseURI: registered.releaseURI,
+    FileSize: registered.fileSize,
+    Hashes: [{ Type: 'ED2K', Value: expected.ed2k }],
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001 }],
+  };
+  assert.deepEqual(evaluatePreview({ status: 200, release: shokoRelease }, expected), {
+    state: 'accepted', reason: 'exact_anidb_release', fileId: 123456,
+  });
+});
+
 test('rejects a registered file for another anime', () => {
   const release = structuredClone(registered);
   release.crossReferences[0].anidbAnimeID = 9999;
