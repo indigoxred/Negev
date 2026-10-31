@@ -20,7 +20,8 @@ async function withRoots(run) {
 const bytes = Buffer.from('abc');
 const file = { name: 'Show/01.mkv', episodeIds: [1001], anidbFileId: 51,
   ed2k: ed2kBuffer(bytes), size: bytes.length };
-const verified = { state: 'batch_identity_verified', files: [file], subtitles: [],
+const verified = { state: 'batch_identity_verified', torrentHash: 'a'.repeat(40),
+  files: [file], subtitles: [],
   handoffReady: false };
 
 test('copies verified bytes into private holding and leaves Shoko Import empty', async () =>
@@ -32,6 +33,8 @@ test('copies verified bytes into private holding and leaves Shoko Import empty',
       readPacer: { afterBytes: async (count) => paced.push(count) } });
     assert.equal(result.state, 'handoff_prepared');
     assert.equal(result.publishReady, false);
+    assert.equal(result.torrentHash, verified.torrentHash);
+    assert.match(result.evidenceDigest, /^[0-9a-f]{64}$/);
     assert.equal(result.files[0].anidbFileId, 51);
     assert.deepEqual(await readdir(roots.importRoot), []);
     assert.deepEqual(await readFile(path.join(result.holdingPath, file.name)), bytes);

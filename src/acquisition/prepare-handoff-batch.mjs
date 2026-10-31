@@ -1,4 +1,5 @@
 import { constants } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { ed2kFile } from '../identity/ed2k.mjs';
@@ -17,6 +18,7 @@ function within(parent, candidate) {
 
 function validEvidence(verified, budget) {
   if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false ||
+      !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(verified?.torrentHash) ||
       !Array.isArray(verified.subtitles) ||
       !Array.isArray(verified.files) || verified.files.length < 1 || verified.files.length > 50) {
     return false;
@@ -52,6 +54,18 @@ function validEvidence(verified, budget) {
     if (subtitleBytes > 64 * 1024 ** 2) return false;
   }
   return true;
+}
+
+function evidenceDigest(verified) {
+  const byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  const videos = verified.files.map((file) => ({ name: file.name, size: file.size,
+    ed2k: file.ed2k, anidbFileId: file.anidbFileId,
+    episodeIds: [...file.episodeIds].sort((a, b) => a - b) })).sort(byName);
+  const subtitles = verified.subtitles.map((file) => ({ name: file.name, size: file.size,
+    sha256: file.sha256 })).sort(byName);
+  return createHash('sha256').update(JSON.stringify({ version: 1,
+    torrentHash: verified.torrentHash.toLowerCase(), videos, subtitles }))
+    .digest('hex');
 }
 
 async function inspectRoots(stagingRoot, holdingRoot, importRoot) {
@@ -154,6 +168,7 @@ export async function prepareHandoffBatch({
       await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'subtitle', pacer });
     }
     return { state: 'handoff_prepared', holdingPath,
+      torrentHash: verified.torrentHash.toLowerCase(), evidenceDigest: evidenceDigest(verified),
       files: verified.files.map((file) => ({ ...file, episodeIds: [...file.episodeIds] })),
       subtitles: verified.subtitles.map((file) => ({ ...file })),
       publishReady: false };

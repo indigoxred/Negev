@@ -31,6 +31,7 @@ test('checks each selected file in sequence and rechecks torrent before reportin
   assert.deepEqual(calls, ['observe', 'Show/01.mkv', 'Show/02.mkv', 'observe']);
   assert.equal(result.state, 'batch_identity_verified');
   assert.equal(result.handoffReady, false);
+  assert.equal(result.torrentHash, expectedTorrent.hash);
   assert.deepEqual(result.files.map((file) => file.anidbFileId), [51, 52]);
 });
 

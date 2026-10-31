@@ -15,6 +15,7 @@ export async function verifyStagedBatch({
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
 }) {
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
+      !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedTorrent?.hash) ||
       typeof observe !== 'function' || typeof lookup !== 'function' ||
       typeof verify !== 'function' || typeof verifySubtitle !== 'function' ||
       !Number.isSafeInteger(maxTotalBytes) ||
@@ -115,7 +116,8 @@ export async function verifyStagedBatch({
   if (signature(first) === null || signature(first) !== signature(final)) {
     return held('torrent_changed_after_hash');
   }
-  return { state: 'batch_identity_verified', files: verified,
+  return { state: 'batch_identity_verified', torrentHash: expectedTorrent.hash.toLowerCase(),
+    files: verified,
     subtitles: verifiedSubtitles,
     handoffReady: false };
 }

@@ -39,6 +39,8 @@ test('a complete video and subtitle pass exact identity into private holding onl
     const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot, verified });
     assert.equal(prepared.state, 'handoff_prepared');
     assert.equal(prepared.publishReady, false);
+    assert.equal(prepared.torrentHash, 'a'.repeat(40));
+    assert.match(prepared.evidenceDigest, /^[0-9a-f]{64}$/);
     assert.deepEqual(await readFile(path.join(prepared.holdingPath, videoFile.name)), video);
     assert.deepEqual(await readFile(path.join(prepared.holdingPath, sidecar.name)), subtitle);
     assert.deepEqual(await readdir(importRoot), []);
