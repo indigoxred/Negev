@@ -63,8 +63,9 @@ export function openAcquisitionLedger(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
-  const requestEpisodes = db.prepare(`SELECT t.episode_id FROM targets t
-    JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
+  const requestedEpisode = db.prepare(`SELECT 1 AS present FROM request_targets rt
+    JOIN targets t ON t.id=rt.target_id
+    WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
   const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
   const busyTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? AND active=1');
   const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
@@ -114,9 +115,9 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
-        const requested = requestEpisodes.all(requestId).map((row) => row.episode_id);
-        if (requested.length === 0 || requested.length > 500) return held('invalid_request_targets');
-        if (episodeIds.some((id) => !requested.includes(id))) return held('target_not_requested');
+        if (episodeIds.some((id) => !requestedEpisode.get(requestId, request.anidb_id, id))) {
+          return held('target_not_requested');
+        }
         const existing = candidateRow.get(candidate.indexerId, digest);
         if (existing && findRelease.get(existing.id)) return held('candidate_released');
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&

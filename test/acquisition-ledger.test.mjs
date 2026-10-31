@@ -75,6 +75,27 @@ test('a request can reserve two disjoint explicit subsets for separate releases'
     } finally { ledger.close(); }
   }));
 
+test('a large installment can reserve one exact episode without reading a 500-target ceiling', async () =>
+  withLedger(async ({ dbPath }) => {
+    const requests = openRequestLedger(dbPath);
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const episodes = Array.from({ length: 501 }, (_, index) => 2000 + index);
+      const saved = requests.submit({ requesterId: 4, requestKey: 'large', nowMs: 150,
+        intent: { state: 'ready', anidbId: 84, kind: 'series',
+          monitorFuture: false, episodeIds: episodes } });
+      const claim = ledger.reserve({ requestId: saved.requestId,
+        candidate: { indexerId: 7, guid: 'large-episode-2500' },
+        episodeIds: [2500], nowMs: 200 });
+      assert.equal(claim.state, 'reserved');
+      assert.deepEqual(ledger.getAttempt(claim.attemptId).episodeIds, [2500]);
+      assert.deepEqual(ledger.reserve({ requestId: saved.requestId,
+        candidate: { indexerId: 7, guid: 'outside-large' },
+        episodeIds: [2501], nowMs: 201 }),
+      { state: 'held', reason: 'target_not_requested' });
+    } finally { ledger.close(); requests.close(); }
+  }));
+
 test('only an unsent, unbound candidate can release its claim for another release', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

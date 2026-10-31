@@ -29,6 +29,22 @@ test('one reserved episode subset can verify without acquiring the whole request
   assert.deepEqual(result.files[0].episodeIds, [1002]);
 });
 
+test('one release in a 501-episode installment verifies only its claimed target', async () => {
+  const largeRequest = { ...request,
+    episodeIds: Array.from({ length: 501 }, (_, index) => 2000 + index) };
+  const result = await verifyStagedBatch({ root: '/staging', request: largeRequest,
+    attempt: { ...attempt, episodeIds: [2500] }, expectedTorrent,
+    plannedFiles: [{ name: 'Show/01.mkv', episodeIds: [2500] }],
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    verify: async () => ({ state: 'identity_verified', fileId: 800,
+      coverage: [{ episodeId: 2500, start: 0, end: 100 }],
+      ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.deepEqual(result.files[0].episodeIds, [2500]);
+});
+
 test('unclaimed targets and mismatched attempt identity hold before observing bytes', async () => {
   for (const change of [
     { attempt: { ...attempt, requestId: 2 } },

@@ -29,7 +29,7 @@ export async function verifyStagedBatch({
   if (request?.status !== 'held' || !Number.isSafeInteger(request.id) || request.id <= 0 ||
       !Number.isSafeInteger(request.anidbId) ||
       request.anidbId <= 0 || !Array.isArray(request.episodeIds) ||
-      request.episodeIds.length === 0 || request.episodeIds.length > 500 ||
+      request.episodeIds.length === 0 || request.episodeIds.length > 2_000 ||
       request.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
       new Set(request.episodeIds).size !== request.episodeIds.length ||
       attempt?.status !== 'torrent_observed' ||
