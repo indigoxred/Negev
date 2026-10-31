@@ -183,9 +183,10 @@ test('account service records one Shoko direct-import page without dispatching a
     assert.equal(calls, 2);
     assert.deepEqual(service.acceptShokoEvent('file:hashed', [{ FileID: 10 }]),
       { state: 'queued', fileId: 10 });
+    service.flagShokoReconciliation('feed_started');
     await service.close();
     assert.equal(calls, 3);
-    assert.equal(service.getShokoEventState().reconciliationNeeded, false);
+    assert.equal(service.getShokoEventState().reconciliationNeeded, true);
     service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
       shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
       publicOrigin: origin, secureCookies: false,

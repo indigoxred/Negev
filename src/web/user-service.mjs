@@ -92,6 +92,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       refreshShokoFile,
       acceptShokoEvent: (target, args) => eventConsumer.accept(target, args),
+      flagShokoReconciliation: (reason) => eventConsumer.flagReconciliation(reason),
       getShokoEventState: () => eventConsumer.getState(),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {

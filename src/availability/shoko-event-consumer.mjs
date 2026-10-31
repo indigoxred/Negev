@@ -64,6 +64,7 @@ export function createShokoEventConsumer({ refreshFile, maxPending = 64 } = {}) 
       return { pending: pending.size, inFlight,
         reconciliationNeeded };
     },
+    flagReconciliation() { reconciliationNeeded = true; },
     async close() {
       stopping = true;
       if (pump) await pump;
