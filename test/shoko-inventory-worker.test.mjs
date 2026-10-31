@@ -96,3 +96,20 @@ test('later unverified evidence withdraws only its own provisional identity inde
     assert.equal(ledger.getFile(10).state, 'unverified');
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('one event-triggered file observation updates identity without advancing a full scan', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+    assert.deepEqual(ledger.recordFileObservation({ item: linked, observedMs: 300 }),
+      { state: 'recorded_file', fileId: 10 });
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 1, pageSize: 2 });
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    assert.equal(ledger.getFile(10).seenPass, 0);
+    assert.equal(ledger.recordPage({ expected: ledger.getCursor(), observedMs: 200,
+      result: { state: 'page', page: 1, total: 1, items: [provisional] } }).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});

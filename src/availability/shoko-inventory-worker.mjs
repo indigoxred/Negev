@@ -2,6 +2,21 @@ import { DatabaseSync } from 'node:sqlite';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const validItem = (item) => {
+  if (!validId(item?.fileId) || typeof item.updated !== 'string' ||
+      !Number.isFinite(Date.parse(item.updated)) ||
+      !['provisional', 'linked', 'unverified'].includes(item.state) ||
+      !Array.isArray(item.pairs) || item.pairs.length > 100 ||
+      (item.state === 'linked') !== (item.pairs.length > 0)) return false;
+  const seen = new Set();
+  for (const pair of item.pairs) {
+    if (!validId(pair?.anidbId) || !validId(pair?.episodeId)) return false;
+    const key = `${pair.anidbId}:${pair.episodeId}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+  }
+  return true;
+};
 
 // Inventory is positive discovery only. Old rows are never deleted by a
 // partial pass, and they cannot by themselves establish current availability.
@@ -25,7 +40,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       updated TEXT NOT NULL,
       state TEXT NOT NULL CHECK(state IN ('provisional','linked','unverified')),
       pairs_json TEXT NOT NULL,
-      seen_pass INTEGER NOT NULL CHECK(seen_pass>0),
+      seen_pass INTEGER NOT NULL CHECK(seen_pass>=0),
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
     ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_pairs (
@@ -56,6 +71,14 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
     WHERE anidb_id=? AND episode_id=? ORDER BY file_id`);
   const advance = db.prepare(`UPDATE shoko_inventory_cursor SET page=?,pass=?
     WHERE id=1 AND page=? AND pass=?`);
+  function saveObservation(item, seenPass, observedMs) {
+    const previous = find.get(item.fileId);
+    if (previous && previous.observedMs > observedMs) return;
+    save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
+      seenPass, observedMs);
+    removePairs.run(item.fileId);
+    for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
+  }
   return {
     getCursor() { return { ...cursor.get() }; },
     getFile(fileId) {
@@ -71,6 +94,21 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       }
       return findPairs.all(anidbId, episodeId).map((row) => row.file_id);
     },
+    recordFileObservation({ item, observedMs }) {
+      if (!validItem(item) || !Number.isSafeInteger(observedMs) || observedMs < 0) {
+        return held('invalid_file_observation');
+      }
+      let begun = false;
+      try {
+        db.exec('BEGIN IMMEDIATE'); begun = true;
+        saveObservation(item, 0, observedMs);
+        db.exec('COMMIT'); begun = false;
+        return { state: 'recorded_file', fileId: item.fileId };
+      } catch (error) {
+        if (begun) db.exec('ROLLBACK');
+        throw error;
+      }
+    },
     recordPage({ expected, result, observedMs }) {
       if (!validId(expected?.page) || !validId(expected.pass) ||
           !Number.isSafeInteger(observedMs) || observedMs < 0 ||
@@ -82,12 +120,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       }
       const seen = new Set();
       for (const item of result.items) {
-        if (!validId(item?.fileId) || seen.has(item.fileId) ||
-            typeof item.updated !== 'string' || !Number.isFinite(Date.parse(item.updated)) ||
-            !['provisional', 'linked', 'unverified'].includes(item.state) ||
-            !Array.isArray(item.pairs) || item.pairs.length > 100 ||
-            item.pairs.some((pair) => !validId(pair?.anidbId) || !validId(pair?.episodeId)) ||
-            (item.state === 'linked') !== (item.pairs.length > 0)) {
+        if (!validItem(item) || seen.has(item.fileId)) {
           return held('invalid_file_page');
         }
         seen.add(item.fileId);
@@ -101,10 +134,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
           return held('stale_cursor');
         }
         for (const item of result.items) {
-          save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
-            current.pass, observedMs);
-          removePairs.run(item.fileId);
-          for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
+          saveObservation(item, current.pass, observedMs);
         }
         const last = current.page * pageSize >= result.total;
         const nextPage = last ? 1 : current.page + 1;

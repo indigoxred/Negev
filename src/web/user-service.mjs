@@ -10,6 +10,7 @@ import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { buildUserApp } from './user-app.mjs';
 import { createMetadataLimiter } from './metadata-limiter.mjs';
 import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
+import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
 
@@ -61,16 +62,31 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
       hydrateTitle: (input) => metadata.run(() => hydrator.load(input)),
     });
-    const inventoryTicks = new Set();
+    const observations = new Set();
     let stopping = false;
     let stopPromise;
+    const track = (task) => {
+      observations.add(task);
+      void task.then(() => observations.delete(task), () => observations.delete(task));
+      return task;
+    };
     return { app,
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
-        const task = inventoryWorker.tick();
-        inventoryTicks.add(task);
-        void task.then(() => inventoryTicks.delete(task), () => inventoryTicks.delete(task));
-        return task;
+        return track(inventoryWorker.tick());
+      },
+      refreshShokoFile: (fileId) => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        if (!Number.isSafeInteger(fileId) || fileId < 1) {
+          return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
+        }
+        return track((async () => {
+          const result = await metadata.run(() => readShokoOneFile({
+            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
+          }));
+          if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
+          return inventory.recordFileObservation({ item: result.item, observedMs: now() });
+        })());
       },
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
@@ -79,7 +95,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stopPromise = (async () => {
             try { await app.close(); }
             finally {
-              await Promise.allSettled([...inventoryTicks]);
+              await Promise.allSettled([...observations]);
               inventory.close(); hydration.close(); requests.close(); accounts.close();
             }
           })();

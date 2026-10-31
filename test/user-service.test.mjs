@@ -164,21 +164,30 @@ test('account service records one Shoko direct-import page without dispatching a
       shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
       publicOrigin: origin, secureCookies: false, fetchImpl: async (url, init) => {
         calls++;
-        assert.equal(url.pathname, '/api/v3/File');
         assert.equal(init.method, 'GET');
+        if (url.pathname === '/api/v3/File/10') return json({ ID: 10,
+          Updated: '2026-10-31T00:00:00Z', SeriesIDs: [{ SeriesID: { AniDB: 42 },
+            EpisodeIDs: [{ AniDB: 1001 }] }] });
+        assert.equal(url.pathname, '/api/v3/File');
         return json({ Total: 1, List: [{ ID: 10, Updated: '2026-10-31T00:00:00Z',
           SeriesIDs: [{ SeriesID: { AniDB: 42 }, EpisodeIDs: [{ AniDB: 1001 }] }] }] });
       } });
     assert.equal((await service.tickShokoInventory()).state, 'recorded');
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
     assert.equal(calls, 1);
+    assert.deepEqual(await service.refreshShokoFile(10),
+      { state: 'recorded_file', fileId: 10 });
+    assert.equal(calls, 2);
+    assert.deepEqual(await service.refreshShokoFile(0),
+      { state: 'held', reason: 'invalid_file_id' });
+    assert.equal(calls, 2);
     await service.close();
     service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
       shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
       publicOrigin: origin, secureCookies: false,
       fetchImpl: async () => { throw new Error('No scan on startup'); } });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

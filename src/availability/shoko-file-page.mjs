@@ -3,6 +3,32 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
 
+export function normalizeShokoFile(file) {
+  if (!validId(file?.ID) || typeof file.Updated !== 'string' ||
+      !Number.isFinite(Date.parse(file.Updated))) return null;
+  const pairs = [];
+  const seenPairs = new Set();
+  let invalid = file.SeriesIDs != null &&
+    (!Array.isArray(file.SeriesIDs) || file.SeriesIDs.length > 100);
+  for (const series of invalid ? [] : file.SeriesIDs ?? []) {
+    if (!validId(series?.SeriesID?.AniDB) || !Array.isArray(series.EpisodeIDs) ||
+        series.EpisodeIDs.length < 1 || series.EpisodeIDs.length > 100) {
+      invalid = true; break;
+    }
+    for (const episode of series.EpisodeIDs) {
+      if (!validId(episode?.AniDB)) { invalid = true; break; }
+      const key = `${series.SeriesID.AniDB}:${episode.AniDB}`;
+      if (seenPairs.has(key)) { invalid = true; break; }
+      seenPairs.add(key);
+      pairs.push({ anidbId: series.SeriesID.AniDB, episodeId: episode.AniDB });
+    }
+    if (invalid) break;
+  }
+  return { fileId: file.ID, updated: file.Updated,
+    state: invalid ? 'unverified' : pairs.length ? 'linked' : 'provisional',
+    pairs: invalid ? [] : pairs };
+}
+
 // One read-only inventory page. It reports positive file IDs only; a page,
 // including an empty one, never proves that an older file was deleted.
 export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
@@ -34,32 +60,10 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
   const seenFiles = new Set();
   const items = [];
   for (const file of data.List) {
-    if (!validId(file?.ID) || seenFiles.has(file.ID) ||
-        typeof file.Updated !== 'string' || !Number.isFinite(Date.parse(file.Updated))) {
-      return unavailable();
-    }
-    seenFiles.add(file.ID);
-    const pairs = [];
-    const seenPairs = new Set();
-    let invalid = file.SeriesIDs != null &&
-      (!Array.isArray(file.SeriesIDs) || file.SeriesIDs.length > 100);
-    for (const series of invalid ? [] : file.SeriesIDs ?? []) {
-      if (!validId(series?.SeriesID?.AniDB) || !Array.isArray(series.EpisodeIDs) ||
-          series.EpisodeIDs.length < 1 || series.EpisodeIDs.length > 100) {
-        invalid = true; break;
-      }
-      for (const episode of series.EpisodeIDs) {
-        if (!validId(episode?.AniDB)) { invalid = true; break; }
-        const key = `${series.SeriesID.AniDB}:${episode.AniDB}`;
-        if (seenPairs.has(key)) { invalid = true; break; }
-        seenPairs.add(key);
-        pairs.push({ anidbId: series.SeriesID.AniDB, episodeId: episode.AniDB });
-      }
-      if (invalid) break;
-    }
-    items.push({ fileId: file.ID, updated: file.Updated,
-      state: invalid ? 'unverified' : pairs.length ? 'linked' : 'provisional',
-      pairs: invalid ? [] : pairs });
+    const item = normalizeShokoFile(file);
+    if (!item || seenFiles.has(item.fileId)) return unavailable();
+    seenFiles.add(item.fileId);
+    items.push(item);
   }
   if (items.length > data.Total) return unavailable();
   return { state: 'page', page, total: data.Total, items };
