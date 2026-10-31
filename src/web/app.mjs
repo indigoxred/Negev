@@ -11,7 +11,7 @@ function hasTestToken(header, token) {
 // Private catalogue contract prototype. No accounts, download controls, or
 // production authentication are provided here.
 export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle,
-  titleRegistry, submitRequest, readRequest, searchReleases }) {
+  titleRegistry, submitRequest, readRequest, searchReleases, discoverCandidates }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
   }
@@ -110,6 +110,22 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
     if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'Invalid request ID' });
     const result = readRequest(id);
     return result ?? reply.code(404).send({ error: 'Request not found' });
+  });
+
+  app.get('/api/requests/:id/candidates', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const requestId = Number(request.params.id);
+    if (!Number.isSafeInteger(requestId) || requestId <= 0) {
+      return reply.code(400).send({ error: 'Invalid request ID' });
+    }
+    if (typeof discoverCandidates !== 'function') {
+      return reply.code(503).send({ error: 'Candidate discovery unavailable' });
+    }
+    const result = await discoverCandidates({ requestId });
+    if (result.state === 'candidates') return result;
+    if (result.reason === 'request_missing') return reply.code(404).send(result);
+    return reply.code(result.reason === 'release_search_unavailable' ||
+      result.reason === 'detail_unavailable' || result.reason === 'request_unavailable' ? 503 : 409).send(result);
   });
 
   return app;

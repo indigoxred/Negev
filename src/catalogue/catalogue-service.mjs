@@ -8,6 +8,7 @@ import { searchAniDbTitles } from './shoko-search.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
+import { createRequestCandidateDiscovery } from '../acquisition/request-candidate-discovery.mjs';
 
 // An injectable private prototype. No listener, account system, download
 // client or production configuration is provided here.
@@ -40,22 +41,27 @@ export function createCatalogueTestService({
     const submitHeld = createHeldRequestSubmitter({
       titleRegistry, loadDetail, ledger: requestLedger, now, today,
     });
+    const readRequest = (id) => {
+      const request = requestLedger.getRequest(id);
+      return request?.requesterId === 1 ? request : null;
+    };
+    const searchReleases = prowlarrBaseUrl === undefined ? undefined : ({ query }) => searchReleaseCandidates({
+      baseUrl: prowlarrBaseUrl, apiKey: prowlarrApiKey, indexerIds: prowlarrIndexerIds,
+      query, fetchImpl,
+    });
     const app = buildTestApp({
       testToken, titleRegistry,
       searchTitles: ({ query, page }) => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       }),
-      searchReleases: prowlarrBaseUrl === undefined ? undefined : ({ query }) => searchReleaseCandidates({
-        baseUrl: prowlarrBaseUrl, apiKey: prowlarrApiKey, indexerIds: prowlarrIndexerIds,
-        query, fetchImpl,
-      }),
+      searchReleases,
       loadDetail,
       hydrateTitle: (input) => hydrator.load(input),
       submitRequest: (input) => submitHeld({ ...input, requesterId: 1 }),
-      readRequest: (id) => {
-        const request = requestLedger.getRequest(id);
-        return request?.requesterId === 1 ? request : null;
-      },
+      readRequest,
+      discoverCandidates: searchReleases === undefined ? undefined : createRequestCandidateDiscovery({
+        readRequest, loadDetail, searchReleases,
+      }),
     });
     return {
       app,

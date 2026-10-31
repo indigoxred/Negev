@@ -80,3 +80,71 @@ test('configured private service searches Prowlarr without Shoko or grab calls',
     assert.equal(calls[0].init.headers['X-Api-Key'], 'synthetic-prowlarr-key');
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('saved-request candidate route requires token and keeps held outcomes explicit', async () => {
+  let calls = 0;
+  const app = buildTestApp({ testToken: token,
+    searchTitles: async () => ({ state: 'results', total: 0, page: 1, items: [] }),
+    discoverCandidates: async ({ requestId }) => {
+      calls++;
+      return requestId === 12 ? { state: 'candidates', requestId,
+        anidbId: 1234, items: [], exhaustive: false } : { state: 'held', reason: 'request_missing' };
+    },
+  });
+  try {
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests/12/candidates' })).statusCode, 401);
+    assert.equal(calls, 0);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests/0/candidates', headers: auth })).statusCode, 400);
+    const valid = await app.inject({ method: 'GET', url: '/api/requests/12/candidates', headers: auth });
+    assert.equal(valid.statusCode, 200);
+    assert.equal(valid.json().exhaustive, false);
+    assert.equal(valid.headers['cache-control'], 'no-store');
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests/13/candidates', headers: auth })).statusCode, 404);
+  } finally { await app.close(); }
+});
+
+test('one saved exact request discovers a candidate through Shoko then Prowlarr', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-request-discovery-'));
+  const calls = [];
+  const service = createCatalogueTestService({
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    prowlarrBaseUrl: 'http://prowlarr.internal:9696', prowlarrApiKey: 'synthetic-prowlarr-key',
+    prowlarrIndexerIds: [7], dbPath: path.join(dir, 'claims.sqlite'), testToken: token,
+    now: () => 1_000_000_000, today: () => '2026-10-31',
+    fetchImpl: async (url, init) => {
+      const parsed = new URL(url);
+      calls.push(`${init.method} ${parsed.host}${parsed.pathname}`);
+      if (parsed.pathname.endsWith('/Search')) return { status: 200, text: async () => JSON.stringify({
+        Total: 1, List: [{ ID: 1234, Title: 'Canonical Anime' }],
+      }) };
+      if (parsed.pathname.endsWith('/AniDB/1234')) return { status: 200, text: async () => JSON.stringify({
+        ID: 1234, Title: 'Canonical Anime', Type: 'TV', AirDate: '2026-01-01',
+        EpisodeCount: 1, Restricted: false,
+      }) };
+      if (parsed.pathname.endsWith('/Episode')) return { status: 200, text: async () => JSON.stringify({
+        Total: 1, List: [{ ID: 1001, AnimeID: 1234, EpisodeNumber: 1,
+          Type: 'Episode', Title: 'First', AirDate: '2026-01-01' }],
+      }) };
+      if (parsed.pathname === '/api/v1/search') return { status: 200, text: async () => JSON.stringify([{
+        guid: 'release-1', indexerId: 7, title: 'Canonical Anime 01', size: 1000,
+        protocol: 'torrent', downloadUrl: 'https://private.invalid/download',
+      }]) };
+      throw Error('Unexpected route');
+    },
+  });
+  try {
+    await service.app.inject({ method: 'GET', url: '/api/catalogue/search?q=Canonical', headers: auth });
+    const submitted = await service.app.inject({ method: 'POST', url: '/api/requests', headers: auth,
+      payload: { anidbId: 1234, scope: 'installment', requestKey: 'req-1' } });
+    assert.equal(submitted.statusCode, 202);
+    const requestId = submitted.json().requestId;
+    const discovered = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}/candidates`, headers: auth });
+    assert.equal(discovered.statusCode, 200);
+    assert.equal(discovered.json().items[0].evidence, 'unverified');
+    assert.equal(discovered.json().exhaustive, false);
+    assert.equal(discovered.body.includes('private.invalid'), false);
+    assert.equal(calls.filter((call) => call.includes('/api/v1/search')).length, 1);
+    assert.equal(calls.every((call) => call.startsWith('GET ')), true);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
