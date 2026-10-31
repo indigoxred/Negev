@@ -66,6 +66,13 @@ test('one exact prepared handoff gets one durable publish intent across restart'
       assert.deepEqual(restarted.getHandoff(attempt.attemptId), {
         status: 'publish_unknown', torrentHash: hash, evidenceDigest,
         holdingPath, publishName: saved.publishName, manifest: evidence.manifest });
+      assert.equal(restarted.markPublishedObserved({ attemptId: attempt.attemptId,
+        evidenceDigest, publishName: saved.publishName, nowMs: 209 }).state,
+      'published_observed');
+      assert.equal(restarted.getHandoff(attempt.attemptId).status, 'published_observed');
+      assert.deepEqual(restarted.beginPublish({ attemptId: attempt.attemptId,
+        evidenceDigest, nowMs: 210 }),
+      { state: 'published_observed', publishName: saved.publishName, sendNow: false });
     } finally { restarted.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

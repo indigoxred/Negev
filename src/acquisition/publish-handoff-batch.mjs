@@ -60,6 +60,77 @@ async function destinationAbsent(destination) {
   catch (error) { return error?.code === 'ENOENT'; }
 }
 
+async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
+  importRoot, lookup, ledger, nowMs, readPacer, readRateBytesPerSecond,
+  verifyVideo, verifySubtitle }) {
+  if (typeof ledger.markPublishedObserved !== 'function' ||
+      typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
+      typeof importRoot !== 'string' || !path.isAbsolute(importRoot)) {
+    return held('unsafe_handoff_roots');
+  }
+  let destination;
+  let before;
+  try {
+    const [holdingStat, importStat] = await Promise.all([
+      lstat(holdingRoot, { bigint: true }), lstat(importRoot, { bigint: true })]);
+    if (!holdingStat.isDirectory() || holdingStat.isSymbolicLink() ||
+        !importStat.isDirectory() || importStat.isSymbolicLink() ||
+        holdingStat.dev !== importStat.dev) return held('unsafe_handoff_roots');
+    const [realHolding, realImport] = await Promise.all([
+      realpath(holdingRoot), realpath(importRoot)]);
+    if (within(realHolding, realImport) || within(realImport, realHolding) ||
+        path.dirname(row.holdingPath) !== realHolding ||
+        !path.basename(row.holdingPath).startsWith('.negev-prep-') ||
+        row.publishName !== `negev-${attemptId}-${evidence.digest.slice(0, 16)}` ||
+        !await destinationAbsent(row.holdingPath)) return held('publish_outcome_unknown');
+    destination = path.join(realImport, row.publishName);
+    before = await lstat(destination, { bigint: true });
+    if (!before.isDirectory() || before.isSymbolicLink() ||
+        before.dev !== importStat.dev ||
+        path.dirname(await realpath(destination)) !== realImport) {
+      return held('publish_outcome_unknown');
+    }
+  } catch { return held('publish_outcome_unknown'); }
+  if (!await exactTree(destination, evidence.manifest)) return held('publish_outcome_unknown');
+  const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
+  for (const file of evidence.manifest.videos) {
+    let result;
+    try { result = await verifyVideo({ root: destination, relativePath: file.name,
+      expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
+      lookup, readPacer: pacer }); }
+    catch { return held('publish_outcome_unknown'); }
+    if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
+        result.ed2k !== file.ed2k || result.size !== file.size) {
+      return held('publish_outcome_unknown');
+    }
+  }
+  for (const file of evidence.manifest.subtitles) {
+    let result;
+    try { result = await verifySubtitle({ root: destination,
+      relativePath: file.name, readPacer: pacer }); }
+    catch { return held('publish_outcome_unknown'); }
+    if (result?.state !== 'subtitle_verified' || result.sha256 !== file.sha256 ||
+        result.size !== file.size) return held('publish_outcome_unknown');
+  }
+  try {
+    const after = await lstat(destination, { bigint: true });
+    if (!await exactTree(destination, evidence.manifest) ||
+        !await destinationAbsent(row.holdingPath) ||
+        after.dev !== before.dev || after.ino !== before.ino ||
+        after.mtimeNs !== before.mtimeNs ||
+        path.dirname(await realpath(destination)) !== path.dirname(destination)) {
+      return held('publish_outcome_unknown');
+    }
+  } catch { return held('publish_outcome_unknown'); }
+  let result;
+  try { result = ledger.markPublishedObserved({ attemptId,
+    evidenceDigest: evidence.digest, publishName: row.publishName, nowMs }); }
+  catch { return held('publish_outcome_unknown'); }
+  return result?.state === 'published_observed'
+    ? { state: 'published_observed', destination }
+    : held('publish_outcome_unknown');
+}
+
 // Local building block only. A caller must supply current NAS mount proof and
 // a private prepared batch. This never marks Shoko import or Plex availability.
 export async function publishPreparedHandoff({
@@ -85,7 +156,6 @@ export async function publishPreparedHandoff({
   }
   const row = ledger.getHandoff(attemptId);
   if (!row) return held('handoff_missing');
-  if (row.status !== 'prepared') return held('publish_outcome_unknown');
   if (row.evidenceDigest !== evidence.digest ||
       row.torrentHash !== evidence.manifest.torrentHash ||
       row.holdingPath !== prepared.holdingPath ||
@@ -93,6 +163,11 @@ export async function publishPreparedHandoff({
       row.publishName !== `negev-${attemptId}-${evidence.digest.slice(0, 16)}`) {
     return held('handoff_conflict');
   }
+  if (row.status === 'publish_unknown') return reconcileUnknownPublish({ attemptId,
+    row, evidence, holdingRoot, importRoot, lookup, ledger, nowMs, readPacer,
+    readRateBytesPerSecond, verifyVideo, verifySubtitle });
+  if (row.status === 'published_observed') return { state: 'published_observed' };
+  if (row.status !== 'prepared') return held('publish_outcome_unknown');
   if (typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
       typeof importRoot !== 'string' || !path.isAbsolute(importRoot)) {
     return held('unsafe_handoff_roots');

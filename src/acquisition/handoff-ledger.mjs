@@ -54,6 +54,8 @@ export function openHandoffLedger(dbPath) {
     VALUES (?,?,?,?,?,?,'prepared',?,?)`);
   const markUnknown = db.prepare(`UPDATE handoff_intents SET status='publish_unknown',updated_ms=?
     WHERE attempt_id=? AND status='prepared'`);
+  const markObserved = db.prepare(`UPDATE handoff_intents SET status='published_observed',updated_ms=?
+    WHERE attempt_id=? AND status='publish_unknown'`);
 
   function transact(action) {
     let begun = false;
@@ -145,6 +147,25 @@ export function openHandoffLedger(dbPath) {
           return { state: 'publish_unknown', publishName: row.publish_name, sendNow: true };
         }
         return { state: row.status, publishName: row.publish_name, sendNow: false };
+      });
+    },
+    // Caller must first prove the exact published directory and file identities.
+    // This state records watched-folder exposure, not Shoko import or playback.
+    markPublishedObserved({ attemptId, evidenceDigest, publishName, nowMs }) {
+      if (!validId(attemptId) || !validDigest(evidenceDigest) ||
+          typeof publishName !== 'string' || !/^negev-[1-9]\d*-[0-9a-f]{16}$/.test(publishName) ||
+          !validTime(nowMs)) throw new TypeError('Invalid published observation');
+      return transact(() => {
+        const row = handoffRow.get(attemptId);
+        if (!row) return held('handoff_missing');
+        if (row.evidence_digest !== evidenceDigest.toLowerCase() ||
+            row.publish_name !== publishName) return held('handoff_conflict');
+        if (!validStoredManifest(row)) return held('manifest_missing');
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (row.status === 'published_observed') return { state: 'published_observed' };
+        if (row.status !== 'publish_unknown') return held('publish_intent_missing');
+        markObserved.run(nowMs, attemptId);
+        return { state: 'published_observed' };
       });
     },
     getHandoff(attemptId) {

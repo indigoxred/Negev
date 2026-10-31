@@ -32,12 +32,15 @@ async function withBatch(run) {
     const publishName = `negev-1-${prepared.evidenceDigest.slice(0, 16)}`;
     let status = 'prepared';
     let begins = 0;
+    let observations = 0;
     const ledger = {
       getHandoff: () => ({ status, holdingPath: prepared.holdingPath,
         torrentHash: prepared.torrentHash, evidenceDigest: prepared.evidenceDigest,
         manifest, publishName }),
       beginPublish: () => { begins++; status = 'publish_unknown';
         return { state: 'publish_unknown', sendNow: true, publishName }; },
+      markPublishedObserved: () => { observations++; status = 'published_observed';
+        return { state: 'published_observed' }; },
     };
     const lookup = async ({ ed2k, size }) => ({ status: 200, release: {
       id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
@@ -47,11 +50,61 @@ async function withBatch(run) {
         percentageStart: null, percentageEnd: null }],
     } });
     await run({ prepared, ledger, lookup, holdingRoot, importRoot,
-      video, subtitle, publishName, getBegins: () => begins });
+      video, subtitle, publishName, getBegins: () => begins,
+      getObservations: () => observations });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 
-test('one final exact check exposes a complete directory and leaves outcome unknown',
+test('an uncertain publish with the exact destination is observed without another rename', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const result = await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed', destination });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+    assert.deepEqual(await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 501 }),
+      { state: 'published_observed' });
+    assert.equal(sample.getObservations(), 1);
+  }));
+
+test('an altered destination or surviving holding copy remains unknown', async () => {
+  for (const keepHolding of [false, true]) {
+    await withBatch(async (sample) => {
+      sample.ledger.beginPublish();
+      const destination = path.join(sample.importRoot, sample.publishName);
+      await mkdir(destination);
+      await writeFile(path.join(destination, '01.mkv'),
+        keepHolding ? sample.video : Buffer.from('bad'));
+      await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+      if (!keepHolding) await rm(sample.prepared.holdingPath, { recursive: true });
+      assert.deepEqual(await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 500 }),
+        { state: 'held', reason: 'publish_outcome_unknown' });
+      assert.equal(sample.getObservations(), 0);
+      assert.equal(sample.getBegins(), 1);
+    });
+  }
+});
+
+test('a failed durable observation stays unknown after exact bytes are checked', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    sample.ledger.markPublishedObserved = () => { throw new Error('database unavailable'); };
+    assert.deepEqual(await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 500 }),
+      { state: 'held', reason: 'publish_outcome_unknown' });
+    assert.equal(sample.getBegins(), 1);
+  }));
+
+test('one final exact check exposes a complete directory, then observes it on retry',
   { skip: process.platform === 'win32' ? 'Windows sandbox denies directory rename' : false },
   async () =>
   withBatch(async (sample) => {
@@ -66,8 +119,9 @@ test('one final exact check exposes a complete directory and leaves outcome unkn
       sample.subtitle);
     assert.deepEqual(await readdir(sample.holdingRoot), []);
     assert.deepEqual(await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 501 }),
-      { state: 'held', reason: 'publish_outcome_unknown' });
+      { state: 'published_observed', destination: path.join(sample.importRoot, sample.publishName) });
     assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
   }));
 
 test('an unexpected file in private holding prevents intent and watched-folder exposure', async () =>
