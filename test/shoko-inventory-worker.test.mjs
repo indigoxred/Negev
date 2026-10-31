@@ -103,7 +103,7 @@ test('one event-triggered file observation updates identity without advancing a 
   let ledger;
   try {
     ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
-    assert.deepEqual(ledger.recordFileObservation({ item: linked, observedMs: 300 }),
+    assert.deepEqual(ledger.recordFileObservation({ item: linked, observedMs: 200 }),
       { state: 'recorded_file', fileId: 10 });
     assert.deepEqual(ledger.getCursor(), { page: 1, pass: 1, pageSize: 2 });
     assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
@@ -112,4 +112,23 @@ test('one event-triggered file observation updates identity without advancing a 
       result: { state: 'page', page: 1, total: 1, items: [provisional] } }).state, 'recorded');
     assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a page fetched before a file event cannot overwrite that newer event', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    let release;
+    let instant = 100;
+    const worker = createShokoInventoryWorker({ ledger, now: () => instant,
+      readPage: () => new Promise((resolve) => { release = resolve; }) });
+    const pending = worker.tick();
+    instant = 200;
+    ledger.recordFileObservation({ item: linked, observedMs: instant });
+    release({ state: 'page', page: 1, total: 1, items: [provisional] });
+    assert.equal((await pending).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    assert.equal(ledger.getFile(10).state, 'linked');
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });

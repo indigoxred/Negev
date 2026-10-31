@@ -73,7 +73,9 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
     WHERE id=1 AND page=? AND pass=?`);
   function saveObservation(item, seenPass, observedMs) {
     const previous = find.get(item.fileId);
-    if (previous && previous.observedMs > observedMs) return;
+    if (previous && (previous.observedMs > observedMs ||
+        (previous.observedMs === observedMs &&
+          previous.seenPass === 0 && seenPass > 0))) return;
     save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
       seenPass, observedMs);
     removePairs.run(item.fileId);
@@ -161,11 +163,14 @@ export function createShokoInventoryWorker({ ledger, readPage, now = Date.now } 
   return {
     async tick() {
       const expected = ledger.getCursor();
+      // Timestamp the page before its HTTP read. A targeted event recheck
+      // completed during that read must outrank this older page snapshot.
+      const observedMs = now();
       let result;
       try { result = await readPage({ page: expected.page, pageSize: expected.pageSize }); }
       catch { return held('file_page_unavailable'); }
       if (result?.state !== 'page') return held('file_page_unavailable');
-      return ledger.recordPage({ expected, result, observedMs: now() });
+      return ledger.recordPage({ expected, result, observedMs });
     },
   };
 }
