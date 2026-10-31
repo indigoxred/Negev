@@ -5,21 +5,31 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
 
-function episodeNumber(name) {
+function episodeNumbers(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
   const matches = [];
   const plainRegular = /^(0*[1-9]\d*)$/.exec(stem);
+  const plainPair = /^(0*[1-9]\d*)-(0*[1-9]\d*)$/.exec(stem);
   const plainSpecial = /^[Ss](0*[1-9]\d*)$/.exec(stem);
   if (plainRegular) matches.push({ type: 'Episode', digits: plainRegular[1] });
+  if (plainPair) matches.push({ type: 'Episode', digits: plainPair[1], endDigits: plainPair[2] });
   if (plainSpecial) matches.push({ type: 'Special', digits: plainSpecial[1] });
   for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?=\s|$)/g)) {
     matches.push({ type: 'Episode', digits: match[1] });
+  }
+  for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)-(0*[1-9]\d*)(?=\s|$)/g)) {
+    matches.push({ type: 'Episode', digits: match[1], endDigits: match[2] });
   }
   for (const match of stem.matchAll(/(?:^|\s)-\s+[Ss](0*[1-9]\d*)(?=\s|$)/g)) {
     matches.push({ type: 'Special', digits: match[1] });
   }
   if (matches.length !== 1 || !Number.isSafeInteger(Number(matches[0].digits))) return null;
-  return { type: matches[0].type, number: Number(matches[0].digits) };
+  const match = matches[0];
+  const start = Number(match.digits);
+  if (!match.endDigits) return { type: match.type, numbers: [start] };
+  const end = Number(match.endDigits);
+  if (!Number.isSafeInteger(end) || end !== start + 1) return null;
+  return { type: match.type, numbers: [start, end] };
 }
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
@@ -83,13 +93,13 @@ export function planTorrentTargets({ request, detail, prepared } = {}) {
   const plannedFiles = [];
   const targets = new Set();
   for (const file of videos) {
-    const episode = episodeNumber(file.name);
-    const id = episode && byNumber.get(`${episode.type}:${episode.number}`);
-    if (!id || !requested.has(id) || targets.has(id)) {
+    const episode = episodeNumbers(file.name);
+    const ids = episode?.numbers.map((number) => byNumber.get(`${episode.type}:${number}`));
+    if (!ids || ids.some((id) => !id || !requested.has(id) || targets.has(id))) {
       return held('ambiguous_or_unrequested_video');
     }
-    targets.add(id);
-    plannedFiles.push({ name: file.name, size: file.size, episodeIds: [id] });
+    for (const id of ids) targets.add(id);
+    plannedFiles.push({ name: file.name, size: file.size, episodeIds: ids });
   }
   return { state: 'planned_targets',
     episodeIds: [...targets].sort((a, b) => a - b), plannedFiles };

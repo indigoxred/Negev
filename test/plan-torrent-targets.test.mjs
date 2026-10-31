@@ -42,6 +42,28 @@ test('plans a four-digit regular episode without accepting a range as one target
     ] } }).state, 'held');
 });
 
+test('plans one two-episode file only when both exact regular targets are requested', () => {
+  const video = { name: '[Group] Show - 01-02 (1080p).mkv', size: 2400 };
+  assert.deepEqual(planTorrentTargets({ request, detail,
+    prepared: { state: 'prepared_stopped', files: [video] } }), {
+    state: 'planned_targets', episodeIds: [1001, 1002],
+    plannedFiles: [{ ...video, episodeIds: [1001, 1002] }],
+  });
+  for (const changed of [
+    { request: { ...request, episodeIds: [1001] }, name: video.name },
+    { request, name: '[Group] Show - 01-03 (1080p).mkv' },
+    { request, name: '[Group] Show - 01-02-03 (1080p).mkv' },
+  ]) {
+    assert.equal(planTorrentTargets({ request: changed.request, detail,
+      prepared: { state: 'prepared_stopped', files: [
+        { ...video, name: changed.name },
+      ] } }).state, 'held');
+  }
+  assert.equal(planTorrentTargets({ request, detail,
+    prepared: { state: 'prepared_stopped', files: [video,
+      { name: 'Show - 02.mkv', size: 1200 }] } }).state, 'held');
+});
+
 test('maps an explicitly requested AniDB Special only from an S-number filename', () => {
   const specialRequest = { ...request, episodeIds: [9002] };
   const specialDetail = { ...detail, total: 2, episodes: [
@@ -93,7 +115,6 @@ test('passive artwork and notes cannot claim an AniDB episode', () => {
 test('ambiguous pack, duplicate number, foreign target, and special hold without a claim', () => {
   const variants = [
     { ...pack, files: [{ name: 'Show S01E01.mkv', size: 1200 }] },
-    { ...pack, files: [{ name: 'Show - 01-02.mkv', size: 1200 }] },
     { ...pack, files: [{ name: 'Show - 01.mkv', size: 1200 },
       { name: 'Show - 01 alt.mkv', size: 1300 }] },
     { ...pack, files: [{ name: 'Show - 04.mkv', size: 1200 }] },
