@@ -174,6 +174,47 @@ test('a verified wrong-show candidate is durably rejected without freeing its li
     } finally { ledger.close(); }
   }));
 
+test('recording rejected retirement frees the claim but not the rejected candidate', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    try {
+    const hash = 'a'.repeat(40);
+    const claim = ledger.reserve({ requestId: firstId, candidate,
+      episodeIds: [1001], nowMs: 200 });
+    ledger.bindPreparedTorrent({ attemptId: claim.attemptId, candidate, hash, nowMs: 201 });
+    ledger.recordFilePlan({ attemptId: claim.attemptId, hash,
+      plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], nowMs: 202 });
+    ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+    ledger.recordTorrent({ attemptId: claim.attemptId, hash, nowMs: 204 });
+    assert.equal(typeof ledger.retireRejected, 'function');
+    assert.deepEqual(ledger.retireRejected({ attemptId: claim.attemptId, hash, nowMs: 205 }),
+      { state: 'held', reason: 'candidate_not_rejected' });
+    ledger.beginStart({ attemptId: claim.attemptId, hash,
+      manifestDigest: 'b'.repeat(64), nowMs: 205 });
+    ledger.recordTerminalRejection({ attemptId: claim.attemptId, hash,
+      reason: 'file_wrong_identity', nowMs: 206 });
+    assert.deepEqual(ledger.retireRejected({ attemptId: claim.attemptId,
+      hash: 'c'.repeat(40), nowMs: 207 }),
+    { state: 'held', reason: 'torrent_conflict' });
+    assert.deepEqual(ledger.retireRejected({ attemptId: claim.attemptId, hash, nowMs: 207 }),
+      { state: 'retired_rejected' });
+    ledger.close();
+    ledger = openAcquisitionLedger(dbPath);
+      assert.equal(ledger.getAttempt(claim.attemptId).status, 'retired_rejected');
+      assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
+        hash, reason: 'file_wrong_identity', nowMs: 208 }),
+      { state: 'retired_rejected' });
+      assert.deepEqual(ledger.retireRejected({ attemptId: claim.attemptId, hash, nowMs: 208 }),
+        { state: 'retired_rejected' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 209 }),
+      { state: 'held', reason: 'candidate_rejected' });
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'different-release' },
+        episodeIds: [1001], nowMs: 210 }).state, 'reserved');
+    } finally { ledger?.close(); }
+  }));
+
 test('dispatch intent persists before network action and never auto-retries after restart', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

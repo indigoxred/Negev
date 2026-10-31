@@ -104,6 +104,11 @@ export function openAcquisitionLedger(dbPath) {
       reason TEXT NOT NULL CHECK(reason = 'file_wrong_identity'),
       rejected_ms INTEGER NOT NULL CHECK(rejected_ms >= 0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_retirements (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      torrent_hash TEXT NOT NULL,
+      retired_ms INTEGER NOT NULL CHECK(retired_ms >= 0)
+    ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
@@ -136,6 +141,9 @@ export function openAcquisitionLedger(dbPath) {
   const findRejection = db.prepare('SELECT torrent_hash,reason,rejected_ms FROM acquisition_rejections WHERE attempt_id=?');
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
+  const findRetirement = db.prepare('SELECT torrent_hash,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const insertRetirement = db.prepare(`INSERT INTO acquisition_retirements
+    (attempt_id,torrent_hash,retired_ms) VALUES (?,?,?)`);
   const handoffTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_intents'");
 
   function transact(action) {
@@ -215,6 +223,7 @@ export function openAcquisitionLedger(dbPath) {
         if (row.expected_hash !== normalizedHash || row.torrent_hash !== normalizedHash) {
           return held('torrent_conflict');
         }
+        if (findRetirement.get(attemptId)) return { state: 'retired_rejected' };
         const existing = findRejection.get(attemptId);
         if (existing) return existing.torrent_hash === normalizedHash &&
           existing.reason === reason
@@ -230,6 +239,38 @@ export function openAcquisitionLedger(dbPath) {
         }
         insertRejection.run(attemptId, normalizedHash, reason, nowMs);
         return { state: 'rejected_held', reason };
+      });
+    },
+    // Called only after an authenticated observer has proved that the exact
+    // rejected torrent is absent. This ledger transition never touches files.
+    retireRejected({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid rejected-torrent retirement');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash || row.torrent_hash !== normalizedHash) {
+          return held('torrent_conflict');
+        }
+        const rejected = findRejection.get(attemptId);
+        if (!rejected || rejected.torrent_hash !== normalizedHash) {
+          return held('candidate_not_rejected');
+        }
+        const existing = findRetirement.get(attemptId);
+        if (existing) return existing.torrent_hash === normalizedHash
+          ? { state: 'retired_rejected' } : held('torrent_conflict');
+        if (findRelease.get(attemptId) || nowMs < row.updated_ms ||
+            nowMs < rejected.rejected_ms) return held('retirement_conflict');
+        if (handoffTable.get() && db.prepare(
+          'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) {
+          return held('handoff_already_recorded');
+        }
+        insertRetirement.run(attemptId, normalizedHash, nowMs);
+        deactivateClaims.run(attemptId);
+        touchAttempt.run(nowMs, attemptId);
+        return { state: 'retired_rejected' };
       });
     },
     bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
@@ -372,7 +413,8 @@ export function openAcquisitionLedger(dbPath) {
       return row ? { id: row.id, requestId: row.request_id, anidbId: row.anidb_id,
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
         status: findRelease.get(attemptId) ? 'released_pre_dispatch' :
-          rejection ? 'rejected_held' : row.status,
+          findRetirement.get(attemptId) ? 'retired_rejected' :
+            rejection ? 'rejected_held' : row.status,
         expectedHash: row.expected_hash, torrentHash: row.torrent_hash,
         ...(rejection ? { rejectionReason: rejection.reason } : {}) } : null;
     },
