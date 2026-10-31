@@ -11,9 +11,11 @@ test('explicit baseline command reads only two bounded heads and journals their 
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-recent-command-'));
   const dbPath = path.join(dir, 'negev.sqlite');
   const reads = [];
+  const pauses = [];
   try {
     const result = await runShokoRecentBaseline({ dbPath,
       shokoBaseUrl: 'http://shoko.invalid:8111', apiKey: 'synthetic-key',
+      pause: async (ms) => { pauses.push(ms); },
       fetchImpl: async (url, init) => {
         reads.push({ url: String(url), method: init.method,
           redirect: init.redirect });
@@ -24,6 +26,7 @@ test('explicit baseline command reads only two bounded heads and journals their 
       } });
     assert.equal(result.state, 'baseline_saved');
     assert.equal(reads.length, 2);
+    assert.deepEqual(pauses, [10_000]);
     assert.equal(reads.every((item) => item.method === 'GET' &&
       item.redirect === 'manual' &&
       new URL(item.url).pathname === '/api/v3/File'), true);
