@@ -9,10 +9,30 @@ const page = { MediaContainer: { size: 2, totalSize: 150, offset: 0,
     { ratingKey: '512', type: 'episode', librarySectionID: 102 },
     { ratingKey: '513', type: 'episode', librarySectionID: 102 },
   ] } };
+const withSection = (reply, libraryId = 102, type = '4') => async (url, options) =>
+  url.pathname === `/library/sections/${libraryId}`
+    ? Response.json({ MediaContainer: { librarySectionID: libraryId,
+      Directory: [{ type, key: `/library/sections/${libraryId}/all?type=${type}` }] } })
+    : reply(url, options);
+
+test('uses the section advertised type pivot before requesting an episode page', async () => {
+  const paths = [];
+  const result = await readPlexSectionKeys({ ...base, fetchImpl: async (url) => {
+    paths.push(`${url.pathname}${url.search}`);
+    if (url.pathname === '/library/sections/102') {
+      return Response.json({ MediaContainer: { librarySectionID: 102,
+        Directory: [{ type: '4', key: '/library/sections/102/all?type=4' }] } });
+    }
+    return Response.json(page);
+  } });
+  assert.deepEqual(paths, ['/library/sections/102?includeDetails=1',
+    '/library/sections/102/all?type=4&sort=addedAt%3Adesc']);
+  assert.deepEqual(result.keys, [512, 513]);
+});
 
 test('reads one bounded, section-scoped Plex key page without exposing file paths', async () => {
   let calls = 0;
-  const result = await readPlexSectionKeys({ ...base, fetchImpl: async (url, options) => {
+  const result = await readPlexSectionKeys({ ...base, fetchImpl: withSection(async (url, options) => {
     calls++;
     assert.equal(url.pathname, '/library/sections/102/all');
     assert.equal(url.searchParams.get('type'), '4');
@@ -23,7 +43,7 @@ test('reads one bounded, section-scoped Plex key page without exposing file path
     assert.equal(options.headers['X-Plex-Container-Size'], '24');
     assert.equal(options.headers['X-Plex-Token'], 'synthetic');
     return Response.json(page);
-  } });
+  }) });
   assert.equal(calls, 1);
   assert.deepEqual(result, { state: 'page', libraryId: 102, kind: 'episode',
     offset: 0, totalSize: 150, keys: [512, 513], complete: false });
@@ -31,21 +51,21 @@ test('reads one bounded, section-scoped Plex key page without exposing file path
 
 test('a movie page uses movie type and remains non-exhaustive even when empty', async () => {
   const result = await readPlexSectionKeys({ ...base, libraryId: 9, kind: 'movie',
-    fetchImpl: async (url) => {
+    fetchImpl: withSection(async (url) => {
       assert.equal(url.searchParams.get('type'), '1');
       return Response.json({ MediaContainer: { size: 0, totalSize: 0, offset: 0,
         librarySectionID: 9, Metadata: [] } });
-    } });
+    }, 9, '1') });
   assert.deepEqual(result, { state: 'page', libraryId: 9, kind: 'movie',
     offset: 0, totalSize: 0, keys: [], complete: false });
 });
 
 test('an omitted optional total still yields keys without claiming completeness', async () => {
   const result = await readPlexSectionKeys({ ...base,
-    fetchImpl: async () => Response.json({ MediaContainer: {
+    fetchImpl: withSection(async () => Response.json({ MediaContainer: {
       size: 1, offset: 0, librarySectionID: 102,
       Metadata: [page.MediaContainer.Metadata[0]],
-    } }) });
+    } })) });
   assert.deepEqual(result, { state: 'page', libraryId: 102, kind: 'episode',
     offset: 0, totalSize: null, keys: [512], complete: false });
 });
@@ -60,7 +80,7 @@ test('wrong section, wrong kind, shifted offset, duplicate keys and oversized pa
   ];
   for (const container of cases) {
     assert.deepEqual(await readPlexSectionKeys({ ...base,
-      fetchImpl: async () => Response.json({ MediaContainer: container }) }),
+      fetchImpl: withSection(async () => Response.json({ MediaContainer: container })) }),
     { state: 'unavailable' });
   }
 });
@@ -68,10 +88,26 @@ test('wrong section, wrong kind, shifted offset, duplicate keys and oversized pa
 test('HTTP errors and byte-cap failures never become an empty successful page', async () => {
   for (const status of [401, 404, 302]) {
     assert.deepEqual(await readPlexSectionKeys({ ...base,
-      fetchImpl: async () => new Response(null, { status }) }),
+      fetchImpl: withSection(async () => new Response(null, { status })) }),
     { state: 'unavailable' });
   }
   assert.deepEqual(await readPlexSectionKeys({ ...base,
-    fetchImpl: async () => new Response('{}', { headers: { 'content-length': '1000001' } }) }),
+    fetchImpl: withSection(async () => new Response('{}', { headers: { 'content-length': '1000001' } })) }),
   { state: 'unavailable' });
+});
+
+test('missing or unsafe advertised type pivots hold without fetching a page', async () => {
+  for (const key of [null, 'https://other.example/library/sections/102/all?type=4',
+    '/library/sections/103/all?type=4', '/library/sections/102/refresh?type=4',
+    '/library/sections/102/all?type=1']) {
+    let calls = 0;
+    const result = await readPlexSectionKeys({ ...base, fetchImpl: async (url) => {
+      calls++;
+      assert.equal(url.pathname, '/library/sections/102');
+      return Response.json({ MediaContainer: { librarySectionID: 102,
+        Directory: key === null ? [] : [{ type: '4', key }] } });
+    } });
+    assert.deepEqual(result, { state: 'unavailable' });
+    assert.equal(calls, 1);
+  }
 });

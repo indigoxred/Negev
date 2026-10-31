@@ -16,6 +16,10 @@ test('private service reads only explicitly allowed Plex sections', async () => 
     fetchImpl: async (url, options) => {
       calls.push(url.pathname);
       assert.equal(options.headers['X-Plex-Token'], 'synthetic-plex-token');
+      if (url.pathname === '/library/sections/102') {
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          Directory: [{ type: '4', key: '/library/sections/102/all?type=4' }] } });
+      }
       return Response.json({ MediaContainer: { size: 1, totalSize: 1, offset: 0,
         librarySectionID: 102, Metadata: [{ ratingKey: '512', type: 'episode',
           librarySectionID: 102 }] } });
@@ -32,7 +36,7 @@ test('private service reads only explicitly allowed Plex sections', async () => 
     assert.equal(allowed.statusCode, 200);
     assert.deepEqual(allowed.json().keys, [512]);
     assert.equal(allowed.json().complete, false);
-    assert.deepEqual(calls, ['/library/sections/102/all']);
+    assert.deepEqual(calls, ['/library/sections/102', '/library/sections/102/all']);
   } finally {
     await service.close();
     await rm(dir, { recursive: true, force: true });

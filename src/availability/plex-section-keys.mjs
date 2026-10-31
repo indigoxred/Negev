@@ -22,8 +22,24 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Plex section observation');
   let body;
   try {
-    const url = new URL(`/library/sections/${libraryId}/all`, base);
-    url.searchParams.set('type', kind === 'episode' ? '4' : '1');
+    const sectionUrl = new URL(`/library/sections/${libraryId}`, base);
+    sectionUrl.searchParams.set('includeDetails', '1');
+    const sectionResponse = await fetchImpl(sectionUrl, { method: 'GET', redirect: 'manual',
+      headers: { 'X-Plex-Token': token, Accept: 'application/json',
+        'X-Plex-Client-Identifier': 'negev-availability-observer' },
+      signal: AbortSignal.timeout(timeoutMs) });
+    if (sectionResponse.status !== 200) return unavailable();
+    const section = (await readBoundedJson(sectionResponse, 100_000))?.MediaContainer;
+    const type = kind === 'episode' ? '4' : '1';
+    if (integer(section?.librarySectionID) !== integer(libraryId) ||
+        !Array.isArray(section.Directory) || section.Directory.length > 100) return unavailable();
+    const pivots = section.Directory.filter((entry) => String(entry?.type) === type);
+    if (pivots.length !== 1 || typeof pivots[0].key !== 'string') return unavailable();
+    const url = new URL(pivots[0].key, base);
+    if (url.origin !== base.origin || url.username || url.password || url.hash ||
+        url.pathname !== `/library/sections/${libraryId}/all` ||
+        [...url.searchParams.keys()].length !== 1 ||
+        url.searchParams.get('type') !== type) return unavailable();
     url.searchParams.set('sort', 'addedAt:desc');
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { 'X-Plex-Token': token, Accept: 'application/json',
