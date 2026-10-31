@@ -74,14 +74,14 @@ test('an early Import file reports busy even before Shoko schedules a queue job'
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
-test('a file arriving while the queue is read stays busy; empty plus idle stays unverified', async () => {
+test('a file arriving while the queue is read stays busy; empty plus idle is observed but not settled', async () => {
   const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
   try {
     const idleQueue = { WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
       TotalCount: 0, CurrentlyExecuting: [], Pools: [] };
     assert.deepEqual(await readShokoImportActivity({ ...input, importRoot,
       fetchImpl: async () => json(idleQueue) }),
-    { state: 'queue_idle_unverified' });
+    { state: 'quiet_observed' });
     assert.deepEqual(await readShokoImportActivity({ ...input, importRoot,
       fetchImpl: async () => {
         await writeFile(path.join(importRoot, 'arrived.mkv'), 'synthetic');

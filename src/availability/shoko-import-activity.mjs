@@ -48,7 +48,10 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       if (after.state === 'busy') return { state: 'busy' };
       if (after.state !== 'empty_observed') return unavailable();
     }
-    return { state: queue.ScheduledCount
-      ? 'scheduled_unverified' : 'queue_idle_unverified' };
+    if (queue.ScheduledCount) return { state: 'scheduled_unverified' };
+    // Both observations of a mounted Import root were empty and the queue
+    // was idle between them. This is useful triage, never an absence fence.
+    return { state: importRoot === undefined
+      ? 'queue_idle_unverified' : 'quiet_observed' };
   } catch { return unavailable(); }
 }
