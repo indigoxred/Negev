@@ -35,24 +35,31 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
   const items = [];
   for (const file of data.List) {
     if (!validId(file?.ID) || seenFiles.has(file.ID) ||
-        typeof file.Updated !== 'string' || !Number.isFinite(Date.parse(file.Updated)) ||
-        (file.SeriesIDs != null && !Array.isArray(file.SeriesIDs))) return unavailable();
+        typeof file.Updated !== 'string' || !Number.isFinite(Date.parse(file.Updated))) {
+      return unavailable();
+    }
     seenFiles.add(file.ID);
     const pairs = [];
     const seenPairs = new Set();
-    for (const series of file.SeriesIDs ?? []) {
+    let invalid = file.SeriesIDs != null &&
+      (!Array.isArray(file.SeriesIDs) || file.SeriesIDs.length > 100);
+    for (const series of invalid ? [] : file.SeriesIDs ?? []) {
       if (!validId(series?.SeriesID?.AniDB) || !Array.isArray(series.EpisodeIDs) ||
-          series.EpisodeIDs.length < 1 || series.EpisodeIDs.length > 100) return unavailable();
+          series.EpisodeIDs.length < 1 || series.EpisodeIDs.length > 100) {
+        invalid = true; break;
+      }
       for (const episode of series.EpisodeIDs) {
-        if (!validId(episode?.AniDB)) return unavailable();
+        if (!validId(episode?.AniDB)) { invalid = true; break; }
         const key = `${series.SeriesID.AniDB}:${episode.AniDB}`;
-        if (seenPairs.has(key)) return unavailable();
+        if (seenPairs.has(key)) { invalid = true; break; }
         seenPairs.add(key);
         pairs.push({ anidbId: series.SeriesID.AniDB, episodeId: episode.AniDB });
       }
+      if (invalid) break;
     }
     items.push({ fileId: file.ID, updated: file.Updated,
-      state: pairs.length ? 'linked' : 'provisional', pairs });
+      state: invalid ? 'unverified' : pairs.length ? 'linked' : 'provisional',
+      pairs: invalid ? [] : pairs });
   }
   if (items.length > data.Total) return unavailable();
   return { state: 'page', page, total: data.Total, items };

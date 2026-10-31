@@ -22,7 +22,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_files (
       file_id INTEGER PRIMARY KEY CHECK(file_id>0),
       updated TEXT NOT NULL,
-      state TEXT NOT NULL CHECK(state IN ('provisional','linked')),
+      state TEXT NOT NULL CHECK(state IN ('provisional','linked','unverified')),
       pairs_json TEXT NOT NULL,
       seen_pass INTEGER NOT NULL CHECK(seen_pass>0),
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
@@ -64,10 +64,10 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       for (const item of result.items) {
         if (!validId(item?.fileId) || seen.has(item.fileId) ||
             typeof item.updated !== 'string' || !Number.isFinite(Date.parse(item.updated)) ||
-            !['provisional', 'linked'].includes(item.state) ||
+            !['provisional', 'linked', 'unverified'].includes(item.state) ||
             !Array.isArray(item.pairs) || item.pairs.length > 100 ||
             item.pairs.some((pair) => !validId(pair?.anidbId) || !validId(pair?.episodeId)) ||
-            (item.state === 'provisional') !== (item.pairs.length === 0)) {
+            (item.state === 'linked') !== (item.pairs.length > 0)) {
           return held('invalid_file_page');
         }
         seen.add(item.fileId);

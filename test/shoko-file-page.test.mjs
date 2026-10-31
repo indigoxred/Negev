@@ -26,13 +26,19 @@ test('one bounded Shoko file page distinguishes provisional and linked imports',
         pairs: [{ anidbId: 42, episodeId: 1001 }] }] });
 });
 
-test('provider failures and malformed cross-references cannot imply absence', async () => {
+test('provider failures cannot imply absence, but one malformed file does not stop the page', async () => {
   assert.deepEqual(await readShokoFilePage({ ...base,
     fetchImpl: async () => new Response('', { status: 503 }) }),
   { state: 'unavailable' });
   assert.deepEqual(await readShokoFilePage({ ...base,
     fetchImpl: async () => json({ Total: 4, List: [file(10, [{ SeriesID: { AniDB: 42 },
-      EpisodeIDs: [{ AniDB: null }] }])] }) }), { state: 'unavailable' });
+      EpisodeIDs: [{ AniDB: null }] }]), file(11, [{ SeriesID: { AniDB: 42 },
+      EpisodeIDs: [{ AniDB: 1001 }] }])] }) }),
+  { state: 'page', page: 2, total: 4, items: [
+    { fileId: 10, updated: date, state: 'unverified', pairs: [] },
+    { fileId: 11, updated: date, state: 'linked',
+      pairs: [{ anidbId: 42, episodeId: 1001 }] },
+  ] });
 });
 
 test('rejects unbounded pages before contacting Shoko', async () => {

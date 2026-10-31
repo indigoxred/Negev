@@ -57,3 +57,20 @@ test('outage and stale concurrent page do not advance or erase observations', as
     assert.equal(ledger.getFile(10).state, 'provisional');
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('an unverified file is held while the next linked file advances', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+    const worker = createShokoInventoryWorker({ ledger, readPage: async () => ({
+      state: 'page', page: 1, total: 2, items: [
+        { ...provisional, state: 'unverified' }, { ...linked, fileId: 11 },
+      ],
+    }) });
+    assert.equal((await worker.tick()).state, 'recorded');
+    assert.equal(ledger.getFile(10).state, 'unverified');
+    assert.deepEqual(ledger.getFile(11).pairs, linked.pairs);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});

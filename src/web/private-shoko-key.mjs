@@ -11,13 +11,14 @@ export async function readPrivateShokoKey({ dataDir, keyPath } = {}) {
   }
   const secretDir = path.dirname(keyPath);
   const [base, parent, file] = await Promise.all([
-    lstat(dataDir), lstat(secretDir), lstat(keyPath),
+    lstat(dataDir, { bigint: true }), lstat(secretDir, { bigint: true }),
+    lstat(keyPath, { bigint: true }),
   ]);
   if (!base.isDirectory() || base.isSymbolicLink() ||
       !parent.isDirectory() || parent.isSymbolicLink() ||
-      !file.isFile() || file.isSymbolicLink() || file.size < 1 || file.size > 512 ||
+      !file.isFile() || file.isSymbolicLink() || file.size < 1n || file.size > 512n ||
       (process.platform !== 'win32' &&
-        ((base.mode | parent.mode | file.mode) & 0o077) !== 0)) {
+        ((base.mode | parent.mode | file.mode) & 0o077n) !== 0n)) {
     throw new TypeError('Invalid private Shoko key file');
   }
   const [realBase, realParent, realFile] = await Promise.all([
@@ -30,8 +31,8 @@ export async function readPrivateShokoKey({ dataDir, keyPath } = {}) {
   const handle = await open(keyPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const current = await handle.stat({ bigint: true });
-    if (!current.isFile() || current.dev !== BigInt(file.dev) ||
-        current.ino !== BigInt(file.ino) || current.size !== BigInt(file.size)) {
+    if (!current.isFile() || current.dev !== file.dev ||
+        current.ino !== file.ino || current.size !== file.size) {
       throw new TypeError('Shoko key file changed');
     }
     const key = (await handle.readFile({ encoding: 'utf8' })).trim();

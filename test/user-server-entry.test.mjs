@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { initializeUserStore } from '../src/auth/user-store.mjs';
+import { readPrivateShokoKey } from '../src/web/private-shoko-key.mjs';
 
 async function availablePort() {
   const server = net.createServer();
@@ -28,6 +29,7 @@ test('offline-initialized account service starts locally without an acquisition 
     await mkdir(secretDir, { mode: 0o700 });
     const shokoKeyPath = path.join(secretDir, 'shoko.token');
     await writeFile(shokoKeyPath, 'synthetic-key', { mode: 0o600 });
+    assert.equal(await readPrivateShokoKey({ dataDir, keyPath: shokoKeyPath }), 'synthetic-key');
     const port = await availablePort();
     child = spawn(process.execPath, ['src/web/user-server.mjs'], {
       cwd: path.resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
