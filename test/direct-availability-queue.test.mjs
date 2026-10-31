@@ -77,3 +77,18 @@ test('uncertain Plex check retries later while another direct import advances', 
       'claimed');
   });
 });
+
+test('coverage counts only current exact positives and never counts unknown targets', async () => {
+  await fixture(async (ctx) => {
+    const first = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...first, observedMs: 100 });
+    const claim = ctx.queue.claimNext({ nowMs: 100 });
+    ctx.queue.recordResult({ claim, state: 'available', checkedMs: 101 });
+    assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
+      episodeIds: [1001, 1002], nowMs: 101 }),
+    { verifiedTargets: 1, targetCount: 2 });
+    assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
+      episodeIds: [1001, 1002], nowMs: 101 + 30 * 60_000 }),
+    { verifiedTargets: 0, targetCount: 2 });
+  });
+});

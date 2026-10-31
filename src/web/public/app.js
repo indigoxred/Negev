@@ -13,8 +13,14 @@ function element(tag, text, className) {
   return node;
 }
 function progressText(progress) {
-  if (!progress || progress.publicAvailability !== 'unverified') {
+  if (!progress || !['unverified', 'verified_recently'].includes(progress.publicAvailability)) {
     return 'Request status unavailable';
+  }
+  if (progress.state === 'review_needed') return 'Needs owner review';
+  if (progress.publicAvailability === 'verified_recently') {
+    return progress.publicVerifiedTargets === progress.targetCount
+      ? 'All requested episodes checked playable in Plex recently'
+      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested episodes checked playable in Plex recently`;
   }
   switch (progress.state) {
     case 'saved': return 'Saved · no download recorded';

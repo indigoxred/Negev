@@ -27,12 +27,15 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
           EpisodeIDs: [{ AniDB: 1001 }] }] : [] });
       }
       if (url.hostname === 'shoko' && url.pathname === '/api/v3/Series/AniDB/42') {
-        return Response.json({ ID: 42, Title: 'Example', Type: 'TV' });
+        return Response.json({ ID: 42, Title: 'Example', Type: 'TV',
+          AirDate: '2020-01-01', EndDate: '2020-02-01',
+          EpisodeCount: 1, Restricted: false });
       }
       if (url.hostname === 'shoko' &&
           url.pathname === '/api/v3/Series/AniDB/42/Episode') {
         return Response.json({ Total: 1, List: [{ ID: 1001, AnimeID: 42,
-          EpisodeNumber: 1, Type: 'Episode', Title: 'One' }] });
+          EpisodeNumber: 1, Type: 'Episode', Title: 'One',
+          AirDate: '2020-01-01' }] });
       }
       if (url.hostname === 'shoko' && url.pathname === '/api/v3/Series/AniDB/Search') {
         return Response.json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
@@ -87,6 +90,14 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     const search = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } });
     assert.equal(search.statusCode, 200);
+    const session = await service.app.inject({ method: 'GET',
+      url: '/api/session', headers: { cookie } });
+    const created = await service.app.inject({ method: 'POST',
+      url: '/api/requests', headers: { cookie,
+        origin: 'http://localhost:3000',
+        'x-negev-csrf': session.json().csrfToken },
+      payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
+    assert.equal(created.statusCode, 202, created.body);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
       headers: { cookie } })).json().state, 'unknown');
     assert.deepEqual(await service.refreshShokoFile(51),
@@ -100,10 +111,19 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
       result: 'available' });
     assert.equal(service.getDirectAvailabilityStatus({
       anidbId: 42, episodeId: 1001 }).state, 'available');
+    const history = await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } });
+    assert.equal(history.json().items[0].progress.publicAvailability,
+      'verified_recently');
+    assert.equal(history.json().items[0].progress.publicVerifiedTargets, 1);
     linked = false;
     assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
     assert.deepEqual(service.getDirectAvailabilityStatus({
       anidbId: 42, episodeId: 1001 }), { state: 'unknown' });
+    const withdrawn = await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } });
+    assert.equal(withdrawn.json().items[0].progress.publicAvailability,
+      'unverified');
     assert.deepEqual(await service.tickDirectAvailability(), {
       state: 'checked', target: { anidbId: 42, episodeId: 1001 },
       result: 'unknown' });

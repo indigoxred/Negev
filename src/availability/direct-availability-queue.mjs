@@ -46,6 +46,9 @@ export function openDirectAvailabilityQueue(dbPath) {
   const record = db.prepare(`UPDATE direct_availability_targets SET
     state=?,due_ms=?,verified_ms=? WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);
+  const positiveForAnime = db.prepare(`SELECT episode_id AS episodeId
+    FROM direct_availability_targets WHERE anidb_id=? AND state='available'
+    AND verified_ms>? LIMIT 10001`);
   return {
     getObservation({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {
@@ -74,6 +77,19 @@ export function openDirectAvailabilityQueue(dbPath) {
         row.verifiedMs + positiveLifetimeMs > nowMs
         ? { state: 'available', verifiedAtMs: row.verifiedMs }
         : { state: 'unknown' };
+    },
+    getCoverage({ anidbId, episodeIds, nowMs }) {
+      if (!validId(anidbId) || !validTime(nowMs) ||
+          !Array.isArray(episodeIds) || episodeIds.length < 1 ||
+          episodeIds.length > 10_000 || episodeIds.some((id) => !validId(id)) ||
+          new Set(episodeIds).size !== episodeIds.length) {
+        throw new TypeError('Invalid availability coverage query');
+      }
+      const rows = positiveForAnime.all(anidbId, nowMs - positiveLifetimeMs);
+      const positives = rows.length > 10_000 ? new Set() :
+        new Set(rows.map((row) => row.episodeId));
+      return { verifiedTargets: episodeIds.filter((id) => positives.has(id)).length,
+        targetCount: episodeIds.length };
     },
     claimNext({ nowMs }) {
       if (!validTime(nowMs)) throw new TypeError('Invalid availability clock');

@@ -149,9 +149,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);
-        return { ...page, items: page.items.map((item) => ({
-          ...item, progress: progress.read(item.id),
-        })) };
+        return { ...page, items: page.items.map((item) => {
+          const local = progress.read(item.id);
+          const coverage = plexObserver ? directAvailability.getCoverage({
+            anidbId: item.anidbId, episodeIds: item.episodeIds,
+            nowMs: now() }) : null;
+          return { ...item, progress: coverage?.verifiedTargets > 0
+            ? { ...local, publicAvailability: 'verified_recently',
+              publicVerifiedTargets: coverage.verifiedTargets }
+            : local };
+        }) };
       },
       searchTitles: ({ query, page }) => metadata.run(() => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
