@@ -199,6 +199,45 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   // A searched title can be checked without a Negev request. This is vital
   // for a file imported manually through Shoko; only positive public proof
   // becomes Available and no identifier or path from the observer is exposed.
+  app.get('/api/catalogue/:id/availability-page', { preHandler: requireUser,
+    config: { rateLimit: { max: 1, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    const page = Number(request.query.page);
+    const offset = Number(request.query.offset);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        Object.keys(request.query).length !== 2 ||
+        !Number.isSafeInteger(page) || page < 1 || page > 1000 ||
+        !Number.isSafeInteger(offset) || offset < 0 || offset >= 100) {
+      return reply.code(400).send({ error: 'Invalid availability page' });
+    }
+    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        !titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof loadDetail !== 'function') {
+      return reply.code(503).send({ error: 'Catalogue unavailable' });
+    }
+    const detail = await loadDetail({ anidbId: id, page });
+    if (detail?.state !== 'details' || detail.anidbId !== id ||
+        detail.page !== page || !['series', 'movie'].includes(detail.kind) ||
+        !Array.isArray(detail.episodes) || detail.episodes.length > 100 ||
+        detail.episodes.some((episode) => !Number.isSafeInteger(episode?.id) ||
+          episode.id < 1) || offset >= detail.episodes.length) {
+      return reply.code(503).send({ error: 'Catalogue unavailable' });
+    }
+    const selected = detail.episodes.slice(offset, offset + 5);
+    const items = [];
+    for (const episode of selected) {
+      const status = await publicAvailability({ anidbId: id,
+        episodeId: episode.id, kind: detail.kind });
+      items.push({ episodeId: episode.id, state: status.state });
+    }
+    return { state: 'checked_page', anidbId: id, page, offset,
+      nextOffset: offset + selected.length < detail.episodes.length
+        ? offset + selected.length : null, items };
+  });
   app.get('/api/catalogue/:id/episodes/:episodeId/availability', {
     preHandler: requireUser,
     config: { rateLimit: { max: 4, timeWindow: '1 minute' } },

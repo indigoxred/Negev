@@ -36,6 +36,15 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         return true;
       },
     },
+    loadDetail: async ({ anidbId, page }) => ({ state: 'details',
+      anidbId, page, kind: 'series', episodes: [
+        { id: 1001, number: 1, type: 'Episode', title: 'One' },
+        { id: 1002, number: 2, type: 'Episode', title: 'Two' },
+        { id: 1003, number: 3, type: 'Episode', title: 'Three' },
+        { id: 1004, number: 4, type: 'Episode', title: 'Four' },
+        { id: 1005, number: 5, type: 'Episode', title: 'Five' },
+        { id: 1006, number: 6, type: 'Episode', title: 'Six' }],
+      total: 6, nextPage: null }),
     loadRelatedTitles: async ({ anidbId }) => ({ state: 'related_titles',
       anidbId, completeness: 'unproven', items: [{ anidbId: 5678,
         title: 'Another installment', relation: 'Sequel' }] }),
@@ -52,7 +61,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         filesToExclude: [], registeredInAniDb: false,
         downloadStarted: false }; },
     observePublicTarget: async (target) => { observed.push(target);
-      return { state: 'available', fileId: 900 }; },
+      return target.episodeId === 1002 ? { state: 'unknown' } :
+        { state: 'available', fileId: 900 }; },
   });
   try {
     const page = await app.inject({ method: 'GET', url: '/' });
@@ -143,6 +153,17 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/episodes/1001/availability?kind=series',
       headers: { cookie } })).statusCode, 404);
+    const checkedPage = await app.inject({ method: 'GET',
+      url: '/api/catalogue/1234/availability-page?page=1&offset=0',
+      headers: { cookie } });
+    assert.equal(checkedPage.statusCode, 200, checkedPage.body);
+    assert.deepEqual(checkedPage.json(), { state: 'checked_page', anidbId: 1234,
+      page: 1, offset: 0, nextOffset: 5,
+      items: [{ episodeId: 1001, state: 'available' },
+        { episodeId: 1002, state: 'unknown' },
+        { episodeId: 1003, state: 'available' },
+        { episodeId: 1004, state: 'available' },
+        { episodeId: 1005, state: 'available' }] });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1002/availability', headers: { cookie } })).statusCode, 404);
     const mine = await app.inject({ method: 'GET', url: '/api/requests',

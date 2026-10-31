@@ -338,6 +338,30 @@ async function showDetail(item) {
         finally { button.disabled = false; select.disabled = false; }
       });
       check.append(label, button, result);
+      const checkPage = element('button', 'Check next 5 in Plex (once per minute)');
+      const checkedList = element('div', undefined, 'availability-results');
+      let checkedCount = 0;
+      checkPage.addEventListener('click', async () => {
+        if (checkedCount >= pager.episodes.length) return;
+        checkPage.disabled = true;
+        try {
+          const page = Math.floor(checkedCount / 100) + 1;
+          const offset = checkedCount % 100;
+          const checked = await api(`/api/catalogue/${item.anidbId}/availability-page?page=${page}&offset=${offset}`);
+          if (state.selected !== item.anidbId) return;
+          for (const entry of checked.items) {
+            const episode = pager.episodes[checkedCount];
+            if (entry.episodeId !== episode?.id) throw new Error('Episode list changed; select the title again');
+            checkedList.append(element('p', `${episode.type} ${episode.number}: ${entry.state === 'available' ? 'Playable in Plex' : 'Not confirmed yet'}`));
+            checkedCount++;
+          }
+          checkPage.disabled = checkedCount >= pager.episodes.length;
+        } catch (error) {
+          message(error.message, true);
+          checkPage.disabled = false;
+        }
+      });
+      check.append(checkPage, checkedList);
       if (data.kind === 'series' && data.restricted === false) {
         const requestSelected = element('button', 'Request selected episode');
         let requesting = false;
@@ -381,6 +405,7 @@ async function showDetail(item) {
             const added = pager.append(page);
             if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
             appendOptions(added.episodes);
+            if (checkedCount < pager.episodes.length) checkPage.disabled = false;
             if (pager.nextPage === null) more.remove();
             else more.disabled = false;
           } catch (error) { message(error.message, true); more.disabled = false; }
