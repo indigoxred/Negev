@@ -10,6 +10,8 @@ import { ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../src/identity/shoko-preview.mjs';
+import { openHandoffPublishQueue, createHandoffPublishWorker } from
+  '../src/acquisition/handoff-publish-queue.mjs';
 import { createCompletionWorker, openCompletionQueue } from '../src/acquisition/completion-queue.mjs';
 
 const torrentHash = 'a'.repeat(40);
@@ -178,17 +180,22 @@ test('a reopened handoff journal can publish once and observe the exact destinat
     const prepared = await processCompletedAttempt({ ...context, ...config });
     assert.equal(prepared.state, 'handoff_prepared');
     const reopened = openHandoffLedger(dbPath);
+    const queue = openHandoffPublishQueue(dbPath);
     const lookup = ({ ed2k, size }) => previewAniDbRelease({
       baseUrl: config.shoko.baseUrl, providerId: config.shoko.providerId,
       apiKey: config.shoko.apiKey, ed2k, size, fetchImpl: config.fetchImpl });
     try {
-      const first = await processRecordedHandoff({ attemptId, ledger: reopened,
-        holdingRoot, importRoot, lookup, nowMs: 207, readPacer: config.readPacer });
-      assert.equal(first.state, 'publish_unknown');
-      const second = await processRecordedHandoff({ attemptId, ledger: reopened,
-        holdingRoot, importRoot, lookup, nowMs: 208, readPacer: config.readPacer });
-      assert.equal(second.state, 'published_observed');
+      let nowMs = 207;
+      const worker = createHandoffPublishWorker({ queue, now: () => nowMs,
+        processAttempt: ({ attemptId: selected }) => processRecordedHandoff({
+          attemptId: selected, ledger: reopened, holdingRoot, importRoot,
+          lookup, nowMs, readPacer: config.readPacer }) });
+      assert.deepEqual(await worker.runOnce(), { state: 'processed', attemptId,
+        result: { state: 'publish_unknown' } });
+      nowMs = 60_208;
+      assert.deepEqual(await worker.runOnce(), { state: 'processed', attemptId,
+        result: { state: 'published_observed' } });
       assert.deepEqual(await readdir(importRoot),
         [reopened.getHandoff(attemptId).publishName]);
-    } finally { reopened.close(); }
+    } finally { queue.close(); reopened.close(); }
   }));
