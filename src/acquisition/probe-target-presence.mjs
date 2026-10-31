@@ -25,7 +25,7 @@ export async function probeTargetPresence({ anidbId, episodeIds, kind,
     let shoko, publicResult;
     try { shoko = await readShokoEpisode(target); }
     catch { shoko = { state: 'unavailable' }; }
-    try { publicResult = await readPublicTarget(target); }
+    try { publicResult = await readPublicTarget(target, shoko); }
     catch { publicResult = { state: 'unknown' }; }
     observations.push({ episodeId, shoko, publicResult });
   }

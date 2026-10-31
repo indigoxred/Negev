@@ -94,12 +94,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
-    const observeCurrentPublic = (target) => {
+    const observeCurrentPublic = (target, observedShoko) => {
       if (directAvailability.getObservation(target) &&
           inventory.getObservedFileIds(target).length === 0) {
         return Promise.resolve({ state: 'unknown', reason: 'shoko_identity_changed' });
       }
-      return metadata.run(() => plexObserver.observeTarget(target));
+      return metadata.run(() => plexObserver.observeTarget(target,
+        observedShoko));
     };
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
       now, observeTarget: async (target) => {
@@ -192,7 +193,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           readShokoEpisode: (target) => metadata.run(() =>
             readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, ...target, fetchImpl })),
-          readPublicTarget: (target) => observeCurrentPublic(target),
+          readPublicTarget: (target, observedShoko) =>
+            observeCurrentPublic(target, observedShoko),
         }) : undefined,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,

@@ -61,7 +61,9 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       return indexPlexCardPage({ libraryId, kind, offset: 0,
         index, now, readPage, readCard });
     },
-    async observeTarget(target) {
+    // observedShoko is supplied only by the internal presence probe, after its
+    // own Shoko read. Never accept this value from a client request body.
+    async observeTarget(target, observedShoko) {
       if (!validId(target?.anidbId) || !validId(target.episodeId) ||
           !['series', 'movie'].includes(target.kind)) {
         throw new TypeError('Invalid availability target');
@@ -72,10 +74,12 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       if (publicLibraryIds.length === 0) {
         return { state: 'unknown', reason: 'public_library_unconfigured' };
       }
-      let shoko;
+      let shoko = observedShoko;
       if (guidProbe) {
-        try { shoko = await readShoko(target); }
-        catch { return { state: 'unknown', reason: 'observer_incomplete' }; }
+        if (!shoko) {
+          try { shoko = await readShoko(target); }
+          catch { return { state: 'unknown', reason: 'observer_incomplete' }; }
+        }
         if (shoko?.state === 'ok' && validId(shoko.shokoEpisodeId) &&
             validId(shoko.shokoSeriesId)) {
           const lookups = publicSections.episode.map((libraryId) => ({

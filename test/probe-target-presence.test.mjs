@@ -57,6 +57,25 @@ test('contradictory public and Shoko observations stay unknown', async () => {
   ]);
 });
 
+test('public observer reuses the trusted Shoko observation for each target', async () => {
+  const shoko = { state: 'ok', complete: true,
+    files: [{ fileId: 7, episodeIds: [1001] }] };
+  let publicReads = 0;
+  const result = await probeTargetPresence({ anidbId: 42,
+    episodeIds: [1001], kind: 'series', now: () => 500,
+    readImportActivity: async () => ({ state: 'quiet_observed' }),
+    readShokoEpisode: async () => shoko,
+    readPublicTarget: async (target, observedShoko) => {
+      publicReads++;
+      assert.equal(target.episodeId, 1001);
+      assert.strictEqual(observedShoko, shoko);
+      return { state: 'available' };
+    },
+  });
+  assert.equal(publicReads, 1);
+  assert.equal(result.targets[0].state, 'available');
+});
+
 test('probe rejects duplicate or unbounded target lists before provider calls', async () => {
   let calls = 0;
   const provider = async () => { calls++; return { state: 'unavailable' }; };

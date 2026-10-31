@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createPlexAvailabilityService } from '../src/availability/plex-availability-service.mjs';
+import { readShokoEpisodeFiles } from '../src/availability/shoko-episode-files.mjs';
 
 const cleanup = [];
 afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
@@ -104,5 +105,18 @@ test('opt-in exact GUID probe can find a direct import before the paced index re
     episodeId: 1001, kind: 'series' });
   assert.deepEqual(result, { state: 'available', fileId: 51 });
   assert.equal(calls.includes('plex/library/sections/102/all'), true);
+  service.close();
+});
+
+test('trusted Shoko observation avoids a second episode request during GUID discovery', async () => {
+  const { config, calls } = await fixture();
+  const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+  const shoko = await readShokoEpisodeFiles({ baseUrl: config.shokoBaseUrl,
+    apiKey: config.shokoApiKey, ...target, fetchImpl: config.fetchImpl });
+  const service = createPlexAvailabilityService({ ...config, guidProbe: true });
+  assert.deepEqual(await service.observeTarget(target, shoko),
+    { state: 'available', fileId: 51 });
+  assert.equal(calls.filter((call) => call ===
+    'shoko/api/v3/Episode/AniDB/1001/Episode').length, 1);
   service.close();
 });
