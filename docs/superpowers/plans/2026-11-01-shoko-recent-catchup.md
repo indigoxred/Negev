@@ -35,7 +35,7 @@
 - [x] Write failing tests for a two-page catch-up, equal-time tie, changed total/head, malformed timezone and exceeded page budget.
 - [x] Run the focused tests and confirm they fail for missing reader behavior.
 - [x] Implement a bounded parser and scanner using `sortOrder=-ImportedAt,-FileID`, `include=ImportLimbo`, at most five 100-file pages plus one first-page recheck.
-- [ ] Run focused and full suites, review the diff for secrets, commit and publish.
+- [x] Run focused and full suites, review the diff for secrets, commit and publish.
 
 ### Task 2: Durable queue-before-cursor recovery
 
@@ -43,8 +43,8 @@
 
 **Interfaces:** A first-run baseline is explicit and immutable. `recordBatch` atomically inserts exact file IDs into a deduplicated pending queue and then saves the newest cursor in one transaction; a failed transaction preserves the old cursor. `drainOne` calls the existing targeted Shoko file-ID path and leaves failed IDs pending.
 
-- [ ] Write failing tests for restart, duplicate replay, failed transaction, backlog overflow and no initial cursor.
-- [ ] Implement the ledger without writing Shoko or Plex.
+- [x] Write failing tests for restart, duplicate replay, failed transaction, backlog overflow and no initial cursor.
+- [x] Implement the ledger without writing Shoko or Plex.
 - [ ] Run focused and full suites, commit and publish.
 
 ### Task 3: Opt-in supervisor and installed gate
