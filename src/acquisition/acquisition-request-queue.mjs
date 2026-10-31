@@ -30,14 +30,20 @@ export function openAcquisitionRequestQueue(dbPath) {
       reason TEXT,
       attempt_id INTEGER CHECK(attempt_id>0),
       checked_ms INTEGER CHECK(checked_ms>=0),
-      next_due_ms INTEGER CHECK(next_due_ms>=0)
+      next_due_ms INTEGER CHECK(next_due_ms>=0),
+      candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'candidate_offset')) {
+      db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN candidate_offset
+        INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50)`);
+    }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
   // An unfinished claim remains excluded after a crash. Later request IDs
   // and later passes continue; reconciliation must close the uncertain claim.
-  const next = db.prepare(`SELECT r.id FROM requests r
+  const next = db.prepare(`SELECT r.id,COALESCE(c.candidate_offset,0) AS candidateOffset FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     WHERE r.id>? AND r.status='held' AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
@@ -48,10 +54,11 @@ export function openAcquisitionRequestQueue(dbPath) {
     VALUES (?,?,NULL,NULL,NULL,NULL,NULL) ON CONFLICT(request_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
-    state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?
+    state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,
+    candidate_offset=COALESCE(?,candidate_offset)
     WHERE request_id=? AND pass=? AND state IS NULL`);
   const result = db.prepare(`SELECT request_id AS requestId,pass,state,reason,
-    attempt_id AS attemptId,
+    attempt_id AS attemptId,candidate_offset AS candidateOffset,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM acquisition_request_checks WHERE request_id=?`);
   const unresolved = db.prepare(`SELECT request_id AS requestId,pass
@@ -85,26 +92,34 @@ export function openAcquisitionRequestQueue(dbPath) {
           throw new Error('Acquisition cursor changed');
         }
         claim.run(row.id, position.pass);
-        return { state: 'claimed', requestId: row.id, pass: position.pass };
+        return { state: 'claimed', requestId: row.id, pass: position.pass,
+          ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}) };
       });
     },
-    recordResult({ requestId, pass, state, reason = null, attemptId = null, checkedMs }) {
+    recordResult({ requestId, pass, state, reason = null, attemptId = null,
+      nextCandidateOffset = null, checkedMs }) {
       if (!validId(requestId) || !validId(pass) ||
           !['held', 'stopped_observed'].includes(state) ||
           (state === 'held' ? typeof reason !== 'string' ||
             !/^[a-z][a-z0-9_]{0,79}$/.test(reason) || attemptId !== null :
             reason !== null || !validId(attemptId)) ||
+          (nextCandidateOffset !== null &&
+            (!Number.isSafeInteger(nextCandidateOffset) ||
+              nextCandidateOffset < 0 || nextCandidateOffset > 50)) ||
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
       return save.run(state, reason, attemptId, checkedMs, checkedMs + RETRY_DELAY_MS,
+        nextCandidateOffset,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
     },
     getResult(requestId) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       const row = result.get(requestId);
-      return row ? { ...row } : null;
+      if (!row) return null;
+      const { candidateOffset, ...other } = row;
+      return candidateOffset > 0 ? { ...other, candidateOffset } : other;
     },
     listUnresolved({ afterId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
@@ -142,9 +157,13 @@ export function createAcquisitionPageWorker({ queue, processRequest,
             return { state: 'pass_complete', pass: next.pass, results };
           }
           let outcome;
-          try { outcome = await processRequest({ requestId: next.requestId }); }
+          try { outcome = await processRequest({ requestId: next.requestId,
+            candidateOffset: next.candidateOffset ?? 0 }); }
           catch { outcome = held('worker_unavailable'); }
-          if ((outcome?.state === 'stopped_observed' && !validId(outcome.attemptId)) ||
+          if ((outcome?.nextCandidateOffset !== undefined &&
+              (!Number.isSafeInteger(outcome.nextCandidateOffset) ||
+                outcome.nextCandidateOffset < 0 || outcome.nextCandidateOffset > 50)) ||
+              (outcome?.state === 'stopped_observed' && !validId(outcome.attemptId)) ||
               (outcome?.state !== 'stopped_observed' &&
               (outcome?.state !== 'held' ||
                 typeof outcome.reason !== 'string' ||
@@ -157,6 +176,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
             const saved = queue.recordResult({ requestId: next.requestId,
               pass: next.pass, state, reason,
               attemptId: state === 'stopped_observed' ? outcome.attemptId : null,
+              nextCandidateOffset: outcome.nextCandidateOffset ?? null,
               checkedMs: now() });
             if (saved.state !== 'recorded') return { state: 'held',
               reason: 'queue_unavailable', results };

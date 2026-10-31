@@ -16,8 +16,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
-  return async ({ requestId } = {}) => {
-    if (!validId(requestId)) return held('invalid_request');
+  return async ({ requestId, candidateOffset = 0 } = {}) => {
+    if (!validId(requestId) || !Number.isSafeInteger(candidateOffset) ||
+        candidateOffset < 0 || candidateOffset > 50) return held('invalid_request');
     let request;
     try { request = await readRequest(requestId); }
     catch { return held('request_unavailable'); }
@@ -44,11 +45,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
           candidate.guid.length > 500 || candidate.evidence !== 'unverified')) {
       return held('release_search_unavailable');
     }
-    if (found.items.length === 0) return held('no_release_candidates');
+    if (found.items.length === 0) return { ...held('no_release_candidates'),
+      nextCandidateOffset: 0 };
     const seen = new Set();
     let selected;
-    for (const candidate of found.items) {
+    const start = candidateOffset < found.items.length ? candidateOffset : 0;
+    let nextIndex = start;
+    for (let index = start; index < found.items.length; index++) {
       if (seen.size >= maxPreflights) break;
+      nextIndex = index + 1;
+      const candidate = found.items[index];
       const key = `${candidate.indexerId}:${candidate.guid}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -69,7 +75,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
       selected = { candidate, preview };
       break;
     }
-    if (!selected) return held('no_safe_release');
+    if (!selected) return { ...held('no_safe_release'),
+      nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0 };
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }

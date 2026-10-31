@@ -85,3 +85,26 @@ test('an unsafe changed catalogue or preflight identity cannot submit', async ()
     assert.equal(submits, 0);
   }
 });
+
+test('later candidate batches can reach a fourth release without rechecking the first three', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42,
+      items: [candidate(1), candidate(2), candidate(3), candidate(4)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-4' ? preflight :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
+  });
+  assert.deepEqual(await process({ requestId: 4 }),
+    { state: 'held', reason: 'no_safe_release', nextCandidateOffset: 3 });
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 3 }),
+    { state: 'stopped_observed', attemptId: 12 });
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2',
+    'candidate-3', 'candidate-4']);
+});

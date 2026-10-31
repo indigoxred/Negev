@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from
@@ -156,5 +157,73 @@ test('restart recovery releases only claims with no saved acquisition attempt', 
       assert.deepEqual(await reconcileUnresolvedAcquisitionClaims({ queue,
         inspectRequest: () => ({ state: 'no_attempt' }), now: () => 201,
         limit: 2 }), { state: 'reviewed', resolved: [2, 3], held: [] });
+    } finally { queue.close(); }
+  }));
+
+test('a held request resumes its next candidate batch after a restart', async () =>
+  fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      assert.equal(claim.requestId, 1);
+      assert.deepEqual(queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'no_safe_release',
+        nextCandidateOffset: 3, checkedMs: 100 }), { state: 'recorded' });
+      assert.equal(queue.getResult(1).candidateOffset, 3);
+    } finally { queue.close(); }
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      for (let id = 2; id <= 3; id++) {
+        const claim = queue.claimNext({ nowMs: 1_800_100 });
+        assert.equal(claim.requestId, id);
+        queue.recordResult({ requestId: id, pass: claim.pass,
+          state: 'held', reason: 'not_ready', checkedMs: 1_800_100 });
+      }
+      assert.equal(queue.claimNext({ nowMs: 1_800_100 }).state, 'pass_complete');
+      const resumed = queue.claimNext({ nowMs: 1_800_100 });
+      assert.deepEqual(resumed, { state: 'claimed', requestId: 1,
+        pass: 2, candidateOffset: 3 });
+    } finally { queue.close(); }
+  }));
+
+test('the page worker passes a saved candidate offset to a later attempt', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const seen = [];
+    try {
+      const worker = createAcquisitionPageWorker({ queue, limit: 3,
+        now: () => 100,
+        processRequest: async ({ requestId, candidateOffset }) => {
+          seen.push({ requestId, candidateOffset });
+          return { state: 'held', reason: 'no_safe_release',
+            nextCandidateOffset: requestId === 1 ? 3 : 0 };
+        } });
+      assert.equal((await worker.runOnce()).state, 'page');
+      assert.equal((await worker.runOnce()).state, 'pass_complete');
+      const later = createAcquisitionPageWorker({ queue, limit: 1,
+        now: () => 1_800_100,
+        processRequest: async ({ requestId, candidateOffset }) => {
+          seen.push({ requestId, candidateOffset });
+          return { state: 'held', reason: 'no_safe_release' };
+        } });
+      assert.equal((await later.runOnce()).state, 'page');
+      assert.deepEqual(seen.at(-1), { requestId: 1, candidateOffset: 3 });
+    } finally { queue.close(); }
+  }));
+
+test('existing queue databases acquire the candidate position without losing checks', async () =>
+  fixture(async (dbPath) => {
+    const old = new DatabaseSync(dbPath);
+    old.exec(`CREATE TABLE acquisition_request_checks (
+      request_id INTEGER PRIMARY KEY REFERENCES requests(id),
+      pass INTEGER NOT NULL, state TEXT, reason TEXT, attempt_id INTEGER,
+      checked_ms INTEGER, next_due_ms INTEGER) STRICT`);
+    old.prepare(`INSERT INTO acquisition_request_checks
+      VALUES (1,1,'held','not_ready',NULL,100,1800100)`).run();
+    old.close();
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).reason, 'not_ready');
+      assert.equal(queue.claimNext({ nowMs: 101 }).requestId, 2);
     } finally { queue.close(); }
   }));
