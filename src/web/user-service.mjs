@@ -69,7 +69,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const metadata = createMetadataLimiter();
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
-    const enqueueChangedFile = ({ before, after, observedMs }) => {
+    const enqueueChangedFile = ({ before, after, observedMs,
+      priority = 'reconcile' }) => {
       const pairs = new Map();
       for (const pair of [...(before?.pairs ?? []), ...(after?.pairs ?? [])]) {
         pairs.set(`${pair.anidbId}:${pair.episodeId}`, pair);
@@ -77,7 +78,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       for (const pair of pairs.values()) {
         const previous = directAvailability.getObservation(pair);
         directAvailability.enqueue({ ...pair,
-          observedMs: Math.max(observedMs, (previous?.observedMs ?? -1) + 1) });
+          observedMs: Math.max(observedMs, (previous?.observedMs ?? -1) + 1),
+          priority });
       }
     };
     const inventoryWorker = createShokoInventoryWorker({ ledger: inventory, now,
@@ -199,7 +201,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (saved.state === 'recorded_file' && after?.observedMs === observedMs &&
             (before?.updated !== after.updated || before?.state !== after.state ||
              JSON.stringify(before?.pairs) !== JSON.stringify(after.pairs))) {
-          enqueueChangedFile({ before, after, observedMs });
+          enqueueChangedFile({ before, after, observedMs, priority: 'event' });
         }
         return saved;
       })());

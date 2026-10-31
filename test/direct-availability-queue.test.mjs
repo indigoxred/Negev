@@ -92,3 +92,17 @@ test('coverage counts only current exact positives and never counts unknown targ
     { verifiedTargets: 0, targetCount: 2 });
   });
 });
+
+test('a fresh Shoko event runs before older inventory backfill without starving later work', async () => {
+  await fixture(async (ctx) => {
+    ctx.queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 100 });
+    ctx.queue.enqueue({ anidbId: 42, episodeId: 1002, observedMs: 101 });
+    ctx.queue.enqueue({ anidbId: 43, episodeId: 2001,
+      observedMs: 102, priority: 'event' });
+    const urgent = ctx.queue.claimNext({ nowMs: 103 });
+    assert.deepEqual(urgent.target, { anidbId: 43, episodeId: 2001 });
+    ctx.queue.recordResult({ claim: urgent, state: 'unknown', checkedMs: 103 });
+    assert.deepEqual(ctx.queue.claimNext({ nowMs: 104 }).target,
+      { anidbId: 42, episodeId: 1001 });
+  });
+});
