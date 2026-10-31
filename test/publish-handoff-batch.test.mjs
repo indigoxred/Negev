@@ -7,6 +7,7 @@ import { ed2kBuffer } from '../src/identity/ed2k.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { prepareHandoffBatch } from '../src/acquisition/prepare-handoff-batch.mjs';
 import { publishPreparedHandoff } from '../src/acquisition/publish-handoff-batch.mjs';
+import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-handoff.mjs';
 
 async function withBatch(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
@@ -129,7 +130,11 @@ test('one final exact check exposes a complete directory, then observes it on re
   { skip: process.platform === 'win32' ? 'Windows sandbox denies directory rename' : false },
   async () =>
   withBatch(async (sample) => {
-    const result = await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 500 });
+    const restored = restorePreparedHandoff({ attemptId: 1,
+      handoff: structuredClone(sample.ledger.getHandoff()) });
+    assert.equal(restored.state, 'handoff_prepared');
+    const result = await publishPreparedHandoff({ ...sample,
+      prepared: restored, attemptId: 1, nowMs: 500 });
     assert.equal(result.state, 'publish_unknown', JSON.stringify({ result,
       begins: sample.getBegins(), entries: await readdir(sample.importRoot) }));
     assert.equal(sample.getBegins(), 1);
@@ -139,10 +144,28 @@ test('one final exact check exposes a complete directory, then observes it on re
     assert.deepEqual(await readFile(path.join(sample.importRoot, sample.publishName, '01.en.srt')),
       sample.subtitle);
     assert.deepEqual(await readdir(sample.holdingRoot), []);
-    assert.deepEqual(await publishPreparedHandoff({ ...sample, attemptId: 1, nowMs: 501 }),
+    assert.deepEqual(await publishPreparedHandoff({ ...sample,
+      prepared: restored, attemptId: 1, nowMs: 501 }),
       { state: 'published_observed', destination: path.join(sample.importRoot, sample.publishName) });
     assert.equal(sample.getBegins(), 1);
     assert.equal(sample.getObservations(), 1);
+  }));
+
+test('restart reconstruction rejects a damaged journal before publication', async () =>
+  withBatch(async (sample) => {
+    const saved = structuredClone(sample.ledger.getHandoff());
+    const restored = restorePreparedHandoff({ attemptId: 1, handoff: saved });
+    assert.equal(restored.state, 'handoff_prepared');
+    assert.equal(restored.holdingPath, sample.prepared.holdingPath);
+    assert.equal(restored.evidenceDigest, sample.prepared.evidenceDigest);
+    const row = structuredClone(saved);
+    row.manifest.videos[0].size++;
+    assert.deepEqual(restorePreparedHandoff({ attemptId: 1, handoff: row }),
+      { state: 'held', reason: 'handoff_evidence_mismatch' });
+    assert.deepEqual(restorePreparedHandoff({ attemptId: 2, handoff: saved }),
+      { state: 'held', reason: 'handoff_evidence_mismatch' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
   }));
 
 test('an unexpected file in private holding prevents intent and watched-folder exposure', async () =>
