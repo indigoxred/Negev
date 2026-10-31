@@ -107,7 +107,9 @@ test('one stopped add is durably recorded before POST and exact manifest is reco
         return new Response('Ok.');
       }
       if (calls.filter((call) => call.endpoint.endsWith('/info')).length === 1) return Response.json([]);
-      return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      return Response.json(endpoint.endsWith('/files') ? files :
+        endpoint.endsWith('/properties')
+          ? { save_path: savePath, download_path: '' } : [torrent]);
     };
     const result = await submitStoppedCandidate({ ...options, ledger, attemptId, fetchImpl });
     assert.equal(result.state, 'stopped_observed');
@@ -115,14 +117,18 @@ test('one stopped add is durably recorded before POST and exact manifest is reco
     assert.deepEqual(calls.map(({ endpoint, method }) => [endpoint, method]), [
       ['/api/v2/app/version', 'GET'],
       ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/add', 'POST'],
-      ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/files', 'GET'],
-      ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/files', 'GET'],
+      ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/properties', 'GET'],
+      ['/api/v2/torrents/files', 'GET'], ['/api/v2/torrents/info', 'GET'],
+      ['/api/v2/torrents/properties', 'GET'], ['/api/v2/torrents/files', 'GET'],
     ]);
     assert.equal(calls[2].status, 'dispatch_unknown');
     const again = await submitStoppedCandidate({ ...options, nowMs: 202, ledger, attemptId,
       fetchImpl: async (url, init) => {
         assert.equal(init.method, 'GET');
-        return Response.json(new URL(url).pathname.endsWith('/files') ? files : [torrent]);
+        const endpoint = new URL(url).pathname;
+        return Response.json(endpoint.endsWith('/files') ? files :
+          endpoint.endsWith('/properties')
+            ? { save_path: savePath, download_path: '' } : [torrent]);
       } });
     assert.equal(again.state, 'stopped_observed');
   }));
@@ -181,6 +187,8 @@ test('excludes only passive extras before accepting a pristine stopped torrent',
         return new Response('Ok.');
       }
       if (!added) return Response.json([]);
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: passiveSavePath, download_path: '' });
       if (endpoint.endsWith('/files')) return Response.json([files[0], {
         index: 1, name: 'readme.nfo', size: 20,
         priority: excluded ? 0 : 1, progress: 0,
@@ -208,6 +216,8 @@ test('unsafe extra file never receives a priority write or torrent start', async
       if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
       if (endpoint.endsWith('/filePrio')) { priorityWrites++; return new Response('Ok.'); }
       if (!added) return Response.json([]);
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: unsafeSavePath, download_path: '' });
       if (endpoint.endsWith('/files')) return Response.json([files[0], {
         index: 1, name: 'setup.exe', size: 20, priority: 1, progress: 0,
       }]);

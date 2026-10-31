@@ -103,7 +103,9 @@ function qbittorrentFetch(calls) {
     if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
     if (endpoint.endsWith('/add')) return new Response('Ok.');
     if (calls.filter((call) => call.endpoint.endsWith('/info')).length === 1) return Response.json([]);
-    return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+    return Response.json(endpoint.endsWith('/files') ? files :
+      endpoint.endsWith('/properties')
+        ? { save_path: savePath, download_path: '' } : [torrent]);
   };
 }
 
@@ -227,7 +229,9 @@ test('replaying an observed stopped candidate never sends a second add', async (
         const endpoint = new URL(url).pathname;
         calls.push({ endpoint, method: init.method });
         assert.equal(init.method, 'GET');
-        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+        return Response.json(endpoint.endsWith('/files') ? files :
+          endpoint.endsWith('/properties')
+            ? { save_path: savePath, download_path: '' } : [torrent]);
       } } });
     assert.equal(replay.state, 'stopped_observed');
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
