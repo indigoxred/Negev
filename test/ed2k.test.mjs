@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, open, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, open, rename, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -55,5 +55,24 @@ test('file hashing reports bytes to the shared pacer', async () => {
     assert.deepEqual(await ed2kFile(file, { pacer: { afterBytes: async (count) => counts.push(count) } }),
       { ed2k: 'A448017AAF21D8525FC10AE87AA6729D', size: 3 });
     assert.deepEqual(counts, [3]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('staged file hashing rejects a path replaced after validation', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-swap-'));
+  const file = path.join(dir, 'episode.mkv');
+  try {
+    await writeFile(file, 'abc');
+    const expectedStat = await lstat(file, { bigint: true });
+    try { await rename(file, path.join(dir, 'original.mkv')); }
+    catch (error) {
+      if (error.code === 'EPERM' && process.platform === 'win32') {
+        t.skip('Windows sandbox denies local rename; Linux CI exercises the swap');
+        return;
+      }
+      throw error;
+    }
+    await writeFile(file, 'xyz');
+    await assert.rejects(() => ed2kFile(file, { expectedStat }), /File changed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

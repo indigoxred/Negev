@@ -66,7 +66,7 @@ export async function verifyStagedFile({
   }
 
   let hash;
-  try { hash = await ed2kFile(fullPath, { pacer }); }
+  try { hash = await ed2kFile(fullPath, { pacer, expectedStat: before }); }
   catch { return held('file_changed_or_unavailable'); }
 
   let preview;

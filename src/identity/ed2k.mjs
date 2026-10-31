@@ -1,3 +1,4 @@
+import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { setImmediate } from 'node:timers/promises';
 
@@ -61,13 +62,19 @@ export function ed2kBuffer(bytes) {
   return ed2kFromChunkDigests(digests);
 }
 
-export async function ed2kFile(path, { pacer } = {}) {
+export async function ed2kFile(path, { pacer, expectedStat } = {}) {
   if (pacer !== undefined && typeof pacer?.afterBytes !== 'function') {
     throw new TypeError('Invalid ED2K read pacer');
   }
-  const file = await open(path, 'r');
+  const file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const before = await file.stat({ bigint: true });
+    if (!before.isFile() || (expectedStat &&
+        (before.dev !== expectedStat.dev || before.ino !== expectedStat.ino ||
+          before.size !== expectedStat.size ||
+          before.mtimeNs !== expectedStat.mtimeNs))) {
+      throw new Error('File changed before hashing');
+    }
     if (before.size === 0n) throw new Error('Cannot identify an empty video file');
     if (before.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('File size is not safe to represent');
     const chunk = Buffer.alloc(ED2K_CHUNK_SIZE);
@@ -87,7 +94,8 @@ export async function ed2kFile(path, { pacer } = {}) {
       else await setImmediate();
     }
     const after = await file.stat({ bigint: true });
-    if (after.size !== before.size || after.mtimeNs !== before.mtimeNs) {
+    if (after.dev !== before.dev || after.ino !== before.ino ||
+        after.size !== before.size || after.mtimeNs !== before.mtimeNs) {
       throw new Error('File changed during hashing');
     }
     return { ed2k: ed2kFromChunkDigests(digests), size: Number(before.size) };
