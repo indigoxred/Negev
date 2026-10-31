@@ -66,9 +66,27 @@ function showSession(data) {
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
 }
+function clearWorkspace() {
+  state.user = null;
+  state.csrf = null;
+  state.selected = null;
+  state.searchToken++;
+  state.nextBeforeId = null;
+  state.releaseSearch = false;
+  state.detailLoad = false;
+  byId('request-list').replaceChildren();
+  byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
+  byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));
+  byId('search-form').reset();
+  byId('invite-code').textContent = '';
+  byId('invite-code').hidden = true;
+  byId('identity').hidden = true;
+  byId('workspace').hidden = true;
+  byId('auth').hidden = false;
+}
 async function refreshSession() {
   try { showSession(await api('/api/session')); await loadRequests(); }
-  catch { state.searchToken++; byId('auth').hidden = false; byId('workspace').hidden = true; }
+  catch { clearWorkspace(); }
 }
 async function loadRequests(append = false) {
   const list = byId('request-list');
@@ -190,17 +208,7 @@ byId('register-form').addEventListener('submit', async (event) => {
 byId('signout').addEventListener('click', async () => {
   try { await api('/api/logout', { method: 'POST', body: '{}' }); }
   catch (error) { message(error.message, true); return; }
-  state.user = null;
-  state.searchToken++;
-  state.csrf = null;
-  state.nextBeforeId = null;
-  state.releaseSearch = false;
-  state.detailLoad = false;
-  byId('request-list').replaceChildren();
-  byId('invite-code').hidden = true;
-  byId('identity').hidden = true;
-  byId('workspace').hidden = true;
-  byId('auth').hidden = false;
+  clearWorkspace();
   message('Signed out.');
 });
 byId('invite').addEventListener('click', async () => {
