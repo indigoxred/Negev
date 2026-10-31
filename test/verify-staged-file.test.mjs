@@ -30,11 +30,14 @@ async function withStage(run) {
 test('verifies an exact file inside staging without importing or moving it', async () => {
   await withStage(async (root) => {
     await writeFile(path.join(root, 'episode.mkv'), 'abc');
-    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv', expected, lookup: async (hash) => {
+    const paced = [];
+    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv', expected,
+      readPacer: { afterBytes: async (count) => paced.push(count) }, lookup: async (hash) => {
       assert.deepEqual(hash, { ed2k, size: 3 });
       return matchingPreview(hash);
     } });
     assert.deepEqual(result, { state: 'identity_verified', fileId: 123456, ed2k, size: 3 });
+    assert.deepEqual(paced, [3]);
   });
 });
 

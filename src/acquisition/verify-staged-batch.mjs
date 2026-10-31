@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
+import { makeBytePacer } from '../identity/read-pacer.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -8,6 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 export async function verifyStagedBatch({
   root, request, expectedTorrent, plannedFiles, observe,
   lookup, verify = verifyStagedFile, maxTotalBytes = 64 * 1024 ** 3,
+  readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
 }) {
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       typeof observe !== 'function' || typeof lookup !== 'function' ||
@@ -15,6 +17,10 @@ export async function verifyStagedBatch({
       maxTotalBytes < 1 || maxTotalBytes > 1024 ** 4) {
     throw new TypeError('Invalid staged batch configuration');
   }
+  if (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') {
+    throw new TypeError('Invalid staged batch read pacer');
+  }
+  const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   if (request?.status !== 'held' || !Number.isSafeInteger(request.anidbId) ||
       request.anidbId <= 0 || !Array.isArray(request.episodeIds) ||
       request.episodeIds.length === 0 || request.episodeIds.length > 500 ||
@@ -58,7 +64,7 @@ export async function verifyStagedBatch({
     try {
       result = await verify({ root, relativePath: file.name,
         expected: { animeId: request.anidbId, episodeIds: plannedByName.get(file.name).episodeIds },
-        lookup });
+        lookup, readPacer: pacer });
     } catch { return held('file_unavailable'); }
     if (result?.state !== 'identity_verified') {
       return held(result?.reason === 'wrong_identity' ? 'file_wrong_identity' :

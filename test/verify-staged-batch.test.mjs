@@ -15,10 +15,13 @@ const plannedFiles = [{ name: 'Show/01.mkv', episodeIds: [1001] },
 
 test('checks each selected file in sequence and rechecks torrent before reporting evidence', async () => {
   const calls = [];
+  const readPacer = { afterBytes: async () => {} };
   const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+    readPacer,
     observe: async () => { calls.push('observe'); return { state: 'complete', files }; },
-    verify: async ({ relativePath, expected }) => {
+    verify: async ({ relativePath, expected, readPacer: suppliedPacer }) => {
       calls.push(relativePath);
+      assert.equal(suppliedPacer, readPacer);
       assert.equal(expected.animeId, 42);
       return { state: 'identity_verified', fileId: relativePath.includes('01') ? 51 : 52,
         ed2k: 'B'.repeat(32), size: 3 };

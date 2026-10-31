@@ -2,6 +2,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { ed2kFile } from './ed2k.mjs';
 import { evaluatePreview } from './evaluate-preview.mjs';
+import { makeBytePacer } from './read-pacer.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts']);
@@ -10,10 +11,15 @@ const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts'
 // and recheck the file before any later Shoko Import handoff.
 export async function verifyStagedFile({
   root, relativePath, expected, lookup, maxFileBytes = 64 * 1024 ** 3,
+  readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
 }) {
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 1024 ** 4) {
     throw new TypeError('Invalid staged file byte budget');
   }
+  if (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') {
+    throw new TypeError('Invalid staged file read pacer');
+  }
+  const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       typeof relativePath !== 'string' || path.isAbsolute(relativePath) ||
       relativePath.includes('\\') || relativePath.includes('\0')) {
@@ -60,7 +66,7 @@ export async function verifyStagedFile({
   }
 
   let hash;
-  try { hash = await ed2kFile(fullPath); }
+  try { hash = await ed2kFile(fullPath, { pacer }); }
   catch { return held('file_changed_or_unavailable'); }
 
   let preview;

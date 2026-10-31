@@ -1,4 +1,5 @@
 import { open } from 'node:fs/promises';
+import { setImmediate } from 'node:timers/promises';
 
 export const ED2K_CHUNK_SIZE = 9_728_000;
 
@@ -60,11 +61,15 @@ export function ed2kBuffer(bytes) {
   return ed2kFromChunkDigests(digests);
 }
 
-export async function ed2kFile(path) {
+export async function ed2kFile(path, { pacer } = {}) {
+  if (pacer !== undefined && typeof pacer?.afterBytes !== 'function') {
+    throw new TypeError('Invalid ED2K read pacer');
+  }
   const file = await open(path, 'r');
   try {
     const before = await file.stat({ bigint: true });
     if (before.size === 0n) throw new Error('Cannot identify an empty video file');
+    if (before.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('File size is not safe to represent');
     const chunk = Buffer.alloc(ED2K_CHUNK_SIZE);
     const digests = [];
     let remaining = before.size;
@@ -78,6 +83,8 @@ export async function ed2kFile(path) {
       }
       digests.push(md4(chunk.subarray(0, wanted)));
       remaining -= BigInt(wanted);
+      if (pacer) await pacer.afterBytes(wanted);
+      else await setImmediate();
     }
     const after = await file.stat({ bigint: true });
     if (after.size !== before.size || after.mtimeNs !== before.mtimeNs) {

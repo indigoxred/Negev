@@ -43,3 +43,17 @@ test('file hashing streams the same bytes as buffer hashing', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('file hashing reports bytes to the shared pacer', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-paced-'));
+  const file = path.join(dir, 'tiny.bin');
+  const counts = [];
+  try {
+    const handle = await open(file, 'w');
+    try { await handle.writeFile(Buffer.from('abc')); }
+    finally { await handle.close(); }
+    assert.deepEqual(await ed2kFile(file, { pacer: { afterBytes: async (count) => counts.push(count) } }),
+      { ed2k: 'A448017AAF21D8525FC10AE87AA6729D', size: 3 });
+    assert.deepEqual(counts, [3]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
