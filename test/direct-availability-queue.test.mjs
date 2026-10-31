@@ -40,6 +40,32 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
   });
 });
 
+test('direct availability worker allows only one Plex comparison at a time', async () => {
+  await fixture(async (ctx) => {
+    const first = { anidbId: 42, episodeId: 1001 };
+    const second = { anidbId: 42, episodeId: 1002 };
+    ctx.queue.enqueue({ ...first, observedMs: 100 });
+    ctx.queue.enqueue({ ...second, observedMs: 100 });
+    let release;
+    const waiting = new Promise((resolve) => { release = resolve; });
+    const observed = [];
+    const worker = createDirectAvailabilityWorker({ queue: ctx.queue,
+      observeTarget: async (target) => {
+        observed.push(target);
+        if (target.episodeId === 1001) await waiting;
+        return { state: 'unknown' };
+      }, now: () => 101 });
+    const active = worker.runOnce();
+    assert.deepEqual(await worker.runOnce(),
+      { state: 'held', reason: 'check_in_progress' });
+    assert.deepEqual(observed, [first]);
+    release();
+    assert.equal((await active).state, 'checked');
+    assert.equal((await worker.runOnce()).state, 'checked');
+    assert.deepEqual(observed, [first, second]);
+  });
+});
+
 test('new Shoko evidence invalidates a prior badge and prevents stale in-flight proof', async () => {
   await fixture(async (ctx) => {
     const target = { anidbId: 42, episodeId: 1001 };

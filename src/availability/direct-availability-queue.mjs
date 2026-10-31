@@ -150,19 +150,24 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
       typeof observeTarget !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid direct availability worker');
   }
+  let busy = false;
   return {
     async runOnce() {
-      const receipt = queue.claimNext({ nowMs: now() });
-      if (receipt.state === 'idle') return receipt;
-      let outcome;
-      try { outcome = await observeTarget(receipt.target); }
-      catch { outcome = { state: 'unknown' }; }
-      const state = outcome?.state === 'available' ? 'available' : 'unknown';
-      const saved = queue.recordResult({ claim: receipt, state,
-        checkedMs: now() });
-      return saved.state === 'recorded'
-        ? { state: 'checked', target: receipt.target, result: state }
-        : saved;
+      if (busy) return { state: 'held', reason: 'check_in_progress' };
+      busy = true;
+      try {
+        const receipt = queue.claimNext({ nowMs: now() });
+        if (receipt.state === 'idle') return receipt;
+        let outcome;
+        try { outcome = await observeTarget(receipt.target); }
+        catch { outcome = { state: 'unknown' }; }
+        const state = outcome?.state === 'available' ? 'available' : 'unknown';
+        const saved = queue.recordResult({ claim: receipt, state,
+          checkedMs: now() });
+        return saved.state === 'recorded'
+          ? { state: 'checked', target: receipt.target, result: state }
+          : saved;
+      } finally { busy = false; }
     },
   };
 }
