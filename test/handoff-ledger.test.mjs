@@ -47,6 +47,13 @@ test('one exact prepared handoff gets one durable publish intent across restart'
     try {
     saved = ledger.recordPrepared({ attemptId: attempt.attemptId, prepared, nowMs: 205 });
     assert.equal(saved.state, 'prepared');
+    const acquisitionAfterHandoff = openAcquisitionLedger(dbPath);
+    try {
+      assert.deepEqual(acquisitionAfterHandoff.recordTerminalRejection({
+        attemptId: attempt.attemptId, hash,
+        reason: 'file_wrong_identity', nowMs: 206 }),
+      { state: 'held', reason: 'handoff_already_recorded' });
+    } finally { acquisitionAfterHandoff.close(); }
     assert.match(saved.publishName, /^negev-[0-9]+-[0-9a-f]{16}$/);
     assert.deepEqual(ledger.recordPrepared({ attemptId: attempt.attemptId,
       prepared, nowMs: 206 }), saved);

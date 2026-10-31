@@ -17,7 +17,8 @@ export function openHandoffLedger(dbPath) {
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA foreign_keys=ON');
-    for (const table of ['acquisition_attempts', 'acquisition_starts']) {
+    for (const table of ['acquisition_attempts', 'acquisition_starts',
+      'acquisition_rejections']) {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
         throw new TypeError('Acquisition ledger must be initialized first');
       }
@@ -45,6 +46,7 @@ export function openHandoffLedger(dbPath) {
   const claimedEpisodes = db.prepare(`SELECT episode_id FROM acquisition_target_claims
     WHERE attempt_id=? AND active=1 ORDER BY episode_id`);
   const startRow = db.prepare('SELECT torrent_hash FROM acquisition_starts WHERE attempt_id=?');
+  const rejectionRow = db.prepare('SELECT 1 FROM acquisition_rejections WHERE attempt_id=?');
   const handoffRow = db.prepare(`SELECT torrent_hash,evidence_digest,holding_path,manifest_json,
     publish_name,status,updated_ms
     FROM handoff_intents WHERE attempt_id=?`);
@@ -107,6 +109,7 @@ export function openHandoffLedger(dbPath) {
             startRow.get(attemptId)?.torrent_hash !== torrentHash) {
           return held('start_intent_missing');
         }
+        if (rejectionRow.get(attemptId)) return held('candidate_rejected');
         const claims = claimedEpisodes.all(attemptId).map((row) => row.episode_id);
         const covered = evidence.manifest.videos.flatMap((file) => file.episodeIds);
         if (evidence.manifest.anidbId !== attempt.anidb_id ||

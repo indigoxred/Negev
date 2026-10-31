@@ -13,12 +13,18 @@ export async function prepareRecordedHandoff({
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
+      typeof acquisitions?.recordTerminalRejection !== 'function' ||
       !Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError('Invalid handoff coordinator configuration');
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
     root: stagingRoot, observe, lookup, verify, verifySubtitle, readPacer });
+  if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
+    const attempt = acquisitions.getAttempt(attemptId);
+    return acquisitions.recordTerminalRejection({ attemptId,
+      hash: attempt.torrentHash, reason: verified.reason, nowMs });
+  }
   if (verified.state !== 'batch_identity_verified') return verified;
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
     verified, readPacer });

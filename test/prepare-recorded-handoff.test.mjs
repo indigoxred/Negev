@@ -7,6 +7,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { prepareRecordedHandoff } from '../src/acquisition/prepare-recorded-handoff.mjs';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { ed2kFile } from '../src/identity/ed2k.mjs';
 
 test('recorded exact batch is copied privately and journaled once, without publishing', async () => {
@@ -60,6 +61,62 @@ test('recorded exact batch is copied privately and journaled once, without publi
     assert.deepEqual(again, { state: 'held', reason: 'handoff_already_recorded' });
     assert.equal(observations, 2);
     assert.equal((await readdir(holdingRoot)).length, 1);
+  } finally {
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('only a confirmed wrong identity records a terminal hold; outage keeps the attempt retryable', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-rejected-handoff-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'wrong', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
+      episodeIds: [1001] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const torrentHash = 'a'.repeat(40);
+  const candidate = { indexerId: 7, guid: 'wrong-release' };
+  const claim = acquisitions.reserve({ requestId: saved.requestId, candidate,
+    episodeIds: [1001], nowMs: 200 });
+  acquisitions.bindPreparedTorrent({ attemptId: claim.attemptId, candidate,
+    hash: torrentHash, nowMs: 201 });
+  acquisitions.recordFilePlan({ attemptId: claim.attemptId, hash: torrentHash,
+    plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], nowMs: 202 });
+  acquisitions.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+  acquisitions.recordTorrent({ attemptId: claim.attemptId, hash: torrentHash, nowMs: 204 });
+  acquisitions.beginStart({ attemptId: claim.attemptId, hash: torrentHash,
+    manifestDigest: 'b'.repeat(64), nowMs: 205 });
+  const handoffs = openHandoffLedger(dbPath);
+  const { mkdir } = await import('node:fs/promises');
+  const [stagingRoot, holdingRoot, importRoot] = ['staging', 'holding', 'import']
+    .map((name) => path.join(root, name));
+  await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) => mkdir(dir)));
+  const base = { requests, acquisitions, handoffs, attemptId: claim.attemptId,
+    stagingRoot, holdingRoot, importRoot, nowMs: 206,
+    observe: async () => ({ state: 'complete', files: [
+      { index: 0, name: '01.mkv', size: 1000 }], subtitles: [] }),
+    lookup: async () => null };
+  try {
+    assert.deepEqual(await prepareRecordedHandoff({ ...base,
+      verify: async () => ({ state: 'held', reason: 'provider_unavailable' }) }),
+    { state: 'held', reason: 'file_provider_unavailable' });
+    assert.equal(acquisitions.getAttempt(claim.attemptId).status, 'torrent_observed');
+    assert.deepEqual(await prepareRecordedHandoff({ ...base,
+      verify: async () => ({ state: 'rejected', reason: 'wrong_identity' }) }),
+    { state: 'rejected_held', reason: 'file_wrong_identity' });
+    assert.equal(acquisitions.getAttempt(claim.attemptId).status, 'rejected_held');
+    assert.equal(handoffs.getHandoff(claim.attemptId), null);
+    const details = { anidbId: 42, torrentHash,
+      files: [{ name: '01.mkv', size: 1000, ed2k: 'A'.repeat(32),
+        anidbFileId: 51, episodeIds: [1001] }], subtitles: [] };
+    assert.deepEqual(handoffs.recordPrepared({ attemptId: claim.attemptId,
+      prepared: { state: 'handoff_prepared', publishReady: false,
+        holdingPath: path.join(holdingRoot, '.negev-prep-fake'),
+        evidenceDigest: evaluateHandoffEvidence(details).digest, ...details },
+      nowMs: 207 }),
+    { state: 'held', reason: 'candidate_rejected' });
+    assert.deepEqual(await readdir(holdingRoot), []);
   } finally {
     handoffs.close(); acquisitions.close(); requests.close();
     await rm(root, { recursive: true, force: true });

@@ -130,6 +130,50 @@ test('only an unsent, unbound candidate can release its claim for another releas
     } finally { ledger.close(); }
   }));
 
+test('a verified wrong-show candidate is durably rejected without freeing its live target', async () =>
+  withLedger(async ({ dbPath, firstId, thirdId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    const torrentHash = 'a'.repeat(40);
+    const claim = ledger.reserve({ requestId: firstId, candidate,
+      episodeIds: [1001], nowMs: 200 });
+    ledger.bindPreparedTorrent({ attemptId: claim.attemptId, candidate,
+      hash: torrentHash, nowMs: 201 });
+    ledger.recordFilePlan({ attemptId: claim.attemptId, hash: torrentHash,
+      plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], nowMs: 202 });
+    ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+    ledger.recordTorrent({ attemptId: claim.attemptId, hash: torrentHash, nowMs: 204 });
+    assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
+      hash: torrentHash, reason: 'file_wrong_identity', nowMs: 205 }),
+    { state: 'held', reason: 'start_intent_missing' });
+    ledger.beginStart({ attemptId: claim.attemptId, hash: torrentHash,
+      manifestDigest: 'b'.repeat(64), nowMs: 205 });
+    assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
+      hash: 'c'.repeat(40), reason: 'file_wrong_identity', nowMs: 206 }),
+    { state: 'held', reason: 'torrent_conflict' });
+    assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
+      hash: torrentHash, reason: 'file_wrong_identity', nowMs: 206 }),
+    { state: 'rejected_held', reason: 'file_wrong_identity' });
+    ledger.close();
+    ledger = openAcquisitionLedger(dbPath);
+    try {
+      assert.equal(ledger.getAttempt(claim.attemptId).status, 'rejected_held');
+      assert.equal(ledger.getAttempt(claim.attemptId).rejectionReason, 'file_wrong_identity');
+      assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
+        hash: torrentHash, reason: 'file_wrong_identity', nowMs: 207 }),
+      { state: 'rejected_held', reason: 'file_wrong_identity' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 208 }),
+      { state: 'held', reason: 'candidate_rejected' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'replacement' },
+        episodeIds: [1001], nowMs: 209 }),
+      { state: 'held', reason: 'target_busy' });
+      assert.equal(ledger.reserve({ requestId: thirdId,
+        candidate: { indexerId: 7, guid: 'later-episode' },
+        episodeIds: [1004], nowMs: 210 }).state, 'reserved');
+    } finally { ledger.close(); }
+  }));
+
 test('dispatch intent persists before network action and never auto-retries after restart', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

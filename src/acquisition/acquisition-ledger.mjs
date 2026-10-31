@@ -98,6 +98,12 @@ export function openAcquisitionLedger(dbPath) {
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_rejections (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      torrent_hash TEXT NOT NULL,
+      reason TEXT NOT NULL CHECK(reason = 'file_wrong_identity'),
+      rejected_ms INTEGER NOT NULL CHECK(rejected_ms >= 0)
+    ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
@@ -127,6 +133,10 @@ export function openAcquisitionLedger(dbPath) {
   const insertStart = db.prepare(`INSERT INTO acquisition_starts
     (attempt_id,torrent_hash,manifest_digest,status,created_ms,updated_ms)
     VALUES (?,?,?,'start_unknown',?,?)`);
+  const findRejection = db.prepare('SELECT torrent_hash,reason,rejected_ms FROM acquisition_rejections WHERE attempt_id=?');
+  const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
+    (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
+  const handoffTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_intents'");
 
   function transact(action) {
     let begun = false;
@@ -161,6 +171,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         const existing = candidateRow.get(candidate.indexerId, digest);
         if (existing && findRelease.get(existing.id)) return held('candidate_released');
+        if (existing && findRejection.get(existing.id)) return held('candidate_rejected');
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
           JSON.stringify([...episodeIds].sort((a, b) => a - b))
@@ -188,6 +199,39 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'released_pre_dispatch' };
       });
     },
+    // Wrong AniDB identity is a terminal result for this exact candidate.
+    // Keep claims active until a separately proved torrent/staging retirement;
+    // otherwise a second grab could race with media still on disk.
+    recordTerminalRejection({ attemptId, hash, reason, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) ||
+          reason !== 'file_wrong_identity' || !validTime(nowMs)) {
+        throw new TypeError('Invalid terminal rejection');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash || row.torrent_hash !== normalizedHash) {
+          return held('torrent_conflict');
+        }
+        const existing = findRejection.get(attemptId);
+        if (existing) return existing.torrent_hash === normalizedHash &&
+          existing.reason === reason
+          ? { state: 'rejected_held', reason } : held('rejection_conflict');
+        if (row.status !== 'torrent_observed' ||
+            findStart.get(attemptId)?.torrent_hash !== normalizedHash) {
+          return held('start_intent_missing');
+        }
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (handoffTable.get() && db.prepare(
+          'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) {
+          return held('handoff_already_recorded');
+        }
+        insertRejection.run(attemptId, normalizedHash, reason, nowMs);
+        return { state: 'rejected_held', reason };
+      });
+    },
     bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
       if (!validId(attemptId) || !validId(candidate?.indexerId) ||
           typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
@@ -197,6 +241,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
+        if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const digest = createHash('sha256').update(candidate.guid).digest('hex');
         if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest) {
@@ -222,6 +267,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
+        if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.expected_hash !== hash.toLowerCase()) return held('torrent_conflict');
         const claimed = attemptEpisodes.all(attemptId).map((item) => item.episode_id);
@@ -258,6 +304,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
+        if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'reserved' && !row.expected_hash) return held('torrent_not_prepared');
         if (row.status === 'reserved') {
@@ -275,6 +322,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
+        if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (!row.expected_hash || row.expected_hash !== hash.toLowerCase()) return held('torrent_conflict');
         if (row.status === 'torrent_observed') return row.torrent_hash === hash.toLowerCase()
@@ -293,6 +341,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
+        if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const normalizedHash = hash.toLowerCase();
         const normalizedDigest = manifestDigest.toLowerCase();
@@ -319,10 +368,13 @@ export function openAcquisitionLedger(dbPath) {
     getAttempt(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
       const row = findAttempt.get(attemptId);
+      const rejection = row ? findRejection.get(attemptId) : null;
       return row ? { id: row.id, requestId: row.request_id, anidbId: row.anidb_id,
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
-        status: findRelease.get(attemptId) ? 'released_pre_dispatch' : row.status,
-        expectedHash: row.expected_hash, torrentHash: row.torrent_hash } : null;
+        status: findRelease.get(attemptId) ? 'released_pre_dispatch' :
+          rejection ? 'rejected_held' : row.status,
+        expectedHash: row.expected_hash, torrentHash: row.torrent_hash,
+        ...(rejection ? { rejectionReason: rejection.reason } : {}) } : null;
     },
     close() { db.close(); },
   };
