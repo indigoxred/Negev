@@ -24,6 +24,7 @@ export async function requestAniDbHydration({
   try {
     const response = await fetchImpl(url, {
       method: 'POST',
+      redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });

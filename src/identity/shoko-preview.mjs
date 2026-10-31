@@ -24,6 +24,7 @@ export async function previewAniDbRelease({
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
+      redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });

@@ -35,6 +35,7 @@ export async function searchReleaseCandidates({
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
+      redirect: 'manual',
       headers: { 'X-Api-Key': apiKey, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });

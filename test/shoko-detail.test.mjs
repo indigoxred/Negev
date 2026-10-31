@@ -20,6 +20,8 @@ test('loads exact AniDB episode IDs including missing and unaired entries', asyn
   assert.equal(calls[1].url.searchParams.get('includeMissing'), 'true');
   assert.equal(calls[1].url.searchParams.get('includeUnaired'), 'true');
   assert.equal(calls[1].init.headers.Authorization, 'Bearer synthetic-key');
+  assert.equal(calls[0].init.redirect, 'manual');
+  assert.equal(calls[1].init.redirect, 'manual');
   assert.deepEqual(result, {
     state: 'details', anidbId: 1234, title: 'Example Anime', kind: 'series',
     airDate: '2026-10-01', endDate: null, episodeCount: 2, restricted: false,

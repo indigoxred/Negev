@@ -21,6 +21,7 @@ test('uses the installed read-only preview route with a header credential', asyn
   assert.equal(url.searchParams.get('id'), 'anidb://AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+123456789');
   assert.equal(url.searchParams.has('apikey'), false);
   assert.equal(called.init.method, 'GET');
+  assert.equal(called.init.redirect, 'manual');
   assert.equal(called.init.headers.Authorization, 'Bearer synthetic-test-key');
   assert.deepEqual(result, { status: 200, release: { providerName: 'AniDB' } });
 });

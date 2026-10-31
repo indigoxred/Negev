@@ -18,6 +18,7 @@ test('requests only one metadata refresh without creating a Shoko series', async
     force: 'false', immediate: 'false', cacheOnly: 'false',
   });
   assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.redirect, 'manual');
   assert.equal(calls[0].init.headers.Authorization, 'Bearer synthetic-key');
 });
 

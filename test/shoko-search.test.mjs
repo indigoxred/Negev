@@ -18,6 +18,7 @@ test('searches unowned AniDB titles using the installed PascalCase response', as
   assert.equal(url.searchParams.get('pageSize'), '20');
   assert.equal(url.searchParams.has('apikey'), false);
   assert.equal(called.init.method, 'GET');
+  assert.equal(called.init.redirect, 'manual');
   assert.equal(called.init.headers.Authorization, 'Bearer synthetic-key');
   assert.deepEqual(result, {
     state: 'results', total: 1, page: 1,

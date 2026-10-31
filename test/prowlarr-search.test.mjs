@@ -22,6 +22,7 @@ test('uses only read-only search and returns unverified, sanitized candidates', 
   assert.equal(url.searchParams.get('limit'), '25');
   assert.equal(url.searchParams.has('apikey'), false);
   assert.equal(called.init.method, 'GET');
+  assert.equal(called.init.redirect, 'manual');
   assert.equal(called.init.headers['X-Api-Key'], 'synthetic-key');
   assert.deepEqual(result, { state: 'candidates', items: [{
     guid: 'release-1', indexerId: 7, title: '[Group] Example Anime - 01', size: 12345,

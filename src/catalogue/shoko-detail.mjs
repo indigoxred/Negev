@@ -6,6 +6,7 @@ async function readJson(url, apiKey, fetchImpl, timeoutMs) {
   try {
     const response = await fetchImpl(url, {
       method: 'GET',
+      redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
