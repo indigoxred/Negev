@@ -37,4 +37,17 @@
 - [x] Run it and observe failure for the missing coordinator.
 - [x] Implement only the composition needed to pass.
 - [x] Add failure tests for Prowlarr, availability, mount, and replay; run targeted then full tests.
-- [ ] Review diff and publish only after passing verification.
+- [x] Review diff and publish only after passing verification.
+
+### Task 2: Preserve the provisional file plan across restart
+
+**Files:** Modify `src/acquisition/acquisition-ledger.mjs` and `src/acquisition/submit-missing-candidate.mjs`; test `test/acquisition-ledger.test.mjs` and `test/submit-missing-candidate.test.mjs`; update `README.md`.
+
+**Interfaces:** `recordFilePlan({attemptId,hash,plannedFiles,nowMs})` binds one immutable filename/size/episode plan to an already bound torrent hash. `getFilePlan(attemptId)` returns that plan after restart. The coordinator requires an exact plan for every video in the torrent metainfo before a qBittorrent call.
+
+- [x] Write and run a failing restart/conflict regression for the durable plan.
+- [x] Implement its SQLite record and fail-closed validation.
+- [x] Write and run a failing coordinator regression for a mismatched filename.
+- [x] Require the exact metainfo plan before the stopped submission; confirm the focused tests pass.
+- [x] Run the full test suite and review the changed files.
+- [ ] Publish and verify Linux CI.

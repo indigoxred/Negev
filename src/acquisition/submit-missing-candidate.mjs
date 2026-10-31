@@ -1,20 +1,58 @@
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+
+const held = (reason) => ({ state: 'held', reason });
+
+function exactFilePlan(prepared, plannedFiles, episodeIds) {
+  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > 50 ||
+      !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > 50) return false;
+  const plannedByName = new Map();
+  const plannedTargets = new Set();
+  for (const file of plannedFiles) {
+    if (typeof file?.name !== 'string' || torrentFileKind(file.name) !== 'video' ||
+        plannedByName.has(file.name.toLowerCase()) ||
+        !Number.isSafeInteger(file.size) || file.size < 1 ||
+        !Array.isArray(file.episodeIds) || file.episodeIds.length < 1) return false;
+    plannedByName.set(file.name.toLowerCase(), file);
+    for (const id of file.episodeIds) {
+      if (!Number.isSafeInteger(id) || id < 1 || plannedTargets.has(id)) return false;
+      plannedTargets.add(id);
+    }
+  }
+  if (plannedTargets.size !== episodeIds.length ||
+      episodeIds.some((id) => !plannedTargets.has(id))) return false;
+  const videos = prepared.files.filter((file) => torrentFileKind(file.name) === 'video');
+  if (videos.length !== plannedFiles.length || prepared.files.some((file) =>
+    !['video', 'subtitle'].includes(torrentFileKind(file.name)))) return false;
+  return videos.every((file) => {
+    const planned = plannedByName.get(file.name.toLowerCase());
+    return planned?.name === file.name && planned.size === file.size;
+  });
+}
 
 // Server-side controlled-acquisition boundary. The caller must have chosen
 // the release and exact episode subset; a title match alone cannot do that.
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, episodeIds,
-  readEvidence, publicLibraryIds, ledger, now = Date.now, prowlarr, qbittorrent }) {
+  plannedFiles, readEvidence, publicLibraryIds, ledger, now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function') {
     throw new TypeError('Invalid stopped acquisition configuration');
   }
   const prepared = await prepareStoppedCandidate({ ...prowlarr, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
+  if (!exactFilePlan(prepared, plannedFiles, episodeIds)) return held('file_plan_mismatch');
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds,
     readEvidence, publicLibraryIds, ledger, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
+  const nowMs = now();
+  const bound = ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+    candidate, hash: prepared.expected.hash, nowMs });
+  if (bound.state === 'held') return bound;
+  const plan = ledger.recordFilePlan({ attemptId: reserved.attemptId,
+    hash: prepared.expected.hash, plannedFiles, nowMs });
+  if (plan.state !== 'planned') return plan;
   return submitStoppedCandidate({ ...qbittorrent, ledger,
-    attemptId: reserved.attemptId, candidate, prepared, nowMs: now() });
+    attemptId: reserved.attemptId, candidate, prepared, nowMs });
 }

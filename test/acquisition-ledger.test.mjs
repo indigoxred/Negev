@@ -180,6 +180,36 @@ test('prepared hash is bound durably to the exact reserved candidate', async () 
     } finally { ledger.close(); }
   }));
 
+test('the video-to-episode plan survives restart and cannot be reinterpreted', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    try {
+      const reserved = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001, 1002], nowMs: 200 });
+      const hash = 'a'.repeat(40);
+      const plannedFiles = [
+        { name: 'Show/01.mkv', size: 1000, episodeIds: [1001] },
+        { name: 'Show/02.mkv', size: 1100, episodeIds: [1002] },
+      ];
+      assert.equal(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate, hash, nowMs: 201 }).state, 'prepared');
+      assert.deepEqual(ledger.recordFilePlan({ attemptId: reserved.attemptId,
+        hash, plannedFiles, nowMs: 202 }), { state: 'planned' });
+      ledger.close();
+      ledger = null;
+      const restarted = openAcquisitionLedger(dbPath);
+      try {
+        assert.deepEqual(restarted.getFilePlan(reserved.attemptId), plannedFiles);
+        assert.deepEqual(restarted.recordFilePlan({ attemptId: reserved.attemptId,
+          hash, plannedFiles: [{ ...plannedFiles[0], episodeIds: [1002] },
+            { ...plannedFiles[1], episodeIds: [1001] }], nowMs: 203 }),
+        { state: 'held', reason: 'file_plan_conflict' });
+        assert.deepEqual(restarted.recordFilePlan({ attemptId: reserved.attemptId,
+          hash, plannedFiles, nowMs: 203 }), { state: 'planned' });
+      } finally { restarted.close(); }
+    } finally { ledger?.close(); }
+  }));
+
 test('two disjoint requests cannot claim the same torrent hash', async () =>
   withLedger(async ({ dbPath, firstId, thirdId }) => {
     const one = openAcquisitionLedger(dbPath);

@@ -1,9 +1,40 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const validHash = (value) => typeof value === 'string' &&
+  /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(value);
+
+function canonicalFilePlan(plannedFiles) {
+  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > 50) {
+    throw new TypeError('Invalid acquisition file plan');
+  }
+  const names = new Set();
+  const targets = new Set();
+  const files = plannedFiles.map((file) => {
+    if (typeof file?.name !== 'string' || file.name.length > 1000 ||
+        torrentFileKind(file.name) !== 'video' ||
+        !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 1024 ** 4 ||
+        !Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
+        file.episodeIds.length > 50 || file.episodeIds.some((id) => !validId(id))) {
+      throw new TypeError('Invalid acquisition file plan');
+    }
+    const nameKey = file.name.toLowerCase();
+    if (names.has(nameKey)) throw new TypeError('Duplicate acquisition filename');
+    names.add(nameKey);
+    for (const id of file.episodeIds) {
+      if (targets.has(id)) throw new TypeError('Duplicate acquisition target');
+      targets.add(id);
+    }
+    return { name: file.name, size: file.size,
+      episodeIds: [...file.episodeIds].sort((a, b) => a - b) };
+  });
+  files.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  return { files, targetIds: [...targets].sort((a, b) => a - b) };
+}
 
 // Durable intent only. A future dispatcher must write dispatch_unknown before
 // any external call and reconcile an uncertain response without re-sending.
@@ -48,6 +79,13 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS active_acquisition_target
       ON acquisition_target_claims(anidb_id,episode_id) WHERE active=1`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_file_plans (
+      attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
+      file_name TEXT NOT NULL,
+      file_size INTEGER NOT NULL CHECK(file_size > 0),
+      episode_key TEXT NOT NULL,
+      PRIMARY KEY(attempt_id,file_name)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_releases (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       released_ms INTEGER NOT NULL CHECK(released_ms >= 0)
@@ -76,6 +114,9 @@ export function openAcquisitionLedger(dbPath) {
   const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
+  const planRows = db.prepare('SELECT file_name,file_size,episode_key FROM acquisition_file_plans WHERE attempt_id=? ORDER BY file_name');
+  const insertPlan = db.prepare('INSERT INTO acquisition_file_plans(attempt_id,file_name,file_size,episode_key) VALUES (?,?,?,?)');
+  const touchAttempt = db.prepare('UPDATE acquisition_attempts SET updated_ms=? WHERE id=?');
   const findRelease = db.prepare('SELECT released_ms FROM acquisition_releases WHERE attempt_id=?');
   const insertRelease = db.prepare('INSERT INTO acquisition_releases(attempt_id,released_ms) VALUES (?,?)');
   const deactivateClaims = db.prepare('UPDATE acquisition_target_claims SET active=0 WHERE attempt_id=? AND active=1');
@@ -171,6 +212,45 @@ export function openAcquisitionLedger(dbPath) {
         if (row.status === 'reserved') return { state: 'prepared', expectedHash: normalizedHash };
         return { state: row.status, expectedHash: normalizedHash };
       });
+    },
+    recordFilePlan({ attemptId, hash, plannedFiles, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid file plan intent');
+      }
+      const plan = canonicalFilePlan(plannedFiles);
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (row.expected_hash !== hash.toLowerCase()) return held('torrent_conflict');
+        const claimed = attemptEpisodes.all(attemptId).map((item) => item.episode_id);
+        if (JSON.stringify(claimed) !== JSON.stringify(plan.targetIds)) {
+          return held('file_plan_target_mismatch');
+        }
+        const stored = planRows.all(attemptId).map((item) => ({ name: item.file_name,
+          size: item.file_size, episodeIds: JSON.parse(item.episode_key) }));
+        if (stored.length) return JSON.stringify(stored) === JSON.stringify(plan.files)
+          ? { state: 'planned' } : held('file_plan_conflict');
+        if (row.status !== 'reserved') return held('file_plan_missing_after_dispatch');
+        for (const file of plan.files) insertPlan.run(attemptId, file.name,
+          file.size, JSON.stringify(file.episodeIds));
+        touchAttempt.run(nowMs, attemptId);
+        return { state: 'planned' };
+      });
+    },
+    getFilePlan(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
+      if (!findAttempt.get(attemptId)) return null;
+      const rows = planRows.all(attemptId);
+      if (!rows.length) return null;
+      try {
+        const files = rows.map((item) => ({ name: item.file_name,
+          size: item.file_size, episodeIds: JSON.parse(item.episode_key) }));
+        const plan = canonicalFilePlan(files);
+        return JSON.stringify(plan.targetIds) === JSON.stringify(
+          attemptEpisodes.all(attemptId).map((item) => item.episode_id)) ? plan.files : null;
+      } catch { return null; }
     },
     beginDispatch({ attemptId, nowMs }) {
       if (!validId(attemptId) || !validTime(nowMs)) throw new TypeError('Invalid dispatch intent');

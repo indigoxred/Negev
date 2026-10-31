@@ -37,7 +37,8 @@ async function withLedgers(run) {
 
 function options({ request, ledger, readEvidence, prowlarrFetch, qbittorrentFetch,
   inspectMounts = async () => mounts }) {
-  return { request, candidate, episodeIds: [1001], readEvidence,
+  return { request, candidate, episodeIds: [1001],
+    plannedFiles: [{ name: 'Example.mkv', size: 1000, episodeIds: [1001] }], readEvidence,
     publicLibraryIds: [102], ledger, now: () => 201,
     prowlarr: { baseUrl: 'http://prowlarr.internal:9696/', apiKey: 'syntheticKey',
       query: 'Example', indexerIds: [3], fetchImpl: prowlarrFetch },
@@ -78,7 +79,20 @@ test('one exact missing target is reserved then submitted stopped once', async (
     assert.equal(result.state, 'stopped_observed');
     assert.equal(result.hash, hash);
     assert.deepEqual(ledger.getAttempt(result.attemptId).episodeIds, [1001]);
+    assert.deepEqual(ledger.getFilePlan(result.attemptId), input.plannedFiles);
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+  }));
+
+test('a wrong video-to-episode plan holds before reservation or qBittorrent', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let qbCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: prowlarrFetch(), qbittorrentFetch: async () => { qbCalls++; } });
+    const result = await submitMissingCandidate({ ...input,
+      plannedFiles: [{ name: 'Other.mkv', size: 1000, episodeIds: [1001] }] });
+    assert.deepEqual(result, { state: 'held', reason: 'file_plan_mismatch' });
+    assert.equal(qbCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
   }));
 
 test('a present target or unavailable Prowlarr cannot send a torrent', async () =>
