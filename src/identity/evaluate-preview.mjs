@@ -15,12 +15,15 @@ export function evaluatePreview(preview, expected) {
     providerName: raw.ProviderName,
     releaseURI: raw.ReleaseURI,
     fileSize: raw.FileSize,
+    ...(Object.hasOwn(raw, 'IsCorrupted') ? { isCorrupted: raw.IsCorrupted } : {}),
     hashes: Array.isArray(raw.Hashes) ? raw.Hashes.map((hash) => ({ type: hash?.Type, value: hash?.Value })) : null,
     crossReferences: Array.isArray(raw.CrossReferences) ? raw.CrossReferences.map((xref) => ({
       anidbAnimeID: xref?.AnidbAnimeID,
       anidbEpisodeID: xref?.AnidbEpisodeID,
-      percentageStart: xref?.PercentageStart,
-      percentageEnd: xref?.PercentageEnd,
+      ...(xref && Object.hasOwn(xref, 'PercentageStart')
+        ? { percentageStart: xref.PercentageStart } : {}),
+      ...(xref && Object.hasOwn(xref, 'PercentageEnd')
+        ? { percentageEnd: xref.PercentageEnd } : {}),
     })) : null,
   } : raw;
   const digest = expected?.ed2k;
@@ -44,8 +47,8 @@ export function evaluatePreview(preview, expected) {
         !Number.isSafeInteger(xref?.anidbAnimeID) || xref.anidbAnimeID <= 0 ||
         !Number.isSafeInteger(xref?.anidbEpisodeID) || xref.anidbEpisodeID <= 0 ||
         !Object.hasOwn(xref, 'percentageStart') || !Object.hasOwn(xref, 'percentageEnd') ||
-        ((xref.percentageStart == null) !== (xref.percentageEnd == null)) ||
-        (xref.percentageStart != null &&
+        ((xref.percentageStart === null) !== (xref.percentageEnd === null)) ||
+        (xref.percentageStart !== null &&
           (!Number.isFinite(xref.percentageStart) || !Number.isFinite(xref.percentageEnd) ||
            xref.percentageStart < 0 || xref.percentageEnd > 100 ||
            xref.percentageStart >= xref.percentageEnd)))) {
@@ -61,6 +64,8 @@ export function evaluatePreview(preview, expected) {
   }
 
   return { state: 'accepted', reason: 'exact_anidb_release', fileId: Number(fileMatch[1]),
+    ...(Object.hasOwn(release, 'isCorrupted')
+      ? { isCorrupted: release.isCorrupted } : {}),
     coverage: release.crossReferences.map((xref) => ({ episodeId: xref.anidbEpisodeID,
       start: xref.percentageStart ?? 0, end: xref.percentageEnd ?? 100 })) };
 }

@@ -44,7 +44,7 @@ async function withBatch(run) {
     };
     const lookup = async ({ ed2k, size }) => ({ status: 200, release: {
       id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
-      releaseURI: 'https://anidb.net/file/51', fileSize: size,
+      releaseURI: 'https://anidb.net/file/51', fileSize: size, isCorrupted: false,
       hashes: [{ type: 'ED2K', value: ed2k }],
       crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
         percentageStart: null, percentageEnd: null }],
@@ -54,6 +54,27 @@ async function withBatch(run) {
       getObservations: () => observations });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('fresh partial coverage or corrupted release cannot enter watched Import', async () => {
+  for (const changed of ['partial', 'corrupt', 'unknown_health']) {
+    await withBatch(async (sample) => {
+      const lookup = async (hash) => {
+        const preview = await sample.lookup(hash);
+        if (changed === 'partial') {
+          preview.release.crossReferences[0].percentageStart = 0;
+          preview.release.crossReferences[0].percentageEnd = 50;
+        } else if (changed === 'corrupt') preview.release.isCorrupted = true;
+        else delete preview.release.isCorrupted;
+        return preview;
+      };
+      const result = await publishPreparedHandoff({ ...sample, lookup,
+        attemptId: 1, nowMs: 500 });
+      assert.equal(result.state, 'held', changed);
+      assert.equal(sample.getBegins(), 0, changed);
+      assert.deepEqual(await readdir(sample.importRoot), [], changed);
+    });
+  }
+});
 
 test('an uncertain publish with the exact destination is observed without another rename', async () =>
   withBatch(async (sample) => {

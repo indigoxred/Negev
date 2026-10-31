@@ -50,6 +50,30 @@ test('preserves exact AniDB half-episode coverage without claiming completion', 
     [{ episodeId: 1001, start: 0, end: 50 }]);
 });
 
+test('missing coverage fields are not manufactured into a full episode', () => {
+  for (const pascal of [false, true]) {
+    const release = structuredClone(registered);
+    delete release.crossReferences[0].percentageStart;
+    delete release.crossReferences[0].percentageEnd;
+    const candidate = pascal ? { ID: release.id, ProviderName: release.providerName,
+      ReleaseURI: release.releaseURI, FileSize: release.fileSize,
+      Hashes: [{ Type: 'ED2K', Value: expected.ed2k }],
+      CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001 }] } : release;
+    assert.deepEqual(evaluatePreview({ status: 200, release: candidate }, expected),
+      { state: 'held', reason: 'invalid_response' });
+  }
+});
+
+test('one-sided, undefined, or invalid coverage stays held', () => {
+  for (const values of [[null, undefined], [undefined, null],
+    [undefined, undefined], [50, 0]]) {
+    const release = structuredClone(registered);
+    release.crossReferences[0].percentageStart = values[0];
+    release.crossReferences[0].percentageEnd = values[1];
+    assert.equal(evaluatePreview({ status: 200, release }, expected).state, 'held');
+  }
+});
+
 test('rejects a registered file for another anime', () => {
   const release = structuredClone(registered);
   release.crossReferences[0].anidbAnimeID = 9999;

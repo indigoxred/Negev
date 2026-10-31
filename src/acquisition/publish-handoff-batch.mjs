@@ -7,6 +7,10 @@ import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
+const admitted = (result, file) => result?.isCorrupted === false &&
+  Array.isArray(result.coverage) && result.coverage.length === file.episodeIds.length &&
+  file.episodeIds.every((episodeId) => result.coverage.some((range) =>
+    range.episodeId === episodeId && range.start === 0 && range.end === 100));
 
 function within(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -100,7 +104,7 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
       lookup, readPacer: pacer }); }
     catch { return held('publish_outcome_unknown'); }
     if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
-        result.ed2k !== file.ed2k || result.size !== file.size) {
+        result.ed2k !== file.ed2k || result.size !== file.size || !admitted(result, file)) {
       return held('publish_outcome_unknown');
     }
   }
@@ -214,6 +218,7 @@ export async function publishPreparedHandoff({
         result.ed2k !== file.ed2k || result.size !== file.size) {
       return held('identity_changed');
     }
+    if (!admitted(result, file)) return held('import_admission_failed');
   }
   for (const file of evidence.manifest.subtitles) {
     let result;

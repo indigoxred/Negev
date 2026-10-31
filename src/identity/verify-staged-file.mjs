@@ -84,5 +84,7 @@ export async function verifyStagedFile({
   const decision = evaluatePreview(preview, { ...expected, ...hash });
   if (decision.state !== 'accepted') return decision;
   return { state: 'identity_verified', fileId: decision.fileId,
-    coverage: decision.coverage, ...hash };
+    coverage: decision.coverage,
+    ...(Object.hasOwn(decision, 'isCorrupted')
+      ? { isCorrupted: decision.isCorrupted } : {}), ...hash };
 }

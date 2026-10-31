@@ -9,8 +9,7 @@ const sameIds = (left, right) => Array.isArray(left) &&
 // result proves Shoko has identified each exact registered video and has an
 // accessible location. The file may still be in Import; this does not prove
 // Shoko moved it, Plex playback, or subtitle import.
-export async function observeHandoffImport({ handoff, readEpisode } = {}) {
-  if (handoff?.status !== 'published_observed') return held('publish_not_observed');
+async function inspectExactShokoFiles({ handoff, readEpisode }) {
   if (typeof readEpisode !== 'function') throw new TypeError('Episode reader required');
   const manifest = handoff.manifest;
   const evidence = evaluateHandoffEvidence({ anidbId: manifest?.anidbId,
@@ -57,4 +56,26 @@ export async function observeHandoffImport({ handoff, readEpisode } = {}) {
   }
   return { state: 'shoko_files_identified',
     fileIds: manifest.videos.map((file) => observed.get(file.anidbFileId)) };
+}
+
+export async function observeHandoffImport({ handoff, readEpisode } = {}) {
+  if (handoff?.status !== 'published_observed') return held('publish_not_observed');
+  return inspectExactShokoFiles({ handoff, readEpisode });
+}
+
+// A saved publish intent can outlive Shoko's rapid move out of Import. This
+// observes content only; it does not claim that this operation supplied it.
+export async function reconcileHandoffContent({ attemptId, ledger, readEpisode } = {}) {
+  if (!validId(attemptId) || typeof ledger?.getHandoff !== 'function' ||
+      typeof readEpisode !== 'function') throw new TypeError('Invalid handoff reconciliation');
+  const handoff = ledger.getHandoff(attemptId);
+  if (handoff?.status !== 'publish_unknown') return held('publish_intent_missing');
+  if (handoff.publishName !== `negev-${attemptId}-${handoff.evidenceDigest?.slice(0, 16)}`) {
+    return held('handoff_evidence_mismatch');
+  }
+  const observed = await inspectExactShokoFiles({ handoff, readEpisode });
+  return observed.state === 'shoko_files_identified'
+    ? { state: 'content_present', publicationProven: false,
+      fileIds: observed.fileIds }
+    : observed;
 }
