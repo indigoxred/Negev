@@ -92,6 +92,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const epochModule = await app.inject({ method: 'GET', url: '/response-epoch.mjs' });
     assert.equal(epochModule.statusCode, 200);
     assert.match(epochModule.headers['content-type'], /javascript/);
+    const franchiseModule = await app.inject({ method: 'GET', url: '/franchise-explorer.mjs' });
+    assert.equal(franchiseModule.statusCode, 200);
+    assert.match(franchiseModule.headers['content-type'], /javascript/);
+    for (const match of script.body.matchAll(/from '\.\/([^']+)'/g)) {
+      const dependency = await app.inject({ method: 'GET', url: `/${match[1]}` });
+      assert.equal(dependency.statusCode, 200, `Missing browser module ${match[1]}`);
+      assert.match(dependency.headers['content-type'], /javascript/);
+    }
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);
     assert.equal((await app.inject({ method: 'GET',

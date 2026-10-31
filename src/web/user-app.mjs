@@ -51,7 +51,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   await app.register(rateLimit, { global: false });
   const pages = await Promise.all(['index.html', 'app.js', 'style.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
-    'request-progress-text.mjs', 'response-epoch.mjs'].map((name) =>
+    'request-progress-text.mjs', 'response-epoch.mjs',
+    'franchise-explorer.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -65,6 +66,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/search-pages.mjs', 'text/javascript; charset=utf-8', pages[5]],
     ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[6]],
     ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[7]],
+    ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[8]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
