@@ -20,18 +20,25 @@ import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
 import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
+import { createRequestCandidateDiscovery } from
+  '../acquisition/request-candidate-discovery.mjs';
+import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
-  plex = null, fetchImpl = fetch,
+  plex = null, prowlarr = null, fetchImpl = fetch,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
-      typeof today !== 'function' || typeof shokoHydration !== 'boolean') {
+      typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
+      (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
+        typeof prowlarr.apiKey !== 'string' || !prowlarr.apiKey ||
+        !Array.isArray(prowlarr.indexerIds) ||
+        prowlarr.indexerIds.length < 1 || prowlarr.indexerIds.length > 20))) {
     throw new TypeError('Invalid user service configuration');
   }
   let accounts;
@@ -65,6 +72,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const submitRequest = createHeldRequestSubmitter({
       titleRegistry, loadDetail, ledger: requests, now, today,
     });
+    const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
+      readRequest: (id) => requests.getRequest(id),
+      loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
+        baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
+        indexerIds: prowlarr.indexerIds, query, fetchImpl })),
+    }) : undefined;
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
         ledger: requests, afterId, limit, today: today(),
@@ -87,6 +101,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      discoverCandidates,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?

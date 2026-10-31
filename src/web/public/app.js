@@ -1,5 +1,6 @@
 const byId = (id) => document.getElementById(id);
-const state = { csrf: null, user: null, selected: null, nextBeforeId: null };
+const state = { csrf: null, user: null, selected: null,
+  nextBeforeId: null, releaseSearch: false };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -25,6 +26,7 @@ async function api(url, options = {}) {
 function showSession(data) {
   state.user = data.user;
   state.csrf = data.csrfToken;
+  state.releaseSearch = data.capabilities?.releaseSearch === true;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -51,6 +53,31 @@ async function loadRequests(append = false) {
       heading.append(element('strong', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
         element('small', `Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
       row.append(heading, element('span', 'Saved · acquisition inactive'));
+      if (state.user?.role === 'admin' && state.releaseSearch) {
+        const button = element('button', 'Review release candidates');
+        const candidates = element('div', undefined, 'candidate-list');
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          candidates.replaceChildren(element('p', 'Searching indexers…', 'muted'));
+          try {
+            const result = await api(`/api/requests/${item.id}/candidates`);
+            candidates.replaceChildren(element('p',
+              'Unverified matches only. No download has started.', 'muted'));
+            if (result.items.length === 0) {
+              candidates.append(element('p', 'No candidates returned by this search.', 'muted'));
+            }
+            for (const candidate of result.items) {
+              candidates.append(element('p',
+                `${candidate.title} · ${Math.round(candidate.size / 1_000_000)} MB · ` +
+                `${candidate.seeders ?? '?'} seeders`));
+            }
+          } catch {
+            candidates.replaceChildren(element('p', 'Release search is unavailable right now.', 'muted'));
+            button.disabled = false;
+          }
+        });
+        row.append(button, candidates);
+      }
       list.append(row);
     }
     state.nextBeforeId = page.nextBeforeId;
@@ -99,6 +126,7 @@ byId('signout').addEventListener('click', async () => {
   state.user = null;
   state.csrf = null;
   state.nextBeforeId = null;
+  state.releaseSearch = false;
   byId('request-list').replaceChildren();
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;

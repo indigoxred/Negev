@@ -22,6 +22,7 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: '1' }).shokoEvents, true);
   assert.equal(parsed.shokoInventory, false);
   assert.equal(parsed.shokoHydration, false);
+  assert.equal(parsed.prowlarr, null);
   assert.equal(parseUserServerConfig({ ...valid,
     NEGEV_SHOKO_HYDRATION: '1' }).shokoHydration, true);
   assert.throws(() => parseUserServerConfig({ ...valid,
@@ -30,6 +31,26 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parsed.airingWatch, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_AIRING_WATCH: '1',
     NEGEV_TIME_ZONE: 'Australia/Sydney' }).airingWatch, true);
+});
+
+test('read-only Prowlarr discovery is opt-in and uses a private key file', () => {
+  const configured = { ...valid, NEGEV_PROWLARR_DISCOVERY: '1',
+    NEGEV_PROWLARR_URL: 'http://prowlarr.internal:9696',
+    NEGEV_PROWLARR_KEY_FILE: path.join(dataDir, 'secrets', 'prowlarr.token'),
+    NEGEV_PROWLARR_INDEXERS: '[7,9]' };
+  assert.deepEqual(parseUserServerConfig(configured).prowlarr, {
+    baseUrl: configured.NEGEV_PROWLARR_URL,
+    keyPath: configured.NEGEV_PROWLARR_KEY_FILE,
+    indexerIds: [7, 9] });
+  for (const change of [
+    { NEGEV_PROWLARR_DISCOVERY: '0' },
+    { NEGEV_PROWLARR_KEY_FILE: path.join(dataDir, 'secrets', 'plex.token') },
+    { NEGEV_PROWLARR_API_KEY: 'synthetic' },
+    { NEGEV_PROWLARR_INDEXERS: '[7,7]' },
+    { NEGEV_PROWLARR_INDEXERS: '[]' },
+    { NEGEV_PROWLARR_INDEXERS: '[0]' },
+    { NEGEV_PROWLARR_URL: 'http://user:pass@prowlarr.internal:9696' },
+  ]) assert.throws(() => parseUserServerConfig({ ...configured, ...change }), TypeError);
 });
 
 test('non-loopback listener requires explicit exposure and HTTPS origin', () => {

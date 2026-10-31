@@ -1,7 +1,8 @@
 import { openUserStore } from '../auth/user-store.mjs';
 import { createUserService } from './user-service.mjs';
 import { dateInZone, parseUserServerConfig } from './user-server-config.mjs';
-import { readPrivatePlexToken, readPrivateShokoKey } from './private-shoko-key.mjs';
+import { readPrivatePlexToken, readPrivateProwlarrKey,
+  readPrivateShokoKey } from './private-shoko-key.mjs';
 import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
 import { createShokoInventoryScheduler } from
   '../availability/shoko-inventory-scheduler.mjs';
@@ -23,7 +24,11 @@ try {
   const plex = config.plex ? { ...config.plex,
     plexToken: await readPrivatePlexToken({ dataDir: config.dataDir,
       keyPath: config.plex.plexTokenPath }) } : null;
-  service = await createUserService({ ...config, plex, shokoApiKey, sessionKey,
+  const prowlarr = config.prowlarr ? { ...config.prowlarr,
+    apiKey: await readPrivateProwlarrKey({ dataDir: config.dataDir,
+      keyPath: config.prowlarr.keyPath }) } : null;
+  service = await createUserService({ ...config, plex, prowlarr,
+    shokoApiKey, sessionKey,
     today: () => dateInZone(config.timeZone) });
   if (config.shokoEvents) {
     shokoFeed = await startShokoSignalRFeed({ baseUrl: config.shokoBaseUrl,

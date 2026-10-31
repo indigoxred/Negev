@@ -17,7 +17,8 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
-  loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget } = {}) {
+  loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
+  discoverCandidates } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -116,7 +117,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   app.get('/api/session', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { id, username, role } = request.negevUser;
-    return { user: { id, username, role }, csrfToken: request.session.get('csrfToken') };
+    return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
+      capabilities: { releaseSearch: role === 'admin' &&
+        typeof discoverCandidates === 'function' } };
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -273,6 +276,38 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(404).send({ error: 'Request not found' });
     }
     return result;
+  });
+  app.get('/api/requests/:id/candidates', { preHandler: requireUser,
+    config: { rateLimit: { max: 2, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Admin required' });
+    }
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 || Object.keys(request.query).length) {
+      return reply.code(400).send({ error: 'Invalid request ID' });
+    }
+    if (!readRequest(id)) return reply.code(404).send({ error: 'Request not found' });
+    if (typeof discoverCandidates !== 'function') {
+      return reply.code(503).send({ error: 'Release search unavailable' });
+    }
+    const result = await discoverCandidates({ requestId: id });
+    if (result?.state !== 'candidates' || result.requestId !== id ||
+        !Array.isArray(result.items) || result.items.length > 50 ||
+        result.items.some((item) =>
+          typeof item?.guid !== 'string' || item.guid.length < 1 ||
+          item.guid.length > 500 || !Number.isSafeInteger(item.indexerId) ||
+          item.indexerId < 1 || typeof item.title !== 'string' ||
+          item.title.length < 1 || item.title.length > 500 ||
+          !Number.isSafeInteger(item.size) || item.size < 1 ||
+          item.evidence !== 'unverified')) {
+      return reply.code(503).send({ error: 'Release search unavailable' });
+    }
+    return { state: 'candidates', requestId: id,
+      anidbId: result.anidbId, exhaustive: false,
+      items: result.items.map((item) => ({ guid: item.guid,
+        indexerId: item.indexerId, title: item.title, size: item.size,
+        seeders: item.seeders ?? null, evidence: 'unverified' })) };
   });
   // A status read belongs to an existing exact request target. Keep internal
   // file IDs, mount paths and Plex rating keys out of the end-user response.

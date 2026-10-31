@@ -23,6 +23,11 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     methods.push(`${init.method} ${parsed.pathname}`);
+    if (parsed.pathname === '/api/v1/search') {
+      assert.equal(init.headers['X-Api-Key'], 'synthetic-prowlarr-key');
+      return json([{ guid: 'synthetic-release', indexerId: 7,
+        title: 'Example Series 01', size: 1000, protocol: 'torrent', seeders: 3 }]);
+    }
     if (parsed.pathname.endsWith('/Search')) {
       return parsed.searchParams.get('query') === 'Movie'
         ? json({ Total: 1, List: [{ ID: 2345, Title: 'Example Movie' }] })
@@ -51,6 +56,8 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   };
   const config = { dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
     shokoApiKey: 'synthetic-shoko-key', sessionKey: randomBytes(32),
+    prowlarr: { baseUrl: 'http://prowlarr.internal:9696',
+      apiKey: 'synthetic-prowlarr-key', indexerIds: [7] },
     publicOrigin: origin, secureCookies: false, fetchImpl,
     now: () => 1_000, today: () => calendarDay };
   let service;
@@ -88,6 +95,11 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.deepEqual(read.json().episodeIds, [1001]);
     assert.equal(read.json().requesterId, owner.id);
     assert.equal(read.json().monitorFuture, true);
+    const candidates = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${id}/candidates`, headers: { cookie } });
+    assert.equal(candidates.statusCode, 200, candidates.body);
+    assert.equal(candidates.json().items[0].evidence, 'unverified');
+    assert.equal(methods.some((method) => method === 'GET /api/v1/search'), true);
     showSecond = true;
     calendarDay = '2026-11-01';
     const airing = await service.pollAiringNextPage();

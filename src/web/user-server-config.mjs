@@ -80,6 +80,38 @@ function plexConfig(env, dataDir) {
     guidProbe: env.NEGEV_PLEX_GUID_PROBE === '1' };
 }
 
+function prowlarrConfig(env, dataDir) {
+  const names = ['NEGEV_PROWLARR_URL', 'NEGEV_PROWLARR_KEY_FILE',
+    'NEGEV_PROWLARR_INDEXERS', 'NEGEV_PROWLARR_API_KEY'];
+  if (env.NEGEV_PROWLARR_DISCOVERY != null &&
+      !['0', '1'].includes(env.NEGEV_PROWLARR_DISCOVERY)) {
+    throw new TypeError('Invalid Prowlarr discovery flag');
+  }
+  if (env.NEGEV_PROWLARR_DISCOVERY !== '1') {
+    if (names.some((name) => Object.hasOwn(env, name))) {
+      throw new TypeError('Prowlarr discovery is disabled');
+    }
+    return null;
+  }
+  if (Object.hasOwn(env, 'NEGEV_PROWLARR_API_KEY')) {
+    throw new TypeError('Prowlarr key must use a private file');
+  }
+  baseUrl(env.NEGEV_PROWLARR_URL, 'Prowlarr URL');
+  const keyPath = path.join(dataDir, 'secrets', 'prowlarr.token');
+  if (env.NEGEV_PROWLARR_KEY_FILE !== keyPath) {
+    throw new TypeError('Private Prowlarr key file required');
+  }
+  let indexerIds;
+  try { indexerIds = JSON.parse(env.NEGEV_PROWLARR_INDEXERS); }
+  catch { throw new TypeError('Invalid Prowlarr indexers'); }
+  if (!Array.isArray(indexerIds) || indexerIds.length < 1 ||
+      indexerIds.length > 20 || indexerIds.some((id) => !validId(id)) ||
+      new Set(indexerIds).size !== indexerIds.length) {
+    throw new TypeError('Invalid Prowlarr indexers');
+  }
+  return { baseUrl: env.NEGEV_PROWLARR_URL, keyPath, indexerIds };
+}
+
 export function dateInZone(timeZone, instant = new Date()) {
   if (typeof timeZone !== 'string' || !timeZone ||
       !(instant instanceof Date) || !Number.isFinite(instant.getTime())) {
@@ -144,6 +176,7 @@ export function parseUserServerConfig(env) {
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),
+    prowlarr: prowlarrConfig(env, dataDir),
     plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,
     secureCookies: exposed, host, port };
 }

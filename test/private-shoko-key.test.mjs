@@ -3,7 +3,8 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readPrivatePlexToken, readPrivateShokoKey } from '../src/web/private-shoko-key.mjs';
+import { readPrivatePlexToken, readPrivateProwlarrKey,
+  readPrivateShokoKey } from '../src/web/private-shoko-key.mjs';
 
 test('account server reads a restricted Shoko token file without using Docker env secrets', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-key-'));
@@ -25,6 +26,20 @@ test('account server reads a restricted Shoko token file without using Docker en
       await symlink(path.join(dataDir, 'session.key'), keyPath);
       await assert.rejects(readPrivateShokoKey({ dataDir, keyPath }), TypeError);
     }
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test('Prowlarr discovery reads only its own restricted token file', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-prowlarr-key-'));
+  try {
+    const secretDir = path.join(dataDir, 'secrets');
+    await mkdir(secretDir, { mode: 0o700 });
+    const keyPath = path.join(secretDir, 'prowlarr.token');
+    await writeFile(keyPath, 'synthetic-prowlarr\n', { mode: 0o600 });
+    assert.equal(await readPrivateProwlarrKey({ dataDir, keyPath }),
+      'synthetic-prowlarr');
+    await assert.rejects(readPrivateProwlarrKey({ dataDir,
+      keyPath: path.join(secretDir, 'plex.token') }), TypeError);
   } finally { await rm(dataDir, { recursive: true, force: true }); }
 });
 

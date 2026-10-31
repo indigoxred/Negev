@@ -54,3 +54,6 @@ export const readPrivateShokoKey = ({ dataDir, keyPath } = {}) =>
 
 export const readPrivatePlexToken = ({ dataDir, keyPath } = {}) =>
   readPrivateKey({ dataDir, keyPath, filename: 'plex.token' });
+
+export const readPrivateProwlarrKey = ({ dataDir, keyPath } = {}) =>
+  readPrivateKey({ dataDir, keyPath, filename: 'prowlarr.token' });
