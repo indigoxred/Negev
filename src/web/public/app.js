@@ -1,4 +1,8 @@
+import { createRequestKeyStore } from './request-key.mjs';
+
 const byId = (id) => document.getElementById(id);
+const requestKeys = createRequestKeyStore({ storage: sessionStorage,
+  createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
   nextBeforeId: null, releaseSearch: false, detailLoad: false };
 function message(text, error = false) {
@@ -315,16 +319,13 @@ async function showDetail(item) {
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
-      const keyName = `negev-request-${item.anidbId}`;
-      let requestKey = sessionStorage.getItem(keyName);
-      if (!requestKey) {
-        requestKey = crypto.randomUUID();
-        sessionStorage.setItem(keyName, requestKey);
-      }
+      const scope = { userId: state.user.id, anidbId: item.anidbId };
+      const requestKey = requestKeys.pending(scope);
       try {
         const saved = await api('/api/requests', { method: 'POST', body: JSON.stringify({
           anidbId: item.anidbId, scope: 'installment', requestKey,
         }) });
+        requestKeys.saved(scope);
         message(`Request #${saved.requestId} saved. Acquisition is not active in this preview.`);
         await loadRequests();
       } catch (error) { message(error.message, true); }
