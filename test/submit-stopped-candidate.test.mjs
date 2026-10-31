@@ -77,7 +77,7 @@ const options = { candidate, prepared, hostPath, baseUrl: 'http://qbittorrent.in
 
 test('holds before torrent add when qBittorrent cannot prove its stopped-add API version', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
-    for (const version of ['v4.6.7', 'v6.0.0', 'unknown']) {
+    for (const version of ['v4.6.7', 'v5.2.3', 'v5.4.0', 'v6.0.0', 'unknown']) {
       const calls = [];
       const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
         fetchImpl: async (url) => {

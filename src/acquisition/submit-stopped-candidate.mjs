@@ -77,9 +77,9 @@ export async function submitStoppedCandidate({
       if (response.status !== 200) return held('provider_unavailable');
       version = (await readBoundedText(response, 32)).trim();
     } catch { return held('provider_unavailable'); }
-    // Older clients may ignore `stopped=true` and begin downloading before
-    // Negev can inspect the manifest. Unknown future major versions also hold.
-    if (!/^v?5\.\d+\.\d+$/.test(version)) {
+    // The stopped-add form was reviewed against qBittorrent 5.3.0. Hold
+    // other minor versions until their API behavior is checked explicitly.
+    if (!/^v?5\.3\.\d+$/.test(version)) {
       return held('unsupported_qbittorrent_version');
     }
     let existing;
