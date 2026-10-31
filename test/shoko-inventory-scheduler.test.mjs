@@ -57,6 +57,36 @@ test('provider failure backs off and never overlaps another page', async () => {
   await scheduler.close();
 });
 
+test('a feed gap restarts a rested inventory pass within one minute', async () => {
+  const clock = fakeClock();
+  const scheduler = createShokoInventoryScheduler({
+    tick: async () => ({ state: 'recorded', nextPage: 1 }), ...clock,
+  });
+  scheduler.start();
+  await clock.fire();
+  assert.equal(clock.timers.values().next().value.delay, 24 * 60 * 60_000);
+  scheduler.requestSoon();
+  assert.equal(clock.timers.size, 1);
+  assert.equal(clock.timers.values().next().value.delay, 60_000);
+  await scheduler.close();
+});
+
+test('a feed gap during a page advances the next page without overlap', async () => {
+  const clock = fakeClock();
+  let resolve;
+  const scheduler = createShokoInventoryScheduler({
+    tick: () => new Promise((done) => { resolve = done; }), ...clock,
+  });
+  scheduler.start();
+  const running = clock.fire();
+  scheduler.requestSoon();
+  assert.equal(clock.timers.size, 0);
+  resolve({ state: 'recorded', nextPage: 1 });
+  await running;
+  assert.equal(clock.timers.values().next().value.delay, 60_000);
+  await scheduler.close();
+});
+
 test('shutdown cancels future work and drains the active page', async () => {
   const clock = fakeClock();
   let resolve;

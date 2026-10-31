@@ -36,14 +36,22 @@ try {
     shokoApiKey, sessionKey,
     today: () => dateInZone(config.timeZone) });
   await service.app.listen({ host: config.host, port: config.port });
+  const flagShokoGap = (reason) => {
+    service.flagShokoReconciliation(reason);
+    shokoInventory?.requestSoon();
+  };
   if (config.shokoEvents) {
     shokoFeedSupervisor = createShokoFeedSupervisor({
       connect: () => startShokoSignalRFeed({ baseUrl: config.shokoBaseUrl,
         apiKey: shokoApiKey, consumer: {
-          accept: service.acceptShokoEvent,
-          flagReconciliation: service.flagShokoReconciliation,
+          accept: (target, args) => {
+            const result = service.acceptShokoEvent(target, args);
+            if (result.state !== 'ignored') shokoInventory?.requestSoon();
+            return result;
+          },
+          flagReconciliation: flagShokoGap,
         } }),
-      onGap: service.flagShokoReconciliation,
+      onGap: flagShokoGap,
     });
     shokoFeedSupervisor.start();
   }
