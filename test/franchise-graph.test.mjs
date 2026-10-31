@@ -22,11 +22,12 @@ test('a missing relation row leaves explicit frontier instead of claiming one fr
   { state: 'pending', reason: 'relation_rows_missing', frontier: [43] });
 });
 
-test('unverified or contradictory edges hold the grouping', () => {
+test('unverified edges hold, while a verified outgoing-only relation remains usable', () => {
   assert.deepEqual(assembleAniDbFranchise({ seedId: 42,
     relationRows: [row(42, [edge(43, 'Sequel', false)])] }),
   { state: 'held', reason: 'unverified_relation' });
   assert.deepEqual(assembleAniDbFranchise({ seedId: 42,
     relationRows: [row(42, [edge(43)]), row(43, [])] }),
-  { state: 'held', reason: 'relation_not_reciprocal' });
+  { state: 'related_installments', completeness: 'unproven', seedId: 42,
+    installmentIds: [42, 43] });
 });

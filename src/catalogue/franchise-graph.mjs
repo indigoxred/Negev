@@ -42,11 +42,9 @@ export function assembleAniDbFranchise({ seedId, relationRows,
     for (const edge of edges) {
       if (!FAMILY_TYPES.has(edge.type)) continue;
       if (!edge.verified) return held('unverified_relation');
-      const opposite = rows.get(edge.relatedId);
-      if (opposite && !opposite.some((item) =>
-        item.relatedId === id && FAMILY_TYPES.has(item.type) && item.verified)) {
-        return held('relation_not_reciprocal');
-      }
+      // Shoko's per-title AniDB endpoint supplies outgoing edges only. AniDB
+      // can store a verified one-way relation without a reverse row, so the
+      // absence of a reverse edge is not contradictory evidence.
       if (!members.has(edge.relatedId)) {
         members.add(edge.relatedId);
         if (members.size > maxMembers) return held('franchise_budget_exceeded');
