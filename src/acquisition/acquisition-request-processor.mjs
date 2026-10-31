@@ -73,6 +73,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
           preview.anidbId !== request.anidbId ||
           typeof preview.torrentHash !== 'string' ||
           !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(preview.torrentHash) ||
+          (preview.searchQuery !== undefined &&
+            (typeof preview.searchQuery !== 'string' ||
+              preview.searchQuery.length < 2 || preview.searchQuery.length > 120 ||
+              /[\x00-\x1f\x7f]/.test(preview.searchQuery))) ||
           !Array.isArray(preview.episodeIds) ||
           preview.episodeIds.length < 1 || preview.episodeIds.length > 50 ||
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
@@ -110,7 +114,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
       candidate: selected.candidate, detail,
       episodeIds: [...selected.preview.episodeIds],
       plannedFiles: selected.preview.files,
-      expectedHash: selected.preview.torrentHash.toLowerCase() }); }
+      expectedHash: selected.preview.torrentHash.toLowerCase(),
+      ...(selected.preview.searchQuery === undefined ? {} :
+        { searchQuery: selected.preview.searchQuery }) }); }
     catch { return held('submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
       return { state: 'stopped_observed', attemptId: outcome.attemptId };
@@ -120,6 +126,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // missing. Provider-wide uncertainty retries the same selected candidate.
     if (outcome?.state === 'held' &&
         (outcome.reason === 'target_already_available' ||
+          outcome.reason === 'candidate_rejected' ||
+          outcome.reason === 'candidate_released' ||
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),

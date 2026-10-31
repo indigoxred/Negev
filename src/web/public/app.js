@@ -433,7 +433,9 @@ async function showDetail(item, franchise = null) {
       const optionText = (episode) =>
         `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
         `${episode.title ? ` · ${episode.title}` : ''}` +
-        `${episode.availability === 'available' ? ' · Playable in Plex' : ''}`;
+        `${episode.availability === 'available' ? ' · Playable in Plex' :
+          episode.availability === 'previously_available'
+            ? ' · Previously playable; recheck needed' : ''}`;
       const appendOptions = (episodes) => {
         for (const episode of episodes) {
           const option = element('option', optionText(episode));
@@ -484,11 +486,18 @@ async function showDetail(item, franchise = null) {
               'Availability has not been checked for this title.';
             else if (status.state === 'held') progress.textContent =
               'The title check needs another try. No missing episodes were assumed.';
-            else progress.textContent = status.totalCount === null
-              ? 'Loading the episode list…'
-              : `${status.state === 'done' ? 'Finished: ' : ''}` +
-                `${status.checkedCount} of ${status.totalCount} checked · ` +
-                `${status.recentAvailableCount} recently verified playable`;
+            else {
+              const olderCount = Math.max(0,
+                (status.lastVerifiedAvailableCount ?? status.recentAvailableCount) -
+                  status.recentAvailableCount);
+              const olderText = olderCount
+                ? ` · ${olderCount} previously verified; recheck needed` : '';
+              progress.textContent = status.totalCount === null
+                ? `Loading the episode list…${olderText}`
+                : `${status.state === 'done' ? 'Finished: ' : ''}` +
+                  `${status.checkedCount} of ${status.totalCount} checked · ` +
+                  `${status.recentAvailableCount} recently verified playable${olderText}`;
+            }
             if (['loading', 'checking'].includes(status.state)) {
               pollTimer = setTimeout(() => { void showProgress(); }, 15_000);
             }

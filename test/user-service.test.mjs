@@ -641,7 +641,8 @@ test('opt-in title check survives the HTTP action and advances by explicit ticks
     assert.deepEqual((await service.app.inject({ method: 'GET', url,
       headers: { cookie } })).json(),
     { state: 'done', generation: 1, totalCount: 1,
-      checkedCount: 1, recentAvailableCount: 0 });
+      checkedCount: 1, recentAvailableCount: 0,
+      lastVerifiedAvailableCount: 0 });
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -4,6 +4,7 @@ import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
+import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -38,9 +39,11 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
 // the release and exact episode subset; a title match alone cannot do that.
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
-  plannedFiles, expectedHash, readEvidence, publicLibraryIds, ledger,
+  plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
+  readEvidence, publicLibraryIds, ledger,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
+      typeof releaseQueries !== 'function' ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
         (typeof expectedHash !== 'string' ||
@@ -55,7 +58,18 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       request.episodeIds.some((id) => !catalogueIds.has(id))) {
     return held('target_missing');
   }
-  const prepared = await prepareStoppedCandidate({ ...prowlarr, candidate });
+  let selectedQuery = prowlarr.query;
+  if (searchQuery !== undefined) {
+    let aliases;
+    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+    catch { return held('trusted_query_unavailable'); }
+    if (!trustedReleaseQueries(detail.title, aliases).includes(searchQuery)) {
+      return held('untrusted_release_query');
+    }
+    selectedQuery = searchQuery;
+  }
+  const prepared = await prepareStoppedCandidate({ ...prowlarr,
+    query: selectedQuery, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
   if (expectedHash !== undefined &&
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {

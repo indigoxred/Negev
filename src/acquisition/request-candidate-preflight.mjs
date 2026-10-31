@@ -2,6 +2,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -10,9 +11,12 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // This never sends the prepared FormData to qBittorrent and does not claim
 // that the future downloaded bytes are registered with AniDB.
 export async function previewRequestCandidate({ requestId, candidate,
-  readRequest, loadDetail, prepare = prepareStoppedCandidate } = {}) {
+  readRequest, loadDetail, releaseQueries = async () => [],
+  pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  prepare = prepareStoppedCandidate } = {}) {
   if (!validId(requestId) || typeof readRequest !== 'function' ||
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
+      typeof releaseQueries !== 'function' || typeof pause !== 'function' ||
       typeof candidate?.guid !== 'string' || !candidate.guid ||
       candidate.guid.length > 500 || !validId(candidate.indexerId) ||
       typeof candidate.title !== 'string' || !candidate.title.trim() ||
@@ -37,9 +41,29 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (request.episodeIds.some((id) => !knownTargets.has(id))) {
     return held('target_missing');
   }
+  const canonicalQuery = trustedReleaseQueries(detail.title)[0];
+  if (!canonicalQuery) return held('detail_unavailable');
   let prepared;
-  try { prepared = await prepare({ query: detail.title, candidate }); }
+  let searchQuery = canonicalQuery;
+  try { prepared = await prepare({ query: canonicalQuery, candidate }); }
   catch { return held('torrent_preflight_unavailable'); }
+  if (prepared?.state === 'held' && prepared.reason === 'candidate_changed') {
+    let aliases;
+    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+    catch { aliases = []; }
+    const queries = trustedReleaseQueries(detail.title, aliases);
+    for (const query of queries.filter((value) => value !== canonicalQuery)) {
+      try { await pause(1_000); }
+      catch { return held('torrent_preflight_unavailable'); }
+      try { prepared = await prepare({ query, candidate }); }
+      catch { return held('torrent_preflight_unavailable'); }
+      if (prepared?.state === 'prepared_stopped') {
+        searchQuery = query;
+        break;
+      }
+      if (prepared?.reason !== 'candidate_changed') break;
+    }
+  }
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
@@ -51,6 +75,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     return held('invalid_metainfo');
   }
   return { state: 'preflight', requestId, anidbId: request.anidbId,
+    ...(searchQuery === canonicalQuery ? {} : { searchQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,

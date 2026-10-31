@@ -122,6 +122,45 @@ test('one exact missing target is reserved then submitted stopped once', async (
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
   }));
 
+test('an alias-only stopped submission revalidates its server-approved title', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const queries = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async (url) => {
+        if (new URL(url).pathname.endsWith('/search')) {
+          queries.push(new URL(url).searchParams.get('query'));
+          return Response.json([{ ...candidate, protocol: 'torrent',
+            downloadUrl: proxy }]);
+        }
+        return new Response(bytes, { headers: {
+          'content-type': 'application/x-bittorrent' } });
+      }, qbittorrentFetch: qbittorrentFetch([]) });
+    const result = await submitMissingCandidate({ ...input,
+      detail: { ...baseDetail, title: 'Canonical Title' },
+      searchQuery: 'Official English',
+      releaseQueries: async ({ anidbId }) => {
+        assert.equal(anidbId, 42);
+        return ['Official English'];
+      } });
+    assert.equal(result.state, 'stopped_observed');
+    assert.deepEqual(queries, ['Official English']);
+  }));
+
+test('a caller-supplied release query outside the trusted AniDB titles cannot reach an indexer', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => { providerCalls++; },
+      qbittorrentFetch: async () => { providerCalls++; } });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      detail: { ...baseDetail, title: 'Canonical Title' },
+      searchQuery: 'Unrelated Show',
+      releaseQueries: async () => ['Official English'] }),
+    { state: 'held', reason: 'untrusted_release_query' });
+    assert.equal(providerCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
+  }));
+
 test('an unambiguous series file creates the provisional subset without a caller plan', async () =>
   withLedgers(async ({ request, ledger }) => {
     const calls = [];

@@ -183,8 +183,11 @@ test('explicit first-time uncertainty policy permits one bounded target attempt 
       'first_time_permissive');
     assert.deepEqual(acquisitions.releaseReserved({ attemptId: first.attemptId,
       nowMs: 102 }), { state: 'released_pre_dispatch' });
+    const second = await reserveMissingTargets({ ...input,
+      candidate: { indexerId: 7, guid: 'second-uncertain-release' } });
+    assert.equal(second.state, 'reserved');
     assert.deepEqual(await reserveMissingTargets({ ...input,
-      candidate: { indexerId: 7, guid: 'second-uncertain-release' } }),
+      candidate: { indexerId: 7, guid: 'third-uncertain-release' } }),
     { state: 'held', reason: 'uncertain_attempt_exhausted' });
   }));
 

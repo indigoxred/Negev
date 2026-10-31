@@ -1,4 +1,5 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -34,18 +35,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     let aliases;
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
-    const queries = [];
-    const seenQueries = new Set();
-    for (const value of [detail.title, ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
-      if (typeof value !== 'string') continue;
-      const query = value.trim();
-      const key = query.toLocaleLowerCase('en');
-      if (query.length < 2 || query.length > 120 || /[\x00-\x1f\x7f]/.test(query) ||
-          seenQueries.has(key)) continue;
-      seenQueries.add(key);
-      queries.push(query);
-      if (queries.length === 3) break;
-    }
+    const queries = trustedReleaseQueries(detail.title, aliases);
     const items = [];
     const seenCandidates = new Set();
     let successful = 0;

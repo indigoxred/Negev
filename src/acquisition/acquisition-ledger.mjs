@@ -123,7 +123,11 @@ export function openAcquisitionLedger(dbPath) {
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
   const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
   const busyTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? AND active=1');
-  const historicalTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? LIMIT 1');
+  const historicalTarget = db.prepare(`SELECT claim.attempt_id
+    FROM acquisition_target_claims claim
+    LEFT JOIN acquisition_releases released ON released.attempt_id=claim.attempt_id
+    WHERE claim.anidb_id=? AND claim.episode_id=?
+      AND released.attempt_id IS NULL LIMIT 1`);
   const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
     (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)

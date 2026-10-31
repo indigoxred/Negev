@@ -14,6 +14,8 @@ test('one authenticated title action is CSRF guarded and returns shared progress
   await accounts.bootstrapAdmin({ username: 'Owner',
     password: 'long-owner-passphrase' });
   let starts = 0;
+  let progressResult = { state: 'checking', generation: 1,
+    totalCount: 12, checkedCount: 3, recentAvailableCount: 2 };
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
     publicOrigin: 'http://localhost:3000', secureCookies: false,
     submitRequest: async () => ({ state: 'held' }),
@@ -21,8 +23,7 @@ test('one authenticated title action is CSRF guarded and returns shared progress
     titleRegistry: { isKnownTitle: ({ anidbId }) => anidbId === 42 },
     startTitleCheck: () => ({ state: starts++ ? 'shared' : 'queued',
       generation: 1 }),
-    getTitleCheck: () => ({ state: 'checking', generation: 1,
-      totalCount: 12, checkedCount: 3, recentAvailableCount: 2 }),
+    getTitleCheck: () => progressResult,
   });
   try {
     const url = '/api/catalogue/42/title-check';
@@ -49,6 +50,13 @@ test('one authenticated title action is CSRF guarded and returns shared progress
       headers: { cookie } })).json(),
     { state: 'checking', generation: 1, totalCount: 12,
       checkedCount: 3, recentAvailableCount: 2 });
+    progressResult = { state: 'loading', generation: 2,
+      totalCount: null, checkedCount: 0, recentAvailableCount: 1,
+      lastVerifiedAvailableCount: 1 };
+    const retained = await app.inject({ method: 'GET', url,
+      headers: { cookie } });
+    assert.equal(retained.statusCode, 200);
+    assert.deepEqual(retained.json(), progressResult);
     assert.equal(starts, 2);
     assert.equal((await app.inject({ method: 'POST', url,
       headers, payload: { episodeIds: [1] } })).statusCode, 400);

@@ -27,7 +27,7 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
-test('permissive first acquisition records one historical attempt per exact target across restarts', async () =>
+test('a released reservation preserves the one uncertain external attempt across restarts', async () =>
   withLedger(async ({ dbPath, firstId, thirdId }) => {
     const one = openAcquisitionLedger(dbPath);
     let attemptId;
@@ -52,24 +52,33 @@ test('permissive first acquisition records one historical attempt per exact targ
           intent: { state: 'ready', anidbId: 42, kind: 'series',
             monitorFuture: false, episodeIds: [1001] } }).requestId;
       } finally { requests.close(); }
-      assert.deepEqual(two.reserve({ requestId: firstId,
-        candidate: { indexerId: 7, guid: 'alternate' },
+      const alternate = { indexerId: 7, guid: 'alternate' };
+      const second = two.reserve({ requestId: firstId,
+        candidate: alternate,
         episodeIds: [1001], evidencePolicy: 'first_time_permissive',
-        nowMs: 202 }), { state: 'held',
-        reason: 'uncertain_attempt_exhausted' });
+        nowMs: 202 });
+      assert.equal(second.state, 'reserved');
+      const hash = 'a'.repeat(40);
+      two.bindPreparedTorrent({ attemptId: second.attemptId,
+        candidate: alternate, hash, nowMs: 203 });
+      two.recordFilePlan({ attemptId: second.attemptId, hash,
+        plannedFiles: [{ name: '01.mkv', size: 1000,
+          episodeIds: [1001] }], nowMs: 204 });
+      assert.deepEqual(two.beginDispatch({ attemptId: second.attemptId,
+        nowMs: 205 }), { state: 'dispatch_unknown', sendNow: true });
       assert.deepEqual(two.reserve({ requestId: sameTargetId,
         candidate: { indexerId: 7, guid: 'overlap' },
         episodeIds: [1001], evidencePolicy: 'first_time_permissive',
-        nowMs: 203 }), { state: 'held',
+        nowMs: 206 }), { state: 'held',
         reason: 'uncertain_attempt_exhausted' });
       assert.equal(two.reserve({ requestId: firstId,
         candidate: { indexerId: 7, guid: 'later-episode' },
         episodeIds: [1002], evidencePolicy: 'first_time_permissive',
-        nowMs: 204 }).state, 'reserved');
+        nowMs: 207 }).state, 'reserved');
       assert.equal(two.reserve({ requestId: thirdId,
         candidate: { indexerId: 7, guid: 'other-target' },
         episodeIds: [1004], evidencePolicy: 'first_time_permissive',
-        nowMs: 205 }).state, 'reserved');
+        nowMs: 208 }).state, 'reserved');
     } finally { two.close(); }
   }));
 

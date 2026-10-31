@@ -314,12 +314,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !Number.isSafeInteger(result.checkedCount) || result.checkedCount < 0 ||
         !Number.isSafeInteger(result.recentAvailableCount) ||
         result.recentAvailableCount < 0 ||
-        result.recentAvailableCount > result.checkedCount) {
+        (result.lastVerifiedAvailableCount !== undefined &&
+          (!Number.isSafeInteger(result.lastVerifiedAvailableCount) ||
+            result.lastVerifiedAvailableCount < result.recentAvailableCount))) {
       return reply.code(503).send({ error: 'Title checks unavailable' });
     }
     return { state: result.state, generation: result.generation,
       totalCount: result.totalCount, checkedCount: result.checkedCount,
-      recentAvailableCount: result.recentAvailableCount };
+      recentAvailableCount: result.recentAvailableCount,
+      ...(result.lastVerifiedAvailableCount === undefined ? {} :
+        { lastVerifiedAvailableCount: result.lastVerifiedAvailableCount }) };
   });
   app.get('/api/catalogue/:id/availability-page', { preHandler: requireUser,
     config: { rateLimit: { max: 1, timeWindow: '1 minute' } },

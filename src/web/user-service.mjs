@@ -161,14 +161,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const submitRequest = createHeldRequestSubmitter({
       titleRegistry, loadDetail, ledger: requests, now, today,
     });
-    const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
-      readRequest: (id) => requests.getRequest(id),
-      loadDetail: (input) => metadata.run(() => loadDetail(input)),
-      releaseQueries: async ({ anidbId }) => {
+    const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
         return status?.state === 'ready' || status?.state === 'stale'
           ? titleSource.releaseQueries(anidbId) : [];
-      },
+      };
+    const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
+      readRequest: (id) => requests.getRequest(id),
+      loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      releaseQueries,
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
         indexerIds: prowlarr.indexerIds, query, fetchImpl })),
@@ -177,6 +178,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
         loadDetail: (input) => metadata.run(() => loadDetail(input)),
+        releaseQueries,
         prepare: (input) => metadata.run(() => prepareStoppedCandidate({
           baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
           indexerIds: prowlarr.indexerIds, ...input, fetchImpl,
@@ -249,7 +251,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           const title = titleChecks?.getTargetStatus(target).state;
           return { ...episode, availability:
             direct === 'available' || title === 'available'
-              ? 'available' : 'unknown' };
+              ? 'available' : title === 'previously_available'
+                ? 'previously_available' : 'unknown' };
         }) };
       },
       startTitleCheck: titleChecks ? ({ anidbId }) =>

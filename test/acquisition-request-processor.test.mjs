@@ -44,6 +44,24 @@ test('bounded automatic path skips unsafe preflight and submits one exact stoppe
     expectedHash: preflight.torrentHash });
 });
 
+test('an alias preflight passes its query to the guarded stopped submission', async () => {
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, items: [candidate(1)] }),
+    previewCandidate: async () => ({ ...preflight,
+      searchQuery: 'Official English' }),
+    loadDetail: async () => detail,
+    submitCandidate: async (input) => {
+      selected = input;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assert.equal((await process({ requestId: 4 })).state, 'stopped_observed');
+  assert.equal(selected.searchQuery, 'Official English');
+});
+
 test('unsafe or malformed release observations never reach stopped submission', async () => {
   for (const found of [
     { state: 'held', reason: 'release_search_unavailable' },
@@ -164,6 +182,45 @@ test('an already playable first candidate does not hide a later missing episode'
     candidateFingerprint: first.nextCandidateFingerprint }),
     { state: 'stopped_observed', attemptId: 12 });
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
+
+test('a terminally rejected release yields to a later eligible release', async () => {
+  const submitted = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: selected }) => {
+      submitted.push(selected.guid);
+      return selected.guid === 'candidate-1'
+        ? { state: 'held', reason: 'candidate_rejected' }
+        : { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'candidate_rejected');
+  assert.equal(first.nextCandidateOffset, 1);
+  assert.deepEqual(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }),
+  { state: 'stopped_observed', attemptId: 12 });
+  assert.deepEqual(submitted, ['candidate-1', 'candidate-2']);
+});
+
+test('an uncertain first-time attempt does not advance to another release', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'held',
+      reason: 'uncertain_attempt_exhausted' }),
+  });
+  assert.deepEqual(await process({ requestId: 4 }),
+    { state: 'held', reason: 'uncertain_attempt_exhausted' });
 });
 
 test('an import awaiting Plex does not hide a later missing episode candidate', async () => {

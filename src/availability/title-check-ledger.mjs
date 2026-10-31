@@ -124,6 +124,8 @@ export function openTitleCheckLedger(dbPath) {
   const positiveCount = db.prepare(`SELECT COUNT(*) AS count
     FROM title_check_positive_proofs WHERE anidb_id=?
       AND checked_ms>? AND checked_ms<=?`);
+  const lastVerifiedCount = db.prepare(`SELECT COUNT(*) AS count
+    FROM title_check_positive_proofs WHERE anidb_id=? AND checked_ms<=?`);
   const recentPositiveIds = db.prepare(`SELECT episode_id AS episodeId
     FROM title_check_positive_proofs WHERE anidb_id=?
       AND checked_ms>? AND checked_ms<=?
@@ -264,11 +266,15 @@ export function openTitleCheckLedger(dbPath) {
         const proofWithdrawn = proof && proof.checkedMs <= observedMs &&
           removeProof.run(anidbId, episodeId, observedMs).changes === 1;
         const target = targetStatus.get(anidbId, job.generation, episodeId);
-        if (!target || target.state === 'pending' ||
-            !validTime(target.checkedMs) || target.checkedMs > observedMs) {
+        if (!target || (target.state !== 'pending' &&
+            (!validTime(target.checkedMs) || target.checkedMs > observedMs))) {
           return { state: proofWithdrawn ? 'queued' : 'unchanged' };
         }
-        resetTarget.run(anidbId, job.generation, episodeId);
+        if (target.state !== 'pending') {
+          resetTarget.run(anidbId, job.generation, episodeId);
+        }
+        // A pending target can be an in-flight read. Revoke its receipt too;
+        // otherwise a result observed before this change can restore a proof.
         requeueJob.run(anidbId, job.generation);
         return { state: 'queued' };
       });
@@ -300,18 +306,22 @@ export function openTitleCheckLedger(dbPath) {
       const row = counts.get(anidbId, job.generation);
       const recent = positiveCount.get(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
+      const retained = lastVerifiedCount.get(anidbId, nowMs);
       return { state: job.state, generation: job.generation,
         totalCount: job.totalCount, checkedCount: row.checkedCount,
-        recentAvailableCount: recent.count };
+        recentAvailableCount: recent.count,
+        lastVerifiedAvailableCount: retained.count };
     },
     getTargetStatus({ anidbId, episodeId, nowMs }) {
       if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
         throw new TypeError('Invalid title target status query');
       }
       const row = proofStatus.get(anidbId, episodeId);
-      return row && validTime(row.checkedMs) &&
-        row.checkedMs <= nowMs && row.checkedMs + positiveLifetimeMs > nowMs
-        ? { state: 'available' } : { state: 'unknown' };
+      if (!row || !validTime(row.checkedMs) || row.checkedMs > nowMs) {
+        return { state: 'unknown' };
+      }
+      return row.checkedMs + positiveLifetimeMs > nowMs
+        ? { state: 'available' } : { state: 'previously_available' };
     },
     getRecentAvailableIds({ anidbId, nowMs }) {
       if (!validId(anidbId) || !validTime(nowMs)) {

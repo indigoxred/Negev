@@ -39,6 +39,26 @@ test('preflight returns only provisional file and target evidence', async () => 
   assert.equal(JSON.stringify(result).includes('form'), false);
 });
 
+test('an alias-only hit is revalidated through a trusted same-anime title', async () => {
+  const queries = [];
+  const result = await previewRequestCandidate({ requestId: 4, candidate,
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async ({ anidbId }) => {
+      assert.equal(anidbId, 42);
+      return ['English Alias'];
+    },
+    pause: async () => {},
+    prepare: async ({ query }) => {
+      queries.push(query);
+      return query === 'English Alias' ? prepared :
+        { state: 'held', reason: 'candidate_changed' };
+    },
+  });
+  assert.deepEqual(queries, ['Example', 'English Alias']);
+  assert.equal(result.state, 'preflight');
+  assert.equal(result.searchQuery, 'English Alias');
+});
+
 test('preflight labels passive extras as exclusions, not episode evidence', async () => {
   const result = await previewRequestCandidate({ requestId: 4, candidate,
     readRequest: () => request, loadDetail: async () => detail,

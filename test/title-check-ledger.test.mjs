@@ -57,6 +57,26 @@ test('a crashed claim is retried after its lease; stale result is rejected', asy
   job.close();
 });
 
+test('invalidation during a claimed target rejects its old positive and rechecks', async () => {
+  const { job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const page = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: page, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const stale = job.claimNext({ nowMs: 4 });
+  assert.deepEqual(job.invalidateTarget({ anidbId: 42, episodeId: 1001,
+    observedMs: 5 }), { state: 'queued' });
+  assert.deepEqual(job.recordTarget({ claim: stale, status: 'available',
+    checkedMs: 6 }), { state: 'held', reason: 'stale_claim' });
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42, episodeId: 1001,
+    nowMs: 7 }), { state: 'unknown' });
+  const fresh = job.claimNext({ nowMs: 8 });
+  assert.equal(fresh.episodeId, 1001);
+  assert.notEqual(fresh.version, stale.version);
+  assert.deepEqual(job.recordTarget({ claim: fresh, status: 'available',
+    checkedMs: 9 }), { state: 'recorded_target' });
+  job.close();
+});
+
 test('page identity and total must remain stable across catalogue pages', async () => {
   const { job } = await ledger();
   job.start({ anidbId: 42, nowMs: 1 });
@@ -82,7 +102,7 @@ test('finished positive results expire without turning Unknown into Missing', as
   job.recordTarget({ claim: target, status: 'available', checkedMs: 5 });
   assert.deepEqual(job.getProgress({ anidbId: 42, nowMs: 6 }),
     { state: 'done', generation: 1, totalCount: 1, checkedCount: 1,
-      recentAvailableCount: 1 });
+      recentAvailableCount: 1, lastVerifiedAvailableCount: 1 });
   assert.deepEqual(job.getTargetStatus({ anidbId: 42,
     episodeId: 1001, nowMs: 6 }), { state: 'available' });
   assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42,
@@ -90,11 +110,35 @@ test('finished positive results expire without turning Unknown into Missing', as
   assert.equal(job.getProgress({ anidbId: 42,
     nowMs: 30 * 60_000 + 6 }).recentAvailableCount, 0);
   assert.deepEqual(job.getTargetStatus({ anidbId: 42,
-    episodeId: 1001, nowMs: 30 * 60_000 + 6 }), { state: 'unknown' });
+    episodeId: 1001, nowMs: 30 * 60_000 + 6 }),
+  { state: 'previously_available' });
   assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42,
     nowMs: 30 * 60_000 + 6 }), []);
   assert.deepEqual(job.start({ anidbId: 42, nowMs: 30 * 60_000 + 7 }),
     { state: 'queued', generation: 2 });
+  job.close();
+});
+
+test('a long healthy title retains honest last-verified coverage after early proofs age', async () => {
+  const { job } = await ledger();
+  const ids = Array.from({ length: 31 }, (_, index) => 1001 + index);
+  job.start({ anidbId: 42, nowMs: 0 });
+  const page = job.claimNext({ nowMs: 1 });
+  job.recordPage({ claim: page, detail: detail({ ids }), checkedMs: 2 });
+  for (let index = 0; index < ids.length; index++) {
+    const checkedMs = (index + 1) * 60_000;
+    const claim = job.claimNext({ nowMs: checkedMs });
+    assert.equal(claim.episodeId, ids[index]);
+    job.recordTarget({ claim, status: 'available', checkedMs });
+  }
+  const progress = job.getProgress({ anidbId: 42, nowMs: 31 * 60_000 });
+  assert.equal(progress.state, 'done');
+  assert.equal(progress.checkedCount, 31);
+  assert.equal(progress.recentAvailableCount, 30);
+  assert.equal(progress.lastVerifiedAvailableCount, 31);
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: ids[0], nowMs: 31 * 60_000 }),
+  { state: 'previously_available' });
   job.close();
 });
 
@@ -195,7 +239,8 @@ test('a Shoko file change withdraws its recent positive and rechecks it', async 
     episodeId: 1001, observedMs: 6 }), { state: 'queued' });
   assert.deepEqual(job.getProgress({ anidbId: 42, nowMs: 7 }),
     { state: 'checking', generation: 1, totalCount: 1,
-      checkedCount: 0, recentAvailableCount: 0 });
+      checkedCount: 0, recentAvailableCount: 0,
+      lastVerifiedAvailableCount: 0 });
   assert.equal(job.claimNext({ nowMs: 7 }).episodeId, 1001);
   job.close();
 });
