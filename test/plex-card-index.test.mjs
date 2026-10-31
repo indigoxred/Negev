@@ -3,6 +3,7 @@ import { afterEach, test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
 import { indexPlexCardPage, retryOnePlexCard } from
   '../src/availability/plex-card-page-worker.mjs';
@@ -19,6 +20,83 @@ async function index() {
 const card = (ratingKey = 500, size = 5) => ({ libraryId: 102,
   ratingKey, kind: 'episode', parts: [{ partId: ratingKey + 100,
     libraryId: 102, plexPath: `/source-pure/${ratingKey}.mkv`, size }] });
+
+test('a durable physical identity selects one of many same-size Parts', async () => {
+  const { path: dbPath, ledger } = await index();
+  for (let ratingKey = 500; ratingKey < 512; ratingKey++) {
+    const item = card(ratingKey);
+    item.parts[0].candidateKey = `1:${ratingKey}:5`;
+    ledger.recordCard({ ...item, observedMs: 10 });
+  }
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }), { state: 'held', reason: 'candidate_budget_exceeded' });
+  ledger.close();
+  const reopened = openPlexCardIndex(dbPath);
+  assert.deepEqual(reopened.lookupCardsByCandidateKey({ keys: ['1:505:5'],
+    libraryIds: [102], kind: 'episode' }),
+  { state: 'candidates', cards: [{ libraryId: 102, ratingKey: 505 }] });
+  assert.deepEqual(reopened.lookupCardsByCandidateKey({ keys: ['1:505:5'],
+    libraryIds: [103], kind: 'episode' }),
+  { state: 'candidates', cards: [] });
+  reopened.close();
+});
+
+test('refresh and removal retire the old physical identity candidate', async () => {
+  const { ledger } = await index();
+  const first = card(); first.parts[0].candidateKey = '1:10:5';
+  ledger.recordCard({ ...first, observedMs: 10 });
+  const replacement = card(); replacement.parts[0].candidateKey = '1:11:5';
+  ledger.recordCard({ ...replacement, observedMs: 11 });
+  const lookup = (key) => ledger.lookupCardsByCandidateKey({ keys: [key],
+    libraryIds: [102], kind: 'episode' }).cards;
+  assert.deepEqual(lookup('1:10:5'), []);
+  assert.equal(lookup('1:11:5').length, 1);
+  ledger.forgetCard({ libraryId: 102, ratingKey: 500, observedMs: 12 });
+  assert.deepEqual(lookup('1:11:5'), []);
+  ledger.close();
+});
+
+test('malformed physical identity candidates cannot enter or query the index', async () => {
+  const { ledger } = await index();
+  for (const key of ['1:2:6', '01:2:5', '1:0:5', '1:2:5\n', 'x:2:5']) {
+    const item = card(); item.parts[0].candidateKey = key;
+    assert.throws(() => ledger.recordCard({ ...item, observedMs: 10 }), TypeError);
+    if (key !== '1:2:6') {
+      assert.throws(() => ledger.lookupCardsByCandidateKey({ keys: [key],
+        libraryIds: [102], kind: 'episode' }), TypeError);
+    }
+  }
+  ledger.close();
+});
+
+test('legacy size-only index migrates without inventing physical identity', async () => {
+  const { path: dbPath, ledger } = await index();
+  ledger.close();
+  const db = new DatabaseSync(dbPath);
+  db.exec('DROP TABLE plex_part_candidates');
+  db.exec(`CREATE TABLE plex_part_candidates (
+    library_id INTEGER NOT NULL, rating_key INTEGER NOT NULL,
+    part_id INTEGER NOT NULL CHECK(part_id>0),
+    file_size INTEGER NOT NULL CHECK(file_size>0),
+    plex_path TEXT NOT NULL,
+    PRIMARY KEY(library_id,rating_key,part_id),
+    FOREIGN KEY(library_id,rating_key)
+      REFERENCES plex_card_observations(library_id,rating_key)) STRICT`);
+  db.prepare(`INSERT INTO plex_card_observations
+    (library_id,rating_key,kind,observed_ms) VALUES (102,500,'episode',10)`).run();
+  db.prepare(`INSERT INTO plex_part_candidates
+    (library_id,rating_key,part_id,file_size,plex_path)
+    VALUES (102,500,600,5,'/source-pure/500.mkv')`).run();
+  db.close();
+  const reopened = openPlexCardIndex(dbPath);
+  assert.deepEqual(reopened.lookupCardsByCandidateKey({ keys: ['1:10:5'],
+    libraryIds: [102], kind: 'episode' }).cards, []);
+  const item = card(501); item.parts[0].candidateKey = '1:11:5';
+  reopened.recordCard({ ...item, observedMs: 11 });
+  assert.equal(reopened.lookupCardsByCandidateKey({ keys: ['1:11:5'],
+    libraryIds: [102], kind: 'episode' }).cards.length, 1);
+  reopened.close();
+});
 
 test('records scoped positive Parts and looks up only matching public card sizes', async () => {
   const { path: dbPath, ledger } = await index();

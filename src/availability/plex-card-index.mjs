@@ -5,6 +5,9 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' && value.length <= 4096 &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
   !/[\0\r\n\\]/.test(value);
+const validCandidateKey = (value, size) => typeof value === 'string' &&
+  value.length <= 128 && /^(0|[1-9]\d{0,30}):([1-9]\d{0,30}):([1-9]\d{0,15})$/.test(value) &&
+  (size === undefined || value.slice(value.lastIndexOf(':') + 1) === String(size));
 
 // Positive discovery only. Stored paths are private candidates, not playback
 // proof. A target check must re-read each card and prove the physical Part.
@@ -28,10 +31,15 @@ export function openPlexCardIndex(dbPath) {
       part_id INTEGER NOT NULL CHECK(part_id>0),
       file_size INTEGER NOT NULL CHECK(file_size>0),
       plex_path TEXT NOT NULL,
+      candidate_key TEXT,
       PRIMARY KEY(library_id,rating_key,part_id),
       FOREIGN KEY(library_id,rating_key)
         REFERENCES plex_card_observations(library_id,rating_key)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(plex_part_candidates)').all()
+      .some((column) => column.name === 'candidate_key')) {
+      db.exec('ALTER TABLE plex_part_candidates ADD COLUMN candidate_key TEXT');
+    }
     // Keep a removal timestamp after deleting a card. An older page read may
     // finish later, including after a service restart.
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_removals (
@@ -41,6 +49,7 @@ export function openPlexCardIndex(dbPath) {
       PRIMARY KEY(library_id,rating_key)
     ) STRICT`);
     db.exec('CREATE INDEX IF NOT EXISTS plex_candidate_size ON plex_part_candidates(file_size,library_id,rating_key)');
+    db.exec('CREATE INDEX IF NOT EXISTS plex_candidate_identity ON plex_part_candidates(candidate_key,library_id,rating_key)');
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_cursors (
       library_id INTEGER NOT NULL CHECK(library_id>0),
       kind TEXT NOT NULL CHECK(kind IN ('episode','movie')),
@@ -77,7 +86,8 @@ export function openPlexCardIndex(dbPath) {
   const clearCard = db.prepare(`DELETE FROM plex_card_observations
     WHERE library_id=? AND rating_key=?`);
   const addPart = db.prepare(`INSERT INTO plex_part_candidates
-    (library_id,rating_key,part_id,file_size,plex_path) VALUES (?,?,?,?,?)`);
+    (library_id,rating_key,part_id,file_size,plex_path,candidate_key)
+    VALUES (?,?,?,?,?,?)`);
   const oldRetry = db.prepare(`SELECT attempts FROM plex_card_retries
     WHERE library_id=? AND rating_key=?`);
   const saveRetry = db.prepare(`INSERT INTO plex_card_retries
@@ -95,6 +105,7 @@ export function openPlexCardIndex(dbPath) {
     (library_id,kind,offset) VALUES (?,?,?) ON CONFLICT(library_id,kind)
     DO UPDATE SET offset=excluded.offset`);
   const candidateQueries = new Map();
+  const identityQueries = new Map();
   const sizeCandidates = (libraryCount) => {
     if (!candidateQueries.has(libraryCount)) candidateQueries.set(libraryCount,
       db.prepare(`SELECT DISTINCT p.library_id AS libraryId,
@@ -105,6 +116,17 @@ export function openPlexCardIndex(dbPath) {
           (${Array(libraryCount).fill('?').join(',')})
         ORDER BY p.library_id,p.rating_key LIMIT 11`));
     return candidateQueries.get(libraryCount);
+  };
+  const identityCandidates = (libraryCount) => {
+    if (!identityQueries.has(libraryCount)) identityQueries.set(libraryCount,
+      db.prepare(`SELECT DISTINCT p.library_id AS libraryId,
+        p.rating_key AS ratingKey FROM plex_part_candidates p
+        JOIN plex_card_observations c ON c.library_id=p.library_id
+          AND c.rating_key=p.rating_key
+        WHERE p.candidate_key=? AND c.kind=? AND p.library_id IN
+          (${Array(libraryCount).fill('?').join(',')})
+        ORDER BY p.library_id,p.rating_key LIMIT 11`));
+    return identityQueries.get(libraryCount);
   };
   return {
     forgetCard({ libraryId, ratingKey, observedMs }) {
@@ -142,7 +164,9 @@ export function openPlexCardIndex(dbPath) {
           !Array.isArray(parts) || parts.length < 1 || parts.length > 400 ||
           parts.some((part) => !validId(part?.partId) ||
             part.libraryId !== libraryId || !validId(part.size) ||
-            !validPath(part.plexPath)) ||
+            !validPath(part.plexPath) ||
+            (part.candidateKey != null &&
+              !validCandidateKey(part.candidateKey, part.size))) ||
           new Set(parts.map((part) => part.partId)).size !== parts.length) {
         throw new TypeError('Invalid Plex card observation');
       }
@@ -160,7 +184,7 @@ export function openPlexCardIndex(dbPath) {
         if (removed) clearRemoval.run(libraryId, ratingKey);
         clearParts.run(libraryId, ratingKey);
         for (const part of parts) addPart.run(libraryId, ratingKey,
-          part.partId, part.size, part.plexPath);
+          part.partId, part.size, part.plexPath, part.candidateKey ?? null);
         clearRetry.run(libraryId, ratingKey);
         db.exec('COMMIT'); begun = false;
         return { state: 'recorded_card' };
@@ -206,6 +230,28 @@ export function openPlexCardIndex(dbPath) {
       const cards = new Map();
       for (const size of new Set(sizes)) {
         for (const row of sizeCandidates(libraryIds.length).all(size, kind, ...libraryIds)) {
+          cards.set(`${row.libraryId}:${row.ratingKey}`,
+            { libraryId: row.libraryId, ratingKey: row.ratingKey });
+          if (cards.size > 10) {
+            return { state: 'held', reason: 'candidate_budget_exceeded' };
+          }
+        }
+      }
+      return { state: 'candidates', cards: [...cards.values()].sort((a, b) =>
+        a.libraryId - b.libraryId || a.ratingKey - b.ratingKey) };
+    },
+    lookupCardsByCandidateKey({ keys, libraryIds, kind }) {
+      if (!Array.isArray(keys) || keys.length < 1 || keys.length > 50 ||
+          keys.some((key) => !validCandidateKey(key)) ||
+          !Array.isArray(libraryIds) || libraryIds.length < 1 ||
+          libraryIds.length > 20 || libraryIds.some((id) => !validId(id)) ||
+          !['episode', 'movie'].includes(kind)) {
+        throw new TypeError('Invalid Plex identity candidate query');
+      }
+      const cards = new Map();
+      for (const key of new Set(keys)) {
+        for (const row of identityCandidates(libraryIds.length).all(key, kind,
+          ...libraryIds)) {
           cards.set(`${row.libraryId}:${row.ratingKey}`,
             { libraryId: row.libraryId, ratingKey: row.ratingKey });
           if (cards.size > 10) {
