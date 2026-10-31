@@ -9,6 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, now, today }) {
   if (typeof titleRegistry?.isKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
+      typeof ledger?.findSubmission !== 'function' ||
       typeof now !== 'function' || typeof today !== 'function') {
     throw new TypeError('Invalid held-request configuration');
   }
@@ -22,6 +23,10 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
           episodeIds.length > 2_000 || episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)))) {
       return held('invalid_request');
     }
+    const commandKey = JSON.stringify([anidbId, scope,
+      scope === 'episodes' ? [...new Set(episodeIds)].sort((a, b) => a - b) : null]);
+    const previous = ledger.findSubmission({ requesterId, requestKey, commandKey });
+    if (previous) return previous;
     if (!titleRegistry.isKnownTitle({ anidbId })) return held('unknown_title');
     const detail = await collectAniDbDetail({ anidbId, loadPage: loadDetail });
     if (detail.state !== 'details') {
@@ -32,6 +37,6 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
     if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
     const intent = planRequest({ detail, releaseState: release.state, scope, episodeIds });
     if (intent.state !== 'ready') return intent;
-    return ledger.submit({ requesterId, requestKey, intent, nowMs: now() });
+    return ledger.submit({ requesterId, requestKey, commandKey, intent, nowMs: now() });
   };
 }

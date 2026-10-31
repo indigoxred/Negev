@@ -4,7 +4,12 @@ function validFile(file) {
     typeof file.storageKey === 'string' && file.storageKey.length > 0 &&
     Array.isArray(file.episodeIds) && file.episodeIds.length > 0 &&
     file.episodeIds.every((id) => Number.isSafeInteger(id) && id > 0) &&
-    new Set(file.episodeIds).size === file.episodeIds.length;
+    new Set(file.episodeIds).size === file.episodeIds.length &&
+    Array.isArray(file.coverage) && file.coverage.length === file.episodeIds.length &&
+    file.coverage.every((entry) => file.episodeIds.includes(entry?.episodeId) &&
+      Number.isFinite(entry.start) && Number.isFinite(entry.end) &&
+      entry.start >= 0 && entry.end <= 100 && entry.start < entry.end) &&
+    new Set(file.coverage.map((entry) => entry.episodeId)).size === file.coverage.length;
 }
 
 function validPart(part) {
@@ -34,7 +39,9 @@ export function evaluateExactAvailability({ target, shoko, plex, publicLibraryId
   const conflicts = new Set();
   for (const file of shoko.files) {
     const key = file.storageKey;
-    const signature = `${file.fileId}:${file.anidbId}:${[...file.episodeIds].sort((a, b) => a - b).join(',')}`;
+    const signature = `${file.fileId}:${file.anidbId}:${[...file.coverage]
+      .sort((a, b) => a.episodeId - b.episodeId)
+      .map((entry) => `${entry.episodeId}:${entry.start}-${entry.end}`).join(',')}`;
     if (claims.has(key) && claims.get(key) !== signature) conflicts.add(key);
     claims.set(key, signature);
   }
@@ -45,12 +52,16 @@ export function evaluateExactAvailability({ target, shoko, plex, publicLibraryId
   }
   if (matching.length === 0) return { state: 'absent' };
   let unreadable = false;
+  let partial = false;
   for (const file of matching) {
+    const range = file.coverage.find((entry) => entry.episodeId === target.episodeId);
+    if (range.start !== 0 || range.end !== 100) { partial = true; continue; }
     for (const part of plex.parts) {
       if (part.storageKey !== file.storageKey || !publicIds.has(part.libraryId)) continue;
       if (part.readable) return { state: 'available', fileId: file.fileId };
       unreadable = true;
     }
   }
-  return unreadable ? { state: 'held', reason: 'plex_part_unreadable' } : { state: 'awaiting_plex' };
+  return unreadable ? { state: 'held', reason: 'plex_part_unreadable' } :
+    partial ? { state: 'held', reason: 'partial_episode' } : { state: 'awaiting_plex' };
 }

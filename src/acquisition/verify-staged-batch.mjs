@@ -89,6 +89,13 @@ export async function verifyStagedBatch({
     if (!Number.isSafeInteger(result.fileId) || result.fileId <= 0 ||
         fileIds.has(result.fileId) || result.size !== file.size ||
         !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
+    const plannedEpisodes = plannedByName.get(file.name).episodeIds;
+    if (!Array.isArray(result.coverage) || result.coverage.length !== plannedEpisodes.length ||
+        result.coverage.some((range) => !plannedEpisodes.includes(range?.episodeId) ||
+          range.start !== 0 || range.end !== 100) ||
+        new Set(result.coverage.map((range) => range.episodeId)).size !== plannedEpisodes.length) {
+      return held('partial_or_unproved_episode');
+    }
     fileIds.add(result.fileId);
     verified.push({ name: file.name, episodeIds: [...plannedByName.get(file.name).episodeIds],
       anidbFileId: result.fileId, ed2k: result.ed2k, size: result.size });

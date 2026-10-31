@@ -1,3 +1,5 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
+
 const SERIES_TYPES = new Set(['TV', 'TVSeries', 'OVA', 'TVSpecial', 'Web', 'Other']);
 
 async function readJson(url, apiKey, fetchImpl, timeoutMs) {
@@ -8,9 +10,7 @@ async function readJson(url, apiKey, fetchImpl, timeoutMs) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status !== 200) return { status: response.status };
-    const body = await response.text();
-    if (body.length > 2_000_000) return { status: 0 };
-    return { status: 200, value: JSON.parse(body) };
+    return { status: 200, value: await readBoundedJson(response, 2_000_000) };
   } catch { return { status: 0 }; }
 }
 

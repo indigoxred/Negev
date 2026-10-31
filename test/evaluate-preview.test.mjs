@@ -15,12 +15,14 @@ const registered = {
   releaseURI: 'https://anidb.net/file/123456',
   fileSize: expected.size,
   hashes: [{ type: 'ED2K', value: expected.ed2k }],
-  crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001 }],
+  crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
+    percentageStart: null, percentageEnd: null }],
 };
 
 test('accepts only an exact registered file and requested episode', () => {
   assert.deepEqual(evaluatePreview({ status: 200, release: registered }, expected), {
     state: 'accepted', reason: 'exact_anidb_release', fileId: 123456,
+    coverage: [{ episodeId: 1001, start: 0, end: 100 }],
   });
 });
 
@@ -31,11 +33,21 @@ test('accepts the installed Shoko v3 PascalCase JSON shape', () => {
     ReleaseURI: registered.releaseURI,
     FileSize: registered.fileSize,
     Hashes: [{ Type: 'ED2K', Value: expected.ed2k }],
-    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001 }],
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+      PercentageStart: null, PercentageEnd: null }],
   };
   assert.deepEqual(evaluatePreview({ status: 200, release: shokoRelease }, expected), {
     state: 'accepted', reason: 'exact_anidb_release', fileId: 123456,
+    coverage: [{ episodeId: 1001, start: 0, end: 100 }],
   });
+});
+
+test('preserves exact AniDB half-episode coverage without claiming completion', () => {
+  const release = structuredClone(registered);
+  release.crossReferences[0].percentageStart = 0;
+  release.crossReferences[0].percentageEnd = 50;
+  assert.deepEqual(evaluatePreview({ status: 200, release }, expected).coverage,
+    [{ episodeId: 1001, start: 0, end: 50 }]);
 });
 
 test('rejects a registered file for another anime', () => {
@@ -47,7 +59,8 @@ test('rejects a registered file for another anime', () => {
 test('rejects missing or extra episode identities in a pack', () => {
   assert.equal(evaluatePreview({ status: 200, release: registered }, { ...expected, episodeIds: [1001, 1002] }).reason, 'wrong_identity');
   const release = structuredClone(registered);
-  release.crossReferences.push({ anidbAnimeID: 42, anidbEpisodeID: 1002 });
+  release.crossReferences.push({ anidbAnimeID: 42, anidbEpisodeID: 1002,
+    percentageStart: null, percentageEnd: null });
   assert.equal(evaluatePreview({ status: 200, release }, expected).reason, 'wrong_identity');
 });
 

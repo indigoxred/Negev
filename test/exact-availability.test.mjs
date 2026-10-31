@@ -3,7 +3,8 @@ import test from 'node:test';
 import { evaluateExactAvailability } from '../src/availability/exact-availability.mjs';
 
 const target = { anidbId: 1234, episodeId: 1001 };
-const file = { fileId: 51, anidbId: 1234, episodeIds: [1001], storageKey: 'verified-storage-key-a' };
+const file = { fileId: 51, anidbId: 1234, episodeIds: [1001],
+  coverage: [{ episodeId: 1001, start: 0, end: 100 }], storageKey: 'verified-storage-key-a' };
 const part = { storageKey: file.storageKey, libraryId: 102, readable: true };
 const shoko = { state: 'ok', complete: true, files: [file] };
 const plex = { state: 'ok', complete: true, parts: [part] };
@@ -17,7 +18,8 @@ test('exact Shoko episode plus public playable Plex part is available without re
 test('wrong anime or episode never counts even when Plex has the same bytes', () => {
   assert.deepEqual(evaluate({ shoko: { ...shoko, files: [{ ...file, anidbId: 9999 }] } }),
     { state: 'absent' });
-  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [{ ...file, episodeIds: [1002] }] } }),
+  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [{ ...file, episodeIds: [1002],
+    coverage: [{ episodeId: 1002, start: 0, end: 100 }] }] } }),
     { state: 'absent' });
 });
 
@@ -34,7 +36,8 @@ test('duplicate encodes and one multi-episode file preserve exact identity', () 
   assert.deepEqual(evaluate({ shoko: { ...shoko, files: [file, second] },
     plex: { ...plex, parts: [{ ...part, storageKey: second.storageKey }] } }),
   { state: 'available', fileId: 52 });
-  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [{ ...file, episodeIds: [1001, 1002] }] } }),
+  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [{ ...file, episodeIds: [1001, 1002],
+    coverage: [...file.coverage, { episodeId: 1002, start: 0, end: 100 }] }] } }),
     { state: 'available', fileId: 51 });
 });
 
@@ -51,4 +54,13 @@ test('outage or incomplete observation is unknown, not absence', () => {
     { plex: { state: 'unavailable' } },
     { plex: { ...plex, complete: false, parts: [] } },
   ]) assert.deepEqual(evaluate(input), { state: 'unknown', reason: 'observer_incomplete' });
+});
+
+test('a playable first-half file cannot satisfy a full episode', () => {
+  const half = { ...file, coverage: [{ episodeId: 1001, start: 0, end: 50 }] };
+  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [half] } }),
+    { state: 'held', reason: 'partial_episode' });
+  assert.deepEqual(evaluate({ shoko: { ...shoko, files: [half, { ...half,
+    fileId: 52, storageKey: 'second-half-copy' }] } }),
+    { state: 'held', reason: 'partial_episode' });
 });

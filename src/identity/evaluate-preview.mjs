@@ -19,6 +19,8 @@ export function evaluatePreview(preview, expected) {
     crossReferences: Array.isArray(raw.CrossReferences) ? raw.CrossReferences.map((xref) => ({
       anidbAnimeID: xref?.AnidbAnimeID,
       anidbEpisodeID: xref?.AnidbEpisodeID,
+      percentageStart: xref?.PercentageStart,
+      percentageEnd: xref?.PercentageEnd,
     })) : null,
   } : raw;
   const digest = expected?.ed2k;
@@ -40,7 +42,13 @@ export function evaluatePreview(preview, expected) {
       !Array.isArray(release.crossReferences) || release.crossReferences.length === 0 ||
       release.crossReferences.some((xref) =>
         !Number.isSafeInteger(xref?.anidbAnimeID) || xref.anidbAnimeID <= 0 ||
-        !Number.isSafeInteger(xref?.anidbEpisodeID) || xref.anidbEpisodeID <= 0)) {
+        !Number.isSafeInteger(xref?.anidbEpisodeID) || xref.anidbEpisodeID <= 0 ||
+        !Object.hasOwn(xref, 'percentageStart') || !Object.hasOwn(xref, 'percentageEnd') ||
+        ((xref.percentageStart == null) !== (xref.percentageEnd == null)) ||
+        (xref.percentageStart != null &&
+          (!Number.isFinite(xref.percentageStart) || !Number.isFinite(xref.percentageEnd) ||
+           xref.percentageStart < 0 || xref.percentageEnd > 100 ||
+           xref.percentageStart >= xref.percentageEnd)))) {
     return held('invalid_response');
   }
 
@@ -52,5 +60,7 @@ export function evaluatePreview(preview, expected) {
     return { state: 'rejected', reason: 'wrong_identity' };
   }
 
-  return { state: 'accepted', reason: 'exact_anidb_release', fileId: Number(fileMatch[1]) };
+  return { state: 'accepted', reason: 'exact_anidb_release', fileId: Number(fileMatch[1]),
+    coverage: release.crossReferences.map((xref) => ({ episodeId: xref.anidbEpisodeID,
+      start: xref.percentageStart ?? 0, end: xref.percentageEnd ?? 100 })) };
 }

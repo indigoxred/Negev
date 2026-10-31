@@ -1,3 +1,4 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
@@ -71,9 +72,7 @@ export async function submitStoppedCandidate({
       const response = await fetchImpl(url, { method: 'GET', headers,
         redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
       if (response.status !== 200) return held('provider_unavailable');
-      const body = await response.text();
-      if (body.length > 100_000) return held('provider_unavailable');
-      existing = JSON.parse(body);
+      existing = await readBoundedJson(response, 100_000);
     } catch { return held('provider_unavailable'); }
     if (!Array.isArray(existing)) return held('provider_unavailable');
     if (existing.length !== 0) return held('torrent_hash_in_use');

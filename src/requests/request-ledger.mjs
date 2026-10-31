@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 
 const REASON = 'awaiting_availability_evidence';
+const held = (reason) => ({ state: 'held', reason });
 
 function canonicalIntent(intent) {
   if (intent?.state !== 'ready' || !Number.isSafeInteger(intent.anidbId) || intent.anidbId <= 0 ||
@@ -29,6 +30,7 @@ export function openRequestLedger(dbPath) {
       id INTEGER PRIMARY KEY,
       requester_id INTEGER NOT NULL CHECK(requester_id > 0),
       request_key TEXT NOT NULL,
+      command_key TEXT,
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
       kind TEXT NOT NULL CHECK(kind IN ('series','movie')),
       episode_key TEXT NOT NULL,
@@ -38,6 +40,10 @@ export function openRequestLedger(dbPath) {
       reason TEXT NOT NULL,
       UNIQUE(requester_id,request_key)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(requests)').all()
+      .some((column) => column.name === 'command_key')) {
+      db.exec('ALTER TABLE requests ADD COLUMN command_key TEXT');
+    }
     db.exec(`CREATE TABLE IF NOT EXISTS targets (
       id INTEGER PRIMARY KEY,
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
@@ -54,11 +60,11 @@ export function openRequestLedger(dbPath) {
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
 
-  const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future
+  const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key
     FROM requests WHERE requester_id=? AND request_key=?`);
   const insertRequest = db.prepare(`INSERT INTO requests
-    (requester_id,request_key,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
-    VALUES (?,?,?,?,?,?,?,'held',?)`);
+    (requester_id,request_key,command_key,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
+    VALUES (?,?,?,?,?,?,?,?,'held',?)`);
   const insertTarget = db.prepare(`INSERT INTO targets(anidb_id,episode_id,status,reason)
     VALUES (?,?,'held',?) ON CONFLICT(anidb_id,episode_id) DO NOTHING`);
   const findTarget = db.prepare('SELECT id FROM targets WHERE anidb_id=? AND episode_id=?');
@@ -85,15 +91,31 @@ export function openRequestLedger(dbPath) {
   }
 
   return {
-    submit({ requesterId, requestKey, intent, nowMs }) {
+    findSubmission({ requesterId, requestKey, commandKey }) {
       if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
           typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
-          !Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError('Invalid requester or time');
+          typeof commandKey !== 'string' || commandKey.length > 20_000) {
+        throw new TypeError('Invalid submission lookup');
+      }
+      const existing = findRequest.get(requesterId, requestKey);
+      if (!existing) return null;
+      if (existing.command_key !== commandKey) return held('idempotency_key_conflict');
+      return { state: 'held', reason: REASON, requestId: existing.id,
+        targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
+    },
+    submit({ requesterId, requestKey, commandKey = null, intent, nowMs }) {
+      if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
+          typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0 ||
+          (commandKey !== null && (typeof commandKey !== 'string' || commandKey.length > 20_000))) {
+        throw new TypeError('Invalid requester or time');
+      }
       const item = canonicalIntent(intent);
       return transact(() => {
         const existing = findRequest.get(requesterId, requestKey);
         if (existing) {
-          if (existing.anidb_id !== item.anidbId || existing.kind !== item.kind ||
+          if (existing.command_key !== commandKey ||
+              existing.anidb_id !== item.anidbId || existing.kind !== item.kind ||
               existing.episode_key !== item.episodeKey ||
               existing.monitor_future !== Number(item.monitorFuture)) {
             return { state: 'held', reason: 'idempotency_key_conflict' };
@@ -101,7 +123,7 @@ export function openRequestLedger(dbPath) {
           return { state: 'held', reason: REASON, requestId: existing.id,
             targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
         }
-        const requestId = Number(insertRequest.run(requesterId, requestKey, item.anidbId,
+        const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);
         const targetIds = [];
         for (const episodeId of item.episodeIds) {

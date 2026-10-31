@@ -1,3 +1,5 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
+
 const PROVIDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ED2K = /^[0-9A-F]{32}$/;
 
@@ -26,9 +28,7 @@ export async function previewAniDbRelease({
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status !== 200) return { status: response.status };
-    const body = await response.text();
-    if (body.length > 1_000_000) return { status: 0 };
-    return { status: 200, release: JSON.parse(body) };
+    return { status: 200, release: await readBoundedJson(response, 1_000_000) };
   } catch {
     // Never include the URL or credential in an error returned to callers.
     return { status: 0 };

@@ -48,6 +48,23 @@ test('private search to exact held request never dispatches acquisition', async 
       headers: auth, payload: body });
     assert.equal(retry.json().requestId, requestId);
     assert.equal(retry.json().created, false);
+    const cold = createCatalogueTestService({
+      shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+      dbPath: path.join(dir, 'state.sqlite'), testToken: 'synthetic-private-token',
+      fetchImpl: async () => { throw Error('catalogue must not be read on retry'); },
+      now: () => 1_000_000_001, today: () => '2026-10-31',
+    });
+    try {
+      const recovered = await cold.app.inject({ method: 'POST', url: '/api/requests',
+        headers: auth, payload: body });
+      assert.equal(recovered.statusCode, 202);
+      assert.equal(recovered.json().requestId, requestId);
+      assert.equal(recovered.json().created, false);
+      const conflict = await cold.app.inject({ method: 'POST', url: '/api/requests',
+        headers: auth, payload: { ...body, scope: 'episodes', episodeIds: [1001] } });
+      assert.equal(conflict.statusCode, 409, conflict.body);
+      assert.equal(conflict.json().reason, 'idempotency_key_conflict');
+    } finally { await cold.close(); }
     const saved = await service.app.inject({ method: 'GET', url: `/api/requests/${requestId}`,
       headers: auth });
     assert.deepEqual(saved.json().episodeIds, [1001]);

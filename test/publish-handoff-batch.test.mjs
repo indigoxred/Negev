@@ -43,7 +43,8 @@ async function withBatch(run) {
       id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
       releaseURI: 'https://anidb.net/file/51', fileSize: size,
       hashes: [{ type: 'ED2K', value: ed2k }],
-      crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001 }],
+      crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
+        percentageStart: null, percentageEnd: null }],
     } });
     await run({ prepared, ledger, lookup, holdingRoot, importRoot,
       video, subtitle, publishName, getBegins: () => begins });

@@ -1,3 +1,4 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateCompletion } from './evaluate-completion.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -25,9 +26,7 @@ export async function observeTorrentCompletion({
     const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) throw new Error('qBittorrent read failed');
-    const body = await response.text();
-    if (body.length > maxChars) throw new Error('qBittorrent response too large');
-    return JSON.parse(body);
+    return readBoundedJson(response, maxChars);
   };
   let before, files, after, filesAfter;
   try {

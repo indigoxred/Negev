@@ -1,3 +1,5 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
+
 // Shoko's title cache reaches beyond locally imported series, but a search
 // hit alone does not contain the episode detail needed for a request.
 export async function searchAniDbTitles({
@@ -31,9 +33,7 @@ export async function searchAniDbTitles({
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status !== 200) return { state: 'unavailable' };
-    const body = await response.text();
-    if (body.length > 1_000_000) return { state: 'unavailable' };
-    const data = JSON.parse(body);
+    const data = await readBoundedJson(response, 1_000_000);
     if (!Number.isSafeInteger(data?.Total) || data.Total < 0 ||
         !Array.isArray(data.List) || data.List.length > pageSize ||
         data.List.some((item) => !Number.isSafeInteger(item?.ID) || item.ID <= 0 ||

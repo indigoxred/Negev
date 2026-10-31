@@ -52,3 +52,13 @@ test('empty successful result remains provisional because Prowlarr can hide sear
   const result = await searchReleaseCandidates({ ...config, query: 'Example', fetchImpl: async () => ({ status: 200, text: async () => '[]' }) });
   assert.deepEqual(result, { state: 'candidates', items: [], exhaustive: false });
 });
+
+test('multi-indexer aggregate may exceed the query limit without hiding valid results', async () => {
+  const data = Array.from({ length: 30 }, (_, n) => ({ guid: `g${n}`,
+    indexerId: n < 15 ? 7 : 9, title: `Release ${n}`, size: 100 + n,
+    protocol: 'torrent' }));
+  const result = await searchReleaseCandidates({ ...config, query: 'Example', limit: 25,
+    fetchImpl: async () => Response.json(data) });
+  assert.equal(result.state, 'candidates');
+  assert.equal(result.items.length, 25);
+});

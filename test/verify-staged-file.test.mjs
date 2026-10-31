@@ -18,7 +18,8 @@ function matchingPreview({ size }) {
     releaseURI: 'https://anidb.net/file/123456',
     fileSize: size,
     hashes: [{ type: 'ED2K', value: ed2k }],
-    crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001 }],
+    crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
+      percentageStart: null, percentageEnd: null }],
   } };
 }
 
@@ -36,7 +37,8 @@ test('verifies an exact file inside staging without importing or moving it', asy
       assert.deepEqual(hash, { ed2k, size: 3 });
       return matchingPreview(hash);
     } });
-    assert.deepEqual(result, { state: 'identity_verified', fileId: 123456, ed2k, size: 3 });
+    assert.deepEqual(result, { state: 'identity_verified', fileId: 123456,
+      coverage: [{ episodeId: 1001, start: 0, end: 100 }], ed2k, size: 3 });
     assert.deepEqual(paced, [3]);
   });
 });

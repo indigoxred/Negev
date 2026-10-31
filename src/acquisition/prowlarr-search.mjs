@@ -1,3 +1,5 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
+
 // Prowlarr GET /api/v1/search only. A release is a search candidate, not
 // evidence that its video is registered in AniDB or safe to import.
 export async function searchReleaseCandidates({
@@ -20,7 +22,10 @@ export async function searchReleaseCandidates({
     throw new TypeError('Invalid Prowlarr search configuration');
   }
 
-  const url = new URL('/api/v1/search', base);
+  if (!/^\/(?:[A-Za-z0-9_-]+\/)*$/.test(base.pathname)) {
+    throw new TypeError('Invalid Prowlarr URL base');
+  }
+  const url = new URL(`${base.pathname}api/v1/search`, base);
   url.searchParams.set('query', term);
   url.searchParams.set('type', 'search');
   url.searchParams.set('limit', String(limit));
@@ -34,10 +39,8 @@ export async function searchReleaseCandidates({
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status !== 200) return { state: 'unavailable' };
-    const body = await response.text();
-    if (body.length > 2_000_000) return { state: 'unavailable' };
-    const data = JSON.parse(body);
-    if (!Array.isArray(data) || data.length > limit || data.some((item) =>
+    const data = await readBoundedJson(response, 2_000_000);
+    if (!Array.isArray(data) || data.length > 1_000 || data.some((item) =>
       typeof item?.guid !== 'string' || !item.guid || item.guid.length > 500 ||
       !indexerIds.includes(item.indexerId) || typeof item.title !== 'string' ||
       !item.title.trim() || item.title.length > 500 ||
@@ -48,7 +51,7 @@ export async function searchReleaseCandidates({
     }
     return {
       state: 'candidates',
-      items: data.filter((item) => item.protocol === 'torrent').map((item) => ({
+      items: data.filter((item) => item.protocol === 'torrent').slice(0, limit).map((item) => ({
         guid: item.guid, indexerId: item.indexerId, title: item.title,
         size: item.size, protocol: item.protocol,
         seeders: item.seeders ?? null, evidence: 'unverified',

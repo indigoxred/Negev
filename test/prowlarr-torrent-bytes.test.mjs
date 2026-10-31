@@ -3,7 +3,8 @@ import test from 'node:test';
 import { fetchProwlarrTorrentBytes } from '../src/acquisition/prowlarr-torrent-bytes.mjs';
 
 const bytes = Uint8Array.from([100, 52, 58, 105, 110, 102, 111, 101]);
-const proxy = 'http://prowlarr.internal:9696/api/v1/indexer/3/download?apikey=syntheticKey&link=abc123&file=Example';
+// Prowlarr DownloadMappingService builds {serverUrl}{urlBase}/{indexerId}/download.
+const proxy = 'http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=abc123&file=Example';
 const candidate = { guid: 'release-1', indexerId: 3, title: 'Example 01', size: 1_000 };
 const config = { baseUrl: 'http://prowlarr.internal:9696/', apiKey: 'syntheticKey',
   query: 'Example', candidate, indexerIds: [3] };
@@ -19,7 +20,7 @@ test('fetches only the matching Prowlarr-proxied torrent bytes without redirecti
   } });
   assert.equal(calls.length, 2);
   assert.equal(calls[0].url.pathname, '/api/v1/search');
-  assert.equal(calls[1].url.pathname, '/api/v1/indexer/3/download');
+  assert.equal(calls[1].url.pathname, '/3/download');
   assert.equal(calls.every(({ init }) => init.method === 'GET' && init.redirect === 'manual' &&
     init.headers['X-Api-Key'] === 'syntheticKey'), true);
   assert.equal(result.state, 'torrent_bytes');
@@ -44,9 +45,9 @@ test('a missing, duplicate, or changed candidate never retrieves bytes', async (
 test('refuses proxy URLs that could escape Prowlarr or change authentication', async () => {
   for (const downloadUrl of [
     'http://evil.invalid/torrent',
-    'http://prowlarr.internal:9696/api/v1/indexer/4/download?apikey=syntheticKey&link=x&file=x',
-    'http://prowlarr.internal:9696/api/v1/indexer/3/download?apikey=other&link=x&file=x',
-    'http://prowlarr.internal:9696/api/v1/indexer/3/download?apikey=syntheticKey&link=x&file=x&redirect=1',
+    'http://prowlarr.internal:9696/4/download?apikey=syntheticKey&link=x&file=x',
+    'http://prowlarr.internal:9696/3/download?apikey=other&link=x&file=x',
+    'http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=x&file=x&redirect=1',
   ]) {
     let calls = 0;
     const result = await fetchProwlarrTorrentBytes({ ...config, fetchImpl: async () => {
@@ -76,4 +77,30 @@ test('invalid candidate and provider failure do not disclose bytes', async () =>
     fetchImpl: async () => { throw Error('unexpected call'); } }), TypeError);
   const result = await fetchProwlarrTorrentBytes({ ...config, fetchImpl: async () => { throw Error('offline'); } });
   assert.deepEqual(result, { state: 'held', reason: 'provider_unavailable' });
+});
+
+test('revalidation accepts a selected candidate among an aggregate of 60 results', async () => {
+  const many = Array.from({ length: 59 }, (_, n) => ({ ...release, guid: `other-${n}` }));
+  let calls = 0;
+  const result = await fetchProwlarrTorrentBytes({ ...config, fetchImpl: async () => {
+    calls++;
+    return calls === 1 ? Response.json([...many, release]) :
+      new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } });
+  } });
+  assert.equal(result.state, 'torrent_bytes');
+  assert.equal(calls, 2);
+});
+
+test('configured Prowlarr URL base scopes both search and proxy', async () => {
+  const paths = [];
+  const result = await fetchProwlarrTorrentBytes({ ...config,
+    baseUrl: 'http://prowlarr.internal:9696/prowlarr/',
+    fetchImpl: async (url) => {
+      paths.push(new URL(url).pathname);
+      return paths.length === 1 ? Response.json([{ ...release,
+        downloadUrl: proxy.replace(':9696/3/', ':9696/prowlarr/3/') }]) :
+        new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } });
+    } });
+  assert.equal(result.state, 'torrent_bytes');
+  assert.deepEqual(paths, ['/prowlarr/api/v1/search', '/prowlarr/3/download']);
 });

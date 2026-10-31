@@ -33,6 +33,9 @@ export function evaluateStagingMountIsolation({ qbittorrent, shoko, plex } = {},
       stagingBinds[0].Source !== hostPath || !stagingBinds[0].RW) {
     return held('staging_bind_mismatch');
   }
+  if (qbittorrent.some((mount) => mount.Destination.startsWith(`${CONTAINER_PATH}/`))) {
+    return held('staging_destination_shadowed');
+  }
   if (shoko.some((mount) => overlaps(hostPath, mount.Source))) {
     return held('staging_visible_to_shoko');
   }

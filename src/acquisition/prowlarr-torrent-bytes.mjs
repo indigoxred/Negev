@@ -1,3 +1,5 @@
+import { readBoundedJson } from '../http/bounded-response.mjs';
+
 const held = (reason) => ({ state: 'held', reason });
 const MAX_TORRENT_BYTES = 2_000_000;
 
@@ -6,7 +8,7 @@ function isTrustedProxy(value, base, apiKey, indexerId) {
   try { url = new URL(value); } catch { return false; }
   const params = [...url.searchParams.keys()];
   return url.origin === base.origin && !url.username && !url.password && !url.hash &&
-    url.pathname === `/api/v1/indexer/${indexerId}/download` &&
+    url.pathname === `${base.pathname === '/' ? '' : base.pathname.slice(0, -1)}/${indexerId}/download` &&
     params.length === 3 && new Set(params).size === 3 &&
     params.every((key) => ['apikey', 'link', 'file'].includes(key)) &&
     url.searchParams.get('apikey') === apiKey &&
@@ -25,7 +27,7 @@ export async function fetchProwlarrTorrentBytes({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Prowlarr URL'); }
   const term = typeof query === 'string' ? query.trim() : '';
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
-      base.pathname !== '/' || base.search || base.hash ||
+      !/^\/(?:[A-Za-z0-9_-]+\/)*$/.test(base.pathname) || base.search || base.hash ||
       typeof apiKey !== 'string' || !apiKey ||
       term.length < 2 || term.length > 120 ||
       typeof candidate?.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
@@ -40,20 +42,18 @@ export async function fetchProwlarrTorrentBytes({
     throw new TypeError('Invalid Prowlarr torrent retrieval configuration');
   }
   const headers = { 'X-Api-Key': apiKey };
-  const search = new URL('/api/v1/search', base);
+  const search = new URL(`${base.pathname}api/v1/search`, base);
   search.searchParams.set('query', term);
   search.searchParams.set('type', 'search');
   search.searchParams.set('limit', '50');
-  for (const id of indexerIds) search.searchParams.append('indexerIds', String(id));
+  search.searchParams.append('indexerIds', String(candidate.indexerId));
 
   try {
     const found = await fetchImpl(search, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
     if (found.status !== 200) return held('provider_unavailable');
-    const searchBody = await found.text();
-    if (searchBody.length > 2_000_000) return held('provider_unavailable');
-    const releases = JSON.parse(searchBody);
-    if (!Array.isArray(releases) || releases.length > 50) return held('provider_unavailable');
+    const releases = await readBoundedJson(found, 2_000_000);
+    if (!Array.isArray(releases) || releases.length > 1_000) return held('provider_unavailable');
     const matches = releases.filter((item) => item?.guid === candidate.guid &&
       item.indexerId === candidate.indexerId && item.protocol === 'torrent' &&
       item.title === candidate.title && item.size === candidate.size);

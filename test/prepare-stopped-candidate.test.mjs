@@ -7,7 +7,7 @@ const info = Buffer.from('d6:lengthi1000e4:name11:Example.mkv12:piece lengthi163
 const torrent = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
 const candidate = { guid: 'release-1', indexerId: 3, title: 'Example 01', size: 1000 };
-const proxy = 'http://prowlarr.internal:9696/api/v1/indexer/3/download?apikey=syntheticKey&link=abc123&file=Example';
+const proxy = 'http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=abc123&file=Example';
 const config = { baseUrl: 'http://prowlarr.internal:9696/', apiKey: 'syntheticKey',
   query: 'Example', candidate, indexerIds: [3] };
 
@@ -19,7 +19,7 @@ test('prepares original bytes, exact hash and stopped staging form without a dow
       ? Response.json([{ ...candidate, protocol: 'torrent', downloadUrl: proxy }])
       : new Response(torrent, { headers: { 'content-type': 'application/x-bittorrent' } });
   } });
-  assert.deepEqual(calls, ['/api/v1/search', '/api/v1/indexer/3/download']);
+  assert.deepEqual(calls, ['/api/v1/search', '/3/download']);
   assert.equal(result.state, 'prepared_stopped');
   assert.equal(result.expected.hash, hash);
   assert.equal(result.expected.category, 'negev');

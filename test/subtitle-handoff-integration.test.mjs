@@ -30,7 +30,8 @@ test('a complete video and subtitle pass exact identity into private holding onl
         id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
         releaseURI: 'https://anidb.net/file/51', fileSize: size,
         hashes: [{ type: 'ED2K', value: ed2k }],
-        crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001 }],
+        crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
+          percentageStart: null, percentageEnd: null }],
       } }),
     });
     assert.equal(verified.state, 'batch_identity_verified');

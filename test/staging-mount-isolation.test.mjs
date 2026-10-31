@@ -41,6 +41,13 @@ test('holds any Shoko or Plex mount covering staging or inside staging', () => {
     shoko: exposure('/srv/negev/staging-other') }).state, 'isolated_mount');
 });
 
+test('holds a qBittorrent mount nested under the staging destination', () => {
+  const nested = { Type: 'bind', Source: '/srv/library',
+    Destination: '/negev-staging/Show', RW: true };
+  assert.deepEqual(check({ ...mounts, qbittorrent: [...mounts.qbittorrent, nested] }),
+    { state: 'held', reason: 'staging_destination_shadowed' });
+});
+
 test('holds absent or malformed consumer mount evidence', () => {
   assert.deepEqual(check({ ...mounts, plex: undefined }),
     { state: 'held', reason: 'invalid_mount_evidence' });
