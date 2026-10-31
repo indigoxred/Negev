@@ -59,14 +59,23 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       const saved = readCursor.get();
       return saved ? { ...saved } : null;
     },
-    bootstrap(cursor) {
-      if (!validCursor(cursor)) return held('invalid_recent_baseline');
+    bootstrap(cursor, initialFileIds = []) {
+      if (!validCursor(cursor) || !Array.isArray(initialFileIds) ||
+          initialFileIds.length > 100 || initialFileIds.some((id) => !validId(id)) ||
+          new Set(initialFileIds).size !== initialFileIds.length ||
+          (initialFileIds.length > 0 && initialFileIds.at(-1) !== cursor.fileId)) {
+        return held('invalid_recent_baseline');
+      }
       db.exec('BEGIN IMMEDIATE');
       try {
         if (readCursor.get() || countPending.get().total !== 0) {
           rollback();
           return held('recent_baseline_exists');
         }
+        if (initialFileIds.length > maxPending) {
+          rollback(); return held('recent_backlog_full');
+        }
+        for (const fileId of initialFileIds) insertPending.run(fileId);
         insertCursor.run(cursor.importedNs, cursor.fileId);
         db.exec('COMMIT');
         return { state: 'baseline_saved' };

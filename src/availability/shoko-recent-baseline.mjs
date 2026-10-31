@@ -24,8 +24,9 @@ const validHead = (page) => {
   return true;
 };
 
-// Explicit setup only, never automatic startup. A stable current head can
-// anchor future imports, but historical files require a separate backfill.
+// Explicit setup only, never automatic startup. Queue the stable head with
+// its watermark so files imported just before setup are not skipped. Older
+// historical files still require a separate backfill.
 export async function bootstrapShokoRecentHead({ ledger, readPage } = {}) {
   if (typeof ledger?.getCursor !== 'function' ||
       typeof ledger?.getCapacity !== 'function' ||
@@ -49,6 +50,7 @@ export async function bootstrapShokoRecentHead({ ledger, readPage } = {}) {
     return held('recent_head_changed');
   }
   const cursor = { ...first.items[0] };
-  const saved = ledger.bootstrap(cursor);
+  const saved = ledger.bootstrap(cursor,
+    first.items.map((item) => item.fileId).reverse());
   return saved.state === 'baseline_saved' ? { ...saved, cursor } : saved;
 }

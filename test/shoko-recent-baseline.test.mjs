@@ -31,6 +31,10 @@ test('two stable bounded Shoko head reads save one immutable baseline', async ()
       { state: 'baseline_saved', cursor: item(13) });
     assert.equal(reads, 2);
     assert.deepEqual(ledger.getCursor(), item(13));
+    assert.deepEqual(ledger.getCapacity().pending, 3);
+    assert.deepEqual(ledger.nextDue(0), { fileId: 11 });
+    ledger.recordResult({ fileId: 11, success: true, nowMs: 0 });
+    assert.deepEqual(ledger.nextDue(0), { fileId: 12 });
     assert.deepEqual(await bootstrapShokoRecentHead({ ledger, readPage }),
       { state: 'held', reason: 'recent_baseline_exists' });
     assert.equal(reads, 2);
@@ -63,4 +67,18 @@ test('empty, malformed and unavailable heads leave the baseline unset', async ()
       assert.equal(ledger.getCursor(), null);
     }
   });
+});
+
+test('baseline capacity failure leaves both cursor and pending queue empty', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-recent-small-'));
+  const ledger = openShokoRecentLedger(path.join(dir, 'negev.sqlite'),
+    { maxPending: 2 });
+  try {
+    const result = await bootstrapShokoRecentHead({ ledger,
+      readPage: async () => ({ state: 'page', page: 1, total: 3,
+        items: [item(13), item(12), item(11)] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'recent_backlog_full' });
+    assert.equal(ledger.getCursor(), null);
+    assert.equal(ledger.getCapacity().pending, 0);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
