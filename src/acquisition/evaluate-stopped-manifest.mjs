@@ -14,6 +14,16 @@ function safeName(name) {
     !part.endsWith('.') && !part.endsWith(' '));
 }
 
+// Shared extension and path policy for both the stopped and completed gates.
+export function torrentFileKind(name) {
+  if (!safeName(name)) return null;
+  const extension = path.posix.extname(name).toLowerCase();
+  if (VIDEO.has(extension)) return 'video';
+  if (SUBTITLE.has(extension)) return 'subtitle';
+  if (PASSIVE_EXCLUDED.has(extension)) return 'passive';
+  return null;
+}
+
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
 export function evaluateStoppedManifest({ torrent, files, expected }) {
@@ -41,15 +51,13 @@ export function evaluateStoppedManifest({ torrent, files, expected }) {
       return held('invalid_file_manifest');
     }
     indexes.add(file.index);
-    if (!safeName(file.name) || names.has(file.name.toLowerCase())) return held('unsafe_file');
+    const kind = torrentFileKind(file.name);
+    if (!kind || names.has(file.name.toLowerCase())) return held('unsafe_file');
     names.add(file.name.toLowerCase());
-    const extension = path.posix.extname(file.name).toLowerCase();
-    if (!VIDEO.has(extension) && !SUBTITLE.has(extension) &&
-        !PASSIVE_EXCLUDED.has(extension)) return held('unsafe_file');
     if (file.priority === 0) continue;
     const item = { index: file.index, name: file.name, size: file.size };
-    if (VIDEO.has(extension)) videos.push(item);
-    else if (SUBTITLE.has(extension)) subtitles.push(item);
+    if (kind === 'video') videos.push(item);
+    else if (kind === 'subtitle') subtitles.push(item);
     else return held('unexpected_selected_file');
   }
   if (videos.length === 0) return held('no_selected_video');

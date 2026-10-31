@@ -4,7 +4,8 @@ import { observeTorrentCompletion } from '../src/acquisition/qbittorrent-observa
 
 const expected = { hash: 'a'.repeat(40), category: 'negev-test', savePath: '/staging' };
 const config = { baseUrl: 'http://qbittorrent.internal:8080', sessionId: 'syntheticSID', expected };
-const torrent = { ...expected, save_path: '/staging', state: 'uploading', progress: 1, amount_left: 0 };
+const torrent = { ...expected, save_path: '/staging', state: 'uploading', progress: 1, amount_left: 0,
+  auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example/01.mkv', size: 1000, progress: 1, priority: 1, is_seed: true }];
 
 test('reads only one exact torrent and its files, then rechecks state', async () => {
@@ -20,8 +21,9 @@ test('reads only one exact torrent and its files, then rechecks state', async ()
   assert.equal(calls[0].parsed.searchParams.get('hashes'), expected.hash);
   assert.equal(calls[1].parsed.searchParams.get('hash'), expected.hash);
   assert.equal(calls.every((call) => call.init.method === 'GET' &&
-    call.init.headers.Cookie === 'SID=syntheticSID'), true);
-  assert.deepEqual(result, { state: 'complete', files: [{ index: 0, name: 'Example/01.mkv', size: 1000 }] });
+    call.init.headers.Cookie === 'SID=syntheticSID' && call.init.redirect === 'manual'), true);
+  assert.deepEqual(result, { state: 'complete',
+    files: [{ index: 0, name: 'Example/01.mkv', size: 1000 }], subtitles: [] });
 });
 
 test('missing torrent, changed state and selected unsafe files hold', async () => {

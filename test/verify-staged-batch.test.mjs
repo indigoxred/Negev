@@ -75,6 +75,19 @@ test('a changed torrent after hashing cannot pass the batch', async () => {
   assert.deepEqual(result, { state: 'held', reason: 'torrent_changed_after_hash' });
 });
 
+test('a changed selected subtitle after video hashing holds the pack', async () => {
+  let observations = 0;
+  const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
+  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+    observe: async () => ({ state: 'complete', files,
+      subtitles: [{ ...subtitle, size: ++observations === 1 ? 120 : 121 }] }),
+    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+      fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'torrent_changed_after_hash' });
+});
+
 test('synthetic staged bytes pass only through exact AniDB file identities', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-batch-'));
   try {

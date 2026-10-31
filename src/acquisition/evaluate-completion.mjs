@@ -1,15 +1,7 @@
-import path from 'node:path';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const COMPLETE_STATES = new Set(['uploading', 'pausedUP', 'queuedUP', 'stalledUP', 'forcedUP', 'stoppedUP']);
-const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts']);
 const held = (reason) => ({ state: 'held', reason });
-
-function safeSelectedVideoName(name) {
-  if (typeof name !== 'string' || name.includes('\\') || name.includes('\0') || path.posix.isAbsolute(name)) return false;
-  const parts = name.split('/');
-  return parts.every((part) => part !== '' && part !== '.' && part !== '..') &&
-    VIDEO_EXTENSIONS.has(path.posix.extname(parts.at(-1)).toLowerCase());
-}
 
 // Pure interpretation of qBittorrent v5 info + files responses. This is
 // evidence for a later hash check, not authorization to import or delete data.
@@ -22,25 +14,34 @@ export function evaluateCompletion({ torrent, files, expected }) {
   if (!torrent || torrent.hash?.toLowerCase() !== expected.hash.toLowerCase() ||
       torrent.category !== expected.category) return held('wrong_torrent_owner');
   if (torrent.save_path !== expected.savePath) return held('wrong_save_path');
+  if (torrent.auto_tmm !== false || torrent.force_start !== false) return held('wrong_torrent_owner');
   if (!COMPLETE_STATES.has(torrent.state) || torrent.progress !== 1 || torrent.amount_left !== 0) {
     return held('incomplete');
   }
-  if (!Array.isArray(files) || files.length === 0) return held('invalid_file_manifest');
+  if (!Array.isArray(files) || files.length === 0 || files.length > 500) return held('invalid_file_manifest');
 
   const selected = [];
+  const subtitles = [];
   const indexes = new Set();
   const names = new Set();
   for (const file of files) {
     if (!Number.isSafeInteger(file?.index) || file.index < 0 || indexes.has(file.index) ||
-        !Number.isSafeInteger(file.size) || file.size < 0 ||
-        !Number.isSafeInteger(file.priority) || file.priority < 0) return held('invalid_file_manifest');
+        !Number.isSafeInteger(file.size) || file.size < 1 ||
+        ![0, 1, 6, 7].includes(file.priority)) return held('invalid_file_manifest');
     indexes.add(file.index);
+    const kind = torrentFileKind(file.name);
+    if (!kind || names.has(file.name.toLowerCase())) {
+      return held(file.priority === 0 ? 'unsafe_file' : 'unsafe_selected_file');
+    }
+    names.add(file.name.toLowerCase());
     if (file.priority === 0) continue;
-    if (!safeSelectedVideoName(file.name) || names.has(file.name) || file.size === 0) return held('unsafe_selected_file');
-    names.add(file.name);
+    if (kind === 'passive') return held('unsafe_selected_file');
     if (file.progress !== 1 || file.is_seed !== true) return held('incomplete');
-    selected.push({ index: file.index, name: file.name, size: file.size });
+    const item = { index: file.index, name: file.name, size: file.size };
+    if (kind === 'video') selected.push(item);
+    else subtitles.push(item);
   }
   if (selected.length === 0) return held('no_selected_video');
-  return { state: 'complete', files: selected.sort((a, b) => a.index - b.index) };
+  return { state: 'complete', files: selected.sort((a, b) => a.index - b.index),
+    subtitles: subtitles.sort((a, b) => a.index - b.index) };
 }

@@ -81,8 +81,10 @@ export async function verifyStagedBatch({
   let final;
   try { final = await observe({ expected: expectedTorrent }); }
   catch { return held('torrent_changed_after_hash'); }
-  const signature = (result) => result?.state === 'complete' && Array.isArray(result.files)
-    ? JSON.stringify(result.files.map((file) => [file.index, file.name, file.size])) : null;
+  const signature = (result) => result?.state === 'complete' && Array.isArray(result.files) &&
+      (result.subtitles === undefined || Array.isArray(result.subtitles))
+    ? JSON.stringify({ videos: result.files.map((file) => [file.index, file.name, file.size]),
+      subtitles: (result.subtitles ?? []).map((file) => [file.index, file.name, file.size]) }) : null;
   if (signature(first) === null || signature(first) !== signature(final)) {
     return held('torrent_changed_after_hash');
   }

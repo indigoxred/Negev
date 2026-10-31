@@ -22,7 +22,7 @@ export async function observeTorrentCompletion({
   const read = async (endpoint, parameter, maxChars) => {
     const url = new URL(`/api/v2/torrents/${endpoint}`, base);
     url.searchParams.set(parameter, expected.hash);
-    const response = await fetchImpl(url, { method: 'GET', headers,
+    const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     const body = await response.text();
@@ -50,7 +50,8 @@ export async function observeTorrentCompletion({
       files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
   if (before.hash !== after.hash || before.category !== after.category ||
       before.save_path !== after.save_path || before.state !== after.state ||
-      before.progress !== after.progress || before.amount_left !== after.amount_left) {
+      before.progress !== after.progress || before.amount_left !== after.amount_left ||
+      before.auto_tmm !== after.auto_tmm || before.force_start !== after.force_start) {
     return held('torrent_changed');
   }
   const fingerprint = (list) => JSON.stringify(list.map((file) => [

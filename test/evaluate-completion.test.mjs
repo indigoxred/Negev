@@ -6,15 +6,31 @@ const hash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const expected = { hash, category: 'negev', savePath: '/negev-stage' };
 const torrent = {
   hash, category: 'negev', save_path: '/negev-stage',
-  state: 'pausedUP', progress: 1, amount_left: 0,
+  state: 'pausedUP', progress: 1, amount_left: 0, auto_tmm: false, force_start: false,
 };
 const video = { index: 0, name: 'Show/episode.mkv', size: 12345, progress: 1, priority: 1, is_seed: true };
 
 test('accepts a complete selected video and ignores an excluded extra', () => {
-  const files = [video, { index: 1, name: 'Show/sample.exe', size: 10, progress: 0, priority: 0, is_seed: false }];
+  const files = [video, { index: 1, name: 'Show/release.nfo', size: 10, progress: 0, priority: 0, is_seed: false }];
   assert.deepEqual(evaluateCompletion({ torrent, files, expected }), {
-    state: 'complete', files: [{ index: 0, name: 'Show/episode.mkv', size: 12345 }],
+    state: 'complete', files: [{ index: 0, name: 'Show/episode.mkv', size: 12345 }], subtitles: [],
   });
+});
+
+test('a completed selected subtitle accompanies the verified video', () => {
+  const subtitle = { ...video, index: 1, name: 'Show/episode.en.srt', size: 1200 };
+  assert.deepEqual(evaluateCompletion({ torrent, files: [video, subtitle], expected }), {
+    state: 'complete', files: [{ index: 0, name: video.name, size: video.size }],
+    subtitles: [{ index: 1, name: subtitle.name, size: subtitle.size }],
+  });
+});
+
+test('excluded executables and unsafe names still hold at completion', () => {
+  for (const name of ['Show/run.exe', '../escape.txt', 'Show/bad\u202ename.nfo']) {
+    assert.deepEqual(evaluateCompletion({ torrent, files: [video,
+      { index: 1, name, size: 10, progress: 0, priority: 0, is_seed: false }], expected }),
+    { state: 'held', reason: 'unsafe_file' });
+  }
 });
 
 test('holds incomplete torrent or selected file', () => {
