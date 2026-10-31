@@ -7,7 +7,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json' },
 });
 
-test('reports unsettled Shoko files without listing private paths', async () => {
+test('idle queue does not trigger a full Shoko file-list read', async () => {
   const calls = [];
   const activity = await readShokoImportActivity({ ...input,
     fetchImpl: async (url, options) => {
@@ -17,36 +17,34 @@ test('reports unsettled Shoko files without listing private paths', async () => 
         WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
         TotalCount: 0, CurrentlyExecuting: [], Pools: [],
       });
-      return json({ Total: 2, List: [{ ID: 1 }] });
+      throw new Error('File endpoint must not be queried by an activity probe');
     },
   });
-  assert.deepEqual(activity, { state: 'unsettled', count: 2 });
-  assert.equal(calls.length, 2);
-  assert.equal(new URL(calls[1].url).searchParams.get('include_only'),
-    'Unrecognized,ImportLimbo');
-  assert.equal(new URL(calls[1].url).searchParams.get('pageSize'), '1');
+  assert.deepEqual(activity, { state: 'queue_idle_unverified' });
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).pathname, '/api/v3/Queue');
   assert.ok(calls.every((call) => call.method === 'GET' &&
     call.authorization === 'Bearer private-test-key'));
 });
 
-test('a quiet sample requires an idle queue and zero unsettled files', async () => {
-  const quiet = await readShokoImportActivity({ ...input,
+test('idle queue alone never claims that imports are settled', async () => {
+  const idle = await readShokoImportActivity({ ...input,
     fetchImpl: async (url) => String(url).endsWith('/api/v3/Queue')
       ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
         TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
-      : json({ Total: 0, List: [] }),
+      : Promise.reject(new Error('Unexpected file query')),
   });
-  assert.deepEqual(quiet, { state: 'quiet_observed' });
+  assert.deepEqual(idle, { state: 'queue_idle_unverified' });
   const busy = await readShokoImportActivity({ ...input,
     fetchImpl: async (url) => String(url).endsWith('/api/v3/Queue')
       ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 1,
         TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
-      : json({ Total: 0, List: [] }),
+      : Promise.reject(new Error('Unexpected file query')),
   });
   assert.deepEqual(busy, { state: 'busy' });
 });
 
-test('missing or inconsistent queue and file counts fail closed', async () => {
+test('missing or inconsistent queue counts fail closed', async () => {
   for (const queue of [
     { WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
       TotalCount: 1, CurrentlyExecuting: [], Pools: [] },
@@ -59,10 +57,4 @@ test('missing or inconsistent queue and file counts fail closed', async () => {
     });
     assert.deepEqual(result, { state: 'unavailable' });
   }
-  assert.deepEqual(await readShokoImportActivity({ ...input,
-    fetchImpl: async (url) => String(url).endsWith('/api/v3/Queue')
-      ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
-        TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
-      : json({ Total: 0, List: [{ ID: 1 }] }),
-  }), { state: 'unavailable' });
 });

@@ -3,9 +3,9 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 const unavailable = () => ({ state: 'unavailable' });
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 
-// A cheap, read-only indicator of Shoko work still in flight. Queue idleness
-// and zero unrecognized/import-limbo files are NOT an absence proof: a file
-// may enter Import immediately after either response or still be hashing.
+// A bounded, read-only indicator of queued Shoko work. Queue idleness does
+// not prove that imports have settled or that an episode is absent. Avoid
+// /api/v3/File here: Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
   fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
@@ -36,14 +36,6 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     if (queue.WaitingCount || queue.BlockedCount || queue.ScheduledCount ||
         queue.CurrentlyExecuting.length ||
         queue.Pools.some((pool) => pool.ActiveWorkers > 0)) return { state: 'busy' };
-    const filesUrl = new URL('/api/v3/File', base);
-    filesUrl.searchParams.set('page', '1');
-    filesUrl.searchParams.set('pageSize', '1');
-    filesUrl.searchParams.set('include_only', 'Unrecognized,ImportLimbo');
-    const files = await read(filesUrl, 100_000);
-    if (!count(files?.Total) || !Array.isArray(files.List) ||
-        files.List.length !== Math.min(files.Total, 1)) return unavailable();
-    return files.Total === 0 ? { state: 'quiet_observed' } :
-      { state: 'unsettled', count: files.Total };
+    return { state: 'queue_idle_unverified' };
   } catch { return unavailable(); }
 }
