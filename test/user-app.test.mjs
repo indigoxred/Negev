@@ -26,6 +26,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
     titleRegistry: { isKnownTitle: ({ anidbId }) => anidbId === 1234 },
+    loadRelatedTitles: async ({ anidbId }) => ({ state: 'related_titles',
+      anidbId, completeness: 'unproven', items: [{ anidbId: 5678,
+        title: 'Another installment', relation: 'Sequel' }] }),
     observePublicTarget: async (target) => { observed.push(target);
       return { state: 'available', fileId: 900 }; },
   });
@@ -50,6 +53,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.match(login.headers['set-cookie'], /SameSite=Strict/);
     const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
     assert.equal(session.json().user.id, owner.id);
+    const related = await app.inject({ method: 'GET',
+      url: '/api/catalogue/1234/related', headers: { cookie } });
+    assert.equal(related.statusCode, 200);
+    assert.equal(related.json().completeness, 'unproven');
+    assert.equal(related.json().items[0].anidbId, 5678);
+    const unknownRelated = await app.inject({ method: 'GET',
+      url: '/api/catalogue/9999/related', headers: { cookie } });
+    assert.equal(unknownRelated.statusCode, 404);
     const csrf = session.json().csrfToken;
     assert.match(csrf, /^[a-f0-9]{64}$/);
     const missingCsrf = await app.inject({ method: 'POST', url: '/api/requests',

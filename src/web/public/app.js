@@ -162,6 +162,33 @@ async function showDetail(item) {
       return;
     }
     panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed episode${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    const relatedButton = element('button', 'Show related installments');
+    const relatedList = element('div', undefined, 'related-list');
+    relatedButton.addEventListener('click', async () => {
+      relatedButton.disabled = true;
+      relatedList.replaceChildren(element('p', 'Checking related titles…', 'muted'));
+      try {
+        const related = await api(`/api/catalogue/${item.anidbId}/related`);
+        if (state.selected !== item.anidbId) return;
+        relatedList.replaceChildren(element('p',
+          'Related titles found in Shoko. This may not be the complete franchise.', 'muted'));
+        if (related.items.length === 0) {
+          relatedList.append(element('p', 'No verified direct relationships are cached yet.', 'muted'));
+        }
+        for (const installment of related.items) {
+          const searchButton = element('button', `${installment.title} · ${installment.relation}`);
+          searchButton.addEventListener('click', () => {
+            byId('query').value = installment.title;
+            byId('search-form').requestSubmit();
+          });
+          relatedList.append(searchButton);
+        }
+      } catch {
+        relatedList.replaceChildren(element('p', 'Related titles are unavailable right now.', 'muted'));
+        relatedButton.disabled = false;
+      }
+    });
+    panel.append(relatedButton, relatedList);
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (Array.isArray(data.episodes) && data.episodes.length > 0) {

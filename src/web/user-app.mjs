@@ -17,7 +17,7 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
-  loadDetail, hydrateTitle, observePublicTarget } = {}) {
+  loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (typeof accounts?.authenticate !== 'function' ||
@@ -153,6 +153,27 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     return { ...result, requestable: false };
+  });
+  app.get('/api/catalogue/:id/related', { preHandler: requireUser,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        Object.keys(request.query).length !== 0) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID' });
+    }
+    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        !titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof loadRelatedTitles !== 'function') {
+      return reply.code(503).send({ error: 'Related titles unavailable' });
+    }
+    const result = await loadRelatedTitles({ anidbId: id });
+    if (result?.state !== 'related_titles') {
+      return reply.code(503).send({ error: 'Related titles unavailable' });
+    }
+    return result;
   });
   // A searched title can be checked without a Negev request. This is vital
   // for a file imported manually through Shoko; only positive public proof

@@ -5,6 +5,7 @@ import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
+import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
@@ -82,6 +83,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       searchTitles: ({ query, page }) => metadata.run(() => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       })),
+      loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
+        readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
+          anidbId, fetchImpl })),
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
