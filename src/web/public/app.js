@@ -118,8 +118,21 @@ async function loadRequests(append = false) {
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
       const heading = element('div');
-      heading.append(element('strong', item.title || `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
-        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} ${item.kind === 'movie' ? 'film' : 'episode'} target${item.episodeIds.length === 1 ? '' : 's'} · ${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`));
+      const targetCount = item.episodeIds.length;
+      const requestedScope = item.kind === 'movie'
+        ? targetCount === 1 ? 'Film requested' : `${targetCount} film parts requested`
+        : `${targetCount} episode${targetCount === 1 ? '' : 's'} requested`;
+      heading.append(element('strong', item.title ||
+        `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
+        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · ` +
+          `${requestedScope} · ` +
+          `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`));
+      if (state.user?.role === 'admin') {
+        const technical = element('details', undefined, 'request-technical');
+        technical.append(element('summary', 'Technical details'),
+          element('small', `AniDB ${item.anidbId} · Request #${item.id}`));
+        heading.append(technical);
+      }
       row.append(heading, element('span', progressText(item.progress, item.kind), 'request-status'));
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
