@@ -8,7 +8,8 @@ import { openHydrationLedger } from '../src/catalogue/hydration-ledger.mjs';
 
 const nowMs = 1_000_000_000;
 const detail = { state: 'details', anidbId: 1234, title: 'Example', kind: 'series',
-  complete: true, total: 1, episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
+  page: 1, complete: true, nextPage: null, total: 1,
+  episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
 
 async function withLedger(run) {
   const base = path.resolve(tmpdir());
@@ -61,9 +62,9 @@ test('unknown title, Shoko outage and partial detail never submit refreshes', as
   currentDetail = { state: 'unavailable' };
   assert.deepEqual(await hydrator.load({ anidbId: 1234 }),
     { state: 'held', reason: 'detail_unavailable' });
-  currentDetail = { ...detail, complete: false };
+  currentDetail = { ...detail, complete: false, total: 2, nextPage: 2 };
   assert.deepEqual(await hydrator.load({ anidbId: 1234 }),
-    { state: 'pending', reason: 'detail_pagination_required' });
+    { state: 'held', reason: 'invalid_detail_evidence' });
   assert.equal(posts, 0);
 }));
 
@@ -82,4 +83,27 @@ test('wrong detail identity and failed POST remain held', async () => withLedger
   assert.deepEqual(await hydrator.load({ anidbId: 1234 }),
     { state: 'held', reason: 'invalid_detail_evidence' });
   assert.equal(ledger.getClaim(first.claimId).status, 'reserved');
+}));
+
+test('a later two-page title completes its existing claim without another refresh', async () => withLedger(async (ledger) => {
+  let ready = false;
+  let posts = 0;
+  const pages = [
+    { ...detail, total: 2, complete: false, nextPage: 2 },
+    { ...detail, page: 2, total: 2, complete: false, episodes: [
+      { id: 1002, number: 2, type: 'Episode', title: 'Second' }] },
+  ];
+  const hydrator = createCatalogueHydrator({
+    isKnownTitle: async () => true,
+    loadDetail: async ({ page }) => ready ? pages[page - 1] : { state: 'detail_pending', anidbId: 1234 },
+    ledger, requestHydration: async () => { posts++; return { state: 'queued' }; },
+    now: () => nowMs,
+  });
+  const claim = await hydrator.load({ anidbId: 1234 });
+  ready = true;
+  const result = await hydrator.load({ anidbId: 1234 });
+  assert.equal(result.state, 'detail_ready');
+  assert.deepEqual(result.detail.episodes.map((episode) => episode.id), [1001, 1002]);
+  assert.equal(ledger.getClaim(claim.claimId).status, 'completed');
+  assert.equal(posts, 1);
 }));

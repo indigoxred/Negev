@@ -10,9 +10,13 @@ function hasTestToken(header, token) {
 
 // Private catalogue contract prototype. No listener, accounts, requests,
 // download controls, or production authentication are provided here.
-export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle }) {
+export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle, titleRegistry }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
+  }
+  if (typeof hydrateTitle === 'function' &&
+      (typeof titleRegistry?.observe !== 'function' || typeof titleRegistry.isKnownTitle !== 'function')) {
+    throw new TypeError('Hydration requires an observed-title registry');
   }
   const app = Fastify({ logger: false });
   const requireTestToken = async (request, reply) => {
@@ -33,6 +37,9 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
     const result = await searchTitles({ query: q.trim(), page });
     if (result.state === 'invalid_query') return reply.code(400).send({ error: 'Invalid search' });
     if (result.state !== 'results') return reply.code(503).send({ error: 'Catalogue unavailable' });
+    if (titleRegistry && !titleRegistry.observe(result)) {
+      return reply.code(503).send({ error: 'Catalogue unavailable' });
+    }
     return result;
   });
 
@@ -59,6 +66,9 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
     }
     if (typeof hydrateTitle !== 'function') {
       return reply.code(503).send({ error: 'Catalogue hydration unavailable' });
+    }
+    if (!titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(409).send({ state: 'held', reason: 'unknown_title' });
     }
     const result = await hydrateTitle({ anidbId: id });
     if (result.state === 'pending') return reply.code(202).send(result);

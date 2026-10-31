@@ -1,4 +1,5 @@
 import { isCompleteAniDbDetail } from './hydration-ledger.mjs';
+import { collectAniDbDetail } from './collect-detail.mjs';
 
 // Isolated coordinator. Every external operation is injected; constructing it
 // does not connect to Shoko or start an HTTP listener.
@@ -20,8 +21,10 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
       if (known !== true) return { state: 'held', reason: known === false ? 'unknown_title' : 'title_lookup_unavailable' };
 
       let detail;
-      try { detail = await loadDetail({ anidbId, page: 1 }); }
+      try { detail = await collectAniDbDetail({ anidbId, loadPage: loadDetail }); }
       catch { return { state: 'held', reason: 'detail_unavailable' }; }
+      if (detail.state === 'partial_detail') return { state: 'pending', reason: 'detail_pagination_required' };
+      if (detail.state === 'invalid_detail_evidence') return { state: 'held', reason: 'invalid_detail_evidence' };
       if (detail?.state === 'details') {
         if (detail.anidbId !== anidbId) return { state: 'held', reason: 'invalid_detail_evidence' };
         if (detail.complete !== true) return { state: 'pending', reason: 'detail_pagination_required' };
