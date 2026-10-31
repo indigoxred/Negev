@@ -50,3 +50,16 @@ test('Shoko outage is a 503 rather than an empty catalogue', async () => {
     assert.equal(response.statusCode, 503);
   } finally { await app.close(); }
 });
+
+test('detail route keeps an unowned title pending and never requestable', async () => {
+  const app = buildTestApp({ testToken, searchTitles: async () => ({ state: 'results', total: 0, page: 1, items: [] }),
+    loadDetail: async ({ anidbId }) => ({ state: 'detail_pending', anidbId }) });
+  try {
+    const denied = await app.inject({ method: 'GET', url: '/api/catalogue/1234' });
+    assert.equal(denied.statusCode, 401);
+    const response = await app.inject({ method: 'GET', url: '/api/catalogue/1234', headers: { authorization: `Bearer ${testToken}` } });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { state: 'detail_pending', anidbId: 1234, requestable: false });
+  } finally { await app.close(); }
+});
+

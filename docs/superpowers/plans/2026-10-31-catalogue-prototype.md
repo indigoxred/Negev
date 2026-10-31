@@ -41,11 +41,21 @@
 
 - [x] Write failing `inject()` tests for health, unauthorized search, valid search, and query validation.
 - [x] Implement an app factory with no listener and no write routes.
-- [ ] Run the full suite and Linux CI.
+- [x] Run the full suite and Linux CI; run `41154936983` passed 34/34 before the detail extension.
 
 ### Task 3: Repository hygiene
 
 **Files:** `package.json`, `pnpm-lock.yaml`, `.gitignore`, `README.md`, `.github/workflows/test.yml`
 
 - [x] Pin dependencies, prevent local dependencies or credentials from being committed, and install only in CI.
-- [ ] Review the published diff for private data; publish after verification.
+- [x] Review the published diff for private data; publish after verification.
+
+### Task 4: Read-only episode detail contract
+
+**Files:** `src/catalogue/shoko-detail.mjs`, `test/shoko-detail.test.mjs`
+
+- [x] Write tests for an owned series with missing and unaired episode IDs, an unowned 404, a partial page, and malformed episode identities.
+- [x] Observe the expected failure.
+- [x] Implement bounded GETs for AniDB detail and episode pages; 404 stays detail pending, never an empty or completed series.
+- [ ] Run local tests and Linux CI. Do not call Shoko's metadata refresh route.
+
