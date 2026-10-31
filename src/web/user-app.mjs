@@ -119,7 +119,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     const { id, username, role } = request.negevUser;
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
-        typeof discoverCandidates === 'function' } };
+        typeof discoverCandidates === 'function',
+      detailLoad: typeof hydrateTitle === 'function' } };
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

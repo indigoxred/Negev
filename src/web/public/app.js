@@ -1,6 +1,6 @@
 const byId = (id) => document.getElementById(id);
 const state = { csrf: null, user: null, selected: null,
-  nextBeforeId: null, releaseSearch: false };
+  nextBeforeId: null, releaseSearch: false, detailLoad: false };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -27,6 +27,7 @@ function showSession(data) {
   state.user = data.user;
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
+  state.detailLoad = data.capabilities?.detailLoad === true;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -161,6 +162,7 @@ byId('signout').addEventListener('click', async () => {
   state.csrf = null;
   state.nextBeforeId = null;
   state.releaseSearch = false;
+  state.detailLoad = false;
   byId('request-list').replaceChildren();
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
@@ -209,6 +211,10 @@ async function showDetail(item) {
     if (state.selected !== item.anidbId) return;
     panel.replaceChildren(element('p', data.title || item.title, 'detail-title'));
     if (data.state === 'detail_pending') {
+      if (!state.detailLoad) {
+        panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
+        return;
+      }
       panel.append(element('p', 'Episode details are being prepared. This title cannot be requested yet.', 'muted'));
       const button = element('button', 'Load details');
       button.addEventListener('click', async () => {
