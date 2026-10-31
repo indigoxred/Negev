@@ -70,6 +70,29 @@ test('an omitted optional total still yields keys without claiming completeness'
     offset: 0, totalSize: null, keys: [512], complete: false });
 });
 
+test('accepts Plex pagination response headers when the JSON body omits offset and total', async () => {
+  const result = await readPlexSectionKeys({ ...base, offset: 25,
+    fetchImpl: withSection(async () => new Response(JSON.stringify({ MediaContainer: {
+      size: 2, librarySectionID: 102, Metadata: page.MediaContainer.Metadata,
+    } }), { status: 200, headers: { 'content-type': 'application/json',
+      'X-Plex-Container-Start': '25', 'X-Plex-Container-Total-Size': '150' } })) });
+  assert.deepEqual(result, { state: 'page', libraryId: 102, kind: 'episode',
+    offset: 25, totalSize: 150, keys: [512, 513], complete: false });
+});
+
+test('conflicting Plex body and header pagination evidence holds', async () => {
+  const result = await readPlexSectionKeys({ ...base,
+    fetchImpl: withSection(async () => new Response(JSON.stringify(page),
+      { status: 200, headers: { 'content-type': 'application/json',
+        'X-Plex-Container-Start': '1' } })) });
+  assert.deepEqual(result, { state: 'unavailable' });
+  const unpaged = await readPlexSectionKeys({ ...base,
+    fetchImpl: withSection(async () => Response.json({ MediaContainer: {
+      size: 2, librarySectionID: 102, Metadata: page.MediaContainer.Metadata,
+    } })) });
+  assert.deepEqual(unpaged, { state: 'unavailable' });
+});
+
 test('wrong section, wrong kind, shifted offset, duplicate keys and oversized page hold', async () => {
   const cases = [
     { ...page.MediaContainer, librarySectionID: 103 },

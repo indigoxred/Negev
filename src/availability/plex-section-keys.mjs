@@ -21,6 +21,10 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Plex section observation');
   let body;
+  let responseStart = null;
+  let responseTotal = null;
+  let hasResponseStart = false;
+  let hasResponseTotal = false;
   try {
     const sectionUrl = new URL(`/library/sections/${libraryId}`, base);
     sectionUrl.searchParams.set('includeDetails', '1');
@@ -48,16 +52,28 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
         'X-Plex-Container-Size': String(pageSize) },
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) return unavailable();
+    hasResponseStart = response.headers?.has?.('x-plex-container-start') ?? false;
+    hasResponseTotal = response.headers?.has?.('x-plex-container-total-size') ?? false;
+    if (hasResponseStart) responseStart = integer(response.headers.get('x-plex-container-start'));
+    if (hasResponseTotal) responseTotal = integer(response.headers.get('x-plex-container-total-size'));
     body = await readBoundedJson(response, 1_000_000);
   } catch { return unavailable(); }
   const container = body?.MediaContainer;
-  const hasTotal = container != null && Object.hasOwn(container, 'totalSize');
-  const totalSize = hasTotal ? integer(container.totalSize) : null;
+  const hasBodyStart = container != null && Object.hasOwn(container, 'offset');
+  const bodyStart = hasBodyStart ? integer(container.offset) : null;
+  const hasBodyTotal = container != null && Object.hasOwn(container, 'totalSize');
+  const bodyTotal = hasBodyTotal ? integer(container.totalSize) : null;
+  const totalSize = hasBodyTotal ? bodyTotal : responseTotal;
   const size = integer(container?.size);
   if (integer(container?.librarySectionID) !== integer(libraryId) ||
-      integer(container?.offset) !== integer(offset) ||
+      (!hasBodyStart && !hasResponseStart) ||
+      (hasBodyStart && bodyStart !== integer(offset)) ||
+      (hasResponseStart && responseStart !== integer(offset)) ||
+      (hasBodyTotal && bodyTotal === null) ||
+      (hasResponseTotal && responseTotal === null) ||
+      (hasBodyTotal && hasResponseTotal && bodyTotal !== responseTotal) ||
       size === null || size > pageSize ||
-      (hasTotal && (totalSize === null || totalSize < offset + size)) ||
+      (totalSize !== null && totalSize < offset + size) ||
       !Array.isArray(container.Metadata) ||
       container.Metadata.length !== size) return unavailable();
   const keys = [];
