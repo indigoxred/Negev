@@ -72,6 +72,12 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       url: '/api/catalogue/search?q=Example', headers: { cookie } });
     assert.equal(search.statusCode, 200, search.body);
     assert.equal(search.json().items[0].anidbId, 1234);
+    const beforeHydration = methods.length;
+    const disabledHydration = await service.app.inject({ method: 'POST',
+      url: '/api/catalogue/1234/load-detail', headers: auth(cookie, csrf),
+      payload: {} });
+    assert.equal(disabledHydration.statusCode, 503);
+    assert.equal(methods.length, beforeHydration);
     const created = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth(cookie, csrf),
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'once' } });

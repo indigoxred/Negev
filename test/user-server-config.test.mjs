@@ -21,6 +21,11 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parsed.shokoEvents, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: '1' }).shokoEvents, true);
   assert.equal(parsed.shokoInventory, false);
+  assert.equal(parsed.shokoHydration, false);
+  assert.equal(parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_HYDRATION: '1' }).shokoHydration, true);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_HYDRATION: 'yes' }), TypeError);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_INVENTORY: '1' }).shokoInventory, true);
   assert.equal(parsed.airingWatch, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_AIRING_WATCH: '1',

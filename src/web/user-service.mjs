@@ -23,13 +23,16 @@ import { createPlexAvailabilityService } from
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
-  sessionKey, publicOrigin, secureCookies = true, plex = null, fetchImpl = fetch,
+  sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
+  plex = null, fetchImpl = fetch,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
-      typeof today !== 'function') throw new TypeError('Invalid user service configuration');
+      typeof today !== 'function' || typeof shokoHydration !== 'boolean') {
+    throw new TypeError('Invalid user service configuration');
+  }
   let accounts;
   let requests;
   let hydration;
@@ -80,7 +83,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       })),
       titleRegistry, loadDetail: (input) => metadata.run(() => loadDetail(input)),
-      hydrateTitle: (input) => metadata.run(() => hydrator.load(input)),
+      hydrateTitle: shokoHydration ?
+        (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?
         metadata.run(() => plexObserver.observeTarget(target)) :
         { state: 'unknown', reason: 'observer_not_configured' },
