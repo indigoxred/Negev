@@ -10,7 +10,8 @@ const base = { today: '2026-10-31', kind: 'series', airDate: '2026-10-01',
 
 test('ongoing series is inferred airing and a passed end date completes it', () => {
   assert.deepEqual(inferReleaseState(base), { state: 'airing', confidence: 'inferred' });
-  assert.deepEqual(inferReleaseState({ ...base, endDate: '2026-10-20' }),
+  assert.deepEqual(inferReleaseState({ ...base, endDate: '2026-10-20',
+    episodes: [{ type: 'Episode', airDate: '2026-10-01' }] }),
     { state: 'completed', confidence: 'inferred' });
   assert.deepEqual(inferReleaseState({ ...base, endDate: '2026-12' }),
     { state: 'airing', confidence: 'inferred' });
@@ -37,6 +38,8 @@ test('missing start, impossible dates and contradictory date order remain unknow
     { ...base, airDate: null },
     { ...base, airDate: '2026-02-30' },
     { ...base, endDate: '2026-09-01' },
+    { ...base, endDate: '2026-10-20', episodes: [
+      { type: 'Episode', airDate: '2026-11-01' }] },
     { ...base, today: 'not-a-date' },
   ]) assert.deepEqual(inferReleaseState(input), { state: 'unknown', confidence: 'none' });
 });

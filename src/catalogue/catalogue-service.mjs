@@ -3,9 +3,11 @@ import { createCatalogueHydrator } from './catalogue-hydrator.mjs';
 import { openHydrationLedger } from './hydration-ledger.mjs';
 import { createObservedTitleRegistry } from './observed-title-registry.mjs';
 import { loadAniDbDetail } from './shoko-detail.mjs';
+import { collectAniDbDetail } from './collect-detail.mjs';
 import { requestAniDbHydration } from './shoko-hydration.mjs';
 import { searchAniDbTitles } from './shoko-search.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
+import { pollAiringWatches } from '../requests/airing-watch-poll.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { createRequestCandidateDiscovery } from '../acquisition/request-candidate-discovery.mjs';
@@ -91,6 +93,15 @@ export function createCatalogueTestService({
     });
     return {
       app,
+      // Explicit private diagnostic invocation only; no route or scheduler.
+      pollAiringOnce: ({ afterId = 0, limit = 3 } = {}) => pollAiringWatches({
+        ledger: requestLedger, today: today(), afterId, limit,
+        loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
+          loadPage: async ({ page }) => {
+            if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
+            return loadDetail({ anidbId, page });
+          } }),
+      }),
       async close() {
         try { await app.close(); }
         finally { requestLedger.close(); ledger.close(); }

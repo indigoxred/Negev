@@ -13,14 +13,19 @@ test('private search to exact held request never dispatches acquisition', async 
   const dir = await mkdtemp(path.join(base, 'negev-private-request-'));
   let airDate = '2026-10-01';
   let restricted = false;
+  let hasSecondEpisode = false;
   const methods = [];
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     methods.push(`${init.method} ${parsed.pathname}`);
     if (parsed.pathname.endsWith('/Search')) return json({ Total: 1, List: [{ ID: 1234, Title: 'Example' }] });
-    if (parsed.pathname.endsWith('/Episode')) return json({ Total: 1, List: [
-      { ID: 1001, AnimeID: 1234, EpisodeNumber: 1, Type: 'Episode',
-        Title: 'First', AirDate: '2026-10-01' }] });
+    if (parsed.pathname.endsWith('/Episode')) {
+      const episodes = [{ ID: 1001, AnimeID: 1234, EpisodeNumber: 1,
+        Type: 'Episode', Title: 'First', AirDate: '2026-10-01' }];
+      if (hasSecondEpisode) episodes.push({ ID: 1002, AnimeID: 1234,
+        EpisodeNumber: 2, Type: 'Episode', Title: 'Second', AirDate: '2026-10-20' });
+      return json({ Total: episodes.length, List: episodes });
+    }
     if (parsed.pathname.endsWith('/AniDB/1234')) return json({ ID: 1234,
       Title: 'Example', Type: 'TV', AirDate: airDate, EndDate: null,
       EpisodeCount: 2, Restricted: restricted });
@@ -69,6 +74,13 @@ test('private search to exact held request never dispatches acquisition', async 
       headers: auth });
     assert.deepEqual(saved.json().episodeIds, [1001]);
     assert.equal(saved.json().monitorFuture, true);
+    hasSecondEpisode = true;
+    const poll = await service.pollAiringOnce();
+    assert.equal(poll.results[0].state, 'advanced');
+    assert.equal(poll.results[0].reason, 'completion_unconfirmed');
+    const afterPoll = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}`, headers: auth });
+    assert.deepEqual(afterPoll.json().episodeIds, [1001, 1002]);
     assert.equal(methods.every((entry) => entry.startsWith('GET ')), true);
     const forged = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'forged', releaseState: 'completed', requesterId: 999 } });
