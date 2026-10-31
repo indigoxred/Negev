@@ -1,11 +1,10 @@
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
-const validHash = (value) => typeof value === 'string' &&
-  /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(value);
 const validDigest = (value) => typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value);
 
 // Records durable intent before a future whole-directory rename. It does not
@@ -28,20 +27,29 @@ export function openHandoffLedger(dbPath) {
       torrent_hash TEXT NOT NULL,
       evidence_digest TEXT NOT NULL,
       holding_path TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
       publish_name TEXT NOT NULL UNIQUE,
       status TEXT NOT NULL CHECK(status IN ('prepared','publish_unknown','published_observed')),
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(handoff_intents)').all()
+      .some((column) => column.name === 'manifest_json')) {
+      // Older private diagnostics remain held; their missing manifest cannot
+      // be reconstructed from a digest alone.
+      db.exec('ALTER TABLE handoff_intents ADD COLUMN manifest_json TEXT');
+    }
   } catch (error) { db.close(); throw error; }
 
   const attemptRow = db.prepare('SELECT status,expected_hash,torrent_hash,updated_ms FROM acquisition_attempts WHERE id=?');
   const startRow = db.prepare('SELECT torrent_hash FROM acquisition_starts WHERE attempt_id=?');
-  const handoffRow = db.prepare(`SELECT torrent_hash,evidence_digest,holding_path,publish_name,status,updated_ms
+  const handoffRow = db.prepare(`SELECT torrent_hash,evidence_digest,holding_path,manifest_json,
+    publish_name,status,updated_ms
     FROM handoff_intents WHERE attempt_id=?`);
   const insertHandoff = db.prepare(`INSERT INTO handoff_intents
-    (attempt_id,torrent_hash,evidence_digest,holding_path,publish_name,status,created_ms,updated_ms)
-    VALUES (?,?,?,?,?,'prepared',?,?)`);
+    (attempt_id,torrent_hash,evidence_digest,holding_path,manifest_json,publish_name,
+      status,created_ms,updated_ms)
+    VALUES (?,?,?,?,?,?,'prepared',?,?)`);
   const markUnknown = db.prepare(`UPDATE handoff_intents SET status='publish_unknown',updated_ms=?
     WHERE attempt_id=? AND status='prepared'`);
 
@@ -59,35 +67,56 @@ export function openHandoffLedger(dbPath) {
     }
   }
 
+  function validStoredManifest(row) {
+    if (typeof row?.manifest_json !== 'string') return null;
+    try {
+      const manifest = JSON.parse(row.manifest_json);
+      const evidence = evaluateHandoffEvidence({ anidbId: manifest.anidbId,
+        torrentHash: manifest.torrentHash, files: manifest.videos,
+        subtitles: manifest.subtitles });
+      return evidence.state === 'valid' && evidence.digest === row.evidence_digest &&
+        evidence.manifest.torrentHash === row.torrent_hash ? evidence.manifest : null;
+    } catch { return null; }
+  }
+
   return {
-    recordPrepared({ attemptId, torrentHash, evidenceDigest, holdingPath, nowMs }) {
-      if (!validId(attemptId) || !validHash(torrentHash) ||
-          !validDigest(evidenceDigest) || !validTime(nowMs) ||
-          typeof holdingPath !== 'string' || !path.isAbsolute(holdingPath) ||
-          holdingPath.length > 4096 || holdingPath.includes('\0')) {
+    recordPrepared({ attemptId, prepared, nowMs }) {
+      if (!validId(attemptId) || !validTime(nowMs) ||
+          prepared?.state !== 'handoff_prepared' || prepared.publishReady !== false ||
+          !validDigest(prepared.evidenceDigest) ||
+          typeof prepared.holdingPath !== 'string' || !path.isAbsolute(prepared.holdingPath) ||
+          prepared.holdingPath.length > 4096 || prepared.holdingPath.includes('\0')) {
         throw new TypeError('Invalid prepared handoff');
       }
+      const evidence = evaluateHandoffEvidence(prepared);
+      if (evidence.state !== 'valid' || evidence.digest !== prepared.evidenceDigest.toLowerCase()) {
+        return held('handoff_evidence_mismatch');
+      }
+      const torrentHash = evidence.manifest.torrentHash;
+      const evidenceDigest = evidence.digest;
+      const holdingPath = prepared.holdingPath;
       return transact(() => {
         const attempt = attemptRow.get(attemptId);
         if (!attempt || attempt.status !== 'torrent_observed' ||
-            attempt.expected_hash !== torrentHash.toLowerCase() ||
-            attempt.torrent_hash !== torrentHash.toLowerCase() ||
-            startRow.get(attemptId)?.torrent_hash !== torrentHash.toLowerCase()) {
+            attempt.expected_hash !== torrentHash ||
+            attempt.torrent_hash !== torrentHash ||
+            startRow.get(attemptId)?.torrent_hash !== torrentHash) {
           return held('start_intent_missing');
         }
         if (nowMs < attempt.updated_ms) return held('time_before_last_transition');
-        const digest = evidenceDigest.toLowerCase();
+        const digest = evidenceDigest;
         const existing = handoffRow.get(attemptId);
         if (existing) {
-          if (existing.torrent_hash !== torrentHash.toLowerCase() ||
+          if (!validStoredManifest(existing)) return held('manifest_missing');
+          if (existing.torrent_hash !== torrentHash ||
               existing.evidence_digest !== digest || existing.holding_path !== holdingPath) {
             return held('handoff_conflict');
           }
           return { state: existing.status, publishName: existing.publish_name };
         }
         const publishName = `negev-${attemptId}-${digest.slice(0, 16)}`;
-        insertHandoff.run(attemptId, torrentHash.toLowerCase(), digest,
-          holdingPath, publishName, nowMs, nowMs);
+        insertHandoff.run(attemptId, torrentHash, digest, holdingPath,
+          JSON.stringify(evidence.manifest), publishName, nowMs, nowMs);
         return { state: 'prepared', publishName };
       });
     },
@@ -99,6 +128,7 @@ export function openHandoffLedger(dbPath) {
         const row = handoffRow.get(attemptId);
         if (!row) return held('handoff_missing');
         if (row.evidence_digest !== evidenceDigest.toLowerCase()) return held('handoff_conflict');
+        if (!validStoredManifest(row)) return held('manifest_missing');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'prepared') {
           markUnknown.run(nowMs, attemptId);
@@ -112,7 +142,7 @@ export function openHandoffLedger(dbPath) {
       const row = handoffRow.get(attemptId);
       return row ? { status: row.status, torrentHash: row.torrent_hash,
         evidenceDigest: row.evidence_digest, holdingPath: row.holding_path,
-        publishName: row.publish_name } : null;
+        publishName: row.publish_name, manifest: validStoredManifest(row) } : null;
     },
     close() { db.close(); },
   };

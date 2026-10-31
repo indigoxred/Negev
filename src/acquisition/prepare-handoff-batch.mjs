@@ -1,11 +1,10 @@
 import { constants } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { ed2kFile } from '../identity/ed2k.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
-import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const DEFAULT_BUDGET = 64 * 1024 ** 3;
@@ -14,58 +13,6 @@ function within(parent, candidate) {
   const relative = path.relative(parent, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relative));
-}
-
-function validEvidence(verified, budget) {
-  if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false ||
-      !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(verified?.torrentHash) ||
-      !Array.isArray(verified.subtitles) ||
-      !Array.isArray(verified.files) || verified.files.length < 1 || verified.files.length > 50) {
-    return false;
-  }
-  const names = new Set();
-  const fileIds = new Set();
-  let total = 0;
-  for (const file of verified.files) {
-    if (torrentFileKind(file?.name) !== 'video' || names.has(file.name.toLowerCase()) ||
-        !Number.isSafeInteger(file.size) || file.size < 1 ||
-        !Number.isSafeInteger(file.anidbFileId) || file.anidbFileId < 1 ||
-        !/^[0-9A-F]{32}$/.test(file.ed2k) || fileIds.has(file.anidbFileId) ||
-        !Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
-        file.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1) ||
-        new Set(file.episodeIds).size !== file.episodeIds.length) return false;
-    names.add(file.name.toLowerCase());
-    fileIds.add(file.anidbFileId);
-    total += file.size;
-    if (!Number.isSafeInteger(total) || total > budget) return false;
-  }
-  if (verified.subtitles.length > 50) return false;
-  let subtitleBytes = 0;
-  const indexes = new Set();
-  for (const file of verified.subtitles) {
-    if (torrentFileKind(file?.name) !== 'subtitle' ||
-        names.has(file.name.toLowerCase()) ||
-        !Number.isSafeInteger(file.index) || file.index < 0 || indexes.has(file.index) ||
-        !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 16 * 1024 ** 2 ||
-        !/^[0-9A-F]{64}$/.test(file.sha256)) return false;
-    names.add(file.name.toLowerCase());
-    indexes.add(file.index);
-    subtitleBytes += file.size;
-    if (subtitleBytes > 64 * 1024 ** 2) return false;
-  }
-  return true;
-}
-
-function evidenceDigest(verified) {
-  const byName = (a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-  const videos = verified.files.map((file) => ({ name: file.name, size: file.size,
-    ed2k: file.ed2k, anidbFileId: file.anidbFileId,
-    episodeIds: [...file.episodeIds].sort((a, b) => a - b) })).sort(byName);
-  const subtitles = verified.subtitles.map((file) => ({ name: file.name, size: file.size,
-    sha256: file.sha256 })).sort(byName);
-  return createHash('sha256').update(JSON.stringify({ version: 1,
-    torrentHash: verified.torrentHash.toLowerCase(), videos, subtitles }))
-    .digest('hex');
 }
 
 async function inspectRoots(stagingRoot, holdingRoot, importRoot) {
@@ -154,7 +101,11 @@ export async function prepareHandoffBatch({
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff preparation configuration');
   }
-  if (!validEvidence(verified, maxTotalBytes)) return held('invalid_verified_batch');
+  if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false) {
+    return held('invalid_verified_batch');
+  }
+  const evidence = evaluateHandoffEvidence(verified, { maxVideoBytes: maxTotalBytes });
+  if (evidence.state !== 'valid') return held('invalid_verified_batch');
   const roots = await inspectRoots(stagingRoot, holdingRoot, importRoot);
   if (!roots) return held('unsafe_handoff_roots');
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
@@ -168,7 +119,8 @@ export async function prepareHandoffBatch({
       await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'subtitle', pacer });
     }
     return { state: 'handoff_prepared', holdingPath,
-      torrentHash: verified.torrentHash.toLowerCase(), evidenceDigest: evidenceDigest(verified),
+      torrentHash: verified.torrentHash.toLowerCase(), anidbId: verified.anidbId,
+      evidenceDigest: evidence.digest,
       files: verified.files.map((file) => ({ ...file, episodeIds: [...file.episodeIds] })),
       subtitles: verified.subtitles.map((file) => ({ ...file })),
       publishReady: false };

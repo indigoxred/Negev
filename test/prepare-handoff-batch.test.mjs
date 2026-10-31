@@ -20,7 +20,7 @@ async function withRoots(run) {
 const bytes = Buffer.from('abc');
 const file = { name: 'Show/01.mkv', episodeIds: [1001], anidbFileId: 51,
   ed2k: ed2kBuffer(bytes), size: bytes.length };
-const verified = { state: 'batch_identity_verified', torrentHash: 'a'.repeat(40),
+const verified = { state: 'batch_identity_verified', torrentHash: 'a'.repeat(40), anidbId: 42,
   files: [file], subtitles: [],
   handoffReady: false };
 

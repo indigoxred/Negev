@@ -6,12 +6,17 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
 test('one exact prepared handoff gets one durable publish intent across restart', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-handoff-ledger-'));
   const dbPath = path.join(root, 'state.sqlite');
   const hash = 'a'.repeat(40);
-  const evidenceDigest = 'b'.repeat(64);
+  const details = { anidbId: 42, torrentHash: hash,
+    files: [{ name: '01.mkv', size: 3, ed2k: 'A'.repeat(32),
+      anidbFileId: 51, episodeIds: [1001] }], subtitles: [] };
+  const evidence = evaluateHandoffEvidence(details);
+  const evidenceDigest = evidence.digest;
   const candidate = { indexerId: 7, guid: 'synthetic-release' };
   try {
     const requests = openRequestLedger(dbPath);
@@ -25,8 +30,11 @@ test('one exact prepared handoff gets one durable publish intent across restart'
     acquisition.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
     acquisition.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
     const beforeStart = openHandoffLedger(dbPath);
+    const holdingPath = path.join(root, 'private-holding-batch');
+    const prepared = { state: 'handoff_prepared', publishReady: false,
+      holdingPath, evidenceDigest, ...details };
     assert.deepEqual(beforeStart.recordPrepared({ attemptId: attempt.attemptId,
-      torrentHash: hash, evidenceDigest, holdingPath: path.join(root, 'holding'), nowMs: 204 }),
+      prepared, nowMs: 204 }),
     { state: 'held', reason: 'start_intent_missing' });
     beforeStart.close();
     acquisition.beginStart({ attemptId: attempt.attemptId, hash,
@@ -34,29 +42,29 @@ test('one exact prepared handoff gets one durable publish intent across restart'
     acquisition.close();
 
     const ledger = openHandoffLedger(dbPath);
-    const holdingPath = path.join(root, 'private-holding-batch');
-    const prepared = ledger.recordPrepared({ attemptId: attempt.attemptId,
-      torrentHash: hash, evidenceDigest, holdingPath, nowMs: 205 });
-    assert.equal(prepared.state, 'prepared');
-    assert.match(prepared.publishName, /^negev-[0-9]+-[0-9a-f]{16}$/);
+    let saved;
+    try {
+    saved = ledger.recordPrepared({ attemptId: attempt.attemptId, prepared, nowMs: 205 });
+    assert.equal(saved.state, 'prepared');
+    assert.match(saved.publishName, /^negev-[0-9]+-[0-9a-f]{16}$/);
     assert.deepEqual(ledger.recordPrepared({ attemptId: attempt.attemptId,
-      torrentHash: hash, evidenceDigest, holdingPath, nowMs: 206 }), prepared);
+      prepared, nowMs: 206 }), saved);
     assert.deepEqual(ledger.recordPrepared({ attemptId: attempt.attemptId,
-      torrentHash: hash, evidenceDigest: 'd'.repeat(64), holdingPath, nowMs: 206 }),
-    { state: 'held', reason: 'handoff_conflict' });
+      prepared: { ...prepared, evidenceDigest: 'd'.repeat(64) }, nowMs: 206 }),
+    { state: 'held', reason: 'handoff_evidence_mismatch' });
     assert.deepEqual(ledger.beginPublish({ attemptId: attempt.attemptId,
       evidenceDigest, nowMs: 207 }),
-    { state: 'publish_unknown', publishName: prepared.publishName, sendNow: true });
-    ledger.close();
+    { state: 'publish_unknown', publishName: saved.publishName, sendNow: true });
+    } finally { ledger.close(); }
 
     const restarted = openHandoffLedger(dbPath);
     try {
       assert.deepEqual(restarted.beginPublish({ attemptId: attempt.attemptId,
         evidenceDigest, nowMs: 208 }),
-      { state: 'publish_unknown', publishName: prepared.publishName, sendNow: false });
+      { state: 'publish_unknown', publishName: saved.publishName, sendNow: false });
       assert.deepEqual(restarted.getHandoff(attempt.attemptId), {
         status: 'publish_unknown', torrentHash: hash, evidenceDigest,
-        holdingPath, publishName: prepared.publishName });
+        holdingPath, publishName: saved.publishName, manifest: evidence.manifest });
     } finally { restarted.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

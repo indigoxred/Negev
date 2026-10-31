@@ -117,6 +117,7 @@ export async function verifyStagedBatch({
     return held('torrent_changed_after_hash');
   }
   return { state: 'batch_identity_verified', torrentHash: expectedTorrent.hash.toLowerCase(),
+    anidbId: request.anidbId,
     files: verified,
     subtitles: verifiedSubtitles,
     handoffReady: false };
