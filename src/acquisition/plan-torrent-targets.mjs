@@ -7,11 +7,19 @@ const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
 
 function episodeNumber(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
-  const plain = /^(?:0*[1-9]\d*)$/.exec(stem);
-  if (plain && Number.isSafeInteger(Number(stem))) return Number(stem);
-  const matches = [...stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?=\s|$)/g)];
-  return matches.length === 1 && Number.isSafeInteger(Number(matches[0][1]))
-    ? Number(matches[0][1]) : null;
+  const matches = [];
+  const plainRegular = /^(0*[1-9]\d*)$/.exec(stem);
+  const plainSpecial = /^[Ss](0*[1-9]\d*)$/.exec(stem);
+  if (plainRegular) matches.push({ type: 'Episode', digits: plainRegular[1] });
+  if (plainSpecial) matches.push({ type: 'Special', digits: plainSpecial[1] });
+  for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?=\s|$)/g)) {
+    matches.push({ type: 'Episode', digits: match[1] });
+  }
+  for (const match of stem.matchAll(/(?:^|\s)-\s+[Ss](0*[1-9]\d*)(?=\s|$)/g)) {
+    matches.push({ type: 'Special', digits: match[1] });
+  }
+  if (matches.length !== 1 || !Number.isSafeInteger(Number(matches[0].digits))) return null;
+  return { type: matches[0].type, number: Number(matches[0].digits) };
 }
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
@@ -64,16 +72,19 @@ export function planTorrentTargets({ request, detail, prepared } = {}) {
   }
 
   const byNumber = new Map();
-  for (const episode of regular) {
+  for (const episode of detail.episodes.filter((item) =>
+    item.type === 'Episode' || item.type === 'Special')) {
     if (!Number.isSafeInteger(episode.number) || episode.number < 1 ||
-        byNumber.has(episode.number)) return held('ambiguous_catalogue_number');
-    byNumber.set(episode.number, episode.id);
+        byNumber.has(`${episode.type}:${episode.number}`)) {
+      return held('ambiguous_catalogue_number');
+    }
+    byNumber.set(`${episode.type}:${episode.number}`, episode.id);
   }
   const plannedFiles = [];
   const targets = new Set();
   for (const file of videos) {
-    const number = episodeNumber(file.name);
-    const id = byNumber.get(number);
+    const episode = episodeNumber(file.name);
+    const id = episode && byNumber.get(`${episode.type}:${episode.number}`);
     if (!id || !requested.has(id) || targets.has(id)) {
       return held('ambiguous_or_unrequested_video');
     }

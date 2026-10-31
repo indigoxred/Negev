@@ -42,6 +42,33 @@ test('plans a four-digit regular episode without accepting a range as one target
     ] } }).state, 'held');
 });
 
+test('maps an explicitly requested AniDB Special only from an S-number filename', () => {
+  const specialRequest = { ...request, episodeIds: [9002] };
+  const specialDetail = { ...detail, total: 2, episodes: [
+    { id: 1001, number: 1, type: 'Episode' },
+    { id: 9002, number: 1, type: 'Special' },
+  ] };
+  const special = { name: '[Group] Show - S01 (1080p).mkv', size: 1200 };
+  assert.deepEqual(planTorrentTargets({ request: specialRequest, detail: specialDetail,
+    prepared: { state: 'prepared_stopped', files: [special] } }), {
+    state: 'planned_targets', episodeIds: [9002],
+    plannedFiles: [{ ...special, episodeIds: [9002] }],
+  });
+  const regular = { name: '[Group] Show - 01 (1080p).mkv', size: 1300 };
+  assert.deepEqual(planTorrentTargets({
+    request: { ...request, episodeIds: [1001, 9002] }, detail: specialDetail,
+    prepared: { state: 'prepared_stopped', files: [regular, special] },
+  }).plannedFiles, [
+    { ...regular, episodeIds: [1001] }, { ...special, episodeIds: [9002] },
+  ]);
+  for (const name of ['[Group] Show - 01 (1080p).mkv',
+    '[Group] Show - S01E01.mkv', '[Group] Show - S01-S02.mkv']) {
+    assert.equal(planTorrentTargets({ request: specialRequest, detail: specialDetail,
+      prepared: { state: 'prepared_stopped', files: [{ ...special, name }] } }).state,
+    'held');
+  }
+});
+
 test('a one-video movie uses its one requested AniDB episode identity', () => {
   const filmRequest = { ...request, kind: 'movie', episodeIds: [5001] };
   const filmDetail = { ...detail, kind: 'movie', total: 1,
