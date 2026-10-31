@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { readShokoImportActivity } from '../src/availability/shoko-import-activity.mjs';
 
 const input = { baseUrl: 'http://shoko.local/', apiKey: 'private-test-key' };
@@ -57,4 +60,35 @@ test('missing or inconsistent queue counts fail closed', async () => {
     });
     assert.deepEqual(result, { state: 'unavailable' });
   }
+});
+
+test('an early Import file reports busy even before Shoko schedules a queue job', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    await writeFile(path.join(importRoot, 'new.mkv'), 'synthetic');
+    let queueReads = 0;
+    assert.deepEqual(await readShokoImportActivity({ ...input, importRoot,
+      fetchImpl: async () => { queueReads++; throw new Error('not reached'); } }),
+    { state: 'busy' });
+    assert.equal(queueReads, 0);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
+test('a file arriving while the queue is read stays busy; empty plus idle stays unverified', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    const idleQueue = { WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+      TotalCount: 0, CurrentlyExecuting: [], Pools: [] };
+    assert.deepEqual(await readShokoImportActivity({ ...input, importRoot,
+      fetchImpl: async () => json(idleQueue) }),
+    { state: 'queue_idle_unverified' });
+    assert.deepEqual(await readShokoImportActivity({ ...input, importRoot,
+      fetchImpl: async () => {
+        await writeFile(path.join(importRoot, 'arrived.mkv'), 'synthetic');
+        return json(idleQueue);
+      } }), { state: 'busy' });
+    assert.deepEqual(await readShokoImportActivity({ ...input,
+      importRoot: path.join(importRoot, 'missing'),
+      fetchImpl: async () => json(idleQueue) }), { state: 'unavailable' });
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
