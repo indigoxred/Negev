@@ -131,3 +131,20 @@ test('AniDB provider uncertainty stays retryable and a wrong-show match is termi
     });
   }
 });
+
+test('a registered but corrupt AniDB release never consumes private holding space', async () => {
+  await fixture(async (context) => {
+    const { handoffs, attemptId, config, holdingRoot, ...stores } = context;
+    const result = await processCompletedAttempt({ ...stores, handoffs, attemptId,
+      holdingRoot, ...config, fetchImpl: async (url, init) => {
+        const response = await config.fetchImpl(url, init);
+        if (!new URL(url).pathname.endsWith('/Preview/By-Release')) return response;
+        const body = JSON.parse(await response.text());
+        body.IsCorrupted = true;
+        return { status: 200, text: async () => JSON.stringify(body) };
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'file_corrupt_release' });
+    assert.deepEqual(await readdir(holdingRoot), []);
+    assert.equal(handoffs.getHandoff(attemptId), null);
+  });
+});
