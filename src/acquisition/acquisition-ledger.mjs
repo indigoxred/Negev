@@ -143,6 +143,14 @@ export function openAcquisitionLedger(dbPath) {
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
   const findRetirement = db.prepare('SELECT torrent_hash,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const rejectedNeedsReview = db.prepare(`SELECT a.id AS attemptId,
+    a.request_id AS requestId,a.anidb_id AS anidbId,
+    r.reason,r.rejected_ms AS observedMs
+    FROM acquisition_rejections r
+    JOIN acquisition_attempts a ON a.id=r.attempt_id
+    LEFT JOIN acquisition_retirements t ON t.attempt_id=r.attempt_id
+    WHERE t.attempt_id IS NULL AND a.id>?
+    ORDER BY a.id LIMIT ?`);
   const insertRetirement = db.prepare(`INSERT INTO acquisition_retirements
     (attempt_id,torrent_hash,retired_ms) VALUES (?,?,?)`);
   const handoffTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_intents'");
@@ -162,6 +170,13 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
+    listRejectedNeedsReview({ afterAttemptId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid rejected review page');
+      }
+      return rejectedNeedsReview.all(afterAttemptId, limit).map((row) => ({ ...row }));
+    },
     inspectRequestAttempts(requestId) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       return { state: attemptForRequest.get(requestId) ? 'attempt_present' : 'no_attempt' };

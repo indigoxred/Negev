@@ -28,6 +28,10 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }),
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
+    listOperationalReview: () => ({ state: 'review', items: [{
+      attemptId: 9, requestId: 1, anidbId: 1234,
+      stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 900,
+    }], nextAfterAttemptId: null }),
     titleRegistry: {
       isKnownTitle: ({ anidbId }) => knownTitles.has(anidbId),
       observe: (result) => {
@@ -90,6 +94,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.match(epochModule.headers['content-type'], /javascript/);
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/admin/review' })).statusCode, 401);
     const crossSite = await app.inject({ method: 'POST', url: '/api/login',
       payload: { username: 'Owner', password: 'long-owner-passphrase' } });
     assert.equal(crossSite.statusCode, 403);
@@ -101,6 +107,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.match(login.headers['set-cookie'], /SameSite=Strict/);
     const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
     assert.equal(session.json().user.id, owner.id);
+    const review = await app.inject({ method: 'GET',
+      url: '/api/admin/review', headers: { cookie } });
+    assert.equal(review.statusCode, 200);
+    assert.deepEqual(review.json().items, [{ attemptId: 9, requestId: 1,
+      anidbId: 1234, stage: 'release_rejected',
+      reason: 'file_wrong_identity', observedMs: 900 }]);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/admin/review?limit=100', headers: { cookie } })).statusCode, 400);
     assert.deepEqual(session.json().capabilities, {
       releaseSearch: true, detailLoad: false, availabilityChecks: false });
     const related = await app.inject({ method: 'GET',
@@ -184,6 +198,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { username: 'Friend', password: 'long-member-passphrase' } });
     assert.equal(friendLogin.statusCode, 200, friendLogin.body);
     const friendCookie = friendLogin.headers['set-cookie'].split(';')[0];
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/admin/review', headers: { cookie: friendCookie } })).statusCode, 403);
     const friendList = await app.inject({ method: 'GET', url: '/api/requests',
       headers: { cookie: friendCookie } });
     assert.deepEqual(friendList.json().items, []);

@@ -13,6 +13,30 @@ const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
 
+test('account service exposes an empty, admin-only operational review', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-review-service-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    now: () => 1_000,
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const review = await service.app.inject({ method: 'GET',
+      url: '/api/admin/review', headers: { cookie } });
+    assert.equal(review.statusCode, 200, review.body);
+    assert.deepEqual(review.json(), { state: 'review', items: [],
+      nextAfterAttemptId: null });
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('opt-in AniDB dump search finds an unowned title and marks stale results', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-search-'));
   const dbPath = path.join(dir, 'negev.sqlite');

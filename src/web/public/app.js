@@ -12,6 +12,8 @@ const state = { csrf: null, user: null, selected: null,
   searchToken: 0 };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
+const reviewResponses = createResponseEpoch();
+let nextReviewAttemptId = null;
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -38,8 +40,11 @@ function showSession(data) {
   if (state.user?.id !== data.user.id) {
     sessionResponses.invalidate();
     requestResponses.invalidate();
+    reviewResponses.invalidate();
     byId('request-list').replaceChildren();
+    byId('review-list').replaceChildren();
     state.nextBeforeId = null;
+    nextReviewAttemptId = null;
   }
   state.user = data.user;
   state.csrf = data.csrfToken;
@@ -53,20 +58,26 @@ function showSession(data) {
   byId('identity').hidden = false;
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
+  byId('admin-review').hidden = data.user.role !== 'admin';
 }
 function clearWorkspace() {
   sessionResponses.invalidate();
   requestResponses.invalidate();
+  reviewResponses.invalidate();
   state.user = null;
   state.csrf = null;
   state.selected = null;
   state.searchToken++;
   state.nextBeforeId = null;
+  nextReviewAttemptId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
   byId('service-notice').textContent =
     'Negev is in preview. Requests are saved; automatic downloads are not active.';
   byId('request-list').replaceChildren();
+  byId('review-list').replaceChildren();
+  byId('more-review').hidden = true;
+  byId('admin-review').hidden = true;
   byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
   byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));
   byId('search-form').reset();
@@ -83,6 +94,7 @@ async function refreshSession() {
     if (!sessionResponses.isCurrent(started)) return;
     showSession(data);
     await loadRequests();
+    if (data.user.role === 'admin') await loadOperationalReview();
   } catch {
     if (sessionResponses.isCurrent(started)) clearWorkspace();
   }
@@ -180,6 +192,42 @@ async function loadRequests(append = false) {
 }
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('more-requests').addEventListener('click', () => { void loadRequests(true); });
+async function loadOperationalReview(append = false) {
+  if (state.user?.role !== 'admin') return;
+  const session = sessionResponses.current();
+  const read = reviewResponses.invalidate();
+  const userId = state.user.id;
+  const list = byId('review-list');
+  if (!append) list.replaceChildren(element('p', 'Checking held work…', 'muted'));
+  const suffix = append && nextReviewAttemptId !== null
+    ? `?afterAttemptId=${nextReviewAttemptId}` : '';
+  try {
+    const page = await api(`/api/admin/review${suffix}`);
+    if (!sessionResponses.isCurrent(session) ||
+        !reviewResponses.isCurrent(read) || state.user?.id !== userId) return;
+    if (!append) list.replaceChildren();
+    if (!append && page.items.length === 0) {
+      list.append(element('p', 'Nothing needs review.', 'muted'));
+    }
+    for (const item of page.items) {
+      const row = element('div', undefined, 'request-row');
+      const label = item.stage === 'release_rejected'
+        ? 'Downloaded file rejected' : 'Import held';
+      row.append(element('strong', `${label} · Request #${item.requestId}`),
+        element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
+      list.append(row);
+    }
+    nextReviewAttemptId = page.nextAfterAttemptId;
+    byId('more-review').hidden = nextReviewAttemptId === null;
+  } catch (error) {
+    if (sessionResponses.isCurrent(session) &&
+        reviewResponses.isCurrent(read) && state.user?.id === userId) {
+      list.replaceChildren(element('p', error.message, 'muted'));
+    }
+  }
+}
+byId('refresh-review').addEventListener('click', () => { void loadOperationalReview(); });
+byId('more-review').addEventListener('click', () => { void loadOperationalReview(true); });
 function authTab(register) {
   byId('login-form').hidden = register;
   byId('register-form').hidden = !register;

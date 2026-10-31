@@ -19,6 +19,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   discoverCandidates, previewCandidate, probeRequestTargets,
+  listOperationalReview,
   publicAvailabilityConfigured = false } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
@@ -133,6 +134,54 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
       availabilityChecks: publicAvailabilityConfigured } };
+  });
+  app.get('/api/admin/review', { preHandler: requireUser,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Admin required' });
+    }
+    const keys = Object.keys(request.query);
+    const rawAfter = request.query.afterAttemptId;
+    const rawLimit = request.query.limit;
+    const afterAttemptId = rawAfter === undefined ? 0 : Number(rawAfter);
+    const limit = rawLimit === undefined ? 20 : Number(rawLimit);
+    if (keys.some((key) => !['afterAttemptId', 'limit'].includes(key)) ||
+        rawAfter !== undefined &&
+          (typeof rawAfter !== 'string' || !/^(0|[1-9]\d*)$/.test(rawAfter)) ||
+        rawLimit !== undefined &&
+          (typeof rawLimit !== 'string' || !/^[1-9]\d*$/.test(rawLimit)) ||
+        !Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+      return reply.code(400).send({ error: 'Invalid review page' });
+    }
+    if (typeof listOperationalReview !== 'function') {
+      return reply.code(503).send({ error: 'Review unavailable' });
+    }
+    let result;
+    try { result = await listOperationalReview({ afterAttemptId, limit }); }
+    catch { return reply.code(503).send({ error: 'Review unavailable' }); }
+    if (result?.state !== 'review' || !Array.isArray(result.items) ||
+        result.items.length > limit ||
+        (result.nextAfterAttemptId !== null &&
+          (!Number.isSafeInteger(result.nextAfterAttemptId) ||
+            result.nextAfterAttemptId <= afterAttemptId)) ||
+        result.items.some((item, index) =>
+          !Number.isSafeInteger(item?.attemptId) ||
+          item.attemptId <= (index === 0 ? afterAttemptId : result.items[index - 1].attemptId) ||
+          !Number.isSafeInteger(item.requestId) || item.requestId < 1 ||
+          !Number.isSafeInteger(item.anidbId) || item.anidbId < 1 ||
+          !['release_rejected', 'import_hold'].includes(item.stage) ||
+          typeof item.reason !== 'string' ||
+          !/^[a-z][a-z0-9_]{0,79}$/.test(item.reason) ||
+          !Number.isSafeInteger(item.observedMs) || item.observedMs < 0)) {
+      return reply.code(503).send({ error: 'Review unavailable' });
+    }
+    return { state: 'review', nextAfterAttemptId: result.nextAfterAttemptId,
+      items: result.items.map(({ attemptId, requestId, anidbId,
+        stage, reason, observedMs }) =>
+        ({ attemptId, requestId, anidbId, stage, reason, observedMs })) };
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

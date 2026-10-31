@@ -38,6 +38,7 @@
     </section>
     <section id="workspace" hidden>
       <section class="panel history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">My requests</h2><button id="refresh-requests" class="quiet" type="button">Refresh</button></div><div id="request-list"><p class="muted">Loading requests…</p></div><button id="more-requests" type="button" hidden>Show more</button></section>
+      <details id="admin-review" class="panel" hidden><summary>Needs attention</summary><p class="muted">Held imports and rejected files that need an owner review. This list does not change any files.</p><div id="review-list"></div><button id="refresh-review" class="quiet" type="button">Refresh</button><button id="more-review" type="button" hidden>Show more</button></details>
       <form id="search-form" class="search-row" role="search">
         <label for="query" class="sr-only">Search anime</label>
         <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime titles" required>

@@ -172,6 +172,10 @@ test('a verified wrong-show candidate is durably rejected without freeing its li
     try {
       assert.equal(ledger.getAttempt(claim.attemptId).status, 'rejected_held');
       assert.equal(ledger.getAttempt(claim.attemptId).rejectionReason, 'file_wrong_identity');
+      assert.deepEqual(ledger.listRejectedNeedsReview(), [{
+        attemptId: claim.attemptId, requestId: firstId, anidbId: 42,
+        reason: 'file_wrong_identity', observedMs: 206,
+      }]);
       assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
         hash: torrentHash, reason: 'file_wrong_identity', nowMs: 207 }),
       { state: 'rejected_held', reason: 'file_wrong_identity' });
@@ -215,6 +219,7 @@ test('recording rejected retirement frees the claim but not the rejected candida
     ledger.close();
     ledger = openAcquisitionLedger(dbPath);
       assert.equal(ledger.getAttempt(claim.attemptId).status, 'retired_rejected');
+      assert.deepEqual(ledger.listRejectedNeedsReview(), []);
       assert.deepEqual(ledger.recordTerminalRejection({ attemptId: claim.attemptId,
         hash, reason: 'file_wrong_identity', nowMs: 208 }),
       { state: 'retired_rejected' });
