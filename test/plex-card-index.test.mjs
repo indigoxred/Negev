@@ -84,6 +84,20 @@ test('a confirmed missing retry also retires its old Part candidate', async () =
   ledger.close();
 });
 
+test('an exact card with no Media retires its old Part candidate', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(), observedMs: 10 });
+  const result = await indexPlexCardPage({ libraryId: 102, kind: 'episode',
+    offset: 0, now: () => 11, index: ledger,
+    readPage: async () => ({ state: 'page', libraryId: 102, kind: 'episode',
+      offset: 0, totalSize: 1, keys: [500], complete: false }),
+    readCard: async () => ({ state: 'no_parts' }) });
+  assert.equal(result.state, 'page_indexed');
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }), { state: 'candidates', cards: [] });
+  ledger.close();
+});
+
 test('too many same-size candidates hold rather than dropping one arbitrarily', async () => {
   const { ledger } = await index();
   for (let key = 1; key <= 11; key++) {

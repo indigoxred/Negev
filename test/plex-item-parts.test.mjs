@@ -42,9 +42,14 @@ test('a wrong item, section, or type cannot supply availability evidence', async
   }
 });
 
-test('a missing or malformed Part is incomplete rather than proof of absence', async () => {
+test('an exact card with an empty Media list has no indexed Part, without proving file absence', async () => {
+  assert.deepEqual(await readPlexItemParts({ ...input,
+    fetchImpl: async () => response({ ...item, Media: [] }) }),
+  { state: 'no_parts' });
+});
+
+test('a malformed Part is incomplete rather than proof of absence', async () => {
   for (const changed of [
-    { ...item, Media: [] },
     { ...item, Media: [{ Part: [{ id: 88, file: '../episode.mkv', size: 5 }] }] },
     { ...item, Media: [{ Part: [{ id: 88, file: '/video.mkv', size: 0 }] }] },
   ]) {

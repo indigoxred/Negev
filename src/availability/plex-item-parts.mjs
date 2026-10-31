@@ -48,9 +48,12 @@ export async function readPlexItemParts({ baseUrl, token, ratingKey, expectedTyp
   if ((itemLibrary !== null && itemLibrary !== positive(libraryId)) ||
       (containerLibrary !== null && containerLibrary !== positive(libraryId)) ||
       (itemLibrary === null && containerLibrary === null) ||
-      !Array.isArray(item.Media) || item.Media.length === 0 || item.Media.length > 20) {
+      !Array.isArray(item.Media) || item.Media.length > 20) {
     return unavailable();
   }
+  // An exact card can remain in Plex after its media versions disappear.
+  // This retires a positive index candidate; it never proves the file absent.
+  if (item.Media.length === 0) return { state: 'no_parts' };
   const parts = [];
   const seen = new Set();
   const itemGuid = typeof item.guid === 'string' && item.guid.length <= 512

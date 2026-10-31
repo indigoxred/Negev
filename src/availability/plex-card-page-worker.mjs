@@ -42,7 +42,7 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
     if (card?.state !== 'ok' || card.complete !== true ||
         !Array.isArray(card.parts) || card.parts.length < 1) {
       skipped++;
-      if (card?.state === 'not_found') {
+      if (card?.state === 'not_found' || card?.state === 'no_parts') {
         try { index.forgetCard?.({ libraryId, ratingKey, observedMs }); }
         catch { defer(ratingKey); }
       } else defer(ratingKey);
@@ -105,7 +105,7 @@ export async function retryOnePlexCard({ libraryId, kind, index, readCard,
   try { card = await readCard({ libraryId, ratingKey: due.ratingKey,
     expectedType: kind }); }
   catch { card = { state: 'unavailable' }; }
-  if (card?.state === 'not_found') {
+  if (card?.state === 'not_found' || card?.state === 'no_parts') {
     try {
       if (typeof index.forgetCard === 'function') index.forgetCard({
         libraryId, ratingKey: due.ratingKey, observedMs: nowMs });
