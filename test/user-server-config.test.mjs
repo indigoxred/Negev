@@ -104,6 +104,18 @@ test('acquisition cannot be advertised as enabled before installed safety gates 
     NEGEV_ACQUISITION_RUNTIME: '0' }).acquisitionRuntime, false);
 });
 
+test('optional read-only Shoko Import root must be a normalized absolute path', () => {
+  assert.equal(parseUserServerConfig(valid).shokoImportRoot, null);
+  const root = path.resolve('sample-import-root');
+  assert.equal(parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_IMPORT_ROOT: root }).shokoImportRoot, root);
+  for (const bad of ['', 'relative', `${root}${path.sep}..`,
+    `${root}\nother`]) {
+    assert.throws(() => parseUserServerConfig({ ...valid,
+      NEGEV_SHOKO_IMPORT_ROOT: bad }), TypeError);
+  }
+});
+
 test('Airing date uses the configured local calendar day', () => {
   const moment = new Date('2026-10-31T13:30:00Z');
   assert.equal(dateInZone('Australia/Sydney', moment), '2026-11-01');

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
 import { openRequestProgress } from '../requests/request-progress.mjs';
@@ -43,6 +44,7 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
+  shokoImportRoot = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   shokoRecent = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
@@ -53,6 +55,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
+      (shokoImportRoot !== null &&
+        (typeof shokoImportRoot !== 'string' ||
+         !path.isAbsolute(shokoImportRoot) ||
+         path.parse(shokoImportRoot).root === shokoImportRoot ||
+         path.normalize(shokoImportRoot) !== shokoImportRoot ||
+         /[\0\r\n]/.test(shokoImportRoot))) ||
       typeof shokoRecent !== 'boolean' || typeof anidbTitleDump !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
@@ -222,7 +230,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           kind: request.kind, episodeIds, now,
           readImportActivity: () => metadata.run(() =>
             readShokoImportActivity({ baseUrl: shokoBaseUrl,
-              apiKey: shokoApiKey, fetchImpl })),
+              apiKey: shokoApiKey, fetchImpl,
+              ...(shokoImportRoot === null ? {} : { importRoot: shokoImportRoot }) })),
           readShokoEpisode: (target) => metadata.run(() =>
             readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, ...target, fetchImpl })),

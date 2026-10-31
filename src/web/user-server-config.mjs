@@ -141,6 +141,15 @@ export function parseUserServerConfig(env) {
   }
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
+  const shokoImportRoot = env.NEGEV_SHOKO_IMPORT_ROOT ?? null;
+  if (shokoImportRoot !== null &&
+      (typeof shokoImportRoot !== 'string' ||
+       !path.isAbsolute(shokoImportRoot) ||
+       path.parse(shokoImportRoot).root === shokoImportRoot ||
+       path.normalize(shokoImportRoot) !== shokoImportRoot ||
+       /[\0\r\n]/.test(shokoImportRoot))) {
+    throw new TypeError('Invalid Shoko Import root');
+  }
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
       env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
@@ -188,7 +197,7 @@ export function parseUserServerConfig(env) {
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
     acquisitionRuntime: false,
     sessionKeyPath: path.join(dataDir, 'session.key'),
-    shokoBaseUrl, shokoApiKeyPath,
+    shokoBaseUrl, shokoApiKeyPath, shokoImportRoot,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',

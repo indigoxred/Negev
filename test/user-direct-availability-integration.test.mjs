@@ -12,6 +12,8 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
   let service;
   try {
     await mkdir(path.join(root, 'Anime'));
+    const importRoot = path.join(root, 'Import');
+    await mkdir(importRoot);
     await writeFile(path.join(root, 'Anime', 'one.mkv'), 'video');
     const dbPath = path.join(root, 'negev.sqlite');
     const accounts = openAccountLedger(dbPath);
@@ -20,7 +22,14 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     const digest = 'A'.repeat(32);
     let linked = true;
     let deleted = false;
+    let queueCalls = 0;
     const fetchImpl = async (url) => {
+      if (url.hostname === 'shoko' && url.pathname === '/api/v3/Queue') {
+        queueCalls++;
+        return Response.json({ WaitingCount: 0, BlockedCount: 0,
+          ScheduledCount: 0, TotalCount: 0,
+          CurrentlyExecuting: [], Pools: [] });
+      }
       if (url.hostname === 'shoko' && url.pathname === '/api/v3/File/51') {
         if (deleted) return new Response(null, { status: 404 });
         return Response.json({ ID: 51, Updated: linked
@@ -75,6 +84,7 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     };
     service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko:8111/',
       shokoApiKey: 'synthetic', sessionKey: randomBytes(32),
+      shokoImportRoot: importRoot,
       publicOrigin: 'http://localhost:3000', secureCookies: false,
       plex: { plexBaseUrl: 'http://plex:32400/', plexToken: 'synthetic',
         publicSections: { episode: [102], movie: [] },
@@ -119,6 +129,18 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
         'x-negev-csrf': session.json().csrfToken },
       payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
     assert.equal(created.statusCode, 202, created.body);
+    const pending = path.join(importRoot, 'pending.mkv');
+    await writeFile(pending, 'partial import');
+    const probeUrl = `/api/requests/${created.json().requestId}/presence-probe`;
+    const probe = () => service.app.inject({ method: 'POST', url: probeUrl,
+      headers: { cookie, origin: 'http://localhost:3000',
+        'x-negev-csrf': session.json().csrfToken },
+      payload: { episodeIds: [1001] } });
+    assert.equal((await probe()).statusCode, 200);
+    assert.equal(queueCalls, 0, 'Import file is observed before reading Shoko queue');
+    await rm(pending);
+    assert.equal((await probe()).statusCode, 200);
+    assert.equal(queueCalls, 2, 'empty root permits two bounded queue checks');
     const history = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.equal(history.json().items[0].progress.publicAvailability,
