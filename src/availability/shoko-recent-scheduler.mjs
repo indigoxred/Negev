@@ -39,7 +39,7 @@ export function createShokoRecentScheduler({ scan, drainOne,
     try { result = await (kind === 'scan' ? scan() : drainOne()); }
     catch { result = { state: 'held' }; }
     if (stopping) return;
-    lastState = result?.state ?? 'held';
+    if (kind === 'scan' || !scanFailed) lastState = result?.state ?? 'held';
     if (kind === 'scan') {
       drainsSinceScan = 0;
       scanFailed = result?.state !== 'caught_up';

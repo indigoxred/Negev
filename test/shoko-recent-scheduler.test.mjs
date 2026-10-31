@@ -113,6 +113,7 @@ test('a failed scan still drains durable work and retries the scan sooner', asyn
   assert.equal(clock.delay(), 10_000);
   await clock.fire();
   assert.deepEqual(calls, ['scan', 'drain']);
+  assert.equal(scheduler.getState().state, 'held');
   assert.equal(clock.delay(), 5 * 60_000);
   await scheduler.close();
 });
