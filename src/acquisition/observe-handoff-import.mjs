@@ -7,7 +7,8 @@ const sameIds = (left, right) => Array.isArray(left) &&
 
 // Read-only, bounded check of a previously published handoff. A positive
 // result proves Shoko has identified each exact registered video and has an
-// accessible location. It does not prove Plex playback or subtitle import.
+// accessible location. The file may still be in Import; this does not prove
+// Shoko moved it, Plex playback, or subtitle import.
 export async function observeHandoffImport({ handoff, readEpisode } = {}) {
   if (handoff?.status !== 'published_observed') return held('publish_not_observed');
   if (typeof readEpisode !== 'function') throw new TypeError('Episode reader required');
@@ -54,6 +55,6 @@ export async function observeHandoffImport({ handoff, readEpisode } = {}) {
       observed.set(expected.anidbFileId, file.fileId);
     }
   }
-  return { state: 'shoko_import_observed',
+  return { state: 'shoko_files_identified',
     fileIds: manifest.videos.map((file) => observed.get(file.anidbFileId)) };
 }

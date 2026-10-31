@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { observeHandoffImport } from '../src/acquisition/observe-handoff-import.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
+import { readShokoEpisodeFiles } from '../src/availability/shoko-episode-files.mjs';
 
 const video = (fileId, episodeIds) => ({ name: `${fileId}.mkv`, size: 123,
   anidbFileId: fileId, ed2k: 'A'.repeat(32), episodeIds });
@@ -26,7 +27,7 @@ test('each exact claimed video must be identified in Shoko before import is obse
         files: [observed(episodeId === 1001 ? 800 : 801, [episodeId])] };
     } });
   assert.deepEqual(calls, [[42, 1001], [42, 1002]]);
-  assert.deepEqual(result, { state: 'shoko_import_observed', fileIds: [1800, 1801] });
+  assert.deepEqual(result, { state: 'shoko_files_identified', fileIds: [1800, 1801] });
 });
 
 test('missing, wrong, or partial Shoko identities cannot complete the handoff', async () => {
@@ -43,7 +44,7 @@ test('missing, wrong, or partial Shoko identities cannot complete the handoff', 
       readEpisode: async ({ episodeId }) => episodeId === 1001
         ? { state: 'ok', complete: true, files: [observed(800, [1001])] }
         : changed });
-    assert.notEqual(result.state, 'shoko_import_observed');
+    assert.notEqual(result.state, 'shoko_files_identified');
   }
 });
 
@@ -53,11 +54,11 @@ test('one multi-episode file needs a stable Shoko file identity across episodes'
   const result = await observeHandoffImport({ handoff: multi,
     readEpisode: async ({ episodeId }) => ({ state: 'ok', complete: true,
       files: [{ ...observed(800, [1001, 1002]), fileId: episodeId + 1000 }] }) });
-  assert.notEqual(result.state, 'shoko_import_observed');
+  assert.notEqual(result.state, 'shoko_files_identified');
   const exact = await observeHandoffImport({ handoff: multi,
     readEpisode: async () => ({ state: 'ok', complete: true,
       files: [observed(800, [1001, 1002])] }) });
-  assert.deepEqual(exact, { state: 'shoko_import_observed', fileIds: [1800] });
+  assert.deepEqual(exact, { state: 'shoko_files_identified', fileIds: [1800] });
 });
 
 test('a merely published-unknown handoff cannot claim import completion', async () => {
@@ -67,4 +68,23 @@ test('a merely published-unknown handoff cannot claim import completion', async 
     readEpisode: async () => { calls++; return { state: 'ok', complete: true, files: [] }; },
   }), { state: 'held', reason: 'publish_not_observed' });
   assert.equal(calls, 0);
+});
+
+test('published handoff is matched through the bounded Shoko episode adapter', async () => {
+  const single = withEvidence({ ...manifest, videos: [video(800, [1001])] });
+  const payload = { IDs: { AniDB: 1001 }, Files: [{ ID: 1800, Size: 123,
+    IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+    Release: { ID: `anidb://${'A'.repeat(32)}+123`, ProviderName: 'AniDB',
+      ReleaseURI: 'https://anidb.net/file/800', FileSize: 123,
+      IsCorrupted: false, Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+      CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+        PercentageStart: null, PercentageEnd: null }] },
+    Locations: [{ FileID: 1800, IsAccessible: true,
+      AbsolutePath: '/pure/Anime/Example/01.mkv' }] }] };
+  const result = await observeHandoffImport({ handoff: single,
+    readEpisode: ({ anidbId, episodeId }) => readShokoEpisodeFiles({
+      baseUrl: 'http://shoko.internal:8111', apiKey: 'synthetic',
+      anidbId, episodeId, fetchImpl: async () => Response.json(payload),
+    }) });
+  assert.deepEqual(result, { state: 'shoko_files_identified', fileIds: [1800] });
 });
