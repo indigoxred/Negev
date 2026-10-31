@@ -146,8 +146,8 @@ export function parseUserServerConfig(env) {
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
       (env.NEGEV_PLEX_INDEX !== '1' ||
-       (env.NEGEV_SHOKO_EVENTS !== '1' && env.NEGEV_SHOKO_INVENTORY !== '1'))) {
-    throw new TypeError('Direct availability needs Shoko discovery and Plex index');
+       env.NEGEV_SHOKO_INVENTORY !== '1')) {
+    throw new TypeError('Direct availability needs Shoko inventory and Plex index');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {

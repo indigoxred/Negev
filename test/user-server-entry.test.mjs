@@ -19,7 +19,7 @@ async function availablePort() {
   return port;
 }
 
-test('offline-initialized account service starts locally without an acquisition worker', async (t) => {
+test('account service starts despite optional Shoko event feed outage', async (t) => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-user-server-'));
   let child;
   try {
@@ -35,6 +35,7 @@ test('offline-initialized account service starts locally without an acquisition 
       cwd: path.resolve('.'), stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
         NEGEV_SHOKO_URL: 'http://shoko.invalid:8111',
+        NEGEV_SHOKO_EVENTS: '1',
         NEGEV_SHOKO_API_KEY_FILE: shokoKeyPath,
         NEGEV_PUBLIC_ORIGIN: `http://localhost:${port}`,
         NEGEV_PORT: String(port) },

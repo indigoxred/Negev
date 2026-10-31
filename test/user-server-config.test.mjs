@@ -113,7 +113,9 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
-    NEGEV_SHOKO_EVENTS: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
+    NEGEV_SHOKO_INVENTORY: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
+  assert.throws(() => parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
+    NEGEV_SHOKO_EVENTS: '1', NEGEV_DIRECT_AVAILABILITY: '1' }), TypeError);
   for (const change of [
     { NEGEV_PLEX_TOKEN: 'secret' },
     { NEGEV_PLEX_TOKEN_FILE: path.join(dataDir, 'secrets', 'shoko.token') },

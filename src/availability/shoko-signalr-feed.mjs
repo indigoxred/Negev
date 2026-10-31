@@ -37,6 +37,8 @@ export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
     throw new TypeError('Invalid Shoko SignalR connection');
   }
   let stopping = false;
+  let resolveClosed;
+  const closed = new Promise((resolve) => { resolveClosed = resolve; });
   const handlers = new Map(targets.map((target) =>
     [target, (event) => consumer.accept(target, [event])]));
   for (const [target, handler] of handlers) connection.on(target, handler);
@@ -61,6 +63,7 @@ export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
   });
   connection.onclose(() => {
     if (!stopping) consumer.flagReconciliation('feed_disconnected');
+    resolveClosed();
   });
   try {
     await connection.start();
@@ -72,11 +75,13 @@ export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
     throw error;
   }
   return {
+    closed,
     async close() {
       if (stopping) return;
       stopping = true;
       for (const [target, handler] of handlers) connection.off(target, handler);
       await connection.stop();
+      resolveClosed();
     },
   };
 }

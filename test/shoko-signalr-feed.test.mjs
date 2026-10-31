@@ -59,6 +59,8 @@ test('reconnection and terminal close flag missing-event reconciliation', async 
   connection.lifecycle.get('reconnecting')();
   await connection.lifecycle.get('reconnected')();
   connection.lifecycle.get('close')();
+  assert.equal(typeof feed.closed?.then, 'function');
+  await feed.closed;
   assert.deepEqual(flags, ['feed_started', 'feed_disconnected',
     'feed_reconnected', 'feed_disconnected']);
   assert.equal(connection.calls.filter((call) => call[0] === 'invoke').length, 2);

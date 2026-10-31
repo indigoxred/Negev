@@ -4,6 +4,8 @@ import { dateInZone, parseUserServerConfig } from './user-server-config.mjs';
 import { readPrivatePlexToken, readPrivateProwlarrKey,
   readPrivateShokoKey } from './private-shoko-key.mjs';
 import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
+import { createShokoFeedSupervisor } from
+  '../availability/shoko-feed-supervisor.mjs';
 import { createShokoInventoryScheduler } from
   '../availability/shoko-inventory-scheduler.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
@@ -12,7 +14,7 @@ import { createDirectAvailabilityScheduler } from
   '../availability/direct-availability-scheduler.mjs';
 
 let service;
-let shokoFeed;
+let shokoFeedSupervisor;
 let shokoInventory;
 let airingScheduler;
 let plexScheduler;
@@ -33,14 +35,18 @@ try {
   service = await createUserService({ ...config, plex, prowlarr,
     shokoApiKey, sessionKey,
     today: () => dateInZone(config.timeZone) });
-  if (config.shokoEvents) {
-    shokoFeed = await startShokoSignalRFeed({ baseUrl: config.shokoBaseUrl,
-      apiKey: shokoApiKey, consumer: {
-        accept: service.acceptShokoEvent,
-        flagReconciliation: service.flagShokoReconciliation,
-      } });
-  }
   await service.app.listen({ host: config.host, port: config.port });
+  if (config.shokoEvents) {
+    shokoFeedSupervisor = createShokoFeedSupervisor({
+      connect: () => startShokoSignalRFeed({ baseUrl: config.shokoBaseUrl,
+        apiKey: shokoApiKey, consumer: {
+          accept: service.acceptShokoEvent,
+          flagReconciliation: service.flagShokoReconciliation,
+        } }),
+      onGap: service.flagShokoReconciliation,
+    });
+    shokoFeedSupervisor.start();
+  }
   if (config.shokoInventory) {
     shokoInventory = createShokoInventoryScheduler({ tick: service.tickShokoInventory });
     shokoInventory.start();
@@ -73,7 +79,7 @@ try {
       await plexScheduler?.close();
       await directAvailabilityScheduler?.close();
       await shokoInventory?.close();
-      await shokoFeed?.close();
+      await shokoFeedSupervisor?.close();
     }
     finally { await service.close(); }
   };
@@ -85,7 +91,7 @@ try {
     await plexScheduler?.close();
     await directAvailabilityScheduler?.close();
     await shokoInventory?.close();
-    await shokoFeed?.close();
+    await shokoFeedSupervisor?.close();
   }
   finally { if (service) await service.close(); }
   process.stderr.write(`Negev user API failed to start (${error?.name ?? 'Error'}).\n`);
