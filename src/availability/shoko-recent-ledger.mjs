@@ -75,7 +75,8 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       if (batch?.state !== 'complete' || !validCursor(batch.newest) ||
           !Array.isArray(batch.fileIds) || batch.fileIds.length > 500 ||
           batch.fileIds.some((id) => !validId(id)) ||
-          new Set(batch.fileIds).size !== batch.fileIds.length) {
+          new Set(batch.fileIds).size !== batch.fileIds.length ||
+          batch.fileIds.length > 0 && batch.fileIds.at(-1) !== batch.newest.fileId) {
         return held('invalid_recent_batch');
       }
       db.exec('BEGIN IMMEDIATE');

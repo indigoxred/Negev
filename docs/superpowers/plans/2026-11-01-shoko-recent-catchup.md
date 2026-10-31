@@ -45,7 +45,7 @@
 
 - [x] Write failing tests for restart, duplicate replay, failed transaction, backlog overflow and no initial cursor.
 - [x] Implement the ledger without writing Shoko or Plex.
-- [ ] Run focused and full suites, commit and publish.
+- [x] Run focused and full suites, commit and publish.
 
 ### Task 3: Opt-in supervisor and installed gate
 

@@ -88,3 +88,13 @@ test('overlapping event and catch-up IDs deduplicate before advancing', async ()
     assert.deepEqual(ledger.nextDue(0), { fileId: 12 });
   });
 });
+
+test('a batch cannot advance past a newest file ID it failed to journal', async () => {
+  await withLedger(({ ledger }) => {
+    ledger.bootstrap(cursor(10));
+    assert.deepEqual(ledger.recordBatch({ state: 'complete', fileIds: [11],
+      newest: cursor(12) }), { state: 'held', reason: 'invalid_recent_batch' });
+    assert.deepEqual(ledger.getCursor(), cursor(10));
+    assert.equal(ledger.nextDue(0), null);
+  });
+});
