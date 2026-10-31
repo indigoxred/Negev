@@ -134,7 +134,7 @@ export function openTitleCheckLedger(dbPath) {
           anidbId: job.anidbId, generation: job.generation,
           version: job.version + 1,
           ...(job.state === 'loading' ? { page: job.nextPage } :
-            { episodeId: episode.episodeId }) };
+            { episodeId: episode.episodeId, kind: job.kind }) };
       });
     },
     recordPage({ claim: receipt, detail, checkedMs }) {
