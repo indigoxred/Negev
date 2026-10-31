@@ -25,6 +25,15 @@ test('a partial second chunk hashes the concatenated chunk digests', () => {
   );
 });
 
+test('two exact chunks use the modern ED2K boundary without an empty trailing chunk', () => {
+  // Independently calculated with OpenSSL's MD4: MD4(MD4(chunk) || MD4(chunk)).
+  // The historical eMule variant appends MD4(empty) and gives 114B21C6...
+  assert.equal(
+    ed2kBuffer(Buffer.alloc(CHUNK_SIZE * 2)),
+    '194EE9E4FA79B2EE9F8829284C466051',
+  );
+});
+
 test('file hashing streams the same bytes as buffer hashing', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-'));
   const file = path.join(dir, 'vector.bin');
