@@ -41,6 +41,37 @@ jobs:
             -c 'printf "synthetic-test-password\n" | node src/auth/init-admin.mjs && install -d -m 0700 /data/secrets && printf synthetic-key > /data/secrets/shoko.token && chmod 0600 /data/secrets/shoko.token && node src/web/user-server.mjs'
           for attempt in 1 2 3 4 5; do
             if docker exec negev-user-ci node -e "fetch('http://127.0.0.1:3000/health/live').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"; then
+              docker exec -i negev-user-ci node --input-type=module <<'NODE'
+          const base = 'http://127.0.0.1:3000';
+          const origin = 'http://localhost:3000';
+          const anonymous = await fetch(`${base}/api/requests`);
+          if (anonymous.status !== 401) throw new Error('Private requests are exposed');
+          const login = await fetch(`${base}/api/login`, {
+            method: 'POST', headers: { Origin: origin,
+              'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: 'Owner',
+              password: 'synthetic-test-password' }),
+          });
+          if (login.status !== 200) throw new Error('Image login failed');
+          const cookie = login.headers.get('set-cookie')?.split(';')[0];
+          if (!cookie) throw new Error('Image session cookie missing');
+          const session = await fetch(`${base}/api/session`, {
+            headers: { Cookie: cookie },
+          });
+          const account = await session.json();
+          if (session.status !== 200 || account.user?.role !== 'admin' ||
+              !account.csrfToken || account.capabilities?.releaseSearch ||
+              account.capabilities?.availabilityChecks) {
+            throw new Error('Image session capabilities incorrect');
+          }
+          const requests = await fetch(`${base}/api/requests`, {
+            headers: { Cookie: cookie },
+          });
+          if (requests.status !== 200 ||
+              !Array.isArray((await requests.json()).items)) {
+            throw new Error('Image request list failed');
+          }
+          NODE
               docker stop negev-user-ci
               exit 0
             fi
