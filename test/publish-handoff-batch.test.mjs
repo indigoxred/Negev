@@ -8,6 +8,7 @@ import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs
 import { prepareHandoffBatch } from '../src/acquisition/prepare-handoff-batch.mjs';
 import { publishPreparedHandoff } from '../src/acquisition/publish-handoff-batch.mjs';
 import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-handoff.mjs';
+import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
 async function withBatch(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
@@ -133,8 +134,8 @@ test('one final exact check exposes a complete directory, then observes it on re
     const restored = restorePreparedHandoff({ attemptId: 1,
       handoff: structuredClone(sample.ledger.getHandoff()) });
     assert.equal(restored.state, 'handoff_prepared');
-    const result = await publishPreparedHandoff({ ...sample,
-      prepared: restored, attemptId: 1, nowMs: 500 });
+    const result = await processRecordedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500 });
     assert.equal(result.state, 'publish_unknown', JSON.stringify({ result,
       begins: sample.getBegins(), entries: await readdir(sample.importRoot) }));
     assert.equal(sample.getBegins(), 1);
@@ -144,8 +145,8 @@ test('one final exact check exposes a complete directory, then observes it on re
     assert.deepEqual(await readFile(path.join(sample.importRoot, sample.publishName, '01.en.srt')),
       sample.subtitle);
     assert.deepEqual(await readdir(sample.holdingRoot), []);
-    assert.deepEqual(await publishPreparedHandoff({ ...sample,
-      prepared: restored, attemptId: 1, nowMs: 501 }),
+    assert.deepEqual(await processRecordedHandoff({ ...sample,
+      attemptId: 1, nowMs: 501 }),
       { state: 'published_observed', destination: path.join(sample.importRoot, sample.publishName) });
     assert.equal(sample.getBegins(), 1);
     assert.equal(sample.getObservations(), 1);
@@ -164,6 +165,15 @@ test('restart reconstruction rejects a damaged journal before publication', asyn
       { state: 'held', reason: 'handoff_evidence_mismatch' });
     assert.deepEqual(restorePreparedHandoff({ attemptId: 2, handoff: saved }),
       { state: 'held', reason: 'handoff_evidence_mismatch' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
+test('recorded publisher holds before provider work when its journal is missing', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      ledger: { getHandoff: () => null }, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'held', reason: 'handoff_missing' });
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));

@@ -8,6 +8,8 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
+import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
+import { previewAniDbRelease } from '../src/identity/shoko-preview.mjs';
 import { createCompletionWorker, openCompletionQueue } from '../src/acquisition/completion-queue.mjs';
 
 const torrentHash = 'a'.repeat(40);
@@ -168,3 +170,25 @@ test('one durable completion tick reaches a verified private handoff', async () 
     } finally { queue.close(); }
   });
 });
+
+test('a reopened handoff journal can publish once and observe the exact destination',
+  { skip: process.platform === 'win32' ? 'Windows sandbox denies directory rename' : false },
+  async () => fixture(async (context) => {
+    const { dbPath, attemptId, config, holdingRoot, importRoot } = context;
+    const prepared = await processCompletedAttempt({ ...context, ...config });
+    assert.equal(prepared.state, 'handoff_prepared');
+    const reopened = openHandoffLedger(dbPath);
+    const lookup = ({ ed2k, size }) => previewAniDbRelease({
+      baseUrl: config.shoko.baseUrl, providerId: config.shoko.providerId,
+      apiKey: config.shoko.apiKey, ed2k, size, fetchImpl: config.fetchImpl });
+    try {
+      const first = await processRecordedHandoff({ attemptId, ledger: reopened,
+        holdingRoot, importRoot, lookup, nowMs: 207, readPacer: config.readPacer });
+      assert.equal(first.state, 'publish_unknown');
+      const second = await processRecordedHandoff({ attemptId, ledger: reopened,
+        holdingRoot, importRoot, lookup, nowMs: 208, readPacer: config.readPacer });
+      assert.equal(second.state, 'published_observed');
+      assert.deepEqual(await readdir(importRoot),
+        [reopened.getHandoff(attemptId).publishName]);
+    } finally { reopened.close(); }
+  }));
