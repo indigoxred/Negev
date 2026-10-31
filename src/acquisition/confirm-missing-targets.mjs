@@ -40,6 +40,14 @@ export async function confirmMissingTargets({ request, episodeIds,
       checkedAtMs - snapshot.observedAtMs > 30_000) {
     return held('availability_evidence_stale');
   }
+  // A scoped Plex part with no Shoko file identity may be a manual import
+  // still awaiting Shoko recognition. It cannot authorize a duplicate grab.
+  if (snapshot.shoko?.state === 'ok' && snapshot.shoko.complete === true &&
+      snapshot.plex?.state === 'ok' && snapshot.plex.complete === true &&
+      Array.isArray(snapshot.shoko.files) && snapshot.shoko.files.length === 0 &&
+      Array.isArray(snapshot.plex.parts) && snapshot.plex.parts.length > 0) {
+    return held('unattributed_plex_part');
+  }
   for (const episodeId of episodeIds) {
     const result = evaluateExactAvailability({
       target: { anidbId: request.anidbId, episodeId },

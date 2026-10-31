@@ -67,6 +67,16 @@ test('incomplete, stale, or unrelated observations never authorize a grab', asyn
     assert.equal(acquisitions.getAttempt(1), null);
   }));
 
+test('a Plex part without a Shoko identity blocks acquisition as a possible pending import', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001, 1002], readEvidence: async () => evidence({
+        plex: { state: 'ok', complete: true, parts: [part] },
+      }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held', reason: 'unattributed_plex_part' });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
 test('freshness clock is read after the observer finishes', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     let observed = false;
