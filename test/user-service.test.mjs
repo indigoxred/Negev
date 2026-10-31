@@ -140,10 +140,73 @@ test('concurrent catalogue reads do not pile up on Shoko', async () => {
       url: '/api/catalogue/search?q=Another', headers: { cookie } });
     assert.equal(busy.statusCode, 503);
     assert.equal(calls, 1);
+    assert.deepEqual(await service.tickShokoInventory(),
+      { state: 'held', reason: 'file_page_unavailable' });
+    assert.equal(calls, 1);
     release(json({ Total: 0, List: [] }));
     assert.equal((await first).statusCode, 200);
   } finally {
     await service?.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('account service records one Shoko direct-import page without dispatching acquisition', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-inventory-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let service;
+  let calls = 0;
+  try {
+    service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false, fetchImpl: async (url, init) => {
+        calls++;
+        assert.equal(url.pathname, '/api/v3/File');
+        assert.equal(init.method, 'GET');
+        return json({ Total: 1, List: [{ ID: 10, Updated: '2026-10-31T00:00:00Z',
+          SeriesIDs: [{ SeriesID: { AniDB: 42 }, EpisodeIDs: [{ AniDB: 1001 }] }] }] });
+      } });
+    assert.equal((await service.tickShokoInventory()).state, 'recorded');
+    assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    assert.equal(calls, 1);
+    await service.close();
+    service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false,
+      fetchImpl: async () => { throw new Error('No scan on startup'); } });
+    assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    assert.equal(calls, 1);
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('service shutdown drains an in-flight inventory page before closing SQLite', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-inventory-drain-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let release;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
+    shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false, fetchImpl: async () => {
+      entered();
+      return new Promise((resolve) => { release = resolve; });
+    } });
+  try {
+    const tick = service.tickShokoInventory();
+    await started;
+    let closed = false;
+    const closing = service.close().then(() => { closed = true; });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(closed, false);
+    release(json({ Total: 0, List: [] }));
+    assert.equal((await tick).state, 'recorded');
+    await closing;
+    assert.equal(closed, true);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
