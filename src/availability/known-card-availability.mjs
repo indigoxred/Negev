@@ -25,13 +25,18 @@ const localPath = (remote, mapping) => {
 // positive evidence only: missing cards, Shoko 404s and incomplete key
 // discovery cannot prove absence or authorize acquisition.
 export async function observeKnownCardAvailability({ target, shoko, plex,
-  publicLibraryIds, shokoMount, plexMount, maxChecks = 64,
+  publicLibraryIds, shokoMount, plexMount, plexMounts, maxChecks = 64,
   proveImpl = provePhysicalPlexPart } = {}) {
+  const mounts = plexMounts ?? (plexMount ? [plexMount] : []);
   if (!Number.isSafeInteger(target?.anidbId) || target.anidbId <= 0 ||
       !Number.isSafeInteger(target.episodeId) || target.episodeId <= 0 ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length === 0 ||
       publicLibraryIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
-      !validMount(shokoMount) || !validMount(plexMount) ||
+      !validMount(shokoMount) || !Array.isArray(mounts) ||
+      mounts.length < 1 || mounts.length > 8 ||
+      mounts.some((mapping) => !validMount(mapping)) ||
+      mounts.some((mapping, index) => mounts.some((other, otherIndex) =>
+        index !== otherIndex && inside(mapping.appRoot, other.appRoot))) ||
       !Number.isSafeInteger(maxChecks) || maxChecks < 0 || maxChecks > 256 ||
       typeof proveImpl !== 'function') throw new TypeError('Invalid availability mounts or budget');
   if (shoko?.state !== 'ok' || typeof shoko.complete !== 'boolean' ||
@@ -60,13 +65,14 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
       if (!shokoPath) return unknown('path_mapping_failed');
       for (const part of plex.parts) {
         if (!publicIds.has(part.libraryId) || part.size !== file.size) continue;
-        const plexPath = localPath(part.plexPath, plexMount);
+        const mapping = mounts.find((entry) => localPath(part.plexPath, entry));
+        const plexPath = mapping && localPath(part.plexPath, mapping);
         if (!plexPath) return unknown('path_mapping_failed');
         if (++checks > maxChecks) return unknown('comparison_budget_exceeded');
         let witness;
         try {
           witness = await proveImpl({ shokoPath, plexPath,
-            shokoRoot: shokoMount.localRoot, plexRoot: plexMount.localRoot,
+            shokoRoot: shokoMount.localRoot, plexRoot: mapping.localRoot,
             expectedSize: file.size });
         } catch { return unknown('physical_evidence_incomplete'); }
         if (witness?.state === 'same_file' && typeof witness.storageKey === 'string' &&

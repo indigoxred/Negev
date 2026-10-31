@@ -7,7 +7,7 @@ const unknown = (reason) => ({ state: 'unknown', reason });
 // observer. A selected card is never negative proof of the rest of a library.
 // A caller must not use this result to authorize a missing-target acquisition.
 export async function observePublicTarget({ target, publicLibraryIds, knownCards,
-  shokoMount, plexMount, readShoko, readPlex, proveImpl } = {}) {
+  shokoMount, plexMount, plexMounts, readShoko, readPlex, proveImpl } = {}) {
   if (!validId(target?.anidbId) || !validId(target.episodeId) ||
       !['series', 'movie'].includes(target.kind) ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
@@ -50,7 +50,8 @@ export async function observePublicTarget({ target, publicLibraryIds, knownCards
   }
   const result = await observeKnownCardAvailability({ target, shoko,
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds,
-    shokoMount, plexMount, ...(proveImpl ? { proveImpl } : {}) });
+    shokoMount, plexMount, plexMounts,
+    ...(proveImpl ? { proveImpl } : {}) });
   if (result.state === 'available') return result;
   if (incomplete) return unknown('observer_incomplete');
   if (result.state === 'held') return result;

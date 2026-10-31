@@ -6,7 +6,7 @@ const unknown = (reason) => ({ state: 'unknown', reason });
 // again and physically compared with the fresh Shoko file before Available.
 // An empty or stale index has no negative meaning.
 export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex,
-  readShoko, readPlex, shokoMount, plexMount, proveImpl } = {}) {
+  readShoko, readPlex, shokoMount, plexMount, plexMounts, proveImpl } = {}) {
   if (typeof cardIndex?.lookupCards !== 'function' ||
       typeof readShoko !== 'function' || typeof readPlex !== 'function') {
     throw new TypeError('Invalid indexed availability observer');
@@ -30,7 +30,7 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
       selected.cards.length === 0) return unknown('card_discovery_incomplete');
   try {
     return await observePublicTarget({ target, publicLibraryIds,
-      knownCards: selected.cards, shokoMount, plexMount,
+      knownCards: selected.cards, shokoMount, plexMount, plexMounts,
       readShoko: async () => shoko, readPlex, proveImpl });
   } catch { return unknown('observer_incomplete'); }
 }

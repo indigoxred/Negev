@@ -18,7 +18,7 @@ const validSections = (sections) => sections &&
 // service credentials. Nothing schedules its ticks or exposes it to users yet.
 export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   shokoApiKey, plexBaseUrl, plexToken, publicSections, shokoMount,
-  plexMount, fetchImpl = fetch, now = Date.now } = {}) {
+  plexMount, plexMounts, fetchImpl = fetch, now = Date.now } = {}) {
   if (!validSections(publicSections) ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
@@ -52,7 +52,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         return Promise.resolve({ state: 'unknown', reason: 'public_library_unconfigured' });
       }
       return observeIndexedTarget({ target, publicLibraryIds,
-        cardIndex: index, shokoMount, plexMount,
+        cardIndex: index, shokoMount, plexMount, plexMounts,
         readShoko: (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, ...input, fetchImpl }),
         readPlex: (input) => readPlexItemParts({ baseUrl: plexBaseUrl,

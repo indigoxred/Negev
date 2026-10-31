@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { readShokoEpisodeFiles } from '../src/availability/shoko-episode-files.mjs';
@@ -121,3 +121,49 @@ test('mount mismatch and a bounded comparison budget fail closed', async () => {
   assert.deepEqual(await observeKnownCardAvailability({ ...input, maxChecks: 0 }),
     { state: 'unknown', reason: 'comparison_budget_exceeded' });
 });
+
+test('a public Part under a second explicit Plex mount can be checked', async () => {
+  const input = await fixture();
+  const relayRoot = path.resolve(input.plexMount.localRoot, '..', 'relay');
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    plexPath: '/relay/Anime/Example/01.mkv' }] };
+  const seen = [];
+  const result = await observeKnownCardAvailability({ ...input, plex,
+    plexMounts: [input.plexMount,
+      { appRoot: '/relay', localRoot: relayRoot }],
+    proveImpl: async (candidate) => {
+      seen.push(candidate);
+      return { state: 'same_file', storageKey: '1:2:5' };
+    } });
+  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.equal(seen[0].plexRoot, relayRoot);
+  assert.equal(seen[0].plexPath, path.join(relayRoot, 'Anime', 'Example', '01.mkv'));
+});
+
+test('unmapped or overlapping Plex roots cannot silently select a file', async () => {
+  const input = await fixture();
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    plexPath: '/unknown/Anime/Example/01.mkv' }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, plex,
+    plexMounts: [input.plexMount] }),
+  { state: 'unknown', reason: 'path_mapping_failed' });
+  await assert.rejects(observeKnownCardAvailability({ ...input,
+    plexMounts: [input.plexMount, { appRoot: '/source-pure/Anime',
+      localRoot: path.resolve('other') }] }), TypeError);
+});
+
+test('a second Plex mount with a symlink to the Shoko file proves physical identity',
+  { skip: process.platform === 'win32' }, async () => {
+    const input = await fixture();
+    const relayRoot = await mkdtemp(path.join(os.tmpdir(), 'negev-relay-card-'));
+    cleanup.push(relayRoot);
+    await mkdir(path.join(relayRoot, 'Anime', 'Example'), { recursive: true });
+    await symlink(path.join(input.shokoMount.localRoot, 'Anime', 'Example', '01.mkv'),
+      path.join(relayRoot, 'Anime', 'Example', '01.mkv'));
+    const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+      plexPath: '/relay/Anime/Example/01.mkv' }] };
+    assert.deepEqual(await observeKnownCardAvailability({ ...input, plex,
+      plexMounts: [input.plexMount,
+        { appRoot: '/relay', localRoot: relayRoot }] }),
+    { state: 'available', fileId: 51 });
+  });
