@@ -127,6 +127,13 @@ export function dateInZone(timeZone, instant = new Date()) {
 // or public-availability worker and does not replace the private diagnostic.
 export function parseUserServerConfig(env) {
   if (env?.NEGEV_USER_SERVER !== '1') throw new TypeError('User server mode required');
+  if (env.NEGEV_ACQUISITION_RUNTIME != null &&
+      !['0', '1'].includes(env.NEGEV_ACQUISITION_RUNTIME)) {
+    throw new TypeError('Invalid acquisition runtime flag');
+  }
+  if (env.NEGEV_ACQUISITION_RUNTIME === '1') {
+    throw new TypeError('Acquisition runtime is unavailable until installed safety gates pass');
+  }
   const dataDir = env.NEGEV_DATA_DIR;
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir) ||
       path.normalize(dataDir) !== dataDir || dataDir.includes('\0')) {
@@ -179,6 +186,7 @@ export function parseUserServerConfig(env) {
   const port = Number(rawPort);
   if (port > 65_535) throw new TypeError('Invalid user server port');
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
+    acquisitionRuntime: false,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',

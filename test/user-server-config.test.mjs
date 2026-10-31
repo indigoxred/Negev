@@ -95,6 +95,15 @@ test('incomplete or ambiguous user-server configuration fails closed', () => {
   ]) assert.throws(() => parseUserServerConfig({ ...valid, ...change }), TypeError);
 });
 
+test('acquisition cannot be advertised as enabled before installed safety gates pass', () => {
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_ACQUISITION_RUNTIME: '1' }), /Acquisition runtime is unavailable/);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_ACQUISITION_RUNTIME: 'yes' }), TypeError);
+  assert.equal(parseUserServerConfig({ ...valid,
+    NEGEV_ACQUISITION_RUNTIME: '0' }).acquisitionRuntime, false);
+});
+
 test('Airing date uses the configured local calendar day', () => {
   const moment = new Date('2026-10-31T13:30:00Z');
   assert.equal(dateInZone('Australia/Sydney', moment), '2026-11-01');
