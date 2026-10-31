@@ -8,9 +8,10 @@ function hasTestToken(header, token) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-// Private catalogue contract prototype. No listener, accounts, requests,
-// download controls, or production authentication are provided here.
-export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle, titleRegistry }) {
+// Private catalogue contract prototype. No accounts, download controls, or
+// production authentication are provided here.
+export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle,
+  titleRegistry, submitRequest, readRequest }) {
   if (typeof testToken !== 'string' || testToken.length < 16 || typeof searchTitles !== 'function') {
     throw new TypeError('Invalid private test app configuration');
   }
@@ -74,6 +75,29 @@ export function buildTestApp({ testToken, searchTitles, loadDetail, hydrateTitle
     if (result.state === 'pending') return reply.code(202).send(result);
     if (result.state === 'detail_ready') return result;
     return reply.code(409).send(result);
+  });
+
+  app.post('/api/requests', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof submitRequest !== 'function') return reply.code(503).send({ error: 'Requests unavailable' });
+    const body = request.body;
+    const allowed = new Set(['anidbId', 'scope', 'episodeIds', 'requestKey']);
+    if (!body || typeof body !== 'object' || Array.isArray(body) ||
+        Object.keys(body).some((key) => !allowed.has(key))) {
+      return reply.code(400).send({ error: 'Invalid request' });
+    }
+    const result = await submitRequest(body);
+    if (result.state === 'held' && Number.isSafeInteger(result.requestId)) return reply.code(202).send(result);
+    return reply.code(result.reason === 'invalid_request' ? 400 : 409).send(result);
+  });
+
+  app.get('/api/requests/:id', { preHandler: requireTestToken }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof readRequest !== 'function') return reply.code(503).send({ error: 'Requests unavailable' });
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ error: 'Invalid request ID' });
+    const result = readRequest(id);
+    return result ?? reply.code(404).send({ error: 'Request not found' });
   });
 
   return app;

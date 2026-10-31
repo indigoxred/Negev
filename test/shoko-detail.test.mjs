@@ -3,8 +3,10 @@ import test from 'node:test';
 import { loadAniDbDetail } from '../src/catalogue/shoko-detail.mjs';
 
 const config = { baseUrl: 'http://shoko.internal:8111', apiKey: 'synthetic-key', anidbId: 1234 };
-const anime = { ID: 1234, Title: 'Example Anime', Type: 'TV', EndDate: null };
-const episode = { ID: 1001, AnimeID: 1234, Type: 'Episode', EpisodeNumber: 1, Title: 'First' };
+const anime = { ID: 1234, Title: 'Example Anime', Type: 'TV', AirDate: '2026-10-01',
+  EndDate: null, EpisodeCount: 2, Restricted: false };
+const episode = { ID: 1001, AnimeID: 1234, Type: 'Episode', EpisodeNumber: 1,
+  AirDate: '2026-10-01', Title: 'First' };
 
 test('loads exact AniDB episode IDs including missing and unaired entries', async () => {
   const calls = [];
@@ -20,10 +22,11 @@ test('loads exact AniDB episode IDs including missing and unaired entries', asyn
   assert.equal(calls[1].init.headers.Authorization, 'Bearer synthetic-key');
   assert.deepEqual(result, {
     state: 'details', anidbId: 1234, title: 'Example Anime', kind: 'series',
+    airDate: '2026-10-01', endDate: null, episodeCount: 2, restricted: false,
     total: 2, page: 1, complete: true, nextPage: null,
     episodes: [
-      { id: 1001, number: 1, type: 'Episode', title: 'First' },
-      { id: 1002, number: 2, type: 'Episode', title: '' },
+      { id: 1001, number: 1, type: 'Episode', title: 'First', airDate: '2026-10-01' },
+      { id: 1002, number: 2, type: 'Episode', title: '', airDate: '2026-10-01' },
     ],
     requestable: false,
   });

@@ -20,7 +20,11 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
         !['movie', 'series'].includes(result.kind) ||
         typeof result.title !== 'string' || !result.title.trim()) return invalid;
     if (!first) first = result;
-    if (result.total !== first.total || result.title !== first.title || result.kind !== first.kind) {
+    if (result.total !== first.total || result.title !== first.title || result.kind !== first.kind ||
+        (result.airDate ?? null) !== (first.airDate ?? null) ||
+        (result.endDate ?? null) !== (first.endDate ?? null) ||
+        (result.episodeCount ?? null) !== (first.episodeCount ?? null) ||
+        (result.restricted ?? null) !== (first.restricted ?? null)) {
       return invalid;
     }
     for (const episode of result.episodes) {
@@ -39,6 +43,8 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
     if (result.nextPage === null) {
       if (episodes.length !== result.total) return invalid;
       return { state: 'details', anidbId, title: first.title, kind: first.kind,
+        airDate: first.airDate ?? null, endDate: first.endDate ?? null,
+        episodeCount: first.episodeCount ?? null, restricted: first.restricted ?? null,
         total: first.total, page: 1, complete: true, nextPage: null,
         episodes, requestable: false };
     }

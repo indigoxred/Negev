@@ -35,6 +35,16 @@ test('inconsistent identity, total or repeated episode ID fails closed', async (
   }
 });
 
+test('release metadata changing between pages fails closed', async () => {
+  const first = { ...page(1, [episode(1), episode(2)], 3, 2),
+    airDate: '2026-10-01', restricted: false };
+  const second = { ...page(2, [episode(3)]),
+    airDate: '2026-10-02', restricted: false };
+  assert.deepEqual(await collectAniDbDetail({ anidbId: 1234,
+    loadPage: async ({ page: n }) => n === 1 ? first : second }),
+  { state: 'invalid_detail_evidence' });
+});
+
 test('a bounded pagination stop remains incomplete and never refreshes metadata', async () => {
   const result = await collectAniDbDetail({ anidbId: 1234, maxPages: 1,
     loadPage: async () => page(1, [episode(1)], 3, 2) });

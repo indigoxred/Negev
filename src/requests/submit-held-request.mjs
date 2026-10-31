@@ -1,0 +1,37 @@
+import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
+import { planRequest } from './plan-request.mjs';
+
+const held = (reason) => ({ state: 'held', reason });
+
+// Diagnostic-only request orchestration. It never searches an indexer or
+// dispatches qBittorrent. The authenticated caller supplies requesterId.
+export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, now, today }) {
+  if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+      typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
+      typeof now !== 'function' || typeof today !== 'function') {
+    throw new TypeError('Invalid held-request configuration');
+  }
+  return async ({ requesterId, anidbId, scope, episodeIds, requestKey }) => {
+    if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
+        !Number.isSafeInteger(anidbId) || anidbId <= 0 ||
+        !['installment', 'episodes'].includes(scope) ||
+        typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
+        (scope === 'installment' && episodeIds !== undefined) ||
+        (scope === 'episodes' && (!Array.isArray(episodeIds) || episodeIds.length === 0 ||
+          episodeIds.length > 2_000 || episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0)))) {
+      return held('invalid_request');
+    }
+    if (!titleRegistry.isKnownTitle({ anidbId })) return held('unknown_title');
+    const detail = await collectAniDbDetail({ anidbId, loadPage: loadDetail });
+    if (detail.state !== 'details') {
+      return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');
+    }
+    if (detail.restricted !== false) return held('restricted_or_unverified');
+    const release = inferReleaseState({ ...detail, today: today() });
+    if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
+    const intent = planRequest({ detail, releaseState: release.state, scope, episodeIds });
+    if (intent.state !== 'ready') return intent;
+    return ledger.submit({ requesterId, requestKey, intent, nowMs: now() });
+  };
+}

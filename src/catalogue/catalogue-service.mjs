@@ -5,20 +5,25 @@ import { createObservedTitleRegistry } from './observed-title-registry.mjs';
 import { loadAniDbDetail } from './shoko-detail.mjs';
 import { requestAniDbHydration } from './shoko-hydration.mjs';
 import { searchAniDbTitles } from './shoko-search.mjs';
+import { openRequestLedger } from '../requests/request-ledger.mjs';
+import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 
-// An injectable private prototype. No listener, account system, request
-// creation, download client or production configuration is provided here.
+// An injectable private prototype. No listener, account system, download
+// client or production configuration is provided here.
 export function createCatalogueTestService({
   shokoBaseUrl, shokoApiKey, dbPath, testToken, fetchImpl = fetch, now = Date.now,
+  today = () => new Date().toISOString().slice(0, 10),
 }) {
   if (typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof dbPath !== 'string' || !dbPath ||
-      typeof fetchImpl !== 'function' || typeof now !== 'function') {
+      typeof fetchImpl !== 'function' || typeof now !== 'function' || typeof today !== 'function') {
     throw new TypeError('Invalid private catalogue service configuration');
   }
   const ledger = openHydrationLedger(dbPath);
+  let requestLedger;
   try {
+    requestLedger = openRequestLedger(dbPath);
     const titleRegistry = createObservedTitleRegistry({ now });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
@@ -30,6 +35,9 @@ export function createCatalogueTestService({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
       }),
     });
+    const submitHeld = createHeldRequestSubmitter({
+      titleRegistry, loadDetail, ledger: requestLedger, now, today,
+    });
     const app = buildTestApp({
       testToken, titleRegistry,
       searchTitles: ({ query, page }) => searchAniDbTitles({
@@ -37,15 +45,21 @@ export function createCatalogueTestService({
       }),
       loadDetail,
       hydrateTitle: (input) => hydrator.load(input),
+      submitRequest: (input) => submitHeld({ ...input, requesterId: 1 }),
+      readRequest: (id) => {
+        const request = requestLedger.getRequest(id);
+        return request?.requesterId === 1 ? request : null;
+      },
     });
     return {
       app,
       async close() {
         try { await app.close(); }
-        finally { ledger.close(); }
+        finally { requestLedger.close(); ledger.close(); }
       },
     };
   } catch (error) {
+    requestLedger?.close();
     ledger.close();
     throw error;
   }

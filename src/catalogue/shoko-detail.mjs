@@ -41,6 +41,12 @@ export async function loadAniDbDetail({
   if (anime?.ID !== anidbId || typeof anime.Title !== 'string' || !anime.Title.trim()) {
     return { state: 'unavailable' };
   }
+  if ((anime.AirDate != null && typeof anime.AirDate !== 'string') ||
+      (anime.EndDate != null && typeof anime.EndDate !== 'string') ||
+      (anime.EpisodeCount != null && (!Number.isSafeInteger(anime.EpisodeCount) || anime.EpisodeCount < 0)) ||
+      (anime.Restricted != null && typeof anime.Restricted !== 'boolean')) {
+    return { state: 'unavailable' };
+  }
   const kind = anime.Type === 'Movie' ? 'movie' : SERIES_TYPES.has(anime.Type) ? 'series' : null;
   if (!kind) return { state: 'detail_pending', anidbId };
 
@@ -57,15 +63,19 @@ export async function loadAniDbDetail({
       !Array.isArray(data.List) || data.List.length > pageSize ||
       data.List.some((ep) => !Number.isSafeInteger(ep?.ID) || ep.ID <= 0 ||
         ep.AnimeID !== anidbId || !Number.isSafeInteger(ep.EpisodeNumber) || ep.EpisodeNumber <= 0 ||
-        typeof ep.Type !== 'string' || typeof ep.Title !== 'string')) {
+        typeof ep.Type !== 'string' || typeof ep.Title !== 'string' ||
+        (ep.AirDate != null && typeof ep.AirDate !== 'string'))) {
     return { state: 'unavailable' };
   }
   return {
     state: 'details', anidbId, title: anime.Title, kind,
+    airDate: anime.AirDate ?? null, endDate: anime.EndDate ?? null,
+    episodeCount: anime.EpisodeCount ?? null, restricted: anime.Restricted ?? null,
     total: data.Total, page,
     complete: page === 1 && data.List.length === data.Total,
     nextPage: page * pageSize < data.Total ? page + 1 : null,
-    episodes: data.List.map((ep) => ({ id: ep.ID, number: ep.EpisodeNumber, type: ep.Type, title: ep.Title })),
+    episodes: data.List.map((ep) => ({ id: ep.ID, number: ep.EpisodeNumber,
+      type: ep.Type, title: ep.Title, airDate: ep.AirDate ?? null })),
     requestable: false,
   };
 }
