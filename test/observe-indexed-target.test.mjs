@@ -49,17 +49,49 @@ test('physical identity avoids an overloaded size lookup but still requires fres
 });
 
 test('keyed candidate is not Available when fresh physical proof disagrees', async () => {
-  const result = await observeIndexedTarget({ ...base,
+  for (const reason of ['different_file', 'file_unavailable']) {
+    const result = await observeIndexedTarget({ ...base,
+      readShoko: async () => shoko,
+      probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+      proveImpl: async () => ({ state: 'held', reason }),
+      cardIndex: {
+        lookupCards: () => { throw new Error('size lookup is overloaded'); },
+        lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+          { libraryId: 102, ratingKey: 500 }] }),
+      },
+    });
+    assert.equal(result.state, 'unknown');
+  }
+});
+
+test('stale key, missing mount and overloaded fallback cannot imply availability', async () => {
+  const keyed = { lookupCards: () => ({ state: 'held',
+    reason: 'candidate_budget_exceeded' }),
+  lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+    { libraryId: 102, ratingKey: 500 }] }) };
+  const stale = await observeIndexedTarget({ ...base,
     readShoko: async () => shoko,
     probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
-    proveImpl: async () => ({ state: 'held', reason: 'different_file' }),
-    cardIndex: {
-      lookupCards: () => { throw new Error('size lookup is overloaded'); },
-      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
-        { libraryId: 102, ratingKey: 500 }] }),
-    },
-  });
-  assert.equal(result.state, 'unknown');
+    readPlex: async () => ({ state: 'ok', complete: true, parts: [
+      { ...((await base.readPlex()).parts[0]), itemGuid: 'wrong-show' }] }),
+    cardIndex: keyed });
+  assert.equal(stale.state, 'unknown');
+  const unavailable = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'held', reason: 'file_unavailable' }),
+    cardIndex: keyed });
+  assert.deepEqual(unavailable, { state: 'unknown',
+    reason: 'card_discovery_incomplete' });
+  const missingMount = await observeIndexedTarget({ ...base,
+    shokoMount: undefined, readShoko: async () => shoko,
+    cardIndex: keyed });
+  assert.equal(missingMount.state, 'unknown');
+  const collision = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    cardIndex: { ...keyed, lookupCardsByCandidateKey: () => ({ state: 'held',
+      reason: 'candidate_budget_exceeded' }) } });
+  assert.equal(collision.state, 'unknown');
 });
 
 test('movie target also checks native Anime episode candidates', async () => {
