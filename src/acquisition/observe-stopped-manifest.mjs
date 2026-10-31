@@ -20,7 +20,7 @@ export async function observeStoppedManifest({
   const read = async (endpoint, parameter, maxChars) => {
     const url = new URL(`/api/v2/torrents/${endpoint}`, base);
     url.searchParams.set(parameter, expected.hash);
-    const response = await fetchImpl(url, { method: 'GET', headers,
+    const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     const body = await response.text();

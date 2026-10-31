@@ -37,6 +37,8 @@ export function openAcquisitionLedger(dbPath) {
       .some((column) => column.name === 'expected_hash')) {
       db.exec('ALTER TABLE acquisition_attempts ADD COLUMN expected_hash TEXT');
     }
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS acquisition_expected_hash
+      ON acquisition_attempts(expected_hash) WHERE expected_hash IS NOT NULL`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_target_claims (
       attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
@@ -53,6 +55,7 @@ export function openAcquisitionLedger(dbPath) {
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
   const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
   const busyTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? AND active=1');
+  const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
     (request_id,anidb_id,indexer_id,candidate_digest,status,created_ms,updated_ms)
     VALUES (?,?,?,?,'reserved',?,?)`);
@@ -117,6 +120,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         const normalizedHash = hash.toLowerCase();
         if (row.expected_hash && row.expected_hash !== normalizedHash) return held('torrent_conflict');
+        if (busyHash.get(normalizedHash, attemptId)) return held('torrent_claimed');
         if (row.status === 'reserved' && !row.expected_hash) {
           prepare.run(normalizedHash, nowMs, attemptId);
           return { state: 'prepared', expectedHash: normalizedHash };

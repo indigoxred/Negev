@@ -100,6 +100,23 @@ test('prepared hash is bound durably to the exact reserved candidate', async () 
     } finally { ledger.close(); }
   }));
 
+test('two disjoint requests cannot claim the same torrent hash', async () =>
+  withLedger(async ({ dbPath, firstId, thirdId }) => {
+    const one = openAcquisitionLedger(dbPath);
+    const two = openAcquisitionLedger(dbPath);
+    try {
+      const first = one.reserve({ requestId: firstId, candidate, nowMs: 200 });
+      const other = { indexerId: 8, guid: 'different-indexer-same-torrent' };
+      const third = two.reserve({ requestId: thirdId, candidate: other, nowMs: 201 });
+      assert.equal(third.state, 'reserved');
+      assert.equal(one.bindPreparedTorrent({ attemptId: first.attemptId,
+        candidate, hash: 'a'.repeat(40), nowMs: 202 }).state, 'prepared');
+      assert.deepEqual(two.bindPreparedTorrent({ attemptId: third.attemptId,
+        candidate: other, hash: 'a'.repeat(40), nowMs: 203 }),
+      { state: 'held', reason: 'torrent_claimed' });
+    } finally { one.close(); two.close(); }
+  }));
+
 test('two connections cannot reserve competing candidates for one target', async () =>
   withLedger(async ({ dbPath, firstId, secondId }) => {
     const one = openAcquisitionLedger(dbPath);

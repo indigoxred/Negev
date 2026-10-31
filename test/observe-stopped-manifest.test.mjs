@@ -19,7 +19,7 @@ test('reads the exact stopped torrent and file list twice before accepting the m
     '/api/v2/torrents/info', '/api/v2/torrents/files', '/api/v2/torrents/info', '/api/v2/torrents/files',
   ]);
   assert.equal(calls.every((call) => call.init.method === 'GET' &&
-    call.init.headers.Cookie === 'SID=syntheticSID'), true);
+    call.init.headers.Cookie === 'SID=syntheticSID' && call.init.redirect === 'manual'), true);
   assert.equal(calls[0].url.searchParams.get('hashes'), expected.hash);
   assert.equal(calls[1].url.searchParams.get('hash'), expected.hash);
   assert.deepEqual(result, { state: 'manifest_safe', videos: [{ index: 0, name: 'Show/01.mkv', size: 1_000 }], subtitles: [] });
