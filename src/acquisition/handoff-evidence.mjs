@@ -15,6 +15,7 @@ export function evaluateHandoffEvidence(input, { maxVideoBytes = 64 * 1024 ** 3 
       !Array.isArray(input.subtitles) || input.subtitles.length > 50) return held;
   const names = new Set();
   const fileIds = new Set();
+  const episodeIds = new Set();
   const subtitleIndexes = new Set();
   let videoBytes = 0;
   let subtitleBytes = 0;
@@ -26,10 +27,12 @@ export function evaluateHandoffEvidence(input, { maxVideoBytes = 64 * 1024 ** 3 
         !Number.isSafeInteger(file.anidbFileId) || file.anidbFileId < 1 ||
         fileIds.has(file.anidbFileId) || !/^[0-9A-F]{32}$/.test(file.ed2k) ||
         !Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
-        file.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1) ||
+        file.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1 ||
+          episodeIds.has(id)) ||
         new Set(file.episodeIds).size !== file.episodeIds.length) return held;
     names.add(file.name.toLowerCase());
     fileIds.add(file.anidbFileId);
+    for (const id of file.episodeIds) episodeIds.add(id);
     videoBytes += file.size;
     if (!Number.isSafeInteger(videoBytes) || videoBytes > maxVideoBytes) return held;
     videos.push({ name: file.name, size: file.size, ed2k: file.ed2k,

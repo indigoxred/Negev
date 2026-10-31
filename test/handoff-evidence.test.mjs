@@ -24,6 +24,7 @@ test('unsafe, duplicate, and over-budget handoff evidence holds', () => {
   for (const change of [
     { files: [{ ...first, name: '../escape.mkv' }] },
     { files: [first, { ...second, name: first.name.toUpperCase() }] },
+    { files: [first, { ...second, episodeIds: [1001] }] },
     { subtitles: [{ ...sidecar, name: 'Show/run.sh' }] },
     { subtitles: [{ ...sidecar, size: 16 * 1024 ** 2 + 1 }] },
     { torrentHash: 'invalid' },

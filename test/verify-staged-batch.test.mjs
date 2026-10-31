@@ -75,6 +75,8 @@ test('unclaimed targets and mismatched attempt identity hold before observing by
     { attempt: { ...attempt, torrentHash: 'b'.repeat(40) } },
     { attempt: { ...attempt, episodeIds: [1003] } },
     { attempt: { ...attempt, episodeIds: [1001] }, plannedFiles: [plannedFiles[1]] },
+    { plannedFiles: [{ ...plannedFiles[0], episodeIds: [1001, 1001] },
+      plannedFiles[1]] },
   ]) {
     let observations = 0;
     const result = await verifyStagedBatch({ root: '/staging', request, attempt,

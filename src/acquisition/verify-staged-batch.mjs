@@ -51,6 +51,7 @@ export async function verifyStagedBatch({
     if (typeof file?.name !== 'string' || !file.name || plannedByName.has(file.name) ||
         (file.size !== undefined && (!Number.isSafeInteger(file.size) || file.size < 1)) ||
         !Array.isArray(file.episodeIds) || file.episodeIds.length === 0 ||
+        new Set(file.episodeIds).size !== file.episodeIds.length ||
         file.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0 ||
           plannedIds.has(id))) return held('invalid_batch_plan');
     plannedByName.set(file.name, file);
