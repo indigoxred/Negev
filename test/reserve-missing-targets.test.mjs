@@ -51,6 +51,17 @@ test('an already playable episode blocks the entire candidate before any claim',
     assert.equal(next.state, 'reserved');
   }));
 
+test('Shoko 404 for a first-time title never proves its requested episode absent', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001], readEvidence: async () => evidence({
+        episodeIds: [1001], shoko: { state: 'not_imported' },
+      }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held',
+      reason: 'target_not_proven_missing', episodeId: 1001 });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
 test('incomplete, stale, or unrelated observations never authorize a grab', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     for (const snapshot of [
