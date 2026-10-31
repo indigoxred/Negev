@@ -30,14 +30,20 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
   }
   let processed = 0;
   let skipped = 0;
+  const defer = (ratingKey) => {
+    try { index.deferCard?.({ libraryId, ratingKey, kind, nowMs: observedMs }); }
+    catch { /* The page remains positive-only and the next sweep can retry. */ }
+  };
   for (const ratingKey of page.keys) {
     let card;
     try { card = await readCard({ libraryId, ratingKey,
       expectedType: kind }); }
-    catch { skipped++; continue; }
+    catch { skipped++; defer(ratingKey); continue; }
     if (card?.state !== 'ok' || card.complete !== true ||
         !Array.isArray(card.parts) || card.parts.length < 1) {
-      skipped++; continue;
+      skipped++;
+      if (card?.state !== 'not_found') defer(ratingKey);
+      continue;
     }
     try {
       const saved = index.recordCard({ libraryId, ratingKey, kind,
@@ -46,7 +52,7 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
         skipped++; continue;
       }
       processed++;
-    } catch { skipped++; }
+    } catch { skipped++; defer(ratingKey); }
   }
   const nextOffset = page.keys.length < pageSize ||
     (page.totalSize !== null && offset + page.keys.length >= page.totalSize)
@@ -73,4 +79,47 @@ export function createPlexCardPageWorker({ libraryId, kind, pageSize = 5,
       return advanced.state === 'cursor_advanced' ? result : advanced;
     },
   };
+}
+
+// One due retry per paced tick. A transient card error cannot hide an older
+// arrival until a full library sweep, and a persistent error cannot stall it.
+export async function retryOnePlexCard({ libraryId, kind, index, readCard,
+  now = Date.now } = {}) {
+  if (!validId(libraryId) || !['episode', 'movie'].includes(kind) ||
+      typeof index?.nextRetry !== 'function' ||
+      typeof index?.recordCard !== 'function' ||
+      typeof index?.deferCard !== 'function' ||
+      typeof index?.clearRetry !== 'function' ||
+      typeof readCard !== 'function' || typeof now !== 'function') {
+    throw new TypeError('Invalid Plex card retry worker');
+  }
+  const nowMs = now();
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) return held('invalid_clock');
+  const due = index.nextRetry({ libraryId, kind, nowMs });
+  if (!due) return { state: 'no_due_retry' };
+  if (!validId(due.ratingKey)) return held('invalid_retry');
+  let card;
+  try { card = await readCard({ libraryId, ratingKey: due.ratingKey,
+    expectedType: kind }); }
+  catch { card = { state: 'unavailable' }; }
+  if (card?.state === 'not_found') {
+    index.clearRetry({ libraryId, ratingKey: due.ratingKey });
+    return { state: 'retry_missing', ratingKey: due.ratingKey };
+  }
+  if (card?.state === 'ok' && card.complete === true &&
+      Array.isArray(card.parts) && card.parts.length > 0) {
+    try {
+      const result = index.recordCard({ libraryId, ratingKey: due.ratingKey,
+        kind, parts: card.parts, observedMs: nowMs });
+      if (result?.state === 'recorded_card') {
+        return { state: 'retry_indexed', ratingKey: due.ratingKey };
+      }
+      if (result?.state === 'stale_card') {
+        index.clearRetry({ libraryId, ratingKey: due.ratingKey });
+        return { state: 'retry_superseded', ratingKey: due.ratingKey };
+      }
+    } catch { /* Retry later with bounded backoff. */ }
+  }
+  index.deferCard({ libraryId, ratingKey: due.ratingKey, kind, nowMs });
+  return { state: 'retry_deferred', ratingKey: due.ratingKey };
 }

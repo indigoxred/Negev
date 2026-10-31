@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPlexCardPageWorker, indexPlexCardPage } from '../src/availability/plex-card-page-worker.mjs';
+import { createPlexCardPageWorker, indexPlexCardPage,
+  retryOnePlexCard } from '../src/availability/plex-card-page-worker.mjs';
 
 const card = (key) => ({ state: 'ok', complete: true,
   parts: [{ partId: key + 10, libraryId: 102,
@@ -34,16 +35,20 @@ test('a final short page wraps but never claims a complete Plex catalogue', asyn
 
 test('card outage skips one card while later pages remain reachable', async () => {
   const recorded = [];
+  const deferred = [];
   const result = await indexPlexCardPage({ libraryId: 102, kind: 'episode',
     offset: 0, pageSize: 2, now: () => 50,
     readPage: async () => ({ state: 'page', libraryId: 102, kind: 'episode',
       offset: 0, totalSize: 9, keys: [500, 501], complete: false }),
     readCard: async ({ ratingKey }) => ratingKey === 500 ? card(500) :
       { state: 'unavailable' },
-    index: { recordCard: (input) => { recorded.push(input); return { state: 'recorded_card' }; } } });
+    index: { recordCard: (input) => { recorded.push(input); return { state: 'recorded_card' }; },
+      deferCard: (input) => { deferred.push(input); return { state: 'retry_deferred' }; } } });
   assert.deepEqual(result, { state: 'page_indexed', processed: 1,
     skipped: 1, nextOffset: 2 });
   assert.deepEqual(recorded.map((row) => row.ratingKey), [500]);
+  assert.deepEqual(deferred, [{ libraryId: 102, ratingKey: 501,
+    kind: 'episode', nowMs: 50 }]);
 });
 
 test('malformed key page does not record or advance', async () => {
@@ -87,4 +92,17 @@ test('page worker advances after a skipped card and later pages remain reachable
   assert.deepEqual(await worker.tick(), { state: 'page_indexed', processed: 2,
     nextOffset: 2 });
   assert.equal(offset, 2);
+});
+
+test('one due retry rechecks its card without blocking the page cursor', async () => {
+  const calls = [];
+  const result = await retryOnePlexCard({ libraryId: 102, kind: 'episode',
+    now: () => 60_010, readCard: async (input) => {
+      calls.push(input); return card(500);
+    }, index: { nextRetry: () => ({ ratingKey: 500 }),
+      recordCard: () => ({ state: 'recorded_card' }),
+      deferCard: () => ({ state: 'retry_deferred' }), clearRetry: () => {} } });
+  assert.deepEqual(result, { state: 'retry_indexed', ratingKey: 500 });
+  assert.deepEqual(calls, [{ libraryId: 102, ratingKey: 500,
+    expectedType: 'episode' }]);
 });

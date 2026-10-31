@@ -2,7 +2,8 @@ import { readShokoEpisodeFiles } from './shoko-episode-files.mjs';
 import { readPlexSectionKeys } from './plex-section-keys.mjs';
 import { readPlexItemParts } from './plex-item-parts.mjs';
 import { openPlexCardIndex } from './plex-card-index.mjs';
-import { createPlexCardPageWorker, indexPlexCardPage } from './plex-card-page-worker.mjs';
+import { createPlexCardPageWorker, indexPlexCardPage,
+  retryOnePlexCard } from './plex-card-page-worker.mjs';
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -35,13 +36,16 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
     token: plexToken, ...input, fetchImpl });
   return {
-    tick({ libraryId, kind }) {
+    async tick({ libraryId, kind }) {
       if (!allowed({ libraryId, kind })) {
-        return Promise.resolve({ state: 'held', reason: 'library_not_allowed' });
+        return { state: 'held', reason: 'library_not_allowed' };
       }
       const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
         readPage, readCard });
-      return worker.tick();
+      const page = await worker.tick();
+      const retry = await retryOnePlexCard({ libraryId, kind, index, now, readCard });
+      return retry.state === 'no_due_retry' ? page :
+        { ...page, retry: retry.state };
     },
     scanRecent({ libraryId, kind }) {
       if (!allowed({ libraryId, kind })) {

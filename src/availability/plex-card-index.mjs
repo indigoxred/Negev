@@ -39,6 +39,15 @@ export function openPlexCardIndex(dbPath) {
       offset INTEGER NOT NULL CHECK(offset>=0),
       PRIMARY KEY(library_id,kind)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_card_retries (
+      library_id INTEGER NOT NULL CHECK(library_id>0),
+      rating_key INTEGER NOT NULL CHECK(rating_key>0),
+      kind TEXT NOT NULL CHECK(kind IN ('episode','movie')),
+      attempts INTEGER NOT NULL CHECK(attempts>0),
+      due_ms INTEGER NOT NULL CHECK(due_ms>=0),
+      PRIMARY KEY(library_id,rating_key)
+    ) STRICT`);
+    db.exec('CREATE INDEX IF NOT EXISTS plex_retry_due ON plex_card_retries(library_id,kind,due_ms)');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const previous = db.prepare(`SELECT observed_ms FROM plex_card_observations
@@ -51,6 +60,17 @@ export function openPlexCardIndex(dbPath) {
     WHERE library_id=? AND rating_key=?`);
   const addPart = db.prepare(`INSERT INTO plex_part_candidates
     (library_id,rating_key,part_id,file_size,plex_path) VALUES (?,?,?,?,?)`);
+  const oldRetry = db.prepare(`SELECT attempts FROM plex_card_retries
+    WHERE library_id=? AND rating_key=?`);
+  const saveRetry = db.prepare(`INSERT INTO plex_card_retries
+    (library_id,rating_key,kind,attempts,due_ms) VALUES (?,?,?,?,?)
+    ON CONFLICT(library_id,rating_key) DO UPDATE SET
+    kind=excluded.kind,attempts=excluded.attempts,due_ms=excluded.due_ms`);
+  const clearRetry = db.prepare(`DELETE FROM plex_card_retries
+    WHERE library_id=? AND rating_key=?`);
+  const dueRetry = db.prepare(`SELECT rating_key AS ratingKey FROM plex_card_retries
+    WHERE library_id=? AND kind=? AND due_ms<=?
+    ORDER BY due_ms,rating_key LIMIT 1`);
   const cursor = db.prepare(`SELECT offset FROM plex_card_cursors
     WHERE library_id=? AND kind=?`);
   const saveCursor = db.prepare(`INSERT INTO plex_card_cursors
@@ -92,12 +112,39 @@ export function openPlexCardIndex(dbPath) {
         clearParts.run(libraryId, ratingKey);
         for (const part of parts) addPart.run(libraryId, ratingKey,
           part.partId, part.size, part.plexPath);
+        clearRetry.run(libraryId, ratingKey);
         db.exec('COMMIT'); begun = false;
         return { state: 'recorded_card' };
       } catch (error) {
         if (begun) db.exec('ROLLBACK');
         throw error;
       }
+    },
+    deferCard({ libraryId, ratingKey, kind, nowMs }) {
+      if (!validId(libraryId) || !validId(ratingKey) ||
+          !['episode', 'movie'].includes(kind) ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new TypeError('Invalid Plex card retry');
+      }
+      const attempts = Math.min((oldRetry.get(libraryId, ratingKey)?.attempts ?? 0) + 1, 7);
+      const dueMs = nowMs + Math.min(60_000 * 2 ** (attempts - 1), 3_600_000);
+      if (!Number.isSafeInteger(dueMs)) throw new TypeError('Invalid retry clock');
+      saveRetry.run(libraryId, ratingKey, kind, attempts, dueMs);
+      return { state: 'retry_deferred' };
+    },
+    nextRetry({ libraryId, kind, nowMs }) {
+      if (!validId(libraryId) || !['episode', 'movie'].includes(kind) ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new TypeError('Invalid Plex retry query');
+      }
+      const row = dueRetry.get(libraryId, kind, nowMs);
+      return row ? { ratingKey: row.ratingKey } : null;
+    },
+    clearRetry({ libraryId, ratingKey }) {
+      if (!validId(libraryId) || !validId(ratingKey)) {
+        throw new TypeError('Invalid Plex retry clear');
+      }
+      clearRetry.run(libraryId, ratingKey);
     },
     lookupCards({ sizes, libraryIds, kind }) {
       if (!Array.isArray(sizes) || sizes.length < 1 || sizes.length > 50 ||

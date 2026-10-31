@@ -86,3 +86,17 @@ test('page cursor is durable and rejects a stale concurrent advance', async () =
   assert.equal(reopened.getCursor({ libraryId: 102, kind: 'movie' }), 0);
   reopened.close();
 });
+
+test('failed card reads retain one bounded durable retry until a successful card', async () => {
+  const { path: dbPath, ledger } = await index();
+  assert.deepEqual(ledger.deferCard({ libraryId: 102, ratingKey: 500,
+    kind: 'episode', nowMs: 10 }), { state: 'retry_deferred' });
+  assert.equal(ledger.nextRetry({ libraryId: 102, kind: 'episode', nowMs: 60_009 }), null);
+  ledger.close();
+  const reopened = openPlexCardIndex(dbPath);
+  assert.deepEqual(reopened.nextRetry({ libraryId: 102, kind: 'episode', nowMs: 60_010 }),
+    { ratingKey: 500 });
+  reopened.recordCard({ ...card(), observedMs: 60_011 });
+  assert.equal(reopened.nextRetry({ libraryId: 102, kind: 'episode', nowMs: 99_999 }), null);
+  reopened.close();
+});
