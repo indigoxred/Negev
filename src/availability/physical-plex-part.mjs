@@ -14,6 +14,43 @@ const identity = (value) => `${value.dev}:${value.ino}:${value.size}`;
 const unchanged = (before, after) => identity(before) === identity(after) &&
   before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 
+// Discovery hint only. Neither a matching key nor a successful metadata
+// probe is playback proof: the selected Plex card must still be freshly read
+// and passed through provePhysicalPlexPart before declaring Available.
+export async function probePhysicalCandidate({ filePath, allowedRoot,
+  backingRoots = [], expectedSize } = {}) {
+  if (!Array.isArray(backingRoots) || backingRoots.length > 8 ||
+      ![filePath, allowedRoot, ...backingRoots].every(validAbsolute) ||
+      !inside(allowedRoot, filePath) ||
+      !Number.isSafeInteger(expectedSize) || expectedSize <= 0) {
+    throw new TypeError('Invalid scoped candidate probe');
+  }
+  let roots, fileReal;
+  try {
+    [roots, fileReal] = await Promise.all([
+      Promise.all([allowedRoot, ...backingRoots].map((root) => realpath(root))),
+      realpath(filePath),
+    ]);
+  } catch { return held('file_unavailable'); }
+  if (!roots.some((root) => inside(root, fileReal))) {
+    return held('path_outside_roots');
+  }
+  try {
+    const before = await stat(filePath, { bigint: true });
+    if (!before.isFile() || before.dev < 0n || before.ino <= 0n) {
+      return held('file_unavailable');
+    }
+    if (before.size !== BigInt(expectedSize)) return held('size_mismatch');
+    const [after, fileRealAfter] = await Promise.all([
+      stat(filePath, { bigint: true }), realpath(filePath),
+    ]);
+    if (!unchanged(before, after) || fileRealAfter !== fileReal) {
+      return held('file_changed');
+    }
+    return { state: 'candidate', candidateKey: identity(before) };
+  } catch { return held('file_unavailable'); }
+}
+
 // All paths are Negev-container paths supplied by explicit read-only mount
 // mappings. This performs scoped metadata reads and opens one byte through the
 // Plex path. It never hashes or scans a library.

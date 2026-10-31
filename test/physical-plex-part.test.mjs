@@ -3,7 +3,8 @@ import { afterEach, test } from 'node:test';
 import { mkdtemp, mkdir, writeFile, link, symlink, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { provePhysicalPlexPart } from '../src/availability/physical-plex-part.mjs';
+import { provePhysicalPlexPart, probePhysicalCandidate } from
+  '../src/availability/physical-plex-part.mjs';
 
 const cleanup = [];
 afterEach(async () => {
@@ -95,4 +96,58 @@ test('a changed expected file size cannot establish the join', async () => {
   const input = await fixture();
   assert.deepEqual(await provePhysicalPlexPart({ ...input, expectedSize: 6 }),
     { state: 'held', reason: 'size_mismatch' });
+});
+
+test('metadata candidate probe distinguishes same-size files without reading bytes', async (t) => {
+  const input = await fixture();
+  const source = await probePhysicalCandidate({ filePath: input.shokoPath,
+    allowedRoot: input.shokoRoot, expectedSize: 5 });
+  const other = await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, expectedSize: 5 });
+  assert.equal(source.state, 'candidate');
+  assert.notEqual(source.candidateKey, other.candidateKey);
+  await rm(input.plexPath);
+  try { await symlink(input.shokoPath, input.plexPath); }
+  catch (error) {
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip('symlinks unavailable');
+    throw error;
+  }
+  const linkResult = await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, backingRoots: [input.shokoRoot], expectedSize: 5 });
+  assert.equal(linkResult.state, 'candidate');
+  assert.equal(linkResult.candidateKey, source.candidateKey);
+});
+
+test('metadata candidate key is stable for one file and differs for another', async () => {
+  const input = await fixture();
+  const options = { filePath: input.shokoPath,
+    allowedRoot: input.shokoRoot, expectedSize: 5 };
+  const first = await probePhysicalCandidate(options);
+  const again = await probePhysicalCandidate(options);
+  const other = await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, expectedSize: 5 });
+  assert.equal(first.state, 'candidate');
+  assert.equal(again.candidateKey, first.candidateKey);
+  assert.notEqual(other.candidateKey, first.candidateKey);
+});
+
+test('metadata probe holds on symlink escape, missing file and wrong size', async (t) => {
+  const input = await fixture();
+  assert.deepEqual(await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, expectedSize: 6 }),
+  { state: 'held', reason: 'size_mismatch' });
+  await rm(input.plexPath);
+  assert.deepEqual(await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, expectedSize: 5 }),
+  { state: 'held', reason: 'file_unavailable' });
+  const outside = path.join(input.root, 'outside.mkv');
+  await writeFile(outside, 'video');
+  try { await symlink(outside, input.plexPath); }
+  catch (error) {
+    if (['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) return t.skip('symlinks unavailable');
+    throw error;
+  }
+  assert.deepEqual(await probePhysicalCandidate({ filePath: input.plexPath,
+    allowedRoot: input.plexRoot, backingRoots: [input.shokoRoot], expectedSize: 5 }),
+  { state: 'held', reason: 'path_outside_roots' });
 });
