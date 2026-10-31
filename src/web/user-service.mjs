@@ -11,6 +11,7 @@ import { buildUserApp } from './user-app.mjs';
 import { createMetadataLimiter } from './metadata-limiter.mjs';
 import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
 import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
+import { createShokoEventConsumer } from '../availability/shoko-event-consumer.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
 
@@ -70,24 +71,28 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       void task.then(() => observations.delete(task), () => observations.delete(task));
       return task;
     };
+    const refreshShokoFile = (fileId) => {
+      if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+      if (!Number.isSafeInteger(fileId) || fileId < 1) {
+        return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
+      }
+      return track((async () => {
+        const result = await metadata.run(() => readShokoOneFile({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
+        }));
+        if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
+        return inventory.recordFileObservation({ item: result.item, observedMs: now() });
+      })());
+    };
+    const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile });
     return { app,
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(inventoryWorker.tick());
       },
-      refreshShokoFile: (fileId) => {
-        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
-        if (!Number.isSafeInteger(fileId) || fileId < 1) {
-          return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
-        }
-        return track((async () => {
-          const result = await metadata.run(() => readShokoOneFile({
-            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
-          }));
-          if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
-          return inventory.recordFileObservation({ item: result.item, observedMs: now() });
-        })());
-      },
+      refreshShokoFile,
+      acceptShokoEvent: (target, args) => eventConsumer.accept(target, args),
+      getShokoEventState: () => eventConsumer.getState(),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {
@@ -95,6 +100,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stopPromise = (async () => {
             try { await app.close(); }
             finally {
+              await eventConsumer.close();
               await Promise.allSettled([...observations]);
               inventory.close(); hydration.close(); requests.close(); accounts.close();
             }

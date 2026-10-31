@@ -181,13 +181,17 @@ test('account service records one Shoko direct-import page without dispatching a
     assert.deepEqual(await service.refreshShokoFile(0),
       { state: 'held', reason: 'invalid_file_id' });
     assert.equal(calls, 2);
+    assert.deepEqual(service.acceptShokoEvent('file:hashed', [{ FileID: 10 }]),
+      { state: 'queued', fileId: 10 });
     await service.close();
+    assert.equal(calls, 3);
+    assert.equal(service.getShokoEventState().reconciliationNeeded, false);
     service = await createUserService({ dbPath, shokoBaseUrl: 'http://shoko.internal:8111',
       shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
       publicOrigin: origin, secureCookies: false,
       fetchImpl: async () => { throw new Error('No scan on startup'); } });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
-    assert.equal(calls, 2);
+    assert.equal(calls, 3);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
