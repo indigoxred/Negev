@@ -8,6 +8,7 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
+import { createCompletionWorker, openCompletionQueue } from '../src/acquisition/completion-queue.mjs';
 
 const torrentHash = 'a'.repeat(40);
 const providerId = '11111111-2222-4333-8444-555555555555';
@@ -65,7 +66,7 @@ async function fixture(run) {
     throw Error('unexpected request');
   };
   try {
-    await run({ requests, acquisitions, handoffs, attemptId: claimed.attemptId,
+    await run({ dbPath, requests, acquisitions, handoffs, attemptId: claimed.attemptId,
       stagingHostPath, holdingRoot, importRoot, identity, calls,
       config: { qbittorrent: { baseUrl: 'http://qbit.internal:8080/', sessionId: 'session' },
         shoko: { baseUrl: 'http://shoko.internal:8111/', providerId, apiKey: 'test-key' },
@@ -146,5 +147,24 @@ test('a registered but corrupt AniDB release never consumes private holding spac
     assert.deepEqual(result, { state: 'held', reason: 'file_corrupt_release' });
     assert.deepEqual(await readdir(holdingRoot), []);
     assert.equal(handoffs.getHandoff(attemptId), null);
+  });
+});
+
+test('one durable completion tick reaches a verified private handoff', async () => {
+  await fixture(async (context) => {
+    const { dbPath, handoffs, attemptId, config, ...stores } = context;
+    const queue = openCompletionQueue(dbPath);
+    try {
+      const worker = createCompletionWorker({ queue, now: () => 206,
+        processAttempt: ({ attemptId: claimedId }) => processCompletedAttempt({
+          ...stores, handoffs, attemptId: claimedId, ...config,
+        }) });
+      assert.deepEqual(await worker.runOnce(), { state: 'processed',
+        attemptId, result: { state: 'handoff_prepared' } });
+      assert.equal(queue.getResult(attemptId).state, 'handoff_prepared');
+      assert.equal(handoffs.getHandoff(attemptId).status, 'prepared');
+      assert.deepEqual(await readdir(stores.importRoot), []);
+      assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1 });
+    } finally { queue.close(); }
   });
 });
