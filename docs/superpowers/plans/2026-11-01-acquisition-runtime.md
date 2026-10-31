@@ -56,9 +56,11 @@ The Task 1 probe is also exposed through an authenticated, admin-only, two-per-m
 
 **Interfaces:** Compose existing request, start, completion and publish queues in order. Keep the runtime disabled by default until Task 2 and mount checks pass. Drain active work on shutdown and reconcile uncertain claims on startup.
 
-- [ ] Write a real-SQLite synthetic request-to-publish test with a failed first target and a successful later target.
+- [x] Write a real-SQLite synthetic request-to-publish test with a held first request and a successful later target, including restart with no repeated stage action.
 - [ ] Implement opt-in composition and test that disabled startup issues no indexer, qBittorrent or media reads.
 - [ ] Verify restart does not repeat torrent POST or watched-folder rename.
 - [ ] Run full local and Linux CI, then prepare a measured NAS preflight and rollback before deployment.
 
 Source preparation: `openAcquisitionPipeline` now owns the four durable queues, requires restart reconciliation before explicit ticks, lets later requests advance past an interrupted claim, and drains active work on close. It has no timer, server integration, provider credentials or download authority; the guarded processors and Task 2 remain required.
+
+Recovery review now pages through every interrupted claim in all four queues instead of marking initialization complete after the first 20. The synthetic real-SQLite chain tests a held request followed by a later request through journalled stopped, start, completion, and publish states; it uses no actual torrent, file verification, or watched folder. The installed missing-target and mount gates remain required before runtime wiring or activation.

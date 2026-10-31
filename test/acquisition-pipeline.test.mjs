@@ -9,6 +9,7 @@ import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openAcquisitionRequestQueue } from
   '../src/acquisition/acquisition-request-queue.mjs';
 import { openAcquisitionPipeline } from '../src/acquisition/acquisition-pipeline.mjs';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
 test('restart reconciliation precedes worker ticks and later requests advance', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-'));
@@ -91,6 +92,101 @@ test('closing the pipeline waits for an active request check before closing its 
     assert.equal(drained, true);
   } finally {
     release(); await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a held request does not block a later synthetic request-to-publish chain', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-chain-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  for (let id = 1; id <= 2; id++) requests.submit({ requesterId: 1,
+    requestKey: `chain-${id}`, nowMs: id,
+    intent: { state: 'ready', anidbId: 40 + id, kind: 'series',
+      episodeIds: [1000 + id], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const candidate = { indexerId: 7, guid: 'synthetic-second' };
+  const hash = 'a'.repeat(40);
+  const events = [];
+  let attemptId;
+  let pipeline;
+  try {
+    pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      processRequest: async ({ requestId }) => {
+        events.push(`request:${requestId}`);
+        if (requestId === 1) return { state: 'held',
+          reason: 'target_not_proven_missing' };
+        attemptId = acquisitions.reserve({ requestId, candidate,
+          episodeIds: [1002], nowMs: 200 }).attemptId;
+        acquisitions.bindPreparedTorrent({ attemptId, candidate, hash,
+          nowMs: 201 });
+        acquisitions.recordFilePlan({ attemptId, hash,
+          plannedFiles: [{ name: '02.mkv', size: 10,
+            episodeIds: [1002] }], nowMs: 202 });
+        acquisitions.beginDispatch({ attemptId, nowMs: 203 });
+        acquisitions.recordTorrent({ attemptId, hash, nowMs: 204 });
+        return { state: 'stopped_observed', attemptId };
+      },
+      processStart: async ({ attemptId: selected }) => {
+        events.push(`start:${selected}`);
+        assert.equal(acquisitions.beginStart({ attemptId: selected, hash,
+          manifestDigest: 'b'.repeat(64), nowMs: 205 }).state,
+        'start_unknown');
+        return { state: 'start_unknown' };
+      },
+      processCompletion: async ({ attemptId: selected }) => {
+        events.push(`completion:${selected}`);
+        const manifest = { anidbId: 42, torrentHash: hash,
+          files: [{ name: '02.mkv', size: 10, ed2k: 'C'.repeat(32),
+            anidbFileId: 51, episodeIds: [1002] }], subtitles: [] };
+        const prepared = { ...manifest, state: 'handoff_prepared',
+          publishReady: false, holdingPath: path.join(dir, 'holding'),
+          evidenceDigest: evaluateHandoffEvidence(manifest).digest };
+        assert.equal(handoffs.recordPrepared({ attemptId: selected,
+          prepared, nowMs: 206 }).state, 'prepared');
+        return { state: 'handoff_prepared' };
+      },
+      processPublish: async ({ attemptId: selected }) => {
+        events.push(`publish:${selected}`);
+        const row = handoffs.getHandoff(selected);
+        const intent = handoffs.beginPublish({ attemptId: selected,
+          evidenceDigest: row.evidenceDigest, nowMs: 207 });
+        assert.equal(intent.state, 'publish_unknown');
+        assert.equal(handoffs.markPublishedObserved({ attemptId: selected,
+          evidenceDigest: row.evidenceDigest,
+          publishName: intent.publishName, nowMs: 208 }).state,
+        'published_observed');
+        return { state: 'published_observed' };
+      }, now: () => 5_000 });
+    assert.equal((await pipeline.tickRequests()).reason, 'reconciliation_required');
+    await pipeline.initialize();
+    const checked = await pipeline.tickRequests();
+    assert.deepEqual(checked.results.map((entry) => entry.state),
+      ['held', 'stopped_observed']);
+    assert.equal((await pipeline.tickStarts()).result.state, 'start_unknown');
+    assert.equal((await pipeline.tickCompletions()).result.state,
+      'handoff_prepared');
+    assert.equal((await pipeline.tickPublish()).result.state, 'published_observed');
+    assert.deepEqual(events, ['request:1', 'request:2',
+      `start:${attemptId}`, `completion:${attemptId}`, `publish:${attemptId}`]);
+    assert.equal(handoffs.getHandoff(attemptId).status, 'published_observed');
+    assert.equal((await pipeline.tickStarts()).state, 'idle');
+    await pipeline.close();
+    pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      processRequest: async () => { throw new Error('No request replay'); },
+      processStart: async () => { throw new Error('No start replay'); },
+      processCompletion: async () => { throw new Error('No completion replay'); },
+      processPublish: async () => { throw new Error('No publish replay'); },
+      now: () => 5_001 });
+    await pipeline.initialize();
+    assert.equal((await pipeline.tickStarts()).state, 'idle');
+    assert.equal((await pipeline.tickPublish()).state, 'idle');
+    assert.equal((await pipeline.tickCompletions()).state, 'pass_complete');
+    assert.equal((await pipeline.tickRequests()).state, 'pass_complete');
+  } finally {
+    if (pipeline) await pipeline.close();
     handoffs.close(); acquisitions.close(); requests.close();
     await rm(dir, { recursive: true, force: true });
   }
