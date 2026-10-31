@@ -77,6 +77,20 @@ test('a Plex part without a Shoko identity blocks acquisition as a possible pend
     assert.equal(acquisitions.getAttempt(1), null);
   }));
 
+test('an unrelated Shoko file cannot hide an unattributed public Plex part', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001, 1002], readEvidence: async () => evidence({
+        shoko: { state: 'ok', complete: true, files: [{ ...file,
+          anidbId: 99, episodeIds: [9001],
+          coverage: [{ episodeId: 9001, start: 0, end: 100 }] }] },
+        plex: { state: 'ok', complete: true, parts: [{ ...part,
+          storageKey: 'unidentified-video' }] },
+      }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held', reason: 'unattributed_plex_part' });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
 test('freshness clock is read after the observer finishes', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     let observed = false;

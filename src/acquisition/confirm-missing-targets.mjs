@@ -44,9 +44,12 @@ export async function confirmMissingTargets({ request, episodeIds,
   // still awaiting Shoko recognition. It cannot authorize a duplicate grab.
   if (snapshot.shoko?.state === 'ok' && snapshot.shoko.complete === true &&
       snapshot.plex?.state === 'ok' && snapshot.plex.complete === true &&
-      Array.isArray(snapshot.shoko.files) && snapshot.shoko.files.length === 0 &&
-      Array.isArray(snapshot.plex.parts) && snapshot.plex.parts.length > 0) {
-    return held('unattributed_plex_part');
+      Array.isArray(snapshot.shoko.files) && Array.isArray(snapshot.plex.parts)) {
+    const knownStorage = new Set(snapshot.shoko.files.map((file) => file.storageKey));
+    if (snapshot.plex.parts.some((part) =>
+      publicLibraryIds.includes(part.libraryId) && !knownStorage.has(part.storageKey))) {
+      return held('unattributed_plex_part');
+    }
   }
   for (const episodeId of episodeIds) {
     const result = evaluateExactAvailability({
