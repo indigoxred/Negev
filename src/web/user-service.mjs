@@ -7,6 +7,9 @@ import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
+import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { pollAiringWatches } from '../requests/airing-watch-poll.mjs';
+import { createAiringPageWorker } from '../requests/airing-page-worker.mjs';
 import { buildUserApp } from './user-app.mjs';
 import { createMetadataLimiter } from './metadata-limiter.mjs';
 import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
@@ -53,6 +56,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const submitRequest = createHeldRequestSubmitter({
       titleRegistry, loadDetail, ledger: requests, now, today,
     });
+    const airingWorker = createAiringPageWorker({ ledger: requests,
+      pollPage: ({ afterId, limit }) => pollAiringWatches({
+        ledger: requests, afterId, limit, today: today(),
+        loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
+          loadPage: async ({ page }) => {
+            if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
+            return metadata.run(() => loadDetail({ anidbId, page }));
+          },
+        }),
+      }),
+    });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
       readRequest: (id) => requests.getRequest(id),
@@ -86,6 +100,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     };
     const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile });
     return { app,
+      pollAiringNextPage: () => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        return track(airingWorker.runOnce());
+      },
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(inventoryWorker.tick());

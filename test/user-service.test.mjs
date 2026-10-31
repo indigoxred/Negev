@@ -76,6 +76,11 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       headers: { cookie } });
     assert.deepEqual(read.json().episodeIds, [1001]);
     assert.equal(read.json().requesterId, owner.id);
+    assert.equal(read.json().monitorFuture, true);
+    const airing = await service.pollAiringNextPage();
+    assert.equal(airing.state, 'page');
+    assert.equal(airing.afterId, 0);
+    assert.equal(airing.results.length, 1);
     const movieSearch = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Movie', headers: { cookie } });
     assert.equal(movieSearch.statusCode, 200, movieSearch.body);

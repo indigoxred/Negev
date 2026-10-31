@@ -6,6 +6,8 @@ An optional `NEGEV_SHOKO_EVENTS=1` account-server setting connects to Shoko's su
 
 An independent `NEGEV_SHOKO_INVENTORY=1` setting opts into paced read-only reconciliation: one page of 25 Shoko files per minute, a 24-hour rest after a complete pass, and a five-minute retry after an error. The SQLite cursor survives restart. Both observer flags remain off by default; the inventory records positive identities only and cannot claim a missing file was deleted. Neither observer starts downloads or reports Plex availability.
 
+`NEGEV_AIRING_WATCH=1` opts into the account service's existing bounded AniDB Airing-watch poll, with at most three saved watches per page and one minute between pages. It requires `NEGEV_TIME_ZONE` (for example `Australia/Sydney`) so the current episode cutoff follows the owner's local calendar day. The saved request cursor survives restart. This only appends newly aired exact episode targets or closes a confirmed Completed watch; it does not search indexers or start downloads. It remains off by default and needs installed AniDB date-field validation before enabling.
+
 The gate calculates a completed video's ED2K hash, calls Shoko's read-only AniDB release-preview endpoint, and evaluates the response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban. The adapter is tested with fake responses only; it has not been connected to a live Negev service.
 
 Run `pnpm install --frozen-lockfile` and `node --test` using Node.js 24. Tests use synthetic responses and make no live server calls.

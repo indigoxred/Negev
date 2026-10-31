@@ -10,6 +10,17 @@ function baseUrl(value, label) {
   return url;
 }
 
+export function dateInZone(timeZone, instant = new Date()) {
+  if (typeof timeZone !== 'string' || !timeZone ||
+      !(instant instanceof Date) || !Number.isFinite(instant.getTime())) {
+    throw new TypeError('Invalid local date configuration');
+  }
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone,
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
+  } catch { throw new TypeError('Invalid local time zone'); }
+}
+
 // Explicit, inert-by-default account-backed listener. It has no acquisition
 // or public-availability worker and does not replace the private diagnostic.
 export function parseUserServerConfig(env) {
@@ -21,10 +32,17 @@ export function parseUserServerConfig(env) {
   }
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
-  if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY].some((flag) =>
+  if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
+      env.NEGEV_AIRING_WATCH].some((flag) =>
     flag != null && !['0', '1'].includes(flag))) {
     throw new TypeError('Invalid Shoko observer flag');
   }
+  const airingWatch = env.NEGEV_AIRING_WATCH === '1';
+  if (airingWatch && !env.NEGEV_TIME_ZONE) {
+    throw new TypeError('Airing watch time zone required');
+  }
+  const timeZone = env.NEGEV_TIME_ZONE ?? 'UTC';
+  dateInZone(timeZone);
   const shokoApiKeyPath = path.join(dataDir, 'secrets', 'shoko.token');
   if (Object.hasOwn(env, 'NEGEV_SHOKO_API_KEY') ||
       env.NEGEV_SHOKO_API_KEY_FILE !== shokoApiKeyPath) {
@@ -49,6 +67,7 @@ export function parseUserServerConfig(env) {
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
-    shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1', publicOrigin,
+    shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
+    airingWatch, timeZone, publicOrigin,
     secureCookies: exposed, host, port };
 }

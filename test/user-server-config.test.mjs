@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
-import { parseUserServerConfig } from '../src/web/user-server-config.mjs';
+import { parseUserServerConfig, dateInZone } from '../src/web/user-server-config.mjs';
 
 const dataDir = path.resolve('private-negev-test');
 const valid = { NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
@@ -22,6 +22,9 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: '1' }).shokoEvents, true);
   assert.equal(parsed.shokoInventory, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_INVENTORY: '1' }).shokoInventory, true);
+  assert.equal(parsed.airingWatch, false);
+  assert.equal(parseUserServerConfig({ ...valid, NEGEV_AIRING_WATCH: '1',
+    NEGEV_TIME_ZONE: 'Australia/Sydney' }).airingWatch, true);
 });
 
 test('non-loopback listener requires explicit exposure and HTTPS origin', () => {
@@ -51,5 +54,14 @@ test('incomplete or ambiguous user-server configuration fails closed', () => {
     { NEGEV_LISTEN_HOST: '192.168.1.1' },
     { NEGEV_SHOKO_EVENTS: 'yes' },
     { NEGEV_SHOKO_INVENTORY: 'yes' },
+    { NEGEV_AIRING_WATCH: 'yes' },
+    { NEGEV_AIRING_WATCH: '1' },
+    { NEGEV_TIME_ZONE: 'Invalid/Timezone' },
   ]) assert.throws(() => parseUserServerConfig({ ...valid, ...change }), TypeError);
+});
+
+test('Airing date uses the configured local calendar day', () => {
+  const moment = new Date('2026-10-31T13:30:00Z');
+  assert.equal(dateInZone('Australia/Sydney', moment), '2026-11-01');
+  assert.equal(dateInZone('UTC', moment), '2026-10-31');
 });
