@@ -35,6 +35,19 @@ test('explicit special selection never adds regular episodes or another installm
   });
 });
 
+test('an Airing request cannot select a future or undated regular episode', () => {
+  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'episodes',
+    episodeIds: [1002], today: '2026-10-31' }),
+  { state: 'held', reason: 'episode_not_aired' });
+  assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'episodes',
+    episodeIds: [1001], today: '2026-10-31' }).episodeIds, [1001]);
+  const undated = { ...detail, episodes: detail.episodes.map((episode) =>
+    episode.id === 1002 ? { ...episode, airDate: null } : episode) };
+  assert.deepEqual(planRequest({ detail: undated, releaseState: 'airing',
+    scope: 'episodes', episodeIds: [1002], today: '2026-10-31' }),
+  { state: 'held', reason: 'episode_not_aired' });
+});
+
 test('unknown status, incomplete detail, duplicate and foreign IDs hold', () => {
   assert.deepEqual(planRequest({ detail, releaseState: 'unknown', scope: 'installment' }),
     { state: 'held', reason: 'release_state_unknown' });

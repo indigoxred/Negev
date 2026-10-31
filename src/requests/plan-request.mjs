@@ -16,10 +16,10 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
   if (!['airing', 'completed'].includes(releaseState) ||
       (detail.kind === 'movie' && releaseState !== 'completed')) return held('release_state_unknown');
   if (!['installment', 'episodes'].includes(scope)) return held('invalid_scope');
+  if (releaseState === 'airing' && !fullDate(today)) return held('invalid_current_date');
 
   let selected;
   if (scope === 'installment') {
-    if (releaseState === 'airing' && !fullDate(today)) return held('invalid_current_date');
     selected = detail.episodes.filter((episode) => episode.type === 'Episode' &&
       (releaseState === 'completed' ||
         (fullDate(episode.airDate) && episode.airDate <= today))).map((episode) => episode.id);
@@ -31,6 +31,11 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
     if (episodeIds.some((id) => !selectable.has(byId.get(id)?.type))) {
       return held('invalid_episode_selection');
     }
+    if (releaseState === 'airing' && episodeIds.some((id) => {
+      const episode = byId.get(id);
+      return episode.type === 'Episode' &&
+        (!fullDate(episode.airDate) || episode.airDate > today);
+    })) return held('episode_not_aired');
     selected = episodeIds;
   }
   if (selected.length === 0) return held(releaseState === 'airing' &&
