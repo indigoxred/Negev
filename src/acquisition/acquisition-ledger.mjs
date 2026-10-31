@@ -25,11 +25,18 @@ export function openAcquisitionLedger(dbPath) {
       indexer_id INTEGER NOT NULL CHECK(indexer_id > 0),
       candidate_digest TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('reserved','dispatch_unknown','torrent_observed')),
+      expected_hash TEXT,
       torrent_hash TEXT,
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms),
       UNIQUE(indexer_id,candidate_digest)
     ) STRICT`);
+    // A prior diagnostic ledger may lack the hash column. Such attempts stay
+    // held; they are never upgraded into a second send.
+    if (!db.prepare('PRAGMA table_info(acquisition_attempts)').all()
+      .some((column) => column.name === 'expected_hash')) {
+      db.exec('ALTER TABLE acquisition_attempts ADD COLUMN expected_hash TEXT');
+    }
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_target_claims (
       attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
@@ -50,10 +57,11 @@ export function openAcquisitionLedger(dbPath) {
     (request_id,anidb_id,indexer_id,candidate_digest,status,created_ms,updated_ms)
     VALUES (?,?,?,?,'reserved',?,?)`);
   const claimTarget = db.prepare('INSERT INTO acquisition_target_claims(attempt_id,anidb_id,episode_id) VALUES (?,?,?)');
-  const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,status,torrent_hash,created_ms,updated_ms
+  const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
-  const begin = db.prepare("UPDATE acquisition_attempts SET status='dispatch_unknown',updated_ms=? WHERE id=? AND status='reserved'");
+  const prepare = db.prepare("UPDATE acquisition_attempts SET expected_hash=?,updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NULL");
+  const begin = db.prepare("UPDATE acquisition_attempts SET status='dispatch_unknown',updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NOT NULL");
   const observe = db.prepare("UPDATE acquisition_attempts SET status='torrent_observed',torrent_hash=?,updated_ms=? WHERE id=? AND status='dispatch_unknown'");
 
   function transact(action) {
@@ -94,12 +102,36 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'reserved', attemptId: id };
       });
     },
+    bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
+      if (!validId(attemptId) || !validId(candidate?.indexerId) ||
+          typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
+          typeof hash !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
+          !validTime(nowMs)) throw new TypeError('Invalid prepared torrent');
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        const digest = createHash('sha256').update(candidate.guid).digest('hex');
+        if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest) {
+          return held('candidate_mismatch');
+        }
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash && row.expected_hash !== normalizedHash) return held('torrent_conflict');
+        if (row.status === 'reserved' && !row.expected_hash) {
+          prepare.run(normalizedHash, nowMs, attemptId);
+          return { state: 'prepared', expectedHash: normalizedHash };
+        }
+        if (row.status === 'reserved') return { state: 'prepared', expectedHash: normalizedHash };
+        return { state: row.status, expectedHash: normalizedHash };
+      });
+    },
     beginDispatch({ attemptId, nowMs }) {
       if (!validId(attemptId) || !validTime(nowMs)) throw new TypeError('Invalid dispatch intent');
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (row.status === 'reserved' && !row.expected_hash) return held('torrent_not_prepared');
         if (row.status === 'reserved') {
           begin.run(nowMs, attemptId);
           return { state: 'dispatch_unknown', sendNow: true };
@@ -115,6 +147,7 @@ export function openAcquisitionLedger(dbPath) {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (!row.expected_hash || row.expected_hash !== hash.toLowerCase()) return held('torrent_conflict');
         if (row.status === 'torrent_observed') return row.torrent_hash === hash.toLowerCase()
           ? { state: 'torrent_observed' } : held('torrent_conflict');
         if (row.status !== 'dispatch_unknown') return held('dispatch_not_recorded');
@@ -127,7 +160,7 @@ export function openAcquisitionLedger(dbPath) {
       const row = findAttempt.get(attemptId);
       return row ? { id: row.id, requestId: row.request_id, anidbId: row.anidb_id,
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
-        status: row.status, torrentHash: row.torrent_hash } : null;
+        status: row.status, expectedHash: row.expected_hash, torrentHash: row.torrent_hash } : null;
     },
     close() { db.close(); },
   };

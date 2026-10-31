@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 
@@ -44,7 +45,7 @@ test('reserves an exact request once and blocks overlapping targets but not othe
         candidate: { indexerId: 7, guid: 'later-episode' }, nowMs: 203 }).state, 'reserved');
       assert.deepEqual(ledger.getAttempt(first.attemptId), {
         id: first.attemptId, requestId: firstId, anidbId: 42,
-        episodeIds: [1001, 1002], status: 'reserved', torrentHash: null,
+        episodeIds: [1001, 1002], status: 'reserved', expectedHash: null, torrentHash: null,
       });
     } finally { ledger.close(); }
   }));
@@ -53,8 +54,13 @@ test('dispatch intent persists before network action and never auto-retries afte
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
     const reserved = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+    const hash = 'a'.repeat(40);
+    assert.deepEqual(ledger.beginDispatch({ attemptId: reserved.attemptId, nowMs: 200 }),
+      { state: 'held', reason: 'torrent_not_prepared' });
+    assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+      candidate, hash, nowMs: 200 }), { state: 'prepared', expectedHash: hash });
     assert.deepEqual(ledger.recordTorrent({ attemptId: reserved.attemptId,
-      hash: 'a'.repeat(40), nowMs: 200 }), { state: 'held', reason: 'dispatch_not_recorded' });
+      hash, nowMs: 200 }), { state: 'held', reason: 'dispatch_not_recorded' });
     assert.deepEqual(ledger.beginDispatch({ attemptId: reserved.attemptId, nowMs: 201 }),
       { state: 'dispatch_unknown', sendNow: true });
     ledger.close();
@@ -64,7 +70,6 @@ test('dispatch intent persists before network action and never auto-retries afte
         { state: 'existing', attemptId: reserved.attemptId, status: 'dispatch_unknown' });
       assert.deepEqual(restarted.beginDispatch({ attemptId: reserved.attemptId, nowMs: 202 }),
         { state: 'dispatch_unknown', sendNow: false });
-      const hash = 'a'.repeat(40);
       assert.deepEqual(restarted.recordTorrent({ attemptId: reserved.attemptId, hash, nowMs: 203 }),
         { state: 'torrent_observed' });
       assert.deepEqual(restarted.recordTorrent({ attemptId: reserved.attemptId, hash, nowMs: 204 }),
@@ -72,6 +77,27 @@ test('dispatch intent persists before network action and never auto-retries afte
       assert.deepEqual(restarted.recordTorrent({ attemptId: reserved.attemptId,
         hash: 'b'.repeat(40), nowMs: 205 }), { state: 'held', reason: 'torrent_conflict' });
     } finally { restarted.close(); }
+  }));
+
+test('prepared hash is bound durably to the exact reserved candidate', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const reserved = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+      const hash = 'a'.repeat(40);
+      assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate: { ...candidate, guid: 'other' }, hash, nowMs: 201 }),
+      { state: 'held', reason: 'candidate_mismatch' });
+      assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate, hash, nowMs: 201 }), { state: 'prepared', expectedHash: hash });
+      assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate, hash: 'b'.repeat(40), nowMs: 202 }),
+      { state: 'held', reason: 'torrent_conflict' });
+      assert.deepEqual(ledger.recordTorrent({ attemptId: reserved.attemptId,
+        hash: 'b'.repeat(40), nowMs: 202 }),
+      { state: 'held', reason: 'torrent_conflict' });
+      assert.equal(ledger.getAttempt(reserved.attemptId).expectedHash, hash);
+    } finally { ledger.close(); }
   }));
 
 test('two connections cannot reserve competing candidates for one target', async () =>
@@ -92,4 +118,27 @@ test('raw indexer GUID is not stored in the private SQLite database', async () =
     ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
     ledger.close();
     assert.equal((await readFile(dbPath)).includes(Buffer.from(candidate.guid)), false);
+  }));
+
+test('an old uncertain attempt remains unsendable after the hash-column migration', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const old = new DatabaseSync(dbPath);
+    old.exec(`CREATE TABLE acquisition_attempts (
+      id INTEGER PRIMARY KEY, request_id INTEGER NOT NULL, anidb_id INTEGER NOT NULL,
+      indexer_id INTEGER NOT NULL, candidate_digest TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('reserved','dispatch_unknown','torrent_observed')),
+      torrent_hash TEXT, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL,
+      UNIQUE(indexer_id,candidate_digest)) STRICT`);
+    const digest = (await import('node:crypto')).createHash('sha256').update(candidate.guid).digest('hex');
+    old.prepare(`INSERT INTO acquisition_attempts
+      (request_id,anidb_id,indexer_id,candidate_digest,status,created_ms,updated_ms)
+      VALUES (?,?,?,?,'dispatch_unknown',200,201)`).run(firstId, 42, candidate.indexerId, digest);
+    old.close();
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      assert.deepEqual(ledger.beginDispatch({ attemptId: 1, nowMs: 202 }),
+        { state: 'dispatch_unknown', sendNow: false });
+      assert.deepEqual(ledger.recordTorrent({ attemptId: 1, hash: 'a'.repeat(40), nowMs: 202 }),
+        { state: 'held', reason: 'torrent_conflict' });
+    } finally { ledger.close(); }
   }));
