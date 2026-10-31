@@ -30,6 +30,14 @@ test('an empty filtered result is only no-match evidence, never absence proof', 
   { state: 'cards', cards: [], complete: true });
 });
 
+test('an explicit zero-item GUID result may omit Metadata', async () => {
+  const result = await readPlexGuidCards({ ...base,
+    fetchImpl: async () => Response.json({ MediaContainer: {
+      librarySectionID: 102, offset: 0, size: 0, totalSize: 0,
+    } }) });
+  assert.deepEqual(result, { state: 'cards', cards: [], complete: true });
+});
+
 test('ignored filters, mixed libraries, and truncated pages hold', async () => {
   for (const response of [
     page([{ ratingKey: 500, librarySectionID: 102,

@@ -49,17 +49,19 @@ export async function readPlexGuidCards({ baseUrl, token, libraryId, kind,
   const start = integer(container?.offset);
   const total = integer(container?.totalSize);
   const size = integer(container?.size);
+  const metadata = container?.Metadata === undefined && size === 0 &&
+    (total ?? totalHeader) === 0 ? [] : container?.Metadata;
   if (integer(container?.librarySectionID) !== integer(libraryId) ||
       (start === null && startHeader === null) ||
       (start !== null && start !== 0) || (startHeader !== null && startHeader !== 0) ||
       (total === null && totalHeader === null) ||
       (total !== null && totalHeader !== null && total !== totalHeader) ||
       (total ?? totalHeader) > 10 || size === null || size > 10 ||
-      size !== (total ?? totalHeader) || !Array.isArray(container.Metadata) ||
-      container.Metadata.length !== size) return unavailable();
+      size !== (total ?? totalHeader) || !Array.isArray(metadata) ||
+      metadata.length !== size) return unavailable();
   const cards = [];
   const keys = new Set();
-  for (const item of container.Metadata) {
+  for (const item of metadata) {
     const ratingKey = integer(item?.ratingKey, 1);
     const exactGuid = item?.guid === guid ||
       (kind === 'movie' && Array.isArray(item?.Guid) &&
