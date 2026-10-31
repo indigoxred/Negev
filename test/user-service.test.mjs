@@ -20,13 +20,22 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   const methods = [];
   let showSecond = false;
   let calendarDay = '2026-10-31';
+  const videoName = 'Example Series - 01.mkv';
+  const info = Buffer.from(`d6:lengthi1000e4:name${Buffer.byteLength(videoName)}:${videoName}12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae`);
+  const torrent = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
+  const proxy = 'http://prowlarr.internal:9696/7/download?apikey=synthetic-prowlarr-key&link=abc123&file=Example';
   const fetchImpl = async (url, init) => {
     const parsed = new URL(url);
     methods.push(`${init.method} ${parsed.pathname}`);
     if (parsed.pathname === '/api/v1/search') {
       assert.equal(init.headers['X-Api-Key'], 'synthetic-prowlarr-key');
       return json([{ guid: 'synthetic-release', indexerId: 7,
-        title: 'Example Series 01', size: 1000, protocol: 'torrent', seeders: 3 }]);
+        title: 'Example Series 01', size: 1000, protocol: 'torrent',
+        seeders: 3, downloadUrl: proxy }]);
+    }
+    if (parsed.pathname === '/7/download') {
+      return new Response(torrent, { headers: {
+        'content-type': 'application/x-bittorrent' } });
     }
     if (parsed.pathname.endsWith('/Search')) {
       return parsed.searchParams.get('query') === 'Movie'
@@ -100,6 +109,15 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.equal(candidates.statusCode, 200, candidates.body);
     assert.equal(candidates.json().items[0].evidence, 'unverified');
     assert.equal(methods.some((method) => method === 'GET /api/v1/search'), true);
+    const inspected = await service.app.inject({ method: 'POST',
+      url: `/api/requests/${id}/preflight`, headers: auth(cookie, csrf),
+      payload: { candidate: { guid: 'synthetic-release', indexerId: 7,
+        title: 'Example Series 01', size: 1000 } } });
+    assert.equal(inspected.statusCode, 200, inspected.body);
+    assert.equal(inspected.json().registeredInAniDb, false);
+    assert.equal(inspected.json().downloadStarted, false);
+    assert.deepEqual(inspected.json().episodeIds, [1001]);
+    assert.equal(methods.filter((method) => method === 'GET /7/download').length, 1);
     showSecond = true;
     calendarDay = '2026-11-01';
     const airing = await service.pollAiringNextPage();
