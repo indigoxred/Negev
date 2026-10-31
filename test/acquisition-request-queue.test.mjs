@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
-import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from
+import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
+  reconcileUnresolvedAcquisitionClaims } from
   '../src/acquisition/acquisition-request-queue.mjs';
 
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
@@ -49,8 +50,13 @@ test('unresolved claim cannot be reprocessed on a later pass but new requests ca
     first.close();
     const second = openAcquisitionRequestQueue(dbPath);
     try {
+      assert.deepEqual(second.listUnresolved(), [{ requestId: 1, pass: 1 }]);
       assert.equal(second.claimNext().requestId, 2);
       assert.equal(second.claimNext().requestId, 3);
+      assert.deepEqual(second.listUnresolved(), [
+        { requestId: 1, pass: 1 }, { requestId: 2, pass: 1 },
+        { requestId: 3, pass: 1 },
+      ]);
       assert.deepEqual(second.claimNext(), { state: 'pass_complete', pass: 1 });
       assert.deepEqual(second.claimNext(), { state: 'pass_complete', pass: 2 });
       const requests = openRequestLedger(dbPath);
@@ -62,6 +68,7 @@ test('unresolved claim cannot be reprocessed on a later pass but new requests ca
       assert.deepEqual(second.recordResult({ requestId: 1, pass: 1,
         state: 'held', reason: 'reconciled_no_dispatch', checkedMs: 20 }),
       { state: 'recorded' });
+      assert.deepEqual(second.listUnresolved().map((item) => item.requestId), [2, 3, 4]);
       assert.deepEqual(second.recordResult({ requestId: 1, pass: 1,
         state: 'held', reason: 'reconciled_no_dispatch', checkedMs: 21 }),
       { state: 'held', reason: 'stale_claim' });
@@ -126,5 +133,28 @@ test('overlapping ticks do not claim twice and invalid results never report prog
         state: 'held', reason: 'worker_unavailable' }] });
       assert.equal(queue.getResult(1).reason, 'worker_unavailable');
       assert.equal(queue.claimNext().requestId, 2);
+    } finally { queue.close(); }
+  }));
+
+test('restart recovery releases only claims with no saved acquisition attempt', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      for (let id = 1; id <= 3; id++) queue.claimNext({ nowMs: 100 });
+      const seen = [];
+      const recovered = await reconcileUnresolvedAcquisitionClaims({ queue,
+        inspectRequest: async (requestId) => {
+          seen.push(requestId);
+          return requestId === 2 ? { state: 'attempt_present' } :
+            requestId === 3 ? { state: 'unavailable' } : { state: 'no_attempt' };
+        }, now: () => 200, limit: 3 });
+      assert.deepEqual(seen, [1, 2, 3]);
+      assert.deepEqual(recovered, { state: 'reviewed', resolved: [1], held: [2, 3] });
+      assert.equal(queue.getResult(1).reason, 'reconciled_no_dispatch');
+      assert.equal(queue.getResult(2).state, null);
+      assert.deepEqual(queue.listUnresolved().map((item) => item.requestId), [2, 3]);
+      assert.deepEqual(await reconcileUnresolvedAcquisitionClaims({ queue,
+        inspectRequest: () => ({ state: 'no_attempt' }), now: () => 201,
+        limit: 2 }), { state: 'reviewed', resolved: [2, 3], held: [] });
     } finally { queue.close(); }
   }));

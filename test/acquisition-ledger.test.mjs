@@ -27,6 +27,20 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('restart recovery can distinguish an untouched request from any saved attempt', async () =>
+  withLedger(async ({ dbPath, firstId, secondId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      assert.deepEqual(ledger.inspectRequestAttempts(firstId), { state: 'no_attempt' });
+      const reserved = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      assert.equal(reserved.state, 'reserved');
+      assert.deepEqual(ledger.inspectRequestAttempts(firstId), { state: 'attempt_present' });
+      assert.deepEqual(ledger.inspectRequestAttempts(secondId), { state: 'no_attempt' });
+      assert.throws(() => ledger.inspectRequestAttempts(0), TypeError);
+    } finally { ledger.close(); }
+  }));
+
 test('reserves an exact request once and blocks overlapping targets but not other targets', async () =>
   withLedger(async ({ dbPath, firstId, secondId, thirdId }) => {
     const ledger = openAcquisitionLedger(dbPath);

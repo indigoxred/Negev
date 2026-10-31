@@ -54,6 +54,9 @@ export function openAcquisitionRequestQueue(dbPath) {
     attempt_id AS attemptId,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM acquisition_request_checks WHERE request_id=?`);
+  const unresolved = db.prepare(`SELECT request_id AS requestId,pass
+    FROM acquisition_request_checks WHERE request_id>? AND state IS NULL
+    ORDER BY request_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -102,6 +105,13 @@ export function openAcquisitionRequestQueue(dbPath) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       const row = result.get(requestId);
       return row ? { ...row } : null;
+    },
+    listUnresolved({ afterId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterId) || afterId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid unresolved claim page');
+      }
+      return unresolved.all(afterId, limit).map((row) => ({ ...row }));
     },
     close() { db.close(); },
   };
@@ -159,4 +169,37 @@ export function createAcquisitionPageWorker({ queue, processRequest,
       } finally { busy = false; }
     },
   };
+}
+
+// Invoke before starting request workers after a restart. The acquisition
+// ledger must prove that a claim has no saved attempt before it can retry.
+// An uncertain provider read or any saved attempt leaves the claim held.
+export async function reconcileUnresolvedAcquisitionClaims({ queue,
+  inspectRequest, now = Date.now, limit = 20 } = {}) {
+  if (typeof queue?.listUnresolved !== 'function' ||
+      typeof queue?.recordResult !== 'function' ||
+      typeof inspectRequest !== 'function' || typeof now !== 'function' ||
+      !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+    throw new TypeError('Invalid acquisition claim recovery');
+  }
+  const claims = queue.listUnresolved({ limit });
+  const resolved = [];
+  const heldClaims = [];
+  for (const claim of claims) {
+    let observation;
+    try { observation = await inspectRequest(claim.requestId); }
+    catch { observation = null; }
+    if (observation?.state !== 'no_attempt') {
+      heldClaims.push(claim.requestId);
+      continue;
+    }
+    try {
+      const saved = queue.recordResult({ requestId: claim.requestId,
+        pass: claim.pass, state: 'held', reason: 'reconciled_no_dispatch',
+        checkedMs: now() });
+      if (saved.state === 'recorded') resolved.push(claim.requestId);
+      else heldClaims.push(claim.requestId);
+    } catch { heldClaims.push(claim.requestId); }
+  }
+  return { state: 'reviewed', resolved, held: heldClaims };
 }

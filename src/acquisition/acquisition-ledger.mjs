@@ -112,6 +112,7 @@ export function openAcquisitionLedger(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
+  const attemptForRequest = db.prepare('SELECT 1 AS present FROM acquisition_attempts WHERE request_id=? LIMIT 1');
   const requestedEpisode = db.prepare(`SELECT 1 AS present FROM request_targets rt
     JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
@@ -161,6 +162,10 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
+    inspectRequestAttempts(requestId) {
+      if (!validId(requestId)) throw new TypeError('Invalid request ID');
+      return { state: attemptForRequest.get(requestId) ? 'attempt_present' : 'no_attempt' };
+    },
     reserve({ requestId, candidate, episodeIds, nowMs }) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
