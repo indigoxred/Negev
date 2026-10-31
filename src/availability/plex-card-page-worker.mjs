@@ -74,11 +74,16 @@ export function createPlexCardPageWorker({ libraryId, kind, pageSize = 5,
   return {
     async tick() {
       const offset = index.getCursor({ libraryId, kind });
+      let page, observedMs;
       const result = await indexPlexCardPage({ libraryId, kind, offset,
-        pageSize, index, readPage, readCard, now });
+        pageSize, index,
+        readPage: async (input) => { page = await readPage(input); return page; },
+        readCard, now: () => { observedMs = now(); return observedMs; } });
       if (result.state !== 'page_indexed') return result;
       const advanced = index.advanceCursor({ libraryId, kind,
-        expectedOffset: offset, nextOffset: result.nextOffset });
+        expectedOffset: offset, nextOffset: result.nextOffset,
+        ...(Number.isSafeInteger(page?.totalSize) ? {
+          pageKeys: page.keys, totalSize: page.totalSize, observedMs } : {}) });
       return advanced.state === 'cursor_advanced' ? result : advanced;
     },
   };

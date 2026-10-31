@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
-import { indexPlexCardPage, retryOnePlexCard } from
+import { createPlexCardPageWorker, indexPlexCardPage, retryOnePlexCard } from
   '../src/availability/plex-card-page-worker.mjs';
 
 const cleanup = [];
@@ -238,6 +238,97 @@ test('page cursor is durable and rejects a stale concurrent advance', async () =
   assert.equal(reopened.getCursor({ libraryId: 102, kind: 'episode' }), 5);
   assert.equal(reopened.getCursor({ libraryId: 102, kind: 'movie' }), 0);
   reopened.close();
+});
+
+test('two identical complete key sweeps retire a card omitted from Plex', async () => {
+  const { path: dbPath, ledger } = await index();
+  ledger.recordCard({ ...card(500), observedMs: 1 });
+  ledger.recordCard({ ...card(501), observedMs: 1 });
+  let keys = [500, 501];
+  let clock = 10;
+  const worker = createPlexCardPageWorker({ libraryId: 102,
+    kind: 'episode', pageSize: 2, index: ledger,
+    now: () => clock++,
+    readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+      kind: 'episode', offset, totalSize: keys.length, keys, complete: false }),
+    readCard: async ({ ratingKey }) => ({ state: 'ok', complete: true,
+      parts: card(ratingKey).parts }),
+  });
+  await worker.tick();
+  keys = [500];
+  await worker.tick();
+  assert.equal(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.length, 2);
+  await worker.tick();
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards, [{ libraryId: 102, ratingKey: 500 }]);
+  ledger.close();
+  const reopened = openPlexCardIndex(dbPath);
+  assert.equal(reopened.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.length, 1);
+  reopened.close();
+});
+
+test('truncated or inconsistent key sweep cannot retire an older card', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(500), observedMs: 1 });
+  ledger.recordCard({ ...card(501), observedMs: 1 });
+  let clock = 10;
+  const worker = createPlexCardPageWorker({ libraryId: 102,
+    kind: 'episode', pageSize: 2, index: ledger, now: () => clock++,
+    readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+      kind: 'episode', offset, totalSize: 2, keys: [500], complete: false }),
+    readCard: async () => ({ state: 'ok', complete: true,
+      parts: card(500).parts }),
+  });
+  await worker.tick();
+  await worker.tick();
+  assert.equal(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.length, 2);
+  ledger.close();
+});
+
+test('card refreshed after a sweep begins survives a delayed withdrawal', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(500), observedMs: 1 });
+  ledger.recordCard({ ...card(501), observedMs: 1 });
+  let keys = [500];
+  let clock = 10;
+  const worker = createPlexCardPageWorker({ libraryId: 102,
+    kind: 'episode', index: ledger, now: () => clock++,
+    readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+      kind: 'episode', offset, totalSize: 1, keys, complete: false }),
+    readCard: async () => ({ state: 'ok', complete: true,
+      parts: card(500).parts }),
+  });
+  await worker.tick();
+  await worker.tick();
+  ledger.recordCard({ ...card(501), observedMs: 12 });
+  await worker.tick();
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.map((row) => row.ratingKey), [500, 501]);
+  ledger.close();
+});
+
+test('changed section total during a multi-page pass prevents withdrawal', async () => {
+  const { ledger } = await index();
+  for (const ratingKey of [500, 501, 502]) {
+    ledger.recordCard({ ...card(ratingKey), observedMs: 1 });
+  }
+  let clock = 10;
+  const worker = createPlexCardPageWorker({ libraryId: 102,
+    kind: 'episode', pageSize: 2, index: ledger, now: () => clock++,
+    readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+      kind: 'episode', offset, totalSize: offset === 0 ? 3 : 2,
+      keys: offset === 0 ? [500, 501] : [], complete: false }),
+    readCard: async ({ ratingKey }) => ({ state: 'ok', complete: true,
+      parts: card(ratingKey).parts }),
+  });
+  await worker.tick();
+  await worker.tick();
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.map((row) => row.ratingKey), [500, 501, 502]);
+  ledger.close();
 });
 
 test('failed card reads retain one bounded durable retry until a successful card', async () => {

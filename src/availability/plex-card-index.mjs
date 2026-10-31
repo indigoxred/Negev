@@ -56,6 +56,26 @@ export function openPlexCardIndex(dbPath) {
       offset INTEGER NOT NULL CHECK(offset>=0),
       PRIMARY KEY(library_id,kind)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_sweep_passes (
+      library_id INTEGER NOT NULL CHECK(library_id>0),
+      kind TEXT NOT NULL CHECK(kind IN ('episode','movie')),
+      pass_num INTEGER NOT NULL CHECK(pass_num>0),
+      total_size INTEGER NOT NULL CHECK(total_size>=0),
+      started_ms INTEGER NOT NULL CHECK(started_ms>=0),
+      status TEXT NOT NULL CHECK(status IN ('running','complete','invalid')),
+      PRIMARY KEY(library_id,kind,pass_num)
+    ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_sweep_keys (
+      library_id INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      pass_num INTEGER NOT NULL,
+      ordinal INTEGER NOT NULL CHECK(ordinal>=0),
+      rating_key INTEGER NOT NULL CHECK(rating_key>0),
+      PRIMARY KEY(library_id,kind,pass_num,ordinal),
+      UNIQUE(library_id,kind,pass_num,rating_key),
+      FOREIGN KEY(library_id,kind,pass_num)
+        REFERENCES plex_sweep_passes(library_id,kind,pass_num) ON DELETE CASCADE
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_retries (
       library_id INTEGER NOT NULL CHECK(library_id>0),
       rating_key INTEGER NOT NULL CHECK(rating_key>0),
@@ -104,6 +124,36 @@ export function openPlexCardIndex(dbPath) {
   const saveCursor = db.prepare(`INSERT INTO plex_card_cursors
     (library_id,kind,offset) VALUES (?,?,?) ON CONFLICT(library_id,kind)
     DO UPDATE SET offset=excluded.offset`);
+  const latestPass = db.prepare(`SELECT pass_num AS passNum,
+    total_size AS totalSize, started_ms AS startedMs, status
+    FROM plex_sweep_passes WHERE library_id=? AND kind=?
+    ORDER BY pass_num DESC LIMIT 1`);
+  const priorPass = db.prepare(`SELECT pass_num AS passNum,
+    total_size AS totalSize, started_ms AS startedMs, status
+    FROM plex_sweep_passes WHERE library_id=? AND kind=? AND pass_num=?`);
+  const startPass = db.prepare(`INSERT INTO plex_sweep_passes
+    (library_id,kind,pass_num,total_size,started_ms,status)
+    VALUES (?,?,?,?,?,'running')`);
+  const markPass = db.prepare(`UPDATE plex_sweep_passes SET status=?
+    WHERE library_id=? AND kind=? AND pass_num=?`);
+  const addSweepKey = db.prepare(`INSERT INTO plex_sweep_keys
+    (library_id,kind,pass_num,ordinal,rating_key) VALUES (?,?,?,?,?)`);
+  const sweepCount = db.prepare(`SELECT COUNT(*) AS count FROM plex_sweep_keys
+    WHERE library_id=? AND kind=? AND pass_num=?`);
+  const sweepMismatch = db.prepare(`SELECT COUNT(*) AS count
+    FROM plex_sweep_keys current
+    LEFT JOIN plex_sweep_keys previous
+      ON previous.library_id=current.library_id AND previous.kind=current.kind
+      AND previous.pass_num=? AND previous.ordinal=current.ordinal
+    WHERE current.library_id=? AND current.kind=? AND current.pass_num=?
+      AND (previous.rating_key IS NULL OR previous.rating_key<>current.rating_key)`);
+  const unseenCards = db.prepare(`SELECT c.rating_key AS ratingKey
+    FROM plex_card_observations c WHERE c.library_id=? AND c.kind=?
+      AND c.observed_ms<? AND NOT EXISTS (
+        SELECT 1 FROM plex_sweep_keys k WHERE k.library_id=c.library_id
+          AND k.kind=c.kind AND k.pass_num=? AND k.rating_key=c.rating_key)`);
+  const prunePasses = db.prepare(`DELETE FROM plex_sweep_passes
+    WHERE library_id=? AND kind=? AND pass_num<?`);
   const candidateQueries = new Map();
   const identityQueries = new Map();
   const sizeCandidates = (libraryCount) => {
@@ -268,10 +318,16 @@ export function openPlexCardIndex(dbPath) {
       }
       return cursor.get(libraryId, kind)?.offset ?? 0;
     },
-    advanceCursor({ libraryId, kind, expectedOffset, nextOffset }) {
+    advanceCursor({ libraryId, kind, expectedOffset, nextOffset,
+      pageKeys, totalSize, observedMs }) {
       if (!validId(libraryId) || !['episode', 'movie'].includes(kind) ||
           !Number.isSafeInteger(expectedOffset) || expectedOffset < 0 ||
-          !Number.isSafeInteger(nextOffset) || nextOffset < 0) {
+          !Number.isSafeInteger(nextOffset) || nextOffset < 0 ||
+          (pageKeys !== undefined && (!Array.isArray(pageKeys) ||
+            pageKeys.length > 5 || pageKeys.some((key) => !validId(key)) ||
+            new Set(pageKeys).size !== pageKeys.length ||
+            !Number.isSafeInteger(totalSize) || totalSize < expectedOffset + pageKeys.length ||
+            !Number.isSafeInteger(observedMs) || observedMs < 0))) {
         throw new TypeError('Invalid Plex cursor advance');
       }
       let begun = false;
@@ -281,6 +337,48 @@ export function openPlexCardIndex(dbPath) {
         if (old !== expectedOffset) {
           db.exec('ROLLBACK'); begun = false;
           return { state: 'held', reason: 'stale_cursor' };
+        }
+        if (pageKeys !== undefined) {
+          let pass = latestPass.get(libraryId, kind);
+          if (expectedOffset === 0) {
+            const passNum = (pass?.passNum ?? 0) + 1;
+            startPass.run(libraryId, kind, passNum, totalSize, observedMs);
+            pass = { passNum, totalSize, startedMs: observedMs, status: 'running' };
+          }
+          if (pass?.status === 'running') {
+            if (pass.totalSize !== totalSize) {
+              markPass.run('invalid', libraryId, kind, pass.passNum);
+            } else {
+              try {
+                for (let i = 0; i < pageKeys.length; i++) {
+                  addSweepKey.run(libraryId, kind, pass.passNum,
+                    expectedOffset + i, pageKeys[i]);
+                }
+              } catch {
+                markPass.run('invalid', libraryId, kind, pass.passNum);
+              }
+              if (nextOffset === 0 &&
+                  sweepCount.get(libraryId, kind, pass.passNum).count === totalSize &&
+                  latestPass.get(libraryId, kind)?.status === 'running') {
+                markPass.run('complete', libraryId, kind, pass.passNum);
+                const prior = priorPass.get(libraryId, kind, pass.passNum - 1);
+                if (prior?.status === 'complete' && prior.totalSize === totalSize &&
+                    prior.startedMs < pass.startedMs && pass.startedMs <= observedMs &&
+                    sweepCount.get(libraryId, kind, prior.passNum).count === totalSize &&
+                    sweepMismatch.get(prior.passNum, libraryId, kind,
+                      pass.passNum).count === 0) {
+                  for (const row of unseenCards.all(libraryId, kind,
+                    prior.startedMs, pass.passNum)) {
+                    clearParts.run(libraryId, row.ratingKey);
+                    clearCard.run(libraryId, row.ratingKey);
+                    saveRemoval.run(libraryId, row.ratingKey, observedMs);
+                    clearRetry.run(libraryId, row.ratingKey);
+                  }
+                }
+                prunePasses.run(libraryId, kind, pass.passNum - 1);
+              }
+            }
+          }
         }
         saveCursor.run(libraryId, kind, nextOffset);
         db.exec('COMMIT'); begun = false;
