@@ -38,8 +38,12 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
 // the release and exact episode subset; a title match alone cannot do that.
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
-  plannedFiles, readEvidence, publicLibraryIds, ledger, now = Date.now, prowlarr, qbittorrent }) {
-  if (!prowlarr || !qbittorrent || typeof now !== 'function') {
+  plannedFiles, expectedHash, readEvidence, publicLibraryIds, ledger,
+  now = Date.now, prowlarr, qbittorrent }) {
+  if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
+      (expectedHash !== undefined &&
+        (typeof expectedHash !== 'string' ||
+        !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedHash)))) {
     throw new TypeError('Invalid stopped acquisition configuration');
   }
   if (!isCompleteAniDbDetail(detail, request?.anidbId) ||
@@ -52,6 +56,10 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   const prepared = await prepareStoppedCandidate({ ...prowlarr, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
+  if (expectedHash !== undefined &&
+      prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {
+    return held('preflight_torrent_changed');
+  }
   let selectedEpisodeIds = episodeIds;
   let selectedFiles = plannedFiles;
   if (episodeIds === undefined && plannedFiles === undefined) {

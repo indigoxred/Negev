@@ -7,6 +7,10 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { submitMissingCandidate } from '../src/acquisition/submit-missing-candidate.mjs';
+import { createAcquisitionRequestProcessor } from
+  '../src/acquisition/acquisition-request-processor.mjs';
+import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from
+  '../src/acquisition/acquisition-request-queue.mjs';
 
 const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
@@ -36,7 +40,7 @@ async function withLedgers(run, intent = { state: 'ready', anidbId: 42,
   const saved = requests.submit({ requesterId: 1, requestKey: 'one', nowMs: 100,
     intent });
   const ledger = openAcquisitionLedger(dbPath);
-  try { await run({ request: requests.getRequest(saved.requestId), ledger }); }
+  try { await run({ request: requests.getRequest(saved.requestId), ledger, dbPath }); }
   finally { ledger.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
 }
 
@@ -161,6 +165,19 @@ test('a wrong video-to-episode plan holds before reservation or qBittorrent', as
     assert.equal(ledger.getAttempt(1), null);
   }));
 
+test('a changed torrent hash after preflight cannot reserve or reach qBittorrent', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let qbCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: prowlarrFetch(),
+      qbittorrentFetch: async () => { qbCalls++; throw Error('unexpected qBittorrent call'); } });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      expectedHash: 'b'.repeat(40) }),
+    { state: 'held', reason: 'preflight_torrent_changed' });
+    assert.equal(qbCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
+  }));
+
 test('a present target or unavailable Prowlarr cannot send a torrent', async () =>
   withLedgers(async ({ request, ledger }) => {
     let qbCalls = 0;
@@ -209,4 +226,37 @@ test('replaying an observed stopped candidate never sends a second add', async (
       } } });
     assert.equal(replay.state, 'stopped_observed');
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+  }));
+
+test('one saved request advances through the bounded processor to one stopped torrent', async () =>
+  withLedgers(async ({ request, ledger, dbPath }) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const calls = [];
+    try {
+      const input = options({ request, ledger, readEvidence: async () => absent(),
+        prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
+      const processRequest = createAcquisitionRequestProcessor({
+        readRequest: () => request,
+        discoverCandidates: async () => ({ state: 'candidates',
+          requestId: request.id, anidbId: 42, items: [{ ...candidate,
+            evidence: 'unverified' }] }),
+        previewCandidate: async () => ({ state: 'preflight',
+          requestId: request.id, anidbId: 42, torrentHash: hash,
+          episodeIds: [1001], files: input.plannedFiles }),
+        loadDetail: async () => baseDetail,
+        submitCandidate: (selection) => submitMissingCandidate({ ...input,
+          ...selection }),
+      });
+      const worker = createAcquisitionPageWorker({ queue, processRequest,
+        limit: 1, now: () => 201 });
+      const first = await worker.runOnce();
+      assert.equal(first.results[0].state, 'stopped_observed');
+      assert.equal(queue.getResult(request.id).attemptId,
+        first.results[0].attemptId);
+      assert.equal(ledger.getAttempt(first.results[0].attemptId).status,
+        'torrent_observed');
+      assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+      assert.deepEqual(await worker.runOnce(),
+        { state: 'pass_complete', pass: 1, results: [] });
+    } finally { queue.close(); }
   }));
