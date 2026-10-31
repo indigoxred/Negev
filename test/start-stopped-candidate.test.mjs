@@ -26,7 +26,8 @@ async function withObservedTorrent(run) {
   const request = requests.submit({ requesterId: 1, requestKey: 'one', nowMs: 100,
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false, episodeIds: [1001] } });
   const ledger = openAcquisitionLedger(dbPath);
-  const attempt = ledger.reserve({ requestId: request.requestId, candidate, nowMs: 200 });
+  const attempt = ledger.reserve({ requestId: request.requestId, candidate,
+    episodeIds: [1001], nowMs: 200 });
   ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
   ledger.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
   ledger.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });

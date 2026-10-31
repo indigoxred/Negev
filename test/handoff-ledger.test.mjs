@@ -25,7 +25,8 @@ test('one exact prepared handoff gets one durable publish intent across restart'
         episodeIds: [1001] } });
     requests.close();
     const acquisition = openAcquisitionLedger(dbPath);
-    const attempt = acquisition.reserve({ requestId: request.requestId, candidate, nowMs: 200 });
+    const attempt = acquisition.reserve({ requestId: request.requestId, candidate,
+      episodeIds: [1001], nowMs: 200 });
     acquisition.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
     acquisition.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
     acquisition.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });

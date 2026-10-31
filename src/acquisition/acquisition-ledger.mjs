@@ -94,26 +94,32 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
-    reserve({ requestId, candidate, nowMs }) {
+    reserve({ requestId, candidate, episodeIds, nowMs }) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
-          !candidate.guid || candidate.guid.length > 500) {
+          !candidate.guid || candidate.guid.length > 500 ||
+          !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > 50 ||
+          episodeIds.some((id) => !validId(id)) ||
+          new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid acquisition reservation');
       }
       const digest = createHash('sha256').update(candidate.guid).digest('hex');
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
-        const episodes = requestEpisodes.all(requestId).map((row) => row.episode_id);
-        if (episodes.length === 0 || episodes.length > 500) return held('invalid_request_targets');
+        const requested = requestEpisodes.all(requestId).map((row) => row.episode_id);
+        if (requested.length === 0 || requested.length > 500) return held('invalid_request_targets');
+        if (episodeIds.some((id) => !requested.includes(id))) return held('target_not_requested');
         const existing = candidateRow.get(candidate.indexerId, digest);
-        if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id
+        if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
+          JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
+          JSON.stringify([...episodeIds].sort((a, b) => a - b))
           ? { state: 'existing', attemptId: existing.id, status: existing.status }
           : held('candidate_claimed');
-        if (episodes.some((id) => busyTarget.get(request.anidb_id, id))) return held('target_busy');
+        if (episodeIds.some((id) => busyTarget.get(request.anidb_id, id))) return held('target_busy');
         const id = Number(insertAttempt.run(requestId, request.anidb_id, candidate.indexerId,
           digest, nowMs, nowMs).lastInsertRowid);
-        for (const episodeId of episodes) claimTarget.run(id, request.anidb_id, episodeId);
+        for (const episodeId of episodeIds) claimTarget.run(id, request.anidb_id, episodeId);
         return { state: 'reserved', attemptId: id };
       });
     },

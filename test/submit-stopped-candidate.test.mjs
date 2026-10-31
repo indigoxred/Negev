@@ -31,7 +31,8 @@ async function withAttempt(run) {
   const request = requests.submit({ requesterId: 1, requestKey: 'one', nowMs: 100,
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false, episodeIds: [1001] } });
   const ledger = openAcquisitionLedger(dbPath);
-  const reserved = ledger.reserve({ requestId: request.requestId, candidate, nowMs: 200 });
+  const reserved = ledger.reserve({ requestId: request.requestId, candidate,
+    episodeIds: [1001], nowMs: 200 });
   try { await run({ ledger, attemptId: reserved.attemptId }); }
   finally { ledger.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
 }

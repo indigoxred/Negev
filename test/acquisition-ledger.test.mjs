@@ -31,17 +31,17 @@ test('reserves an exact request once and blocks overlapping targets but not othe
   withLedger(async ({ dbPath, firstId, secondId, thirdId }) => {
     const ledger = openAcquisitionLedger(dbPath);
     try {
-      const first = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+      const first = ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
       assert.equal(first.state, 'reserved');
       assert.ok(Number.isSafeInteger(first.attemptId));
-      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate, nowMs: 201 }),
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 201 }),
         { state: 'existing', attemptId: first.attemptId, status: 'reserved' });
-      assert.deepEqual(ledger.reserve({ requestId: secondId, candidate, nowMs: 201 }),
+      assert.deepEqual(ledger.reserve({ requestId: secondId, candidate, episodeIds: [1002, 1003], nowMs: 201 }),
         { state: 'held', reason: 'candidate_claimed' });
-      assert.deepEqual(ledger.reserve({ requestId: secondId,
+      assert.deepEqual(ledger.reserve({ requestId: secondId, episodeIds: [1002, 1003],
         candidate: { indexerId: 7, guid: 'other-release' }, nowMs: 202 }),
       { state: 'held', reason: 'target_busy' });
-      assert.equal(ledger.reserve({ requestId: thirdId,
+      assert.equal(ledger.reserve({ requestId: thirdId, episodeIds: [1004],
         candidate: { indexerId: 7, guid: 'later-episode' }, nowMs: 203 }).state, 'reserved');
       assert.deepEqual(ledger.getAttempt(first.attemptId), {
         id: first.attemptId, requestId: firstId, anidbId: 42,
@@ -50,10 +50,35 @@ test('reserves an exact request once and blocks overlapping targets but not othe
     } finally { ledger.close(); }
   }));
 
+test('a request can reserve two disjoint explicit subsets for separate releases', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const first = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      assert.equal(first.state, 'reserved');
+      const second = ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'episode-2' },
+        episodeIds: [1002], nowMs: 201 });
+      assert.equal(second.state, 'reserved');
+      assert.deepEqual(ledger.getAttempt(first.attemptId).episodeIds, [1001]);
+      assert.deepEqual(ledger.getAttempt(second.attemptId).episodeIds, [1002]);
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1002], nowMs: 202 }),
+      { state: 'held', reason: 'candidate_claimed' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'outside-request' },
+        episodeIds: [1003], nowMs: 202 }),
+      { state: 'held', reason: 'target_not_requested' });
+      assert.throws(() => ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'implicit' }, nowMs: 203 }), TypeError);
+    } finally { ledger.close(); }
+  }));
+
 test('dispatch intent persists before network action and never auto-retries after restart', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
-    const reserved = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+    const reserved = ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
     const hash = 'a'.repeat(40);
     assert.deepEqual(ledger.beginDispatch({ attemptId: reserved.attemptId, nowMs: 200 }),
       { state: 'held', reason: 'torrent_not_prepared' });
@@ -66,7 +91,7 @@ test('dispatch intent persists before network action and never auto-retries afte
     ledger.close();
     const restarted = openAcquisitionLedger(dbPath);
     try {
-      assert.deepEqual(restarted.reserve({ requestId: firstId, candidate, nowMs: 202 }),
+      assert.deepEqual(restarted.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 202 }),
         { state: 'existing', attemptId: reserved.attemptId, status: 'dispatch_unknown' });
       assert.deepEqual(restarted.beginDispatch({ attemptId: reserved.attemptId, nowMs: 202 }),
         { state: 'dispatch_unknown', sendNow: false });
@@ -83,7 +108,7 @@ test('prepared hash is bound durably to the exact reserved candidate', async () 
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
     try {
-      const reserved = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+      const reserved = ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
       const hash = 'a'.repeat(40);
       assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
         candidate: { ...candidate, guid: 'other' }, hash, nowMs: 201 }),
@@ -105,9 +130,9 @@ test('two disjoint requests cannot claim the same torrent hash', async () =>
     const one = openAcquisitionLedger(dbPath);
     const two = openAcquisitionLedger(dbPath);
     try {
-      const first = one.reserve({ requestId: firstId, candidate, nowMs: 200 });
+      const first = one.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
       const other = { indexerId: 8, guid: 'different-indexer-same-torrent' };
-      const third = two.reserve({ requestId: thirdId, candidate: other, nowMs: 201 });
+      const third = two.reserve({ requestId: thirdId, candidate: other, episodeIds: [1004], nowMs: 201 });
       assert.equal(third.state, 'reserved');
       assert.equal(one.bindPreparedTorrent({ attemptId: first.attemptId,
         candidate, hash: 'a'.repeat(40), nowMs: 202 }).state, 'prepared');
@@ -122,8 +147,8 @@ test('two connections cannot reserve competing candidates for one target', async
     const one = openAcquisitionLedger(dbPath);
     const two = openAcquisitionLedger(dbPath);
     try {
-      assert.equal(one.reserve({ requestId: firstId, candidate, nowMs: 200 }).state, 'reserved');
-      assert.deepEqual(two.reserve({ requestId: secondId,
+      assert.equal(one.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 }).state, 'reserved');
+      assert.deepEqual(two.reserve({ requestId: secondId, episodeIds: [1002, 1003],
         candidate: { indexerId: 8, guid: 'competing' }, nowMs: 201 }),
       { state: 'held', reason: 'target_busy' });
     } finally { one.close(); two.close(); }
@@ -132,7 +157,7 @@ test('two connections cannot reserve competing candidates for one target', async
 test('raw indexer GUID is not stored in the private SQLite database', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
-    ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+    ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
     ledger.close();
     assert.equal((await readFile(dbPath)).includes(Buffer.from(candidate.guid)), false);
   }));
@@ -163,7 +188,7 @@ test('an old uncertain attempt remains unsendable after the hash-column migratio
 test('only an observed stopped torrent can receive one durable start intent', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
-    const attempt = ledger.reserve({ requestId: firstId, candidate, nowMs: 200 });
+    const attempt = ledger.reserve({ requestId: firstId, candidate, episodeIds: [1001, 1002], nowMs: 200 });
     const hash = 'a'.repeat(40);
     const manifestDigest = 'b'.repeat(64);
     try {
