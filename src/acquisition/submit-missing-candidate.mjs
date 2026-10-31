@@ -3,6 +3,7 @@ import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -40,6 +41,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   plannedFiles, readEvidence, publicLibraryIds, ledger, now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function') {
     throw new TypeError('Invalid stopped acquisition configuration');
+  }
+  if (!isCompleteAniDbDetail(detail, request?.anidbId) ||
+      detail.kind !== request.kind) return held('detail_unavailable');
+  if (detail.restricted !== false) return held('restricted_or_unverified');
+  const catalogueIds = new Set(detail.episodes.map((episode) => episode.id));
+  if (!Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
+      request.episodeIds.some((id) => !catalogueIds.has(id))) {
+    return held('target_missing');
   }
   const prepared = await prepareStoppedCandidate({ ...prowlarr, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;

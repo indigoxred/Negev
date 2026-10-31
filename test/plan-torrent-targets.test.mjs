@@ -5,6 +5,7 @@ import { planTorrentTargets } from '../src/acquisition/plan-torrent-targets.mjs'
 const request = { id: 7, status: 'held', anidbId: 42, kind: 'series',
   episodeIds: [1001, 1002, 1003] };
 const detail = { state: 'details', complete: true, total: 3, anidbId: 42, kind: 'series',
+  restricted: false,
   episodes: [
     { id: 1001, number: 1, type: 'Episode' },
     { id: 1002, number: 2, type: 'Episode' },
@@ -59,6 +60,8 @@ test('ambiguous pack, duplicate number, foreign target, and special hold without
 test('incomplete or contradictory AniDB detail cannot make a plan', () => {
   for (const changed of [
     { ...detail, complete: false },
+    { ...detail, restricted: true },
+    { ...detail, restricted: null },
     { ...detail, anidbId: 43 },
     { ...detail, episodes: [...detail.episodes, { id: 9000, number: 1, type: 'Episode' }] },
   ]) assert.equal(planTorrentTargets({ request, detail: changed, prepared: pack }).state, 'held');

@@ -23,6 +23,10 @@ const torrent = { hash, category: 'negev', save_path: savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: '01.mkv', size: 1000, priority: 1, progress: 0 }];
+const baseDetail = { state: 'details', complete: true, total: 2,
+  anidbId: 42, kind: 'series', restricted: false,
+  episodes: [{ id: 1001, number: 1, type: 'Episode' },
+    { id: 1002, number: 2, type: 'Episode' }] };
 
 async function withLedgers(run, intent = { state: 'ready', anidbId: 42,
   kind: 'series', monitorFuture: false, episodeIds: [1001, 1002] }) {
@@ -38,7 +42,7 @@ async function withLedgers(run, intent = { state: 'ready', anidbId: 42,
 
 function options({ request, ledger, readEvidence, prowlarrFetch, qbittorrentFetch,
   inspectMounts = async () => mounts }) {
-  return { request, candidate, episodeIds: [1001],
+  return { request, candidate, detail: baseDetail, episodeIds: [1001],
     plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], readEvidence,
     publicLibraryIds: [102], ledger, now: () => 201,
     prowlarr: { baseUrl: 'http://prowlarr.internal:9696/', apiKey: 'syntheticKey',
@@ -47,6 +51,31 @@ function options({ request, ledger, readEvidence, prowlarrFetch, qbittorrentFetc
       sessionId: 'syntheticSID', inspectMounts, realpathImpl: async () => hostPath,
       fetchImpl: qbittorrentFetch } };
 }
+
+test('a title newly restricted after request cannot reach Prowlarr or qBittorrent', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => { providerCalls++; },
+      qbittorrentFetch: async () => { providerCalls++; } });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      detail: { ...baseDetail, restricted: true } }),
+    { state: 'held', reason: 'restricted_or_unverified' });
+    assert.equal(providerCalls, 0);
+  }));
+
+test('a request target removed from fresh AniDB detail holds before provider reads', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => { providerCalls++; },
+      qbittorrentFetch: async () => { providerCalls++; } });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      detail: { ...baseDetail, total: 1,
+        episodes: [baseDetail.episodes[0]] } }),
+    { state: 'held', reason: 'target_missing' });
+    assert.equal(providerCalls, 0);
+  }));
 
 function absent() {
   return { anidbId: 42, episodeIds: [1001], observedAtMs: 200,
@@ -89,7 +118,7 @@ test('an unambiguous series file creates the provisional subset without a caller
     const calls = [];
     const input = options({ request, ledger, readEvidence: async () => absent(),
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
-    const detail = { state: 'details', complete: true, total: 2,
+    const detail = { state: 'details', complete: true, total: 2, restricted: false,
       anidbId: 42, kind: 'series', episodes: [
         { id: 1001, number: 1, type: 'Episode' },
         { id: 1002, number: 2, type: 'Episode' },
@@ -109,7 +138,7 @@ test('a one-video AniDB movie request follows the same stopped acquisition path'
     const input = options({ request, ledger,
       readEvidence: async () => ({ ...absent(), episodeIds: [5001] }),
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
-    const detail = { state: 'details', complete: true, total: 1,
+    const detail = { state: 'details', complete: true, total: 1, restricted: false,
       anidbId: 42, kind: 'movie',
       episodes: [{ id: 5001, number: 1, type: 'Episode' }] };
     const result = await submitMissingCandidate({ ...input, detail,
