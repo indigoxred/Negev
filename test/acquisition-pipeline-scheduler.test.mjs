@@ -92,3 +92,38 @@ test('failed reconciliation never schedules work', async () => {
   await scheduler.stop();
   assert.equal(closed, true);
 });
+
+test('operator status distinguishes waiting, active work and a stopped worker', async () => {
+  const timer = clock();
+  let release;
+  let entered;
+  const active = new Promise((resolve) => { entered = resolve; });
+  const pending = new Promise((resolve) => { release = resolve; });
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickPublish: async () => { entered(); await pending; return { state: 'processed' }; },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async () => ({ state: 'pass_complete' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 1234,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  assert.deepEqual(scheduler.getStatus(), { state: 'not_started',
+    activeStage: null, lastStage: null, lastResult: null,
+    lastFinishedMs: null });
+  await scheduler.start();
+  assert.equal(scheduler.getStatus().state, 'waiting');
+  const firing = timer.advance();
+  await active;
+  assert.deepEqual(scheduler.getStatus(), { state: 'running',
+    activeStage: 'publish', lastStage: null, lastResult: null,
+    lastFinishedMs: null });
+  release();
+  await firing;
+  assert.deepEqual(scheduler.getStatus(), { state: 'waiting',
+    activeStage: null, lastStage: 'publish', lastResult: 'processed',
+    lastFinishedMs: 1234 });
+  await scheduler.stop();
+  assert.equal(scheduler.getStatus().state, 'stopped');
+});

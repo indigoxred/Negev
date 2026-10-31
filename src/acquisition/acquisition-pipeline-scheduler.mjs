@@ -6,11 +6,13 @@ const stages = ['tickPublish', 'tickCompletions', 'tickStarts', 'tickRequests'];
 export function createPipelineScheduler({ pipeline,
   initialDelayMs = 60_000, stepDelayMs = 60_000,
   failureDelayMs = 5 * 60_000,
+  now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof pipeline?.initialize !== 'function' ||
       typeof pipeline.close !== 'function' ||
       stages.some((name) => typeof pipeline[name] !== 'function') ||
-      typeof setTimer !== 'function' || typeof clearTimer !== 'function' ||
+      typeof now !== 'function' || typeof setTimer !== 'function' ||
+      typeof clearTimer !== 'function' ||
       [initialDelayMs, stepDelayMs, failureDelayMs].some((value) =>
         !Number.isSafeInteger(value) || value < 1 || value > 86_400_000)) {
     throw new TypeError('Invalid pipeline scheduler');
@@ -21,8 +23,13 @@ export function createPipelineScheduler({ pipeline,
   let stopping;
   let started = false;
   let closed = false;
+  let stopped = false;
+  let recoveryState = 'not_started';
   let stageIndex = 0;
   let lastResult = null;
+  let activeStage = null;
+  let lastStage = null;
+  let lastFinishedMs = null;
   const schedule = (delay) => {
     if (closed) return;
     timer = setTimer(() => {
@@ -34,18 +41,32 @@ export function createPipelineScheduler({ pipeline,
   const tick = async () => {
     const stage = stages[stageIndex];
     stageIndex = (stageIndex + 1) % stages.length;
+    activeStage = stage.slice(4).toLowerCase();
     try { lastResult = await pipeline[stage](); }
     catch { lastResult = { state: 'held', reason: 'worker_unavailable' }; }
+    lastStage = activeStage;
+    activeStage = null;
+    const finished = now();
+    lastFinishedMs = Number.isSafeInteger(finished) && finished >= 0
+      ? finished : null;
     schedule(lastResult?.state === 'held' ? failureDelayMs : stepDelayMs);
   };
   return {
     start() {
       if (started || closed) throw new Error('Pipeline scheduler already started or stopped');
       started = true;
+      recoveryState = 'reconciling';
       initialization = (async () => {
-        const result = await pipeline.initialize();
-        if (result?.state === 'reconciled') schedule(initialDelayMs);
-        return result;
+        try {
+          const result = await pipeline.initialize();
+          recoveryState = result?.state === 'reconciled'
+            ? 'waiting' : 'reconciliation_held';
+          if (result?.state === 'reconciled') schedule(initialDelayMs);
+          return result;
+        } catch (error) {
+          recoveryState = 'reconciliation_failed';
+          throw error;
+        }
       })();
       return initialization;
     },
@@ -58,10 +79,19 @@ export function createPipelineScheduler({ pipeline,
           if (initialization) await Promise.allSettled([initialization]);
           if (running) await Promise.allSettled([running]);
           await pipeline.close();
+          stopped = true;
         })();
       }
       return stopping;
     },
     getLastResult() { return lastResult; },
+    getStatus() {
+      return { state: stopped ? 'stopped' : closed ? 'stopping' :
+        activeStage ? 'running' : recoveryState,
+      activeStage, lastStage,
+      lastResult: typeof lastResult?.state === 'string'
+        ? lastResult.state : null,
+      lastFinishedMs };
+    },
   };
 }
