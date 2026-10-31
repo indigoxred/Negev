@@ -11,14 +11,15 @@ const input = {
 test('constructs one stopped qBittorrent v5 upload at an explicit staging path', async () => {
   const form = buildStoppedTorrentAddForm(input);
   assert.equal(form.get('savepath'), input.savePath);
-  assert.equal(form.get('root_folder'), 'false');
+  assert.equal(form.get('contentLayout'), 'NoSubfolder');
+  assert.equal(form.has('root_folder'), false);
   assert.equal(form.get('category'), 'negev');
   assert.equal(form.get('stopped'), 'true');
   assert.equal(form.has('paused'), false);
   assert.equal(form.get('autoTMM'), 'false');
   assert.equal(form.get('skip_checking'), 'false');
   assert.deepEqual([...form.keys()].sort(), [
-    'autoTMM', 'category', 'root_folder', 'savepath', 'skip_checking', 'stopped', 'torrents',
+    'autoTMM', 'category', 'contentLayout', 'savepath', 'skip_checking', 'stopped', 'torrents',
   ]);
   const file = form.get('torrents');
   assert.equal(file.name, 'candidate.torrent');

@@ -16,11 +16,11 @@ async function exactPreparedTorrent(prepared) {
   const form = prepared.form;
   const fields = [...form.keys()].sort();
   if (JSON.stringify(fields) !== JSON.stringify([
-    'autoTMM', 'category', 'root_folder', 'savepath', 'skip_checking', 'stopped', 'torrents',
+    'autoTMM', 'category', 'contentLayout', 'savepath', 'skip_checking', 'stopped', 'torrents',
   ].sort()) || form.get('savepath') !== prepared.expected.savePath ||
       form.get('category') !== 'negev' || form.get('stopped') !== 'true' ||
       form.get('autoTMM') !== 'false' || form.get('skip_checking') !== 'false' ||
-      form.get('root_folder') !== 'false') return null;
+      form.get('contentLayout') !== 'NoSubfolder') return null;
   const torrent = form.get('torrents');
   if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > 2_000_000) return null;
   const metainfo = inspectTorrentMetainfo({ bytes: new Uint8Array(await torrent.arrayBuffer()) });

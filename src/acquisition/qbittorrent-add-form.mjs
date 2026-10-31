@@ -16,6 +16,6 @@ export function buildStoppedTorrentAddForm({ torrentBytes, savePath, category })
   form.set('stopped', 'true');
   form.set('autoTMM', 'false');
   form.set('skip_checking', 'false');
-  form.set('root_folder', 'false');
+  form.set('contentLayout', 'NoSubfolder');
   return form;
 }
