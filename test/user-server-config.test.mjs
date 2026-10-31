@@ -109,7 +109,8 @@ test('optional read-only Shoko Import root must be a normalized absolute path', 
   const root = path.resolve('sample-import-root');
   assert.equal(parseUserServerConfig({ ...valid,
     NEGEV_SHOKO_IMPORT_ROOT: root }).shokoImportRoot, root);
-  for (const bad of ['', 'relative', `${root}${path.sep}..`,
+  for (const bad of ['', 'relative', path.parse(root).root,
+    `${root}${path.sep}..`,
     `${root}\nother`]) {
     assert.throws(() => parseUserServerConfig({ ...valid,
       NEGEV_SHOKO_IMPORT_ROOT: bad }), TypeError);
