@@ -47,7 +47,7 @@ test('starts only the exact safe stopped manifest once after durable intent', as
       const endpoint = new URL(url).pathname;
       if (endpoint.endsWith('/start')) {
         posts++;
-        assert.equal(reads, 4);
+        assert.equal(reads, 5);
         assert.equal(init.method, 'POST');
         assert.equal(init.body.toString(), `hashes=${hash}`);
         assert.equal(init.redirect, 'manual');
@@ -56,6 +56,9 @@ test('starts only the exact safe stopped manifest once after durable intent', as
       }
       assert.equal(init.method, 'GET');
       reads++;
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: '/negev-staging', download_path: '',
+      });
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };
     const first = await startStoppedCandidate({ ...options, ledger, attemptId, fetchImpl });
@@ -86,12 +89,31 @@ test('unsafe manifest and visible staging hold before the start call', async () 
     assert.deepEqual(visible, { state: 'held', reason: 'staging_visible_to_shoko' });
   }));
 
+test('a stopped torrent whose incomplete path escapes staging cannot start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId }) => {
+    let posts = 0;
+    const fetchImpl = async (url) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint.endsWith('/start')) { posts++; throw Error('unexpected start'); }
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: '/negev-staging', download_path: '/Shoko',
+      });
+      return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+    };
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId, fetchImpl });
+    assert.deepEqual(result, { state: 'held', reason: 'incomplete_path_outside_staging' });
+    assert.equal(posts, 0);
+  }));
+
 test('a lost start response remains unknown and cannot trigger a second POST', async () =>
   withObservedTorrent(async ({ ledger, attemptId }) => {
     let posts = 0;
     const fetchImpl = async (url) => {
       const endpoint = new URL(url).pathname;
       if (endpoint.endsWith('/start')) { posts++; throw Error('response lost'); }
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: '/negev-staging', download_path: '',
+      });
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };
     assert.deepEqual(await startStoppedCandidate({ ...options, ledger, attemptId, fetchImpl }),

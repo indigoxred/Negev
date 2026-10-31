@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readBoundedJson } from '../http/bounded-response.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 
@@ -36,8 +37,24 @@ export async function startStoppedCandidate({
   const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs });
   if (manifest.state !== 'manifest_safe') return manifest;
+  let paths;
+  try {
+    const url = new URL('/api/v2/torrents/properties', base);
+    url.searchParams.set('hash', expected.hash);
+    const response = await fetchImpl(url, { method: 'GET',
+      headers: { Cookie: `SID=${sessionId}`, Accept: 'application/json' },
+      redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) return held('storage_path_unverified');
+    paths = await readBoundedJson(response, 100_000);
+  } catch { return held('storage_path_unverified'); }
+  if (paths?.save_path !== expected.savePath ||
+      typeof paths.download_path !== 'string') return held('storage_path_unverified');
+  if (paths.download_path !== '' && paths.download_path !== expected.savePath) {
+    return held('incomplete_path_outside_staging');
+  }
   const manifestDigest = createHash('sha256').update(JSON.stringify({
     videos: manifest.videos, subtitles: manifest.subtitles,
+    savePath: paths.save_path, downloadPath: paths.download_path,
   })).digest('hex');
   const intent = ledger.beginStart({ attemptId, hash: expected.hash,
     manifestDigest, nowMs });

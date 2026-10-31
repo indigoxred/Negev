@@ -75,6 +75,40 @@ test('a request can reserve two disjoint explicit subsets for separate releases'
     } finally { ledger.close(); }
   }));
 
+test('only an unsent, unbound candidate can release its claim for another release', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const first = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      assert.deepEqual(ledger.releaseReserved({ attemptId: first.attemptId, nowMs: 201 }),
+        { state: 'released_pre_dispatch' });
+      assert.deepEqual(ledger.releaseReserved({ attemptId: first.attemptId, nowMs: 202 }),
+        { state: 'released_pre_dispatch' });
+      const reopened = openAcquisitionLedger(dbPath);
+      try {
+        assert.equal(reopened.getAttempt(first.attemptId).status, 'released_pre_dispatch');
+        assert.deepEqual(reopened.beginDispatch({ attemptId: first.attemptId, nowMs: 203 }),
+          { state: 'held', reason: 'candidate_released' });
+      } finally { reopened.close(); }
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 203 }),
+        { state: 'held', reason: 'candidate_released' });
+      assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: first.attemptId,
+        candidate, hash: 'a'.repeat(40), nowMs: 203 }),
+        { state: 'held', reason: 'candidate_released' });
+      const second = ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'replacement' },
+        episodeIds: [1001], nowMs: 204 });
+      assert.equal(second.state, 'reserved');
+      ledger.bindPreparedTorrent({ attemptId: second.attemptId,
+        candidate: { indexerId: 7, guid: 'replacement' },
+        hash: 'b'.repeat(40), nowMs: 205 });
+      assert.deepEqual(ledger.releaseReserved({ attemptId: second.attemptId, nowMs: 206 }),
+        { state: 'held', reason: 'candidate_bound_or_sent' });
+    } finally { ledger.close(); }
+  }));
+
 test('dispatch intent persists before network action and never auto-retries after restart', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

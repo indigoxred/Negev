@@ -48,6 +48,10 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS active_acquisition_target
       ON acquisition_target_claims(anidb_id,episode_id) WHERE active=1`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_releases (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      released_ms INTEGER NOT NULL CHECK(released_ms >= 0)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_starts (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       torrent_hash TEXT NOT NULL,
@@ -71,6 +75,9 @@ export function openAcquisitionLedger(dbPath) {
   const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
+  const findRelease = db.prepare('SELECT released_ms FROM acquisition_releases WHERE attempt_id=?');
+  const insertRelease = db.prepare('INSERT INTO acquisition_releases(attempt_id,released_ms) VALUES (?,?)');
+  const deactivateClaims = db.prepare('UPDATE acquisition_target_claims SET active=0 WHERE attempt_id=? AND active=1');
   const prepare = db.prepare("UPDATE acquisition_attempts SET expected_hash=?,updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NULL");
   const begin = db.prepare("UPDATE acquisition_attempts SET status='dispatch_unknown',updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NOT NULL");
   const observe = db.prepare("UPDATE acquisition_attempts SET status='torrent_observed',torrent_hash=?,updated_ms=? WHERE id=? AND status='dispatch_unknown'");
@@ -111,6 +118,7 @@ export function openAcquisitionLedger(dbPath) {
         if (requested.length === 0 || requested.length > 500) return held('invalid_request_targets');
         if (episodeIds.some((id) => !requested.includes(id))) return held('target_not_requested');
         const existing = candidateRow.get(candidate.indexerId, digest);
+        if (existing && findRelease.get(existing.id)) return held('candidate_released');
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
           JSON.stringify([...episodeIds].sort((a, b) => a - b))
@@ -123,6 +131,21 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'reserved', attemptId: id };
       });
     },
+    releaseReserved({ attemptId, nowMs }) {
+      if (!validId(attemptId) || !validTime(nowMs)) throw new TypeError('Invalid release intent');
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return { state: 'released_pre_dispatch' };
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (row.status !== 'reserved' || row.expected_hash !== null || findStart.get(attemptId)) {
+          return held('candidate_bound_or_sent');
+        }
+        insertRelease.run(attemptId, nowMs);
+        deactivateClaims.run(attemptId);
+        return { state: 'released_pre_dispatch' };
+      });
+    },
     bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
       if (!validId(attemptId) || !validId(candidate?.indexerId) ||
           typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
@@ -131,6 +154,7 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const digest = createHash('sha256').update(candidate.guid).digest('hex');
         if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest) {
@@ -152,6 +176,7 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'reserved' && !row.expected_hash) return held('torrent_not_prepared');
         if (row.status === 'reserved') {
@@ -168,6 +193,7 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (!row.expected_hash || row.expected_hash !== hash.toLowerCase()) return held('torrent_conflict');
         if (row.status === 'torrent_observed') return row.torrent_hash === hash.toLowerCase()
@@ -185,6 +211,7 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
+        if (findRelease.get(attemptId)) return held('candidate_released');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const normalizedHash = hash.toLowerCase();
         const normalizedDigest = manifestDigest.toLowerCase();
@@ -213,7 +240,8 @@ export function openAcquisitionLedger(dbPath) {
       const row = findAttempt.get(attemptId);
       return row ? { id: row.id, requestId: row.request_id, anidbId: row.anidb_id,
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
-        status: row.status, expectedHash: row.expected_hash, torrentHash: row.torrent_hash } : null;
+        status: findRelease.get(attemptId) ? 'released_pre_dispatch' : row.status,
+        expectedHash: row.expected_hash, torrentHash: row.torrent_hash } : null;
     },
     close() { db.close(); },
   };
