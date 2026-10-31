@@ -18,6 +18,7 @@ const constantEqual = (a, b) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
+  startTitleCheck, getTitleCheck,
   discoverCandidates, previewCandidate, probeRequestTargets,
   listOperationalReview,
   publicAvailabilityConfigured = false } = {}) {
@@ -256,6 +257,68 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   // A searched title can be checked without a Negev request. This is vital
   // for a file imported manually through Shoko; only positive public proof
   // becomes Available and no identifier or path from the observer is exposed.
+  app.post('/api/catalogue/:id/title-check', { preHandler: writeGuards,
+    config: { rateLimit: { max: 6, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        Object.keys(request.query).length !== 0 ||
+        !allowedBody(request.body, []) || Object.keys(request.body).length !== 0) {
+      return reply.code(400).send({ error: 'Invalid title check' });
+    }
+    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        !titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof startTitleCheck !== 'function') {
+      return reply.code(503).send({ error: 'Title checks unavailable' });
+    }
+    let result;
+    try { result = await startTitleCheck({ anidbId: id }); }
+    catch { return reply.code(503).send({ error: 'Title checks unavailable' }); }
+    if (!['queued', 'shared'].includes(result?.state) ||
+        !Number.isSafeInteger(result.generation) || result.generation < 1) {
+      return reply.code(503).send({ error: 'Title checks unavailable' });
+    }
+    return reply.code(202).send({ state: result.state,
+      generation: result.generation });
+  });
+  app.get('/api/catalogue/:id/title-check', { preHandler: requireUser,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        Object.keys(request.query).length !== 0) {
+      return reply.code(400).send({ error: 'Invalid title check' });
+    }
+    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        !titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof getTitleCheck !== 'function') {
+      return reply.code(503).send({ error: 'Title checks unavailable' });
+    }
+    let result;
+    try { result = await getTitleCheck({ anidbId: id }); }
+    catch { return reply.code(503).send({ error: 'Title checks unavailable' }); }
+    if (result === null) return { state: 'not_started' };
+    if (!['loading', 'checking', 'done', 'held'].includes(result?.state) ||
+        !Number.isSafeInteger(result.generation) || result.generation < 1 ||
+        (result.totalCount !== null &&
+          (!Number.isSafeInteger(result.totalCount) ||
+            result.totalCount < 0 || result.totalCount > 10_000)) ||
+        !Number.isSafeInteger(result.checkedCount) || result.checkedCount < 0 ||
+        !Number.isSafeInteger(result.recentAvailableCount) ||
+        result.recentAvailableCount < 0 ||
+        result.recentAvailableCount > result.checkedCount) {
+      return reply.code(503).send({ error: 'Title checks unavailable' });
+    }
+    return { state: result.state, generation: result.generation,
+      totalCount: result.totalCount, checkedCount: result.checkedCount,
+      recentAvailableCount: result.recentAvailableCount };
+  });
   app.get('/api/catalogue/:id/availability-page', { preHandler: requireUser,
     config: { rateLimit: { max: 1, timeWindow: '1 minute' } },
   }, async (request, reply) => {
