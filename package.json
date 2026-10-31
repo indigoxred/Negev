@@ -2,11 +2,15 @@
   "name": "negev",
   "version": "0.0.0",
   "private": true,
+  "packageManager": "pnpm@11.25.0",
   "type": "module",
   "scripts": {
     "test": "node --test"
   },
   "engines": {
     "node": ">=24"
+  },
+  "dependencies": {
+    "fastify": "5.12.7"
   }
 }

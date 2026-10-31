@@ -4,7 +4,7 @@ Negev is a planned, self-hosted anime request and acquisition app. This reposito
 
 The gate calculates a completed video's ED2K hash, calls Shoko's read-only AniDB release-preview endpoint, and evaluates the response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban. The adapter is tested with fake responses only; it has not been connected to a live Negev service.
 
-Run the local tests with `node --test` using Node.js 24 or later. No external package or server connection is needed for the tests.
+Run `pnpm install --frozen-lockfile` and `node --test` using Node.js 24. Tests use synthetic responses and make no live server calls.
 
 ## Intended boundaries
 
@@ -15,6 +15,8 @@ Run the local tests with `node --test` using Node.js 24 or later. No external pa
 - Direct Shoko imports must update availability without creating a Negev request.
 - Negev must not expose incomplete downloads to Shoko or Plex.
 
-The staging path guard checks regular video files inside an app-owned directory, rejects path escapes and symlinks, then performs the read-only identity check. A separate pure qBittorrent v5 evaluator checks torrent ownership, completion, selected files, and the staging save path. It holds an entire pack if any selected video is unfinished or an unexpected file is selected. These pieces are not yet wired to a live qBittorrent session and do not move a file. The web app, catalogue detail source, downloader control, Shoko handoff, Plex observation, persistence, and Docker image are **not implemented yet**. No production service has been changed for this repository.
+The staging path guard checks regular video files inside an app-owned directory, rejects path escapes and symlinks, then performs the read-only identity check. A separate pure qBittorrent v5 evaluator checks torrent ownership, completion, selected files, and the staging save path. It holds an entire pack if any selected video is unfinished or an unexpected file is selected. These pieces are not yet wired to a live qBittorrent session and do not move a file.
+
+A private Fastify app factory can search Shoko's AniDB title cache under a synthetic test token. Every title result remains **details pending** and **not requestable**. The app factory has no listener; no catalogue or credentials are fetched during tests. The end-user web app, episode detail source, downloader control, Shoko handoff, Plex observation, persistence, and Docker image are **not implemented yet**. No production service has been changed for this repository.
 
 Do not commit credentials, NAS configuration, database copies, logs, operational evidence, or media to this public project.
