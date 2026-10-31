@@ -1,6 +1,7 @@
 import { createRequestKeyStore } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
+import { progressText } from './request-progress-text.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -18,32 +19,6 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
-}
-function progressText(progress, kind) {
-  const target = kind === 'movie' ? 'film' : 'episode';
-  if (!progress || !['unverified', 'verified_recently'].includes(progress.publicAvailability)) {
-    return 'Request status unavailable';
-  }
-  if (progress.state === 'review_needed') return 'Needs owner review';
-  if (progress.publicAvailability === 'verified_recently') {
-    return progress.publicVerifiedTargets === progress.targetCount
-      ? `All requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`
-      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`;
-  }
-  switch (progress.state) {
-    case 'saved': return 'Saved · no download recorded';
-    case 'release_preparing': return 'Preparing a release';
-    case 'torrent_unverified': return 'Checking torrent submission';
-    case 'torrent_stopped': return 'Release selected · download not started';
-    case 'download_unverified': return 'Download requested · completion unverified';
-    case 'partial_private_copy':
-      return `${progress.privateVerifiedTargets}/${progress.targetCount} ${target} target${progress.targetCount === 1 ? '' : 's'} have a recorded private copy · Plex unverified`;
-    case 'private_copy_recorded':
-      return 'Files verified privately · Shoko import unverified';
-    case 'import_unverified': return 'Shoko import outcome unverified · Plex unverified';
-    case 'review_needed': return 'Needs owner review';
-    default: return 'Request status unavailable';
-  }
 }
 async function api(url, options = {}) {
   const headers = { Accept: 'application/json', ...options.headers };
