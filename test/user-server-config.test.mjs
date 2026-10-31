@@ -20,6 +20,8 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(Object.hasOwn(parsed, 'shokoApiKey'), false);
   assert.equal(parsed.shokoEvents, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: '1' }).shokoEvents, true);
+  assert.equal(parsed.shokoInventory, false);
+  assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_INVENTORY: '1' }).shokoInventory, true);
 });
 
 test('non-loopback listener requires explicit exposure and HTTPS origin', () => {
@@ -48,5 +50,6 @@ test('incomplete or ambiguous user-server configuration fails closed', () => {
     { NEGEV_PORT: '0' }, { NEGEV_PORT: '3000x' },
     { NEGEV_LISTEN_HOST: '192.168.1.1' },
     { NEGEV_SHOKO_EVENTS: 'yes' },
+    { NEGEV_SHOKO_INVENTORY: 'yes' },
   ]) assert.throws(() => parseUserServerConfig({ ...valid, ...change }), TypeError);
 });

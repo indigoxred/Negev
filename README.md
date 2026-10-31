@@ -4,6 +4,8 @@ Negev is an early, self-hosted anime request and acquisition prototype. Its acco
 
 An optional `NEGEV_SHOKO_EVENTS=1` account-server setting connects to Shoko's supported SignalR `file` feed. It starts disabled, requires a confirmed subscription, bounds file-ID rechecks, and records gaps for later reconciliation. Detection events have no file ID; this feed alone does not prove Plex availability or perform a full reconciliation. The installed subscription and real import timing still need a controlled test before enabling it on the NAS.
 
+An independent `NEGEV_SHOKO_INVENTORY=1` setting opts into paced read-only reconciliation: one page of 25 Shoko files per minute, a 24-hour rest after a complete pass, and a five-minute retry after an error. The SQLite cursor survives restart. Both observer flags remain off by default; the inventory records positive identities only and cannot claim a missing file was deleted. Neither observer starts downloads or reports Plex availability.
+
 The gate calculates a completed video's ED2K hash, calls Shoko's read-only AniDB release-preview endpoint, and evaluates the response against its exact file size, AniDB file registration, anime ID, and requested episode IDs. An uncertain or incorrect result does not authorize import. In particular, Shoko's HTTP 204 response is inconclusive because its provider can also return 204 during an AniDB ban. The adapter is tested with fake responses only; it has not been connected to a live Negev service.
 
 Run `pnpm install --frozen-lockfile` and `node --test` using Node.js 24. Tests use synthetic responses and make no live server calls.

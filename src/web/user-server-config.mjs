@@ -21,9 +21,9 @@ export function parseUserServerConfig(env) {
   }
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
-  if (env.NEGEV_SHOKO_EVENTS != null &&
-      !['0', '1'].includes(env.NEGEV_SHOKO_EVENTS)) {
-    throw new TypeError('Invalid Shoko events flag');
+  if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY].some((flag) =>
+    flag != null && !['0', '1'].includes(flag))) {
+    throw new TypeError('Invalid Shoko observer flag');
   }
   const shokoApiKeyPath = path.join(dataDir, 'secrets', 'shoko.token');
   if (Object.hasOwn(env, 'NEGEV_SHOKO_API_KEY') ||
@@ -48,6 +48,7 @@ export function parseUserServerConfig(env) {
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath,
-    shokoEvents: env.NEGEV_SHOKO_EVENTS === '1', publicOrigin,
+    shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
+    shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1', publicOrigin,
     secureCookies: exposed, host, port };
 }
