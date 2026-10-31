@@ -6,6 +6,7 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openStartQueue, createStartWorker } from '../src/acquisition/start-queue.mjs';
+import { processRecordedStart } from '../src/acquisition/process-recorded-start.mjs';
 
 async function fixture(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-start-queue-'));
@@ -33,7 +34,7 @@ async function fixture(run) {
   }
   let queue = openStartQueue(dbPath);
   try {
-    await run({ dbPath, ids, acquisitions,
+    await run({ dbPath, ids, requests, acquisitions,
       get queue() { return queue; },
       reopen() { queue.close(); queue = openStartQueue(dbPath); } });
   } finally {
@@ -121,4 +122,30 @@ test('a repeated unavailable start goes to review rather than polling forever', 
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
     assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
       ctx.ids[1].attemptId);
+  }));
+
+test('journalled start processor and queue issue only one start intent', async () =>
+  fixture(async (ctx) => {
+    let sends = 0;
+    const worker = createStartWorker({ queue: ctx.queue, now: () => 1_000,
+      processAttempt: ({ attemptId }) => processRecordedStart({
+        attemptId, requests: ctx.requests, acquisitions: ctx.acquisitions,
+        stagingHostPath: '/srv/staging',
+        qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },
+        inspectMounts: async () => ({}), realpathImpl: async () => '/srv/staging',
+        readEvidence: async () => ({}), publicLibraryIds: [102],
+        start: async ({ ledger, attemptId: id, expected }) => {
+          const intent = ledger.beginStart({ attemptId: id, hash: expected.hash,
+            manifestDigest: 'a'.repeat(64), nowMs: 1_000 });
+          if (intent.sendNow) sends++;
+          return intent;
+        },
+      }) });
+    assert.equal((await worker.runOnce()).result.state, 'start_unknown');
+    ctx.reopen();
+    const restarted = createStartWorker({ queue: ctx.queue, now: () => 10_000_000,
+      processAttempt: async () => { throw new Error('should not replay first'); } });
+    assert.equal((await restarted.runOnce()).attemptId, ctx.ids[1].attemptId);
+    assert.equal(sends, 1);
+    assert.equal(ctx.queue.getResult(ctx.ids[0].attemptId).state, 'start_unknown');
   }));
