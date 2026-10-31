@@ -66,7 +66,7 @@ test('failed hash refresh and malformed detection cannot declare imports quiet',
   malformed.accept('file:detected', [{ ManagedFolderID: 3,
     RelativePath: '../outside.mkv' }]);
   assert.deepEqual(malformed.getArrivalState(),
-    { state: 'busy', pendingPaths: 0 });
+    { state: 'unverified', pendingPaths: 0 });
   await malformed.close();
 });
 

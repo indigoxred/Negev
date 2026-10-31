@@ -43,7 +43,6 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   const detected = new Map();
   const resolutions = new Map();
   let detectionSequence = 0;
-  let arrivalOverflow = false;
   let inFlight = null;
   let pump = null;
   let reconciliationNeeded = false;
@@ -86,10 +85,9 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         reconciliationNeeded = true;
         const key = Array.isArray(args) && args.length === 1
           ? arrivalKey(args[0]) : null;
-        if (!key) arrivalOverflow = true;
-        else if (detected.has(key) || detected.size < maxArrivals) {
+        if (key && (detected.has(key) || detected.size < maxArrivals)) {
           detected.set(key, ++detectionSequence);
-        } else arrivalOverflow = true;
+        }
         return { state: 'reconcile', reason: 'file_detected' };
       }
       if (!idEvents.has(target)) return { state: 'ignored' };
@@ -129,7 +127,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     // Positive busy evidence only. Empty memory cannot prove that Shoko's
     // watcher, hash queue, or a disconnected event feed has settled.
     getArrivalState() {
-      return { state: detected.size || arrivalOverflow ? 'busy' : 'unverified',
+      return { state: detected.size ? 'busy' : 'unverified',
         pendingPaths: detected.size };
     },
     flagReconciliation() { reconciliationNeeded = true; },
