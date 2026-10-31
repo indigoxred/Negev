@@ -40,7 +40,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
         !count(pool?.ActiveWorkers)) ||
       queue.TotalCount !== queue.WaitingCount + queue.BlockedCount +
         queue.CurrentlyExecuting.length) return unavailable();
-    if (queue.WaitingCount || queue.BlockedCount || queue.ScheduledCount ||
+    if (queue.WaitingCount || queue.BlockedCount ||
         queue.CurrentlyExecuting.length ||
         queue.Pools.some((pool) => pool.ActiveWorkers > 0)) return { state: 'busy' };
     if (importRoot !== undefined) {
@@ -48,6 +48,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       if (after.state === 'busy') return { state: 'busy' };
       if (after.state !== 'empty_observed') return unavailable();
     }
-    return { state: 'queue_idle_unverified' };
+    return { state: queue.ScheduledCount
+      ? 'scheduled_unverified' : 'queue_idle_unverified' };
   } catch { return unavailable(); }
 }

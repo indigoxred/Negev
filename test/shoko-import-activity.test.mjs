@@ -30,7 +30,7 @@ test('idle queue does not trigger a full Shoko file-list read', async () => {
     call.authorization === 'Bearer private-test-key'));
 });
 
-test('idle queue alone never claims that imports are settled', async () => {
+test('idle and deferred-only queues never claim that imports are settled', async () => {
   const idle = await readShokoImportActivity({ ...input,
     fetchImpl: async (url) => String(url).endsWith('/api/v3/Queue')
       ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
@@ -38,13 +38,13 @@ test('idle queue alone never claims that imports are settled', async () => {
       : Promise.reject(new Error('Unexpected file query')),
   });
   assert.deepEqual(idle, { state: 'queue_idle_unverified' });
-  const busy = await readShokoImportActivity({ ...input,
+  const deferred = await readShokoImportActivity({ ...input,
     fetchImpl: async (url) => String(url).endsWith('/api/v3/Queue')
       ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 1,
         TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
       : Promise.reject(new Error('Unexpected file query')),
   });
-  assert.deepEqual(busy, { state: 'busy' });
+  assert.deepEqual(deferred, { state: 'scheduled_unverified' });
 });
 
 test('missing or inconsistent queue counts fail closed', async () => {
