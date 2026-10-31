@@ -78,7 +78,7 @@ async function loadRequests(append = false) {
       const row = element('div', undefined, 'request-row');
       const heading = element('div');
       heading.append(element('strong', item.title || `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
-        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} ${item.kind === 'movie' ? 'film' : 'episode'} target${item.episodeIds.length === 1 ? '' : 's'}`));
+        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} ${item.kind === 'movie' ? 'film' : 'episode'} target${item.episodeIds.length === 1 ? '' : 's'} · ${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`));
       row.append(heading, element('span', progressText(item.progress, item.kind), 'request-status'));
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');

@@ -30,7 +30,8 @@ test('an exact request and targets survive restart in a held state', async () =>
   try {
     assert.deepEqual(second.getRequest(saved.requestId), {
       id: saved.requestId, requesterId: 7, anidbId: 1234, kind: 'series',
-      monitorFuture: true, episodeIds: [1001, 1002], status: 'held',
+      monitorFuture: true, watchClosed: false,
+      episodeIds: [1001, 1002], status: 'held',
       reason: 'awaiting_availability_evidence', createdMs: 1_000,
     });
   } finally { second.close(); }
@@ -206,6 +207,9 @@ test('completed detail adds final episodes once and closes only that airing watc
       detail, releaseState: 'completed', today: '2026-02-01' }),
     { state: 'advanced', addedEpisodeIds: [1003], deferredEpisodeIds: [], watchClosed: true });
     assert.deepEqual(one.listActiveAirings(), []);
+    assert.equal(one.getRequest(airing.requestId).watchClosed, true);
+    assert.equal(one.listRequests({ requesterId: 7 }).items[0].watchClosed, true);
+    assert.equal(one.getRequest(completed.requestId).watchClosed, false);
     assert.deepEqual(one.getRequest(completed.requestId).episodeIds, [1001, 1002]);
     assert.deepEqual(one.advanceAiring({ requestId: airing.requestId,
       detail, releaseState: 'airing', today: '2026-02-02' }),

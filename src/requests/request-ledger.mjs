@@ -96,7 +96,7 @@ export function openRequestLedger(dbPath) {
   const insertLink = db.prepare('INSERT INTO request_targets(request_id,target_id) VALUES (?,?)');
   const findLinks = db.prepare(`SELECT t.id,t.episode_id FROM targets t
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
-  const get = db.prepare(`SELECT id,requester_id,title,anidb_id,kind,monitor_future,created_ms,status,reason
+  const get = db.prepare(`SELECT id,requester_id,title,anidb_id,kind,monitor_future,watch_closed,created_ms,status,reason
     FROM requests WHERE id=?`);
   const listOwn = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
     ORDER BY id DESC LIMIT ?`);
@@ -242,6 +242,7 @@ export function openRequestLedger(dbPath) {
       return row ? { id: row.id, requesterId: row.requester_id, anidbId: row.anidb_id,
         ...(row.title === null ? {} : { title: row.title }),
         kind: row.kind, monitorFuture: Boolean(row.monitor_future),
+        watchClosed: Boolean(row.watch_closed),
         episodeIds: findLinks.all(row.id).map((link) => link.episode_id),
         status: row.status, reason: row.reason, createdMs: row.created_ms } : null;
     },
