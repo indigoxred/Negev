@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -47,6 +48,7 @@ export async function verifyStagedBatch({
   catch { return held('torrent_unavailable'); }
   if (first?.state !== 'complete') return held(first?.reason ?? 'torrent_unavailable');
   const selected = first.files;
+  const subtitles = first.subtitles ?? [];
   if (!Array.isArray(selected) || selected.length !== plannedFiles.length ||
       selected.length > 50 || selected.some((file) =>
         !Number.isSafeInteger(file?.index) || file.index < 0 ||
@@ -56,6 +58,14 @@ export async function verifyStagedBatch({
       selected.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) {
     return held('manifest_or_budget_mismatch');
   }
+  if (!Array.isArray(subtitles) || subtitles.length > 50 || subtitles.some((file) =>
+    !Number.isSafeInteger(file?.index) || file.index < 0 ||
+    torrentFileKind(file.name) !== 'subtitle' ||
+    !Number.isSafeInteger(file.size) || file.size < 1) ||
+    new Set([...selected, ...subtitles].map((file) => file.index)).size !==
+      selected.length + subtitles.length ||
+    new Set([...selected, ...subtitles].map((file) => file.name.toLowerCase())).size !==
+      selected.length + subtitles.length) return held('manifest_or_budget_mismatch');
 
   const verified = [];
   const fileIds = new Set();
@@ -88,5 +98,7 @@ export async function verifyStagedBatch({
   if (signature(first) === null || signature(first) !== signature(final)) {
     return held('torrent_changed_after_hash');
   }
-  return { state: 'batch_identity_verified', files: verified, handoffReady: false };
+  return { state: 'batch_identity_verified', files: verified,
+    subtitles: subtitles.map((file) => ({ index: file.index, name: file.name, size: file.size })),
+    handoffReady: false };
 }

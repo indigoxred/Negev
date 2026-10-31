@@ -19,7 +19,8 @@ async function withRoots(run) {
 const bytes = Buffer.from('abc');
 const file = { name: 'Show/01.mkv', episodeIds: [1001], anidbFileId: 51,
   ed2k: ed2kBuffer(bytes), size: bytes.length };
-const verified = { state: 'batch_identity_verified', files: [file], handoffReady: false };
+const verified = { state: 'batch_identity_verified', files: [file], subtitles: [],
+  handoffReady: false };
 
 test('copies verified bytes into private holding and leaves Shoko Import empty', async () =>
   withRoots(async (roots) => {
@@ -73,4 +74,13 @@ test('holding inside watched Import and unsafe names hold before copying', async
       verified: { ...verified, files: [{ ...file, name: '../escape.mkv' }] } }),
     { state: 'held', reason: 'invalid_verified_batch' });
     assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
+
+test('selected subtitles cannot be silently omitted from a prepared batch', async () =>
+  withRoots(async (roots) => {
+    assert.deepEqual(await prepareHandoffBatch({ ...roots,
+      verified: { ...verified, subtitles: [{ index: 1, name: 'Show/01.en.srt', size: 5 }] } }),
+    { state: 'held', reason: 'subtitle_handoff_not_ready' });
+    assert.deepEqual(await readdir(roots.importRoot), []);
+    assert.deepEqual(await readdir(roots.holdingRoot), []);
   }));

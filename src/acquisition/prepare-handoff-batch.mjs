@@ -16,6 +16,7 @@ function within(parent, candidate) {
 
 function validEvidence(verified, budget) {
   if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false ||
+      !Array.isArray(verified.subtitles) ||
       !Array.isArray(verified.files) || verified.files.length < 1 || verified.files.length > 50) {
     return false;
   }
@@ -122,6 +123,7 @@ export async function prepareHandoffBatch({
     throw new TypeError('Invalid handoff preparation configuration');
   }
   if (!validEvidence(verified, maxTotalBytes)) return held('invalid_verified_batch');
+  if (verified.subtitles.length > 0) return held('subtitle_handoff_not_ready');
   const roots = await inspectRoots(stagingRoot, holdingRoot, importRoot);
   if (!roots) return held('unsafe_handoff_roots');
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });

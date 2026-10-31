@@ -88,6 +88,18 @@ test('a changed selected subtitle after video hashing holds the pack', async () 
   assert.deepEqual(result, { state: 'held', reason: 'torrent_changed_after_hash' });
 });
 
+test('unchanged selected subtitles are recorded in identity evidence', async () => {
+  const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
+  const result = await verifyStagedBatch({ root: '/staging', request, expectedTorrent, plannedFiles,
+    observe: async () => ({ state: 'complete', files, subtitles: [subtitle] }),
+    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+      fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.deepEqual(result.subtitles, [subtitle]);
+});
+
 test('synthetic staged bytes pass only through exact AniDB file identities', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-batch-'));
   try {
