@@ -90,6 +90,15 @@ export async function startStoppedCandidate({
       attempt.episodeIds.some((id) => !currentRequest.episodeIds.includes(id))) {
     return held('request_missing');
   }
+  // The availability probe may take long enough for qBittorrent priorities or
+  // paths to change. Recheck immediately before recording the one-send intent.
+  const finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
+    expected, fetchImpl, timeoutMs });
+  if (finalManifest.state !== 'manifest_safe' ||
+      JSON.stringify(finalManifest.videos) !== JSON.stringify(manifest.videos) ||
+      JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
+    return held('manifest_changed_before_start');
+  }
   const manifestDigest = createHash('sha256').update(JSON.stringify({
     videos: manifest.videos, subtitles: manifest.subtitles,
     savePath: paths.save_path, downloadPath: paths.download_path,

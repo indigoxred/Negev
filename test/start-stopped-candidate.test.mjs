@@ -51,15 +51,12 @@ test('starts only the exact safe stopped manifest once after durable intent', as
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let posts = 0;
     let reads = 0;
+    let submitted;
     const fetchImpl = async (url, init) => {
       const endpoint = new URL(url).pathname;
       if (endpoint.endsWith('/start')) {
         posts++;
-        assert.equal(reads, 5);
-        assert.equal(init.method, 'POST');
-        assert.equal(init.body.toString(), `hashes=${hash}`);
-        assert.equal(init.redirect, 'manual');
-        assert.equal(init.headers.Cookie, 'SID=syntheticSID');
+        submitted = init;
         return new Response('');
       }
       assert.equal(init.method, 'GET');
@@ -72,6 +69,11 @@ test('starts only the exact safe stopped manifest once after durable intent', as
     const first = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest, fetchImpl });
     assert.equal(first.state, 'start_unknown');
     assert.equal(first.sendNow, true);
+    assert.equal(reads, 13);
+    assert.equal(submitted.method, 'POST');
+    assert.equal(submitted.body.toString(), `hashes=${hash}`);
+    assert.equal(submitted.redirect, 'manual');
+    assert.equal(submitted.headers.Cookie, 'SID=syntheticSID');
     const second = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest, fetchImpl,
       now: () => 205 });
     assert.equal(second.state, 'start_unknown');
@@ -110,6 +112,29 @@ test('a stopped torrent whose incomplete path escapes staging cannot start', asy
     };
     const result = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest, fetchImpl });
     assert.deepEqual(result, { state: 'held', reason: 'incomplete_path_outside_staging' });
+    assert.equal(posts, 0);
+  }));
+
+test('a file priority changed during the availability probe blocks start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => {
+        availabilityRead = true;
+        return options.readEvidence();
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        if (endpoint.endsWith('/files')) return Response.json(availabilityRead
+          ? [{ ...files[0], priority: 0 }] : files);
+        return Response.json([torrent]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'manifest_changed_before_start' });
     assert.equal(posts, 0);
   }));
 
