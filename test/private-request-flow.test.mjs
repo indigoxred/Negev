@@ -72,6 +72,7 @@ test('private search to exact held request never dispatches acquisition', async 
     } finally { await cold.close(); }
     const saved = await service.app.inject({ method: 'GET', url: `/api/requests/${requestId}`,
       headers: auth });
+    assert.equal(saved.json().title, 'Example');
     assert.deepEqual(saved.json().episodeIds, [1001]);
     assert.equal(saved.json().monitorFuture, true);
     hasSecondEpisode = true;
@@ -136,6 +137,7 @@ test('a movie request is saved as one-time held acquisition', async () => {
     const saved = await service.app.inject({ method: 'GET',
       url: `/api/requests/${created.json().requestId}`, headers: auth });
     assert.equal(saved.json().kind, 'movie');
+    assert.equal(saved.json().title, 'Example Movie');
     assert.deepEqual(saved.json().episodeIds, [2001]);
     assert.equal(saved.json().monitorFuture, false);
   } finally {

@@ -15,11 +15,15 @@ function canonicalIntent(intent) {
       (intent.kind === 'movie' && intent.monitorFuture) ||
       !Array.isArray(intent.episodeIds) || intent.episodeIds.length === 0 ||
       intent.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
-      new Set(intent.episodeIds).size !== intent.episodeIds.length) {
+      new Set(intent.episodeIds).size !== intent.episodeIds.length ||
+      (intent.title !== undefined &&
+        (typeof intent.title !== 'string' || intent.title.length > 300 ||
+          intent.title.trim() !== intent.title || !intent.title ||
+          /[\x00-\x1f\x7f]/.test(intent.title)))) {
     throw new TypeError('Invalid exact request intent');
   }
   const episodeIds = [...intent.episodeIds].sort((a, b) => a - b);
-  return { anidbId: intent.anidbId, kind: intent.kind,
+  return { anidbId: intent.anidbId, kind: intent.kind, title: intent.title ?? null,
     monitorFuture: intent.monitorFuture, episodeIds, episodeKey: episodeIds.join(',') };
 }
 
@@ -37,6 +41,7 @@ export function openRequestLedger(dbPath) {
       requester_id INTEGER NOT NULL CHECK(requester_id > 0),
       request_key TEXT NOT NULL,
       command_key TEXT,
+      title TEXT,
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
       kind TEXT NOT NULL CHECK(kind IN ('series','movie')),
       episode_key TEXT NOT NULL,
@@ -54,6 +59,10 @@ export function openRequestLedger(dbPath) {
     if (!db.prepare('PRAGMA table_info(requests)').all()
       .some((column) => column.name === 'watch_closed')) {
       db.exec('ALTER TABLE requests ADD COLUMN watch_closed INTEGER NOT NULL DEFAULT 0 CHECK(watch_closed IN (0,1))');
+    }
+    if (!db.prepare('PRAGMA table_info(requests)').all()
+      .some((column) => column.name === 'title')) {
+      db.exec('ALTER TABLE requests ADD COLUMN title TEXT');
     }
     db.exec(`CREATE TABLE IF NOT EXISTS targets (
       id INTEGER PRIMARY KEY,
@@ -79,15 +88,15 @@ export function openRequestLedger(dbPath) {
   const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key
     FROM requests WHERE requester_id=? AND request_key=?`);
   const insertRequest = db.prepare(`INSERT INTO requests
-    (requester_id,request_key,command_key,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
-    VALUES (?,?,?,?,?,?,?,?,'held',?)`);
+    (requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
+    VALUES (?,?,?,?,?,?,?,?,?,'held',?)`);
   const insertTarget = db.prepare(`INSERT INTO targets(anidb_id,episode_id,status,reason)
     VALUES (?,?,'held',?) ON CONFLICT(anidb_id,episode_id) DO NOTHING`);
   const findTarget = db.prepare('SELECT id FROM targets WHERE anidb_id=? AND episode_id=?');
   const insertLink = db.prepare('INSERT INTO request_targets(request_id,target_id) VALUES (?,?)');
   const findLinks = db.prepare(`SELECT t.id,t.episode_id FROM targets t
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
-  const get = db.prepare(`SELECT id,requester_id,anidb_id,kind,monitor_future,created_ms,status,reason
+  const get = db.prepare(`SELECT id,requester_id,title,anidb_id,kind,monitor_future,created_ms,status,reason
     FROM requests WHERE id=?`);
   const listOwn = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
     ORDER BY id DESC LIMIT ?`);
@@ -215,7 +224,7 @@ export function openRequestLedger(dbPath) {
           return { state: 'held', reason: REASON, requestId: existing.id,
             targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
         }
-        const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.anidbId,
+        const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.title, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);
         const targetIds = [];
         for (const episodeId of item.episodeIds) {
@@ -231,6 +240,7 @@ export function openRequestLedger(dbPath) {
       if (!Number.isSafeInteger(requestId) || requestId <= 0) throw new TypeError('Invalid request ID');
       const row = get.get(requestId);
       return row ? { id: row.id, requesterId: row.requester_id, anidbId: row.anidb_id,
+        ...(row.title === null ? {} : { title: row.title }),
         kind: row.kind, monitorFuture: Boolean(row.monitor_future),
         episodeIds: findLinks.all(row.id).map((link) => link.episode_id),
         status: row.status, reason: row.reason, createdMs: row.created_ms } : null;

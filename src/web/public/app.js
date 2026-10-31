@@ -50,8 +50,8 @@ async function loadRequests(append = false) {
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
       const heading = element('div');
-      heading.append(element('strong', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
-        element('small', `Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
+      heading.append(element('strong', item.title || `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
+        element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
       row.append(heading, element('span', 'Saved · acquisition inactive'));
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 
 const intent = { state: 'ready', anidbId: 1234, kind: 'series',
@@ -33,6 +34,43 @@ test('an exact request and targets survive restart in a held state', async () =>
       reason: 'awaiting_availability_evidence', createdMs: 1_000,
     });
   } finally { second.close(); }
+}));
+
+test('verified title survives restart and a legacy request remains readable', async () => withPath(async (dbPath) => {
+  const first = openRequestLedger(dbPath);
+  const named = first.submit({ requesterId: 7, requestKey: 'named',
+    intent: { ...intent, title: 'A Film & a Series' }, nowMs: 1_000 });
+  const legacy = first.submit({ requesterId: 7, requestKey: 'legacy', intent, nowMs: 1_001 });
+  first.close();
+  const second = openRequestLedger(dbPath);
+  try {
+    assert.equal(second.getRequest(named.requestId).title, 'A Film & a Series');
+    assert.equal('title' in second.getRequest(legacy.requestId), false);
+    assert.deepEqual(second.listRequests({ requesterId: 7 }).items.map((item) =>
+      item.title ?? null), [null, 'A Film & a Series']);
+  } finally { second.close(); }
+}));
+
+test('existing database without a title column migrates without losing requests', async () => withPath(async (dbPath) => {
+  const old = new DatabaseSync(dbPath);
+  old.exec(`CREATE TABLE requests (
+    id INTEGER PRIMARY KEY, requester_id INTEGER NOT NULL,
+    request_key TEXT NOT NULL, command_key TEXT, anidb_id INTEGER NOT NULL,
+    kind TEXT NOT NULL, episode_key TEXT NOT NULL, monitor_future INTEGER NOT NULL,
+    watch_closed INTEGER NOT NULL DEFAULT 0, created_ms INTEGER NOT NULL,
+    status TEXT NOT NULL, reason TEXT NOT NULL,
+    UNIQUE(requester_id,request_key)) STRICT`);
+  old.exec(`INSERT INTO requests VALUES
+    (1,7,'old',NULL,1234,'series','1001',0,0,1000,'held','awaiting_availability_evidence')`);
+  old.close();
+  const ledger = openRequestLedger(dbPath);
+  try {
+    assert.equal(ledger.getRequest(1).anidbId, 1234);
+    assert.equal('title' in ledger.getRequest(1), false);
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'new',
+      intent: { ...intent, title: 'New Title' }, nowMs: 1_001 });
+    assert.equal(ledger.getRequest(saved.requestId).title, 'New Title');
+  } finally { ledger.close(); }
 }));
 
 test('same-user retries are idempotent while different users share targets', async () => withPath(async (dbPath) => {
@@ -90,6 +128,7 @@ test('malformed intent or requester is rejected before writes', async () => with
       { requesterId: 7, intent: { ...intent, episodeIds: [1001, 1001] } },
       { requesterId: 7, intent: { ...intent, kind: 'movie', monitorFuture: true } },
       { requesterId: 7, intent: { ...intent, anidbId: null } },
+      { requesterId: 7, intent: { ...intent, title: 'bad\nname' } },
     ]) assert.throws(() => ledger.submit({ requestKey: 'first', ...input, nowMs: 1_000 }), TypeError);
     assert.equal(ledger.countRequests(), 0);
   } finally { ledger.close(); }
