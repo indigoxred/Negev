@@ -2,13 +2,29 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const idEvents = new Set(['file:hashed', 'file:relocated',
   'file:deleted', 'file:updated']);
 
+// Targeted file-ID events already cause an exact refresh. Only events that
+// cannot be resolved by that refresh wake the broad inventory backfill.
+export function forwardShokoEvent({ consumer, requestReconciliation,
+  target, args } = {}) {
+  if (typeof consumer?.accept !== 'function' ||
+      typeof requestReconciliation !== 'function') {
+    throw new TypeError('Invalid Shoko event forwarding');
+  }
+  const result = consumer.accept(target, args);
+  if (result.state === 'reconcile') requestReconciliation();
+  return result;
+}
+
 // Accepts decoded SignalR hub method calls, not untrusted raw WebSocket frames.
 // The installed feed subscription and authentication still need live proof.
 export function createShokoEventConsumer({ refreshFile, onDeleted,
+  onReconciliationNeeded,
   maxPending = 64 } = {}) {
   if (typeof refreshFile !== 'function' || !Number.isSafeInteger(maxPending) ||
       maxPending < 1 || maxPending > 256 ||
-      (onDeleted !== undefined && typeof onDeleted !== 'function')) {
+      (onDeleted !== undefined && typeof onDeleted !== 'function') ||
+      (onReconciliationNeeded !== undefined &&
+        typeof onReconciliationNeeded !== 'function')) {
     throw new TypeError('Invalid Shoko event consumer');
   }
   const pending = new Set();
@@ -16,6 +32,11 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   let pump = null;
   let reconciliationNeeded = false;
   let stopping = false;
+
+  const flagUnresolvedEvent = (fileId) => {
+    reconciliationNeeded = true;
+    try { onReconciliationNeeded?.(fileId); } catch { /* Keep draining. */ }
+  };
 
   const drain = () => {
     if (pump) return;
@@ -26,8 +47,8 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         inFlight = fileId;
         try {
           const result = await refreshFile(fileId);
-          if (result?.state !== 'recorded_file') reconciliationNeeded = true;
-        } catch { reconciliationNeeded = true; }
+          if (result?.state !== 'recorded_file') flagUnresolvedEvent(fileId);
+        } catch { flagUnresolvedEvent(fileId); }
         inFlight = null;
       }
     })().finally(() => {
@@ -52,7 +73,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       if (target === 'file:deleted') {
         reconciliationNeeded = true;
         try { onDeleted?.(fileId); }
-        catch { reconciliationNeeded = true; }
+        catch { flagUnresolvedEvent(fileId); }
       }
       if (pending.has(fileId)) return { state: 'coalesced', fileId };
       if (pending.size >= maxPending) {

@@ -39,12 +39,15 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
+  onShokoReconciliationNeeded,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
+      (onShokoReconciliationNeeded !== undefined &&
+        typeof onShokoReconciliationNeeded !== 'function') ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
         typeof prowlarr.apiKey !== 'string' || !prowlarr.apiKey ||
         !Array.isArray(prowlarr.indexerIds) ||
@@ -233,6 +236,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })());
     };
     const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile,
+      onReconciliationNeeded: onShokoReconciliationNeeded,
       onDeleted: (fileId) => {
         const before = inventory.getFile(fileId);
         if (before?.pairs.length) enqueueChangedFile({ before, after: null,

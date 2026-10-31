@@ -12,6 +12,7 @@ import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
 import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
 import { createDirectAvailabilityScheduler } from
   '../availability/direct-availability-scheduler.mjs';
+import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
 
 let service;
 let shokoFeedSupervisor;
@@ -34,6 +35,7 @@ try {
       keyPath: config.prowlarr.keyPath }) } : null;
   service = await createUserService({ ...config, plex, prowlarr,
     shokoApiKey, sessionKey,
+    onShokoReconciliationNeeded: () => shokoInventory?.requestSoon(),
     today: () => dateInZone(config.timeZone) });
   await service.app.listen({ host: config.host, port: config.port });
   const flagShokoGap = (reason) => {
@@ -45,9 +47,11 @@ try {
       connect: () => startShokoSignalRFeed({ baseUrl: config.shokoBaseUrl,
         apiKey: shokoApiKey, consumer: {
           accept: (target, args) => {
-            const result = service.acceptShokoEvent(target, args);
-            if (result.state !== 'ignored') shokoInventory?.requestSoon();
-            return result;
+            return forwardShokoEvent({
+              consumer: { accept: service.acceptShokoEvent },
+              requestReconciliation: () => shokoInventory?.requestSoon(),
+              target, args,
+            });
           },
           flagReconciliation: flagShokoGap,
         } }),

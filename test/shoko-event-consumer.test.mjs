@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createShokoEventConsumer } from '../src/availability/shoko-event-consumer.mjs';
+import { createShokoEventConsumer, forwardShokoEvent } from
+  '../src/availability/shoko-event-consumer.mjs';
 
 const deferred = () => {
   let resolve;
@@ -53,15 +54,18 @@ test('a deletion event cannot itself prove absence and a failed recheck stays he
 
 test('deletion invalidation failure requests reconciliation while later files proceed', async () => {
   const seen = [];
+  const wakeups = [];
   const consumer = createShokoEventConsumer({
     refreshFile: async (id) => { seen.push(id); return { state: 'recorded_file' }; },
     onDeleted: () => { throw new Error('queue unavailable'); },
+    onReconciliationNeeded: (fileId) => wakeups.push(fileId),
   });
   assert.deepEqual(consumer.accept('file:deleted', [{ FileID: 12 }]),
     { state: 'queued', fileId: 12 });
   consumer.accept('file:hashed', [{ FileID: 13 }]);
   await consumer.close();
   assert.deepEqual(seen, [12, 13]);
+  assert.deepEqual(wakeups, [12]);
   assert.equal(consumer.getState().reconciliationNeeded, true);
 });
 
@@ -89,4 +93,39 @@ test('malformed or unknown messages cannot trigger arbitrary Shoko reads', async
     { state: 'ignored' });
   await consumer.close();
   assert.deepEqual(calls, []);
+});
+
+test('normal file events use targeted refresh without waking the full inventory scan', async () => {
+  const refreshed = [];
+  const wakeups = [];
+  const consumer = createShokoEventConsumer({ refreshFile: async (id) => {
+    refreshed.push(id);
+    return { state: 'recorded_file' };
+  } });
+  const forward = (target, args) => forwardShokoEvent({
+    consumer, requestReconciliation: () => wakeups.push(target), target, args,
+  });
+  assert.equal(forward('file:hashed', [{ FileID: 10 }]).state, 'queued');
+  assert.equal(forward('file:relocated', [{ FileID: 11 }]).state, 'queued');
+  assert.equal(forward('file:detected', [{ RelativePath: 'new.mkv' }]).state,
+    'reconcile');
+  assert.equal(forward('file:hashed', [{ FileID: 'bad' }]).state, 'reconcile');
+  await consumer.close();
+  assert.deepEqual(refreshed, [10, 11]);
+  assert.deepEqual(wakeups, ['file:detected', 'file:hashed']);
+});
+
+test('failed targeted refresh wakes inventory after the asynchronous read finishes', async () => {
+  const gate = deferred();
+  const wakeups = [];
+  const consumer = createShokoEventConsumer({
+    refreshFile: () => gate.promise,
+    onReconciliationNeeded: (fileId) => wakeups.push(fileId),
+  });
+  assert.equal(consumer.accept('file:hashed', [{ FileID: 17 }]).state, 'queued');
+  assert.deepEqual(wakeups, []);
+  gate.resolve({ state: 'held', reason: 'file_unavailable' });
+  await consumer.close();
+  assert.deepEqual(wakeups, [17]);
+  assert.equal(consumer.getState().reconciliationNeeded, true);
 });
