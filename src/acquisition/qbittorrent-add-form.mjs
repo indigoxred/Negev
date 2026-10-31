@@ -10,7 +10,7 @@ export function buildStoppedTorrentAddForm({ torrentBytes, savePath, category })
   form.set('torrents', new Blob([torrentBytes], { type: 'application/x-bittorrent' }), 'candidate.torrent');
   form.set('savepath', savePath);
   form.set('category', category);
-  form.set('paused', 'true');
+  form.set('stopped', 'true');
   form.set('autoTMM', 'false');
   form.set('skip_checking', 'false');
   return form;
