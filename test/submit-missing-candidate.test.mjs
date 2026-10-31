@@ -98,6 +98,7 @@ function qbittorrentFetch(calls) {
   return async (url, init) => {
     const endpoint = new URL(url).pathname;
     calls.push({ endpoint, method: init.method });
+    if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
     if (endpoint.endsWith('/add')) return new Response('Ok.');
     if (calls.filter((call) => call.endpoint.endsWith('/info')).length === 1) return Response.json([]);
     return Response.json(endpoint.endsWith('/files') ? files : [torrent]);

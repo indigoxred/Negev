@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { readBoundedJson, readBoundedText } from '../http/bounded-response.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
@@ -68,6 +68,20 @@ export async function submitStoppedCandidate({
 
   const headers = { Cookie: `SID=${sessionId}` };
   if (bound.state === 'prepared') {
+    let version;
+    try {
+      const response = await fetchImpl(new URL('/api/v2/app/version', base), {
+        method: 'GET', headers, redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (response.status !== 200) return held('provider_unavailable');
+      version = (await readBoundedText(response, 32)).trim();
+    } catch { return held('provider_unavailable'); }
+    // Older clients may ignore `stopped=true` and begin downloading before
+    // Negev can inspect the manifest. Unknown future major versions also hold.
+    if (!/^v?5\.\d+\.\d+$/.test(version)) {
+      return held('unsupported_qbittorrent_version');
+    }
     let existing;
     try {
       const url = new URL('/api/v2/torrents/info', base);

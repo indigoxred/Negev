@@ -75,30 +75,50 @@ const options = { candidate, prepared, hostPath, baseUrl: 'http://qbittorrent.in
   sessionId: 'syntheticSID', nowMs: 201,
   inspectMounts: async () => mounts, realpathImpl: async () => hostPath };
 
+test('holds before torrent add when qBittorrent cannot prove its stopped-add API version', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    for (const version of ['v4.6.7', 'v6.0.0', 'unknown']) {
+      const calls = [];
+      const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+        fetchImpl: async (url) => {
+          const endpoint = new URL(url).pathname;
+          calls.push(endpoint);
+          if (endpoint === '/api/v2/app/version') return new Response(version);
+          return Response.json([]);
+        },
+      });
+      assert.deepEqual(result, { state: 'held', reason: 'unsupported_qbittorrent_version' });
+      assert.deepEqual(calls, ['/api/v2/app/version']);
+      assert.equal(ledger.getAttempt(attemptId).status, 'reserved');
+    }
+  }));
+
 test('one stopped add is durably recorded before POST and exact manifest is reconciled', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     const calls = [];
     const fetchImpl = async (url, init) => {
       const endpoint = new URL(url).pathname;
       calls.push({ endpoint, method: init.method, status: ledger.getAttempt(attemptId).status });
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
       if (endpoint.endsWith('/add')) {
         assert.equal(init.body.get('stopped'), 'true');
         assert.equal(init.body.get('savepath'), savePath);
         assert.equal(ledger.getAttempt(attemptId).expectedHash, hash);
         return new Response('Ok.');
       }
-      if (calls.length === 1) return Response.json([]);
+      if (calls.filter((call) => call.endpoint.endsWith('/info')).length === 1) return Response.json([]);
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };
     const result = await submitStoppedCandidate({ ...options, ledger, attemptId, fetchImpl });
     assert.equal(result.state, 'stopped_observed');
     assert.equal(ledger.getAttempt(attemptId).torrentHash, hash);
     assert.deepEqual(calls.map(({ endpoint, method }) => [endpoint, method]), [
+      ['/api/v2/app/version', 'GET'],
       ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/add', 'POST'],
       ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/files', 'GET'],
       ['/api/v2/torrents/info', 'GET'], ['/api/v2/torrents/files', 'GET'],
     ]);
-    assert.equal(calls[1].status, 'dispatch_unknown');
+    assert.equal(calls[2].status, 'dispatch_unknown');
     const again = await submitStoppedCandidate({ ...options, nowMs: 202, ledger, attemptId,
       fetchImpl: async (url, init) => {
         assert.equal(init.method, 'GET');
@@ -130,6 +150,7 @@ test('uncertain POST response never triggers a second add', async () =>
     let posts = 0;
     const fetchImpl = async (url, init) => {
       const endpoint = new URL(url).pathname;
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
       if (endpoint.endsWith('/add')) { posts++; throw Error('connection lost'); }
       return Response.json([]);
     };
@@ -149,6 +170,7 @@ test('excludes only passive extras before accepting a pristine stopped torrent',
     const fetchImpl = async (url, init) => {
       const endpoint = new URL(url).pathname;
       calls.push([init.method, endpoint]);
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
       if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
       if (endpoint.endsWith('/filePrio')) {
         assert.equal(added, true);
@@ -182,6 +204,7 @@ test('unsafe extra file never receives a priority write or torrent start', async
     let priorityWrites = 0;
     const fetchImpl = async (url) => {
       const endpoint = new URL(url).pathname;
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
       if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
       if (endpoint.endsWith('/filePrio')) { priorityWrites++; return new Response('Ok.'); }
       if (!added) return Response.json([]);
