@@ -26,7 +26,7 @@ test('one bounded scan journals new IDs before moving the cursor', async () => {
         return { state: 'page', page, total: 3,
           items: [cursor(13), cursor(12), cursor(11)] };
       },
-      refreshFile: async () => ({ state: 'recorded_file' }) });
+      refreshFile: async () => ({ state: 'recorded_file', recognition: 'linked' }) });
     assert.deepEqual(await worker.scan(), { state: 'caught_up', added: 3 });
     assert.deepEqual(pages, [1, 1]);
     assert.deepEqual(ledger.getCursor(), cursor(13));
@@ -44,12 +44,42 @@ test('failed targeted recheck waits while a later file is processed', async () =
       readPage: async () => { throw new Error('scan not used'); },
       refreshFile: async (fileId) => {
         seen.push(fileId);
-        return fileId === 11 ? { state: 'held' } : { state: 'recorded_file' };
+        return fileId === 11 ? { state: 'held' } :
+          { state: 'recorded_file', recognition: 'linked' };
       } });
     assert.deepEqual(await worker.drainOne(), { state: 'retry_scheduled', fileId: 11 });
     assert.deepEqual(await worker.drainOne(), { state: 'acknowledged', fileId: 12 });
     assert.deepEqual(seen, [11, 12]);
     assert.deepEqual(ledger.nextDue(100), null);
+  });
+});
+
+test('a Shoko file observed before recognition stays pending for later recheck', async () => {
+  await withLedger(async (ledger) => {
+    ledger.bootstrap(cursor(10));
+    ledger.recordBatch({ state: 'complete', fileIds: [11, 12],
+      newest: cursor(12) });
+    const seen = [];
+    let nowMs = 100;
+    let recognized = false;
+    const worker = createShokoRecentWorker({ ledger, now: () => nowMs,
+      readPage: async () => { throw new Error('scan not used'); },
+      refreshFile: async (fileId) => {
+        seen.push(fileId);
+        return { state: 'recorded_file', recognition:
+          fileId !== 11 || recognized ? 'linked' : 'provisional' };
+      } });
+    assert.deepEqual(await worker.drainOne(),
+      { state: 'retry_scheduled', fileId: 11 });
+    assert.deepEqual(await worker.drainOne(),
+      { state: 'acknowledged', fileId: 12 });
+    assert.deepEqual(seen, [11, 12]);
+    assert.deepEqual(ledger.nextDue(300_100), { fileId: 11 });
+    nowMs = 300_100;
+    recognized = true;
+    assert.deepEqual(await worker.drainOne(),
+      { state: 'acknowledged', fileId: 11 });
+    assert.equal(ledger.nextDue(nowMs), null);
   });
 });
 
@@ -61,7 +91,7 @@ test('a missing baseline and an active operation cannot start a second scan', as
     const page = { state: 'page', page: 1, total: 1, items: [cursor(10)] };
     const worker = createShokoRecentWorker({ ledger, now: () => 100,
       readPage: () => ++reads === 1 ? firstPage : page,
-      refreshFile: async () => ({ state: 'recorded_file' }) });
+      refreshFile: async () => ({ state: 'recorded_file', recognition: 'linked' }) });
     assert.deepEqual(await worker.scan(), { state: 'held',
       reason: 'recent_baseline_required' });
     assert.equal(reads, 0);

@@ -3,7 +3,9 @@ import { scanShokoRecentSince } from './shoko-recent-catchup.mjs';
 const held = (reason) => ({ state: 'held', reason });
 
 // Explicit ticks only. The file-ID queue is durable and later IDs can run
-// while an unavailable file waits for its own retry. No server timer uses it.
+// while an unavailable file waits for its own retry. The refresh callback must
+// report recognition='linked' before a file leaves the queue: Shoko can first
+// list an import as provisional and link it after hashing. No server timer uses it.
 export function createShokoRecentWorker({ ledger, readPage, refreshFile,
   now = Date.now, pageSize = 100, maxPages = 5 } = {}) {
   if (typeof ledger?.getCursor !== 'function' ||
@@ -43,7 +45,8 @@ export function createShokoRecentWorker({ ledger, readPage, refreshFile,
         try { result = await refreshFile(pending.fileId); }
         catch { result = { state: 'unavailable' }; }
         const saved = ledger.recordResult({ fileId: pending.fileId,
-          success: result?.state === 'recorded_file', nowMs: now() });
+          success: result?.state === 'recorded_file' &&
+            result.recognition === 'linked', nowMs: now() });
         return { ...saved, fileId: pending.fileId };
       } catch { return held('recent_work_unavailable'); }
       finally { busy = false; }
