@@ -16,12 +16,12 @@ test('reads verified AniDB relation IDs without requiring local Shoko series', a
     items: [{ relatedId: 43, type: 'Sequel', verified: true }] });
 });
 
-test('a reversed relation remains linked to the requested AniDB ID', async () => {
+test('a reversed relation is rejected instead of mislabelled', async () => {
   const result = await readAniDbRelations({ ...config, fetchImpl: async () =>
     Response.json([{ IDs: { AniDB: 41, Shoko: 9 },
       RelatedIDs: { AniDB: 42, Shoko: null }, Type: 'Prequel',
       Source: 'AniDB', Verified: true }]) });
-  assert.deepEqual(result.items, [{ relatedId: 41, type: 'Prequel', verified: true }]);
+  assert.deepEqual(result, { state: 'unavailable' });
 });
 
 test('missing metadata, malformed IDs, and unsupported sources never make an empty franchise', async () => {

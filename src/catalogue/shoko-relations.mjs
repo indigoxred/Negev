@@ -36,7 +36,9 @@ export async function readAniDbRelations({ baseUrl, apiKey, anidbId,
   for (const relation of relations) {
     const left = relation?.IDs?.AniDB;
     const right = relation?.RelatedIDs?.AniDB;
-    const relatedId = left === anidbId ? right : right === anidbId ? left : null;
+    // This Shoko endpoint returns outgoing relations from anidbId. The type
+    // is directional; accepting a reversed row would mislabel the neighbor.
+    const relatedId = left === anidbId ? right : null;
     if (!validId(left) || !validId(right) || left === right ||
         !validId(relatedId) || seen.has(relatedId) ||
         !TYPES.has(relation.Type) || relation.Source !== 'AniDB' ||
