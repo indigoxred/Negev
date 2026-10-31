@@ -12,6 +12,25 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
+function progressText(progress) {
+  if (!progress || progress.publicAvailability !== 'unverified') {
+    return 'Request status unavailable';
+  }
+  switch (progress.state) {
+    case 'saved': return 'Saved · no download recorded';
+    case 'release_preparing': return 'Preparing a release';
+    case 'torrent_unverified': return 'Checking torrent submission';
+    case 'torrent_stopped': return 'Release selected · download not started';
+    case 'download_unverified': return 'Download requested · completion unverified';
+    case 'partial_private_copy':
+      return `${progress.privateVerifiedTargets}/${progress.targetCount} episode targets have a recorded private copy · Plex unverified`;
+    case 'private_copy_recorded':
+      return 'Files verified privately · Shoko import unverified';
+    case 'import_unverified': return 'Shoko import outcome unverified · Plex unverified';
+    case 'review_needed': return 'Needs owner review';
+    default: return 'Request status unavailable';
+  }
+}
 async function api(url, options = {}) {
   const headers = { Accept: 'application/json', ...options.headers };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -53,7 +72,7 @@ async function loadRequests(append = false) {
       const heading = element('div');
       heading.append(element('strong', item.title || `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
         element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId} · Request #${item.id} · ${item.episodeIds.length} episode target${item.episodeIds.length === 1 ? '' : 's'}`));
-      row.append(heading, element('span', 'Saved · acquisition inactive'));
+      row.append(heading, element('span', progressText(item.progress), 'request-status'));
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
         const candidates = element('div', undefined, 'candidate-list');

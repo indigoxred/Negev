@@ -114,6 +114,12 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.deepEqual(read.json().episodeIds, [1001]);
     assert.equal(read.json().requesterId, owner.id);
     assert.equal(read.json().monitorFuture, true);
+    const history = await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } });
+    assert.equal(history.statusCode, 200, history.body);
+    assert.deepEqual(history.json().items[0].progress, { state: 'saved',
+      targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
+      reviewRequired: false, publicAvailability: 'unverified' });
     const candidates = await service.app.inject({ method: 'GET',
       url: `/api/requests/${id}/candidates`, headers: { cookie } });
     assert.equal(candidates.statusCode, 200, candidates.body);

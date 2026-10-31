@@ -2,6 +2,8 @@
 
 Negev is an early, self-hosted anime request and acquisition prototype. Its account-backed page can search AniDB titles through Shoko and record series and movie requests in a **held** state. It cannot acquire, import, or report live availability yet; the end-user pages remain an early preview.
 
+The signed-in request list now summarizes durable local acquisition journals for both series and movies. It distinguishes a saved request, a stopped release, an unconfirmed download, a recorded private copy, and an attempt needing review. These are progress records, never a claim of Shoko import or Plex playback. Public availability remains a separate positive-only check, and the request list explicitly says it is unverified.
+
 A bounded read-only Shoko AniDB relation adapter and pure graph can collect verified prequels, sequels, side stories, films and alternative versions while leaving each AniDB installment separately requestable. Missing relation rows, unverified links and asymmetric edges hold the group. Shared-character and unexplained `Other` links do not merge it. Shoko's per-title endpoint returns outgoing relations only, so even a closed graph is labelled a related-installment candidate, not a complete franchise. It is not yet persisted, scheduled, connected to the account page, or proved against installed Shoko relation responses.
 
 The account page can now request one title's verified direct relationships on demand and show their names. Each related title opens its exact AniDB ID, preserving installment-level requests even when titles share a name. It explicitly says the list may be incomplete. This view has synthetic tests only and does not use the transitive graph yet.

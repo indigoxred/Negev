@@ -1,5 +1,8 @@
 import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
+import { openRequestProgress } from '../requests/request-progress.mjs';
+import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
+import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
@@ -45,12 +48,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   }
   let accounts;
   let requests;
+  let acquisitions;
+  let handoffs;
+  let progress;
   let hydration;
   let inventory;
   let plexObserver;
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
+    acquisitions = openAcquisitionLedger(dbPath);
+    handoffs = openHandoffLedger(dbPath);
+    progress = openRequestProgress(dbPath);
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     const metadata = createMetadataLimiter();
@@ -104,7 +113,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
       readRequest: (id) => requests.getRequest(id),
-      listRequests: (input) => requests.listRequests(input),
+      listRequests: (input) => {
+        const page = requests.listRequests(input);
+        return { ...page, items: page.items.map((item) => ({
+          ...item, progress: progress.read(item.id),
+        })) };
+      },
       searchTitles: ({ query, page }) => metadata.run(() => searchAniDbTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
       })),
@@ -183,7 +197,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
               plexObserver?.close();
-              inventory.close(); hydration.close(); requests.close(); accounts.close();
+              inventory.close(); hydration.close(); progress.close();
+              handoffs.close(); acquisitions.close(); requests.close(); accounts.close();
             }
           })();
         }
@@ -191,6 +206,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       } };
   } catch (error) {
     plexObserver?.close(); inventory?.close(); hydration?.close();
+    progress?.close(); handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();
     throw error;
   }
