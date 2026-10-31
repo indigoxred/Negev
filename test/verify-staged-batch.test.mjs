@@ -29,6 +29,30 @@ test('one reserved episode subset can verify without acquiring the whole request
   assert.deepEqual(result.files[0].episodeIds, [1002]);
 });
 
+test('one two-episode video requires exact full AniDB coverage for both targets', async () => {
+  const pairedFiles = [{ index: 0, name: 'Show/01-02.mkv', size: 3 }];
+  const pairedPlan = [{ name: pairedFiles[0].name, episodeIds: [1001, 1002] }];
+  const options = { root: '/staging', request, attempt, expectedTorrent,
+    plannedFiles: pairedPlan,
+    observe: async () => ({ state: 'complete', files: pairedFiles }),
+    lookup: async () => null };
+  const verified = await verifyStagedBatch({ ...options,
+    verify: async () => ({ state: 'identity_verified', fileId: 51,
+      ed2k: 'B'.repeat(32), size: 3,
+      coverage: [1001, 1002].map((episodeId) =>
+        ({ episodeId, start: 0, end: 100 })) }),
+  });
+  assert.equal(verified.state, 'batch_identity_verified');
+  assert.deepEqual(verified.files[0].episodeIds, [1001, 1002]);
+  const partial = await verifyStagedBatch({ ...options,
+    verify: async () => ({ state: 'identity_verified', fileId: 51,
+      ed2k: 'B'.repeat(32), size: 3,
+      coverage: [{ episodeId: 1001, start: 0, end: 50 },
+        { episodeId: 1002, start: 50, end: 100 }] }),
+  });
+  assert.deepEqual(partial, { state: 'held', reason: 'partial_or_unproved_episode' });
+});
+
 test('one release in a 501-episode installment verifies only its claimed target', async () => {
   const largeRequest = { ...request,
     episodeIds: Array.from({ length: 501 }, (_, index) => 2000 + index) };
