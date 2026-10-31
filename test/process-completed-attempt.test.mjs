@@ -168,7 +168,7 @@ test('one durable completion tick reaches a verified private handoff', async () 
       assert.equal(queue.getResult(attemptId).state, 'handoff_prepared');
       assert.equal(handoffs.getHandoff(attemptId).status, 'prepared');
       assert.deepEqual(await readdir(stores.importRoot), []);
-      assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1 });
+      assert.deepEqual(await worker.runOnce(), { state: 'idle' });
     } finally { queue.close(); }
   });
 });
