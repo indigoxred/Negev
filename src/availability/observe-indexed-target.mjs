@@ -6,9 +6,11 @@ const unknown = (reason) => ({ state: 'unknown', reason });
 // again and physically compared with the fresh Shoko file before Available.
 // An empty or stale index has no negative meaning.
 export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex,
-  readShoko, readPlex, shokoMount, plexMount, plexMounts, proveImpl } = {}) {
+  readShoko, readPlex, shokoMount, plexMount, plexMounts, proveImpl,
+  now = Date.now } = {}) {
   if (typeof cardIndex?.lookupCards !== 'function' ||
-      typeof readShoko !== 'function' || typeof readPlex !== 'function') {
+      typeof readShoko !== 'function' || typeof readPlex !== 'function' ||
+      typeof now !== 'function') {
     throw new TypeError('Invalid indexed availability observer');
   }
   let shoko;
@@ -38,6 +40,20 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
   try {
     return await observePublicTarget({ target, publicLibraryIds,
       knownCards: cards, shokoMount, plexMount, plexMounts,
-      readShoko: async () => shoko, readPlex, proveImpl });
+      readShoko: async () => shoko,
+      readPlex: async (input) => {
+        const result = await readPlex(input);
+        if (['not_found', 'no_parts'].includes(result?.state) &&
+            typeof cardIndex.forgetCard === 'function') {
+          try {
+            const observedMs = now();
+            if (Number.isSafeInteger(observedMs) && observedMs >= 0) {
+              cardIndex.forgetCard({ libraryId: input.libraryId,
+                ratingKey: input.ratingKey, observedMs });
+            }
+          } catch { /* A stale index cannot become absence evidence. */ }
+        }
+        return result;
+      }, proveImpl });
   } catch { return unknown('observer_incomplete'); }
 }

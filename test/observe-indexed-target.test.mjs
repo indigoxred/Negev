@@ -59,3 +59,32 @@ test('empty, incomplete or overloaded index remains Unknown', async () => {
     cardIndex: { lookupCards: () => { throw new Error('should not read'); } } }),
   { state: 'unknown', reason: 'observer_incomplete' });
 });
+
+test('a definitively missing Plex card is removed from the candidate index', async () => {
+  const forgotten = [];
+  const result = await observeIndexedTarget({ ...base,
+    now: () => 1234, readShoko: async () => shoko,
+    readPlex: async () => ({ state: 'not_found' }),
+    cardIndex: {
+      lookupCards: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      forgetCard: (input) => forgotten.push(input),
+    },
+  });
+  assert.equal(result.state, 'unknown');
+  assert.deepEqual(forgotten, [{ libraryId: 102, ratingKey: 500,
+    observedMs: 1234 }]);
+});
+
+test('a transient Plex card error does not remove an indexed candidate', async () => {
+  const forgotten = [];
+  await observeIndexedTarget({ ...base, readShoko: async () => shoko,
+    readPlex: async () => ({ state: 'unavailable' }),
+    cardIndex: {
+      lookupCards: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      forgetCard: (input) => forgotten.push(input),
+    },
+  });
+  assert.deepEqual(forgotten, []);
+});
