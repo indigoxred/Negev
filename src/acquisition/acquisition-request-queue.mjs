@@ -52,6 +52,7 @@ export function openAcquisitionRequestQueue(dbPath) {
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     WHERE r.id>? AND r.status='held' AND
+      EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
     ORDER BY r.id LIMIT 1`);
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');

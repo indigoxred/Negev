@@ -13,7 +13,9 @@ function canonicalIntent(intent) {
   if (intent?.state !== 'ready' || !Number.isSafeInteger(intent.anidbId) || intent.anidbId <= 0 ||
       !['series', 'movie'].includes(intent.kind) || typeof intent.monitorFuture !== 'boolean' ||
       (intent.kind === 'movie' && intent.monitorFuture) ||
-      !Array.isArray(intent.episodeIds) || intent.episodeIds.length === 0 ||
+      !Array.isArray(intent.episodeIds) ||
+      (intent.episodeIds.length === 0 &&
+        !(intent.kind === 'series' && intent.monitorFuture)) ||
       intent.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
       new Set(intent.episodeIds).size !== intent.episodeIds.length ||
       (intent.title !== undefined &&

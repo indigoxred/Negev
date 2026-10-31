@@ -18,3 +18,9 @@ test('an unverified request still shows review and singular private copy wording
     publicAvailability: 'unverified', privateVerifiedTargets: 1, targetCount: 2 }, 'series'),
   '1/2 episode targets have a recorded private copy · Plex unverified');
 });
+
+test('a future-only Airing watch explains why no download is recorded', () => {
+  assert.equal(progressText({ state: 'saved', targetCount: 0,
+    publicAvailability: 'unverified' }, 'series'),
+  'Watching for the first aired episode');
+});

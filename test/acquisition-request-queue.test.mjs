@@ -12,6 +12,25 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('future-only watch is skipped until its first episode target is added', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-future-queue-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'future',
+    intent: { ...intent, episodeIds: [], monitorFuture: true }, nowMs: 1 });
+  const queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    assert.equal(queue.claimNext({ nowMs: 1 }).state, 'pass_complete');
+    requests.advanceAiring({ requestId: saved.requestId,
+      detail: { state: 'details', anidbId: 42, kind: 'series',
+        complete: true, total: 1, episodes: [
+          { id: 1001, type: 'Episode', airDate: '2026-11-01' },
+        ] }, releaseState: 'airing', today: '2026-11-01' });
+    assert.equal(queue.claimNext({ nowMs: 2 }).requestId, saved.requestId);
+  } finally { queue.close(); requests.close();
+    await rm(dir, { recursive: true, force: true }); }
+});
+
 async function fixture(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-acquisition-queue-'));
   const dbPath = path.join(dir, 'state.sqlite');

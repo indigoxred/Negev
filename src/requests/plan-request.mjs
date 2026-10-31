@@ -38,8 +38,10 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
     })) return held('episode_not_aired');
     selected = episodeIds;
   }
-  if (selected.length === 0) return held(releaseState === 'airing' &&
-    scope === 'installment' ? 'no_aired_episodes' : 'invalid_episode_selection');
+  if (selected.length === 0 && !(releaseState === 'airing' &&
+    detail.kind === 'series' && scope === 'installment')) {
+    return held('invalid_episode_selection');
+  }
   return {
     state: 'ready', anidbId, kind: detail.kind,
     episodeIds: [...selected].sort((a, b) => a - b),

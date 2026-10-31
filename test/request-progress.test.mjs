@@ -54,3 +54,21 @@ test('request progress distinguishes private proof from public availability', as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('a future-only Airing watch has readable zero-target progress', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-future-progress-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'future', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: true, episodeIds: [] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const progress = openRequestProgress(dbPath);
+  try {
+    assert.deepEqual(progress.read(saved.requestId), { state: 'saved',
+      targetCount: 0, privateVerifiedTargets: 0, activeAttempts: 0,
+      reviewRequired: false, publicAvailability: 'unverified' });
+  } finally { progress.close(); handoffs.close(); acquisitions.close();
+    requests.close(); await rm(root, { recursive: true, force: true }); }
+});

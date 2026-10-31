@@ -192,6 +192,38 @@ test('airing watch adds only aired regular episodes and survives restart', async
   } finally { two.close(); }
 }));
 
+test('future-only Airing request waits durably without an acquisition target', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const futureIntent = { ...intent, episodeIds: [] };
+  const saved = one.submit({ requesterId: 7, requestKey: 'future',
+    intent: futureIntent, nowMs: 1_000 });
+  assert.equal(saved.created, true);
+  assert.deepEqual(saved.targetIds, []);
+  assert.equal(one.countTargets(), 0);
+  one.close();
+  const two = openRequestLedger(dbPath);
+  try {
+    assert.deepEqual(two.getRequest(saved.requestId).episodeIds, []);
+    assert.deepEqual(two.listActiveAirings(), [{ requestId: saved.requestId,
+      anidbId: 1234 }]);
+    const detail = { state: 'details', anidbId: 1234, kind: 'series',
+      complete: true, total: 1, episodes: [
+        { id: 1001, type: 'Episode', airDate: '2026-11-01' },
+      ] };
+    assert.deepEqual(two.advanceAiring({ requestId: saved.requestId,
+      detail, releaseState: 'airing', today: '2026-10-31' }).addedEpisodeIds, []);
+    assert.deepEqual(two.advanceAiring({ requestId: saved.requestId,
+      detail, releaseState: 'airing', today: '2026-11-01' }).addedEpisodeIds, [1001]);
+    assert.deepEqual(two.getRequest(saved.requestId).episodeIds, [1001]);
+    assert.equal(two.countTargets(), 1);
+    assert.equal(two.submit({ requesterId: 7, requestKey: 'future',
+      intent: futureIntent, nowMs: 2_000 }).created, false);
+    assert.throws(() => two.submit({ requesterId: 8, requestKey: 'empty-film',
+      intent: { ...futureIntent, kind: 'movie', monitorFuture: false },
+      nowMs: 3_000 }), TypeError);
+  } finally { two.close(); }
+}));
+
 test('completed detail adds final episodes once and closes only that airing watch', async () => withPath(async (dbPath) => {
   const one = openRequestLedger(dbPath);
   const airing = one.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });

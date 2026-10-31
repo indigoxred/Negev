@@ -17,7 +17,7 @@ export function openRequestProgress(dbPath) {
     }
   } catch (error) { db.close(); throw error; }
   const request = db.prepare(`SELECT r.id,COUNT(rt.target_id) AS target_count
-    FROM requests r JOIN request_targets rt ON rt.request_id=r.id
+    FROM requests r LEFT JOIN request_targets rt ON rt.request_id=r.id
     WHERE r.id=? GROUP BY r.id`);
   const attempts = db.prepare(`SELECT a.status,
       (SELECT COUNT(*) FROM acquisition_target_claims c

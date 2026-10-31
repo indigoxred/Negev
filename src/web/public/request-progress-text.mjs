@@ -14,7 +14,8 @@ export function progressText(progress, kind) {
   }
   if (progress.state === 'review_needed') return 'Needs owner review';
   switch (progress.state) {
-    case 'saved': return 'Saved · no download recorded';
+    case 'saved': return progress.targetCount === 0 && kind === 'series'
+      ? 'Watching for the first aired episode' : 'Saved · no download recorded';
     case 'release_preparing': return 'Preparing a release';
     case 'torrent_unverified': return 'Checking torrent submission';
     case 'torrent_stopped': return 'Release selected · download not started';

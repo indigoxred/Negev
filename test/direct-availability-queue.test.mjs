@@ -126,6 +126,13 @@ test('coverage counts only current exact positives and never counts unknown targ
   });
 });
 
+test('a future-only watch has zero verified and zero requested targets', async () => {
+  await fixture(async (ctx) => {
+    assert.deepEqual(ctx.queue.getCoverage({ anidbId: 42,
+      episodeIds: [], nowMs: 100 }), { verifiedTargets: 0, targetCount: 0 });
+  });
+});
+
 test('a fresh Shoko event runs before older inventory backfill without starving later work', async () => {
   await fixture(async (ctx) => {
     ctx.queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 100 });

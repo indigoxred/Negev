@@ -219,7 +219,7 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     }
     if (parsed.pathname.endsWith('/AniDB/1234')) {
       return json({ ID: 1234, Title: 'Example Series', Type: 'TV',
-        AirDate: '2026-10-01', EndDate: null, EpisodeCount: 2, Restricted: false });
+        AirDate: '2026-09-01', EndDate: null, EpisodeCount: 2, Restricted: false });
     }
     if (parsed.pathname.endsWith('/AniDB/2345')) {
       return json({ ID: 2345, Title: 'Example Movie', Type: 'Movie',
@@ -333,6 +333,21 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.deepEqual(movieInspected.json().files[0].episodeIds, [2001]);
     assert.equal(movieInspected.json().downloadStarted, false);
     assert.equal(methods.every((method) => method.startsWith('GET ')), true);
+    calendarDay = '2026-09-30';
+    const future = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth(cookie, csrf), payload: { anidbId: 1234,
+        scope: 'installment', requestKey: 'future-only' } });
+    assert.equal(future.statusCode, 202, future.body);
+    assert.deepEqual(future.json().targetIds, []);
+    const futureRead = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${future.json().requestId}`, headers: { cookie } });
+    assert.deepEqual(futureRead.json().episodeIds, []);
+    assert.equal(futureRead.json().monitorFuture, true);
+    const futureHistory = await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } });
+    assert.deepEqual(futureHistory.json().items[0].progress, { state: 'saved',
+      targetCount: 0, privateVerifiedTargets: 0, activeAttempts: 0,
+      reviewRequired: false, publicAvailability: 'unverified' });
     await service.close();
     service = await createUserService({ ...config, fetchImpl: async () => {
       throw new Error('Catalogue must not be read on identical retry');

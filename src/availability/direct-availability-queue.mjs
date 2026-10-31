@@ -92,11 +92,12 @@ export function openDirectAvailabilityQueue(dbPath) {
     },
     getCoverage({ anidbId, episodeIds, nowMs }) {
       if (!validId(anidbId) || !validTime(nowMs) ||
-          !Array.isArray(episodeIds) || episodeIds.length < 1 ||
+          !Array.isArray(episodeIds) ||
           episodeIds.length > 10_000 || episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid availability coverage query');
       }
+      if (episodeIds.length === 0) return { verifiedTargets: 0, targetCount: 0 };
       const rows = positiveForAnime.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       const positives = rows.length > 10_000 ? new Set() :

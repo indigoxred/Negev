@@ -16,7 +16,10 @@ test('airing whole installment stores current regular IDs and future monitoring'
     episodeIds: [1001], monitorFuture: true,
   });
   assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment',
-    today: '2026-09-30' }), { state: 'held', reason: 'no_aired_episodes' });
+    today: '2026-09-30' }), {
+    state: 'ready', anidbId: 1234, kind: 'series',
+    episodeIds: [], monitorFuture: true,
+  });
   assert.deepEqual(planRequest({ detail, releaseState: 'airing', scope: 'installment' }),
     { state: 'held', reason: 'invalid_current_date' });
 });
