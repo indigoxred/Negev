@@ -19,8 +19,10 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     accounts.close();
     const digest = 'A'.repeat(32);
     let linked = true;
+    let deleted = false;
     const fetchImpl = async (url) => {
       if (url.hostname === 'shoko' && url.pathname === '/api/v3/File/51') {
+        if (deleted) return new Response(null, { status: 404 });
         return Response.json({ ID: 51, Updated: linked
           ? '2026-10-31T00:00:00Z' : '2026-10-31T00:01:00Z',
         SeriesIDs: linked ? [{ SeriesID: { AniDB: 42 },
@@ -130,6 +132,14 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
       headers: { cookie } })).json(), { state: 'unknown',
       reason: 'evidence_incomplete' });
+    linked = true;
+    assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
+    assert.equal((await service.tickDirectAvailability()).result, 'available');
+    deleted = true;
+    assert.deepEqual(service.acceptShokoEvent('file:deleted', [{ FileID: 51 }]),
+      { state: 'queued', fileId: 51 });
+    assert.deepEqual(service.getDirectAvailabilityStatus({
+      anidbId: 42, episodeId: 1001 }), { state: 'unknown' });
   } finally {
     await service?.close();
     await rm(root, { recursive: true, force: true });

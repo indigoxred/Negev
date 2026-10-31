@@ -206,7 +206,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
-    const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile });
+    const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile,
+      onDeleted: (fileId) => {
+        const before = inventory.getFile(fileId);
+        if (before?.pairs.length) enqueueChangedFile({ before, after: null,
+          observedMs: now(), priority: 'event' });
+      } });
     return { app,
       pollAiringNextPage: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });

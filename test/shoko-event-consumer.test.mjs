@@ -40,11 +40,28 @@ test('hashed and relocated events coalesce by Shoko file ID and run serially', a
 });
 
 test('a deletion event cannot itself prove absence and a failed recheck stays held', async () => {
+  const invalidated = [];
   const consumer = createShokoEventConsumer({ refreshFile: async () =>
-    ({ state: 'held', reason: 'file_unavailable' }) });
+    ({ state: 'held', reason: 'file_unavailable' }),
+  onDeleted: (fileId) => invalidated.push(fileId) });
   assert.deepEqual(consumer.accept('file:deleted', [{ FileID: 12 }]),
     { state: 'queued', fileId: 12 });
+  assert.deepEqual(invalidated, [12]);
   await consumer.close();
+  assert.equal(consumer.getState().reconciliationNeeded, true);
+});
+
+test('deletion invalidation failure requests reconciliation while later files proceed', async () => {
+  const seen = [];
+  const consumer = createShokoEventConsumer({
+    refreshFile: async (id) => { seen.push(id); return { state: 'recorded_file' }; },
+    onDeleted: () => { throw new Error('queue unavailable'); },
+  });
+  assert.deepEqual(consumer.accept('file:deleted', [{ FileID: 12 }]),
+    { state: 'queued', fileId: 12 });
+  consumer.accept('file:hashed', [{ FileID: 13 }]);
+  await consumer.close();
+  assert.deepEqual(seen, [12, 13]);
   assert.equal(consumer.getState().reconciliationNeeded, true);
 });
 

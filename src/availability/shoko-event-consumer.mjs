@@ -4,9 +4,11 @@ const idEvents = new Set(['file:hashed', 'file:relocated',
 
 // Accepts decoded SignalR hub method calls, not untrusted raw WebSocket frames.
 // The installed feed subscription and authentication still need live proof.
-export function createShokoEventConsumer({ refreshFile, maxPending = 64 } = {}) {
+export function createShokoEventConsumer({ refreshFile, onDeleted,
+  maxPending = 64 } = {}) {
   if (typeof refreshFile !== 'function' || !Number.isSafeInteger(maxPending) ||
-      maxPending < 1 || maxPending > 256) {
+      maxPending < 1 || maxPending > 256 ||
+      (onDeleted !== undefined && typeof onDeleted !== 'function')) {
     throw new TypeError('Invalid Shoko event consumer');
   }
   const pending = new Set();
@@ -47,7 +49,11 @@ export function createShokoEventConsumer({ refreshFile, maxPending = 64 } = {}) 
         reconciliationNeeded = true;
         return { state: 'reconcile', reason: 'invalid_event' };
       }
-      if (target === 'file:deleted') reconciliationNeeded = true;
+      if (target === 'file:deleted') {
+        reconciliationNeeded = true;
+        try { onDeleted?.(fileId); }
+        catch { reconciliationNeeded = true; }
+      }
       if (pending.has(fileId)) return { state: 'coalesced', fileId };
       if (pending.size >= maxPending) {
         reconciliationNeeded = true;
