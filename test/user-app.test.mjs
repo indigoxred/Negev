@@ -25,6 +25,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }),
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
+    titleRegistry: { isKnownTitle: ({ anidbId }) => anidbId === 1234 },
     observePublicTarget: async (target) => { observed.push(target);
       return { state: 'available', fileId: 900 }; },
   });
@@ -68,6 +69,15 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(available.statusCode, 200);
     assert.deepEqual(available.json(), { state: 'available' });
     assert.deepEqual(observed, [{ anidbId: 1234, episodeId: 1001, kind: 'series' }]);
+    const direct = await app.inject({ method: 'GET',
+      url: '/api/catalogue/1234/episodes/1001/availability?kind=series',
+      headers: { cookie } });
+    assert.deepEqual(direct.json(), { state: 'available' });
+    assert.deepEqual(observed.at(-1), { anidbId: 1234,
+      episodeId: 1001, kind: 'series' });
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/catalogue/9999/episodes/1001/availability?kind=series',
+      headers: { cookie } })).statusCode, 404);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1002/availability', headers: { cookie } })).statusCode, 404);
     const mine = await app.inject({ method: 'GET', url: '/api/requests',

@@ -70,6 +70,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(403).send({ error: 'Request token rejected' });
     }
   };
+  const publicAvailability = async (target) => {
+    if (typeof observePublicTarget !== 'function') {
+      return { state: 'unknown', reason: 'observer_not_configured' };
+    }
+    let result;
+    try { result = await observePublicTarget(target); }
+    catch { return { state: 'unknown', reason: 'observer_unavailable' }; }
+    return result?.state === 'available' ? { state: 'available' } :
+      { state: 'unknown', reason: 'evidence_incomplete' };
+  };
   const writeGuards = [requireOrigin, requireUser, requireCsrf];
   const authRate = { max: 5, timeWindow: '1 minute' };
   app.get('/health/live', async () => ({ status: 'ok' }));
@@ -143,6 +153,29 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     return { ...result, requestable: false };
+  });
+  // A searched title can be checked without a Negev request. This is vital
+  // for a file imported manually through Shoko; only positive public proof
+  // becomes Available and no identifier or path from the observer is exposed.
+  app.get('/api/catalogue/:id/episodes/:episodeId/availability', {
+    preHandler: requireUser,
+    config: { rateLimit: { max: 3, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const id = Number(request.params.id);
+    const episodeId = Number(request.params.episodeId);
+    if (!Number.isSafeInteger(id) || id < 1 ||
+        !Number.isSafeInteger(episodeId) || episodeId < 1 ||
+        Object.keys(request.query).length !== 1 ||
+        !['series', 'movie'].includes(request.query.kind)) {
+      return reply.code(400).send({ error: 'Invalid availability target' });
+    }
+    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+        !titleRegistry.isKnownTitle({ anidbId: id })) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    return publicAvailability({ anidbId: id, episodeId,
+      kind: request.query.kind });
   });
   app.post('/api/catalogue/:id/load-detail', { preHandler: writeGuards,
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
@@ -242,15 +275,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !saved.episodeIds?.includes(episodeId)) {
       return reply.code(404).send({ error: 'Request target not found' });
     }
-    if (typeof observePublicTarget !== 'function') {
-      return { state: 'unknown', reason: 'observer_not_configured' };
-    }
-    let result;
-    try { result = await observePublicTarget({ anidbId: saved.anidbId,
-      episodeId, kind: saved.kind }); }
-    catch { return { state: 'unknown', reason: 'observer_unavailable' }; }
-    if (result?.state === 'available') return { state: 'available' };
-    return { state: 'unknown', reason: 'evidence_incomplete' };
+    return publicAvailability({ anidbId: saved.anidbId,
+      episodeId, kind: saved.kind });
   });
   return app;
 }
