@@ -64,7 +64,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       sourcePaths.push(location.AbsolutePath);
     }
     if (sourcePaths.length === 0) return unavailable();
-    files.push({ fileId: file.ID, anidbFileId: identity.fileId,
+    files.push({ fileId: file.ID, anidbFileId: identity.fileId, ed2k,
       anidbId, episodeIds, coverage: identity.coverage,
       size: file.Size, sourcePaths });
   }

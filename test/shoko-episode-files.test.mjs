@@ -29,7 +29,7 @@ test('reads one exact AniDB episode and its registered accessible file', async (
     return json(episode);
   } });
   assert.deepEqual(result, { state: 'ok', complete: true, files: [{
-    fileId: 51, anidbFileId: 800, anidbId: 42, episodeIds: [1001],
+    fileId: 51, anidbFileId: 800, ed2k: digest, anidbId: 42, episodeIds: [1001],
     coverage: [{ episodeId: 1001, start: 0, end: 100 }],
     size: 123, sourcePaths: ['/pure/Anime/Example/01.mkv'],
   }] });
