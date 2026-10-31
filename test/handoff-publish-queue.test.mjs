@@ -82,7 +82,10 @@ test('changed evidence requires review and does not repeatedly hash the same bat
       version: first.version, state: 'held', reason: 'manifest_tree_mismatch',
       checkedMs: 1_001 }), { state: 'recorded' });
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    assert.deepEqual(ctx.queue.listReviewNeeded(), [{ attemptId: first.attemptId,
+      reason: 'manifest_tree_mismatch', checkedMs: 1_001 }]);
     ctx.reopen();
+    assert.equal(ctx.queue.listReviewNeeded().length, 1);
     assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
   }));
 

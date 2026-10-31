@@ -59,6 +59,10 @@ export function openHandoffPublishQueue(dbPath) {
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version
     FROM handoff_publish_checks WHERE state IS NULL
     ORDER BY attempt_id LIMIT ?`);
+  const reviewNeeded = db.prepare(`SELECT attempt_id AS attemptId,reason,
+    checked_ms AS checkedMs FROM handoff_publish_checks
+    WHERE state='held' AND next_due_ms IS NULL AND attempt_id>?
+    ORDER BY attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -106,6 +110,13 @@ export function openHandoffPublishQueue(dbPath) {
     getResult(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid publish attempt');
       return check.get(attemptId) ?? null;
+    },
+    listReviewNeeded({ afterAttemptId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid publish review page');
+      }
+      return reviewNeeded.all(afterAttemptId, limit).map((row) => ({ ...row }));
     },
     reconcileUnresolved({ nowMs = Date.now(), limit = 20 } = {}) {
       if (!validTime(nowMs) || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
