@@ -19,6 +19,57 @@ test('a detected event has no file ID and asks for paced reconciliation', async 
   assert.deepEqual(calls, []);
 });
 
+test('a detected path stays busy until its hashed file refresh succeeds', async () => {
+  const gate = deferred();
+  const consumer = createShokoEventConsumer({
+    refreshFile: async () => gate.promise,
+  });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  gate.resolve({ state: 'recorded_file' });
+  await consumer.close();
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'unverified', pendingPaths: 0 });
+});
+
+test('a second detection during hash refresh remains pending', async () => {
+  const gate = deferred();
+  const consumer = createShokoEventConsumer({
+    refreshFile: async () => gate.promise,
+  });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  consumer.accept('file:detected', [path]);
+  gate.resolve({ state: 'recorded_file' });
+  await consumer.close();
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+});
+
+test('failed hash refresh and malformed detection cannot declare imports quiet', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'held', reason: 'file_unavailable' }) });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  await consumer.close();
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  const malformed = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file' }) });
+  malformed.accept('file:detected', [{ ManagedFolderID: 3,
+    RelativePath: '../outside.mkv' }]);
+  assert.deepEqual(malformed.getArrivalState(),
+    { state: 'busy', pendingPaths: 0 });
+  await malformed.close();
+});
+
 test('hashed and relocated events coalesce by Shoko file ID and run serially', async () => {
   const gate = deferred();
   const calls = [];
