@@ -6,13 +6,13 @@ const row = (anidbId, items) => ({ state: 'relations', anidbId, items });
 const edge = (relatedId, type = 'Sequel', verified = true) =>
   ({ relatedId, type, verified });
 
-test('a complete verified relation graph groups transitive installments only', () => {
+test('verified relation rows group transitive candidate installments only', () => {
   const result = assembleAniDbFranchise({ seedId: 42, relationRows: [
     row(42, [edge(43), edge(99, 'SharedCharacters')]),
     row(43, [edge(42, 'Prequel'), edge(44, 'SideStory')]),
     row(44, [edge(43, 'MainStory')]),
   ] });
-  assert.deepEqual(result, { state: 'franchise', seedId: 42,
+  assert.deepEqual(result, { state: 'related_installments', completeness: 'unproven', seedId: 42,
     installmentIds: [42, 43, 44] });
 });
 

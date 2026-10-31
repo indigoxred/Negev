@@ -5,8 +5,10 @@ const FAMILY_TYPES = new Set(['SameSetting', 'AlternativeSetting',
 const NON_FAMILY_TYPES = new Set(['Other', 'SharedCharacters']);
 const held = (reason) => ({ state: 'held', reason });
 
-// Assemble only from complete, verified AniDB relation rows. Every member
-// remains its own requestable installment; this graph never merges episodes.
+// Assemble only from supplied, verified AniDB relation rows. Shoko's
+// per-title endpoint returns outgoing links, so even a closed graph cannot
+// prove that no incoming-only installment exists elsewhere in its cache.
+// Every member remains its own requestable installment.
 export function assembleAniDbFranchise({ seedId, relationRows,
   maxMembers = 50 } = {}) {
   if (!validId(seedId) || !Array.isArray(relationRows) ||
@@ -54,6 +56,6 @@ export function assembleAniDbFranchise({ seedId, relationRows,
   }
   if (frontier.size) return { state: 'pending',
     reason: 'relation_rows_missing', frontier: [...frontier].sort((a, b) => a - b) };
-  return { state: 'franchise', seedId,
+  return { state: 'related_installments', completeness: 'unproven', seedId,
     installmentIds: [...members].sort((a, b) => a - b) };
 }
