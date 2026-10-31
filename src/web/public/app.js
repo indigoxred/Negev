@@ -162,6 +162,33 @@ async function showDetail(item) {
       return;
     }
     panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed episode${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    // One explicit check at a time: a pending or incomplete public observation
+    // is Unknown, never a claim that an episode is missing.
+    if (Array.isArray(data.episodes) && data.episodes.length > 0) {
+      const check = element('div', undefined, 'availability-check');
+      const label = element('label', 'Check an episode in Plex');
+      const select = element('select');
+      for (const episode of data.episodes) {
+        const option = element('option', `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
+        option.value = String(episode.id);
+        select.append(option);
+      }
+      label.append(select);
+      const button = element('button', 'Check availability');
+      const result = element('p', '', 'muted');
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        result.textContent = 'Checking the public library…';
+        try {
+          const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
+          result.textContent = status.state === 'available' ?
+            'Playable in Plex' : 'Availability is not confirmed yet';
+        } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
+        finally { button.disabled = false; }
+      });
+      check.append(label, button, result);
+      panel.append(check);
+    }
     if (data.restricted !== false) {
       panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));
       return;
