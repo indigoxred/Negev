@@ -101,3 +101,153 @@ test('a new submission key preserves a later request while sharing exact targets
     assert.equal(ledger.countRequests(), 2);
   } finally { ledger.close(); }
 }));
+
+test('airing watch adds only aired regular episodes and survives restart', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const saved = one.submit({ requesterId: 7, requestKey: 'airing', intent,
+    nowMs: 1_000 });
+  const detail = { state: 'details', anidbId: 1234, kind: 'series',
+    complete: true, total: 5, episodes: [
+      { id: 1001, type: 'Episode', airDate: '2026-01-01' },
+      { id: 1002, type: 'Episode', airDate: '2026-01-08' },
+      { id: 1003, type: 'Episode', airDate: '2026-01-15' },
+      { id: 1004, type: 'Episode', airDate: '2026-02-01' },
+      { id: 1099, type: 'Special', airDate: '2026-01-15' },
+    ] };
+  assert.deepEqual(one.advanceAiring({ requestId: saved.requestId,
+    detail, releaseState: 'airing', today: '2026-01-20' }),
+  { state: 'advanced', addedEpisodeIds: [1003], deferredEpisodeIds: [1004], watchClosed: false });
+  one.close();
+  const two = openRequestLedger(dbPath);
+  try {
+    assert.deepEqual(two.getRequest(saved.requestId).episodeIds, [1001, 1002, 1003]);
+    assert.deepEqual(two.listActiveAirings(), [{ requestId: saved.requestId,
+      anidbId: 1234 }]);
+    assert.deepEqual(two.advanceAiring({ requestId: saved.requestId,
+      detail, releaseState: 'airing', today: '2026-01-20' }).addedEpisodeIds, []);
+    assert.equal(two.countTargets(), 3);
+    const retry = two.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 2_000 });
+    assert.equal(retry.created, false);
+    assert.equal(retry.targetIds.length, 3);
+  } finally { two.close(); }
+}));
+
+test('completed detail adds final episodes once and closes only that airing watch', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const airing = one.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
+  const completed = one.submit({ requesterId: 8, requestKey: 'completed',
+    intent: { ...intent, monitorFuture: false }, nowMs: 1_001 });
+  const detail = { state: 'details', anidbId: 1234, kind: 'series',
+    complete: true, total: 3, episodes: [
+      { id: 1001, type: 'Episode' }, { id: 1002, type: 'Episode' },
+      { id: 1003, type: 'Episode' },
+    ] };
+  try {
+    assert.deepEqual(one.advanceAiring({ requestId: airing.requestId,
+      detail, releaseState: 'completed', today: '2026-02-01' }),
+    { state: 'advanced', addedEpisodeIds: [1003], deferredEpisodeIds: [], watchClosed: true });
+    assert.deepEqual(one.listActiveAirings(), []);
+    assert.deepEqual(one.getRequest(completed.requestId).episodeIds, [1001, 1002]);
+    assert.deepEqual(one.advanceAiring({ requestId: airing.requestId,
+      detail, releaseState: 'airing', today: '2026-02-02' }),
+    { state: 'held', reason: 'watch_closed' });
+  } finally { one.close(); }
+}));
+
+test('incomplete or wrong-title detail cannot add watched targets', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  const saved = ledger.submit({ requesterId: 7, requestKey: 'airing', intent,
+    nowMs: 1_000 });
+  const detail = { state: 'details', anidbId: 1234, kind: 'series',
+    complete: true, total: 3, episodes: [
+      { id: 1001, type: 'Episode' }, { id: 1002, type: 'Episode' },
+      { id: 1003, type: 'Episode', airDate: '2026-01-15' },
+    ] };
+  try {
+    for (const changed of [{ ...detail, anidbId: 9999 },
+      { ...detail, complete: false }, { ...detail, kind: 'movie' }]) {
+      assert.equal(ledger.advanceAiring({ requestId: saved.requestId,
+        detail: changed, releaseState: 'airing', today: '2026-02-01' }).state, 'held');
+    }
+    assert.equal(ledger.countTargets(), 2);
+  } finally { ledger.close(); }
+}));
+
+test('a changed catalogue cannot erase known episodes or close an airing watch', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
+    const detail = { state: 'details', anidbId: 1234, kind: 'series',
+      complete: true, total: 2, episodes: [
+        { id: 1001, type: 'Episode' },
+        { id: 1003, type: 'Episode' },
+      ] };
+    assert.deepEqual(ledger.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'completed', today: '2026-02-01' }),
+    { state: 'held', reason: 'catalogue_regression' });
+    assert.deepEqual(ledger.listActiveAirings(), [{ requestId: saved.requestId,
+      anidbId: 1234 }]);
+    assert.equal(ledger.countTargets(), 2);
+  } finally { ledger.close(); }
+}));
+
+test('a completed season with a long backlog advances in bounded batches before closing', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
+    const episodes = Array.from({ length: 32 }, (_, i) => ({ id: 1001 + i, type: 'Episode' }));
+    const detail = { state: 'details', anidbId: 1234, kind: 'series',
+      complete: true, total: episodes.length, episodes };
+    const first = ledger.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'completed', today: '2026-02-01' });
+    assert.equal(first.addedEpisodeIds.length, 25);
+    assert.equal(first.watchClosed, false);
+    const second = ledger.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'completed', today: '2026-02-01' });
+    assert.deepEqual(second.addedEpisodeIds, [1028, 1029, 1030, 1031, 1032]);
+    assert.equal(second.watchClosed, true);
+    assert.equal(ledger.countTargets(), 32);
+    assert.deepEqual(ledger.listActiveAirings(), []);
+  } finally { ledger.close(); }
+}));
+
+test('invalid or unknown air dates stay deferred while later valid episodes advance', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
+    const detail = { state: 'details', anidbId: 1234, kind: 'series',
+      complete: true, total: 5, episodes: [
+        { id: 1001, type: 'Episode' }, { id: 1002, type: 'Episode' },
+        { id: 1003, type: 'Episode', airDate: null },
+        { id: 1004, type: 'Episode', airDate: '2026-02-99' },
+        { id: 1005, type: 'Episode', airDate: '2026-01-20' },
+      ] };
+    assert.deepEqual(ledger.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'airing', today: '2026-02-01' }),
+    { state: 'advanced', addedEpisodeIds: [1005],
+      deferredEpisodeIds: [1003, 1004], watchClosed: false });
+    assert.throws(() => ledger.advanceAiring({ requestId: saved.requestId,
+      detail, releaseState: 'airing', today: '2026-02-99' }), TypeError);
+  } finally { ledger.close(); }
+}));
+
+test('two ledger connections cannot append the same airing episode twice', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const two = openRequestLedger(dbPath);
+  try {
+    const saved = one.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
+    const detail = { state: 'details', anidbId: 1234, kind: 'series',
+      complete: true, total: 3, episodes: [
+        { id: 1001, type: 'Episode' }, { id: 1002, type: 'Episode' },
+        { id: 1003, type: 'Episode', airDate: '2026-01-20' },
+      ] };
+    const first = one.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'airing', today: '2026-02-01' });
+    const second = two.advanceAiring({ requestId: saved.requestId, detail,
+      releaseState: 'airing', today: '2026-02-01' });
+    assert.deepEqual(first.addedEpisodeIds, [1003]);
+    assert.deepEqual(second.addedEpisodeIds, []);
+    assert.equal(one.countTargets(), 3);
+    assert.deepEqual(two.getRequest(saved.requestId).episodeIds, [1001, 1002, 1003]);
+  } finally { one.close(); two.close(); }
+}));

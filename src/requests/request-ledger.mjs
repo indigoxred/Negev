@@ -1,7 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
+import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 
 const REASON = 'awaiting_availability_evidence';
 const held = (reason) => ({ state: 'held', reason });
+function validFullDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
 
 function canonicalIntent(intent) {
   if (intent?.state !== 'ready' || !Number.isSafeInteger(intent.anidbId) || intent.anidbId <= 0 ||
@@ -35,6 +41,7 @@ export function openRequestLedger(dbPath) {
       kind TEXT NOT NULL CHECK(kind IN ('series','movie')),
       episode_key TEXT NOT NULL,
       monitor_future INTEGER NOT NULL CHECK(monitor_future IN (0,1)),
+      watch_closed INTEGER NOT NULL DEFAULT 0 CHECK(watch_closed IN (0,1)),
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       status TEXT NOT NULL CHECK(status = 'held'),
       reason TEXT NOT NULL,
@@ -43,6 +50,10 @@ export function openRequestLedger(dbPath) {
     if (!db.prepare('PRAGMA table_info(requests)').all()
       .some((column) => column.name === 'command_key')) {
       db.exec('ALTER TABLE requests ADD COLUMN command_key TEXT');
+    }
+    if (!db.prepare('PRAGMA table_info(requests)').all()
+      .some((column) => column.name === 'watch_closed')) {
+      db.exec('ALTER TABLE requests ADD COLUMN watch_closed INTEGER NOT NULL DEFAULT 0 CHECK(watch_closed IN (0,1))');
     }
     db.exec(`CREATE TABLE IF NOT EXISTS targets (
       id INTEGER PRIMARY KEY,
@@ -75,6 +86,10 @@ export function openRequestLedger(dbPath) {
     FROM requests WHERE id=?`);
   const countRequests = db.prepare('SELECT COUNT(*) AS count FROM requests');
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
+  const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed FROM requests WHERE id=?');
+  const closeWatch = db.prepare('UPDATE requests SET watch_closed=1 WHERE id=? AND watch_closed=0');
+  const activeAirings = db.prepare(`SELECT id,anidb_id FROM requests
+    WHERE id>? AND monitor_future=1 AND watch_closed=0 ORDER BY id LIMIT ?`);
 
   function transact(action) {
     let begun = false;
@@ -91,6 +106,54 @@ export function openRequestLedger(dbPath) {
   }
 
   return {
+    listActiveAirings({ afterId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterId) || afterId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid airing watch page');
+      }
+      return activeAirings.all(afterId, limit).map((row) => ({
+        requestId: row.id, anidbId: row.anidb_id }));
+    },
+    // The original submission episode_key is immutable for idempotency.
+    // Later aired episodes are appended as shared targets in one transaction.
+    advanceAiring({ requestId, detail, releaseState, today }) {
+      if (!Number.isSafeInteger(requestId) || requestId <= 0 ||
+          !validFullDate(today) ||
+          !['airing', 'completed'].includes(releaseState)) {
+        throw new TypeError('Invalid airing observation');
+      }
+      return transact(() => {
+        const watch = watchRow.get(requestId);
+        if (!watch) return held('request_missing');
+        if (watch.monitor_future !== 1 || watch.kind !== 'series') return held('not_airing_request');
+        if (watch.watch_closed === 1) return held('watch_closed');
+        if (!isCompleteAniDbDetail(detail, watch.anidb_id) || detail.kind !== 'series' ||
+            detail.episodes.length > 2_000) {
+          return held('detail_incomplete');
+        }
+        const regular = detail.episodes.filter((episode) => episode.type === 'Episode');
+        const byId = new Map(regular.map((episode) => [episode.id, episode]));
+        const linked = findLinks.all(requestId).map((row) => row.episode_id);
+        if (linked.some((id) => !byId.has(id))) return held('catalogue_regression');
+        const linkedIds = new Set(linked);
+        const pending = regular.filter((episode) => !linkedIds.has(episode.id));
+        const eligible = releaseState === 'completed' ? pending : pending.filter((episode) =>
+          validFullDate(episode.airDate) &&
+          episode.airDate <= today);
+        const selected = eligible.slice(0, 25);
+        const addedEpisodeIds = [];
+        for (const episode of selected) {
+          insertTarget.run(watch.anidb_id, episode.id, REASON);
+          insertLink.run(requestId, findTarget.get(watch.anidb_id, episode.id).id);
+          addedEpisodeIds.push(episode.id);
+        }
+        const watchClosed = releaseState === 'completed' && selected.length === pending.length;
+        if (watchClosed) closeWatch.run(requestId);
+        return { state: 'advanced', addedEpisodeIds: addedEpisodeIds.sort((a, b) => a - b),
+          deferredEpisodeIds: pending.filter((episode) => !selected.includes(episode))
+            .map((episode) => episode.id).sort((a, b) => a - b), watchClosed };
+      });
+    },
     findSubmission({ requesterId, requestKey, commandKey }) {
       if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
           typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
