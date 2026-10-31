@@ -57,5 +57,13 @@
 - [x] Write tests for an owned series with missing and unaired episode IDs, an unowned 404, a partial page, and malformed episode identities.
 - [x] Observe the expected failure.
 - [x] Implement bounded GETs for AniDB detail and episode pages; 404 stays detail pending, never an empty or completed series.
-- [ ] Run local tests and Linux CI. Do not call Shoko's metadata refresh route.
+- [x] Run local tests and Linux CI; run `41155446489` passed 39/39 on Linux. Do not call Shoko's metadata refresh route.
+
+### Task 5: Metadata-only hydration request contract
+
+**Files:** `src/catalogue/shoko-hydration.mjs`, `test/shoko-hydration.test.mjs`
+
+- [x] Write failing tests for the exact one-ID refresh query, queued result, failed provider and invalid ID.
+- [x] Implement a separate adapter with explicit `createSeriesEntry=false`, no force, no immediate action, no relations, and supplementary update skipped.
+- [ ] Run full local suite and Linux CI. Do not wire this into the app or call an installed Shoko server before the one-title proof.
 
