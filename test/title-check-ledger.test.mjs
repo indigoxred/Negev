@@ -98,6 +98,60 @@ test('finished positive results expire without turning Unknown into Missing', as
   job.close();
 });
 
+test('rechecking a title preserves fresh proof until a new result replaces it', async () => {
+  const { job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const firstPage = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: firstPage, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const firstTarget = job.claimNext({ nowMs: 4 });
+  job.recordTarget({ claim: firstTarget, status: 'available', checkedMs: 5 });
+  assert.deepEqual(job.start({ anidbId: 42, nowMs: 6 }),
+    { state: 'queued', generation: 2 });
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 7 }), { state: 'available' });
+  assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42, nowMs: 7 }), [1001]);
+  const nextPage = job.claimNext({ nowMs: 8 });
+  job.recordPage({ claim: nextPage, detail: detail({ ids: [1001] }), checkedMs: 9 });
+  const nextTarget = job.claimNext({ nowMs: 10 });
+  job.recordTarget({ claim: nextTarget, status: 'unknown', checkedMs: 11 });
+  assert.deepEqual(job.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 12 }), { state: 'unknown' });
+  job.close();
+});
+
+test('a file change withdraws proof even while the next title page is loading', async () => {
+  const { dbPath, job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const page = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: page, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const target = job.claimNext({ nowMs: 4 });
+  job.recordTarget({ claim: target, status: 'available', checkedMs: 5 });
+  job.start({ anidbId: 42, nowMs: 6 });
+  job.close();
+  const reopened = openTitleCheckLedger(dbPath);
+  assert.deepEqual(reopened.getTargetStatus({ anidbId: 42,
+    episodeId: 1001, nowMs: 7 }), { state: 'available' });
+  assert.deepEqual(reopened.invalidateTarget({ anidbId: 42,
+    episodeId: 1001, observedMs: 8 }), { state: 'queued' });
+  assert.deepEqual(reopened.getRecentAvailableIds({ anidbId: 42,
+    nowMs: 9 }), []);
+  reopened.close();
+});
+
+test('changed catalogue drops proof for an episode absent from its next page set', async () => {
+  const { job } = await ledger();
+  job.start({ anidbId: 42, nowMs: 1 });
+  const page = job.claimNext({ nowMs: 2 });
+  job.recordPage({ claim: page, detail: detail({ ids: [1001] }), checkedMs: 3 });
+  const target = job.claimNext({ nowMs: 4 });
+  job.recordTarget({ claim: target, status: 'available', checkedMs: 5 });
+  job.start({ anidbId: 42, nowMs: 6 });
+  const replacement = job.claimNext({ nowMs: 7 });
+  job.recordPage({ claim: replacement, detail: detail({ ids: [1002] }), checkedMs: 8 });
+  assert.deepEqual(job.getRecentAvailableIds({ anidbId: 42, nowMs: 9 }), []);
+  job.close();
+});
+
 test('malformed or oversized catalogue page becomes held without partial targets', async () => {
   for (const invalid of [null, { state: 'unavailable' },
     detail({ ids: [1001], total: 10_001 }),

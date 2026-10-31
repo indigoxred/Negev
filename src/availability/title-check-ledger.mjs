@@ -38,6 +38,20 @@ export function openTitleCheckLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS title_check_next_target ON
       title_check_targets(anidb_id,generation,state,ordinal)`);
+    db.exec(`CREATE TABLE IF NOT EXISTS title_check_positive_proofs (
+      anidb_id INTEGER NOT NULL CHECK(anidb_id>0),
+      episode_id INTEGER NOT NULL CHECK(episode_id>0),
+      checked_ms INTEGER NOT NULL CHECK(checked_ms>=0),
+      PRIMARY KEY(anidb_id,episode_id)
+    ) STRICT`);
+    // Existing private ledgers predate the proof table. Only their latest
+    // generation can contribute an unexpired positive after this migration.
+    db.exec(`INSERT OR IGNORE INTO title_check_positive_proofs
+      (anidb_id,episode_id,checked_ms)
+      SELECT t.anidb_id,t.episode_id,t.checked_ms FROM title_check_targets t
+      JOIN title_check_jobs j ON j.anidb_id=t.anidb_id
+        AND j.generation=t.generation
+      WHERE t.state='available' AND t.checked_ms IS NOT NULL`);
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const transaction = (work) => {
@@ -72,6 +86,18 @@ export function openTitleCheckLedger(dbPath) {
     WHERE anidb_id=? AND generation=? AND episode_id=?`);
   const targetStatus = db.prepare(`SELECT state,checked_ms AS checkedMs
     FROM title_check_targets WHERE anidb_id=? AND generation=? AND episode_id=?`);
+  const proofStatus = db.prepare(`SELECT checked_ms AS checkedMs
+    FROM title_check_positive_proofs WHERE anidb_id=? AND episode_id=?`);
+  const upsertProof = db.prepare(`INSERT INTO title_check_positive_proofs
+    (anidb_id,episode_id,checked_ms) VALUES (?,?,?)
+    ON CONFLICT(anidb_id,episode_id) DO UPDATE SET checked_ms=excluded.checked_ms
+    WHERE checked_ms<=excluded.checked_ms`);
+  const removeProof = db.prepare(`DELETE FROM title_check_positive_proofs
+    WHERE anidb_id=? AND episode_id=? AND checked_ms<=?`);
+  const pruneProofs = db.prepare(`DELETE FROM title_check_positive_proofs
+    WHERE anidb_id=? AND episode_id NOT IN
+      (SELECT episode_id FROM title_check_targets
+        WHERE anidb_id=? AND generation=?)`);
   const resetTarget = db.prepare(`UPDATE title_check_targets
     SET state='pending',checked_ms=NULL WHERE anidb_id=? AND generation=?
     AND episode_id=?`);
@@ -92,14 +118,15 @@ export function openTitleCheckLedger(dbPath) {
     state=? WHERE anidb_id=? AND generation=? AND version=?`);
   const defer = db.prepare(`UPDATE title_check_jobs SET lease_until_ms=?
     WHERE anidb_id=? AND generation=? AND version=?`);
-  const counts = db.prepare(`SELECT COUNT(*) AS checkedCount,
-    COALESCE(SUM(CASE WHEN state='available' AND checked_ms>? AND
-      checked_ms<=? THEN 1 ELSE 0 END),0) AS recentAvailableCount
+  const counts = db.prepare(`SELECT COUNT(*) AS checkedCount
     FROM title_check_targets WHERE anidb_id=? AND generation=?
       AND state<>'pending'`);
+  const positiveCount = db.prepare(`SELECT COUNT(*) AS count
+    FROM title_check_positive_proofs WHERE anidb_id=?
+      AND checked_ms>? AND checked_ms<=?`);
   const recentPositiveIds = db.prepare(`SELECT episode_id AS episodeId
-    FROM title_check_targets WHERE anidb_id=? AND generation=?
-      AND state='available' AND checked_ms>? AND checked_ms<=?
+    FROM title_check_positive_proofs WHERE anidb_id=?
+      AND checked_ms>? AND checked_ms<=?
     ORDER BY episode_id LIMIT 10001`);
   const validReceipt = (receipt, state) =>
     receipt?.state === state && validId(receipt.anidbId) &&
@@ -189,6 +216,10 @@ export function openTitleCheckLedger(dbPath) {
           addTarget.run(receipt.anidbId, receipt.generation,
             priorCount + i, episodes[i].id);
         }
+        if (detail.nextPage === null) {
+          pruneProofs.run(receipt.anidbId, receipt.anidbId,
+            receipt.generation);
+        }
         recordPage.run(detail.kind, detail.total, detail.nextPage ?? receipt.page,
           detail.nextPage === null
             ? (detail.total === 0 ? 'done' : 'checking') : 'loading',
@@ -211,6 +242,11 @@ export function openTitleCheckLedger(dbPath) {
           receipt.generation, receipt.episodeId).changes !== 1) {
           return { state: 'held', reason: 'stale_claim' };
         }
+        if (status === 'available') {
+          upsertProof.run(receipt.anidbId, receipt.episodeId, checkedMs);
+        } else {
+          removeProof.run(receipt.anidbId, receipt.episodeId, checkedMs);
+        }
         const state = nextTarget.get(receipt.anidbId, receipt.generation)
           ? 'checking' : 'done';
         release.run(state, receipt.anidbId, receipt.generation, receipt.version);
@@ -224,10 +260,13 @@ export function openTitleCheckLedger(dbPath) {
       return transaction(() => {
         const job = find.get(anidbId);
         if (!job) return { state: 'unchanged' };
+        const proof = proofStatus.get(anidbId, episodeId);
+        const proofWithdrawn = proof && proof.checkedMs < observedMs &&
+          removeProof.run(anidbId, episodeId, observedMs).changes === 1;
         const target = targetStatus.get(anidbId, job.generation, episodeId);
         if (!target || target.state === 'pending' ||
             !validTime(target.checkedMs) || target.checkedMs >= observedMs) {
-          return { state: 'unchanged' };
+          return { state: proofWithdrawn ? 'queued' : 'unchanged' };
         }
         resetTarget.run(anidbId, job.generation, episodeId);
         requeueJob.run(anidbId, job.generation);
@@ -258,19 +297,19 @@ export function openTitleCheckLedger(dbPath) {
       }
       const job = find.get(anidbId);
       if (!job) return null;
-      const row = counts.get(nowMs - positiveLifetimeMs, nowMs,
-        anidbId, job.generation);
+      const row = counts.get(anidbId, job.generation);
+      const recent = positiveCount.get(anidbId,
+        nowMs - positiveLifetimeMs, nowMs);
       return { state: job.state, generation: job.generation,
         totalCount: job.totalCount, checkedCount: row.checkedCount,
-        recentAvailableCount: row.recentAvailableCount };
+        recentAvailableCount: recent.count };
     },
     getTargetStatus({ anidbId, episodeId, nowMs }) {
       if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
         throw new TypeError('Invalid title target status query');
       }
-      const job = find.get(anidbId);
-      const row = job && targetStatus.get(anidbId, job.generation, episodeId);
-      return row?.state === 'available' && validTime(row.checkedMs) &&
+      const row = proofStatus.get(anidbId, episodeId);
+      return row && validTime(row.checkedMs) &&
         row.checkedMs <= nowMs && row.checkedMs + positiveLifetimeMs > nowMs
         ? { state: 'available' } : { state: 'unknown' };
     },
@@ -278,9 +317,7 @@ export function openTitleCheckLedger(dbPath) {
       if (!validId(anidbId) || !validTime(nowMs)) {
         throw new TypeError('Invalid title coverage query');
       }
-      const job = find.get(anidbId);
-      if (!job) return [];
-      const rows = recentPositiveIds.all(anidbId, job.generation,
+      const rows = recentPositiveIds.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
     },
