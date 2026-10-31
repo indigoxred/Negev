@@ -38,14 +38,35 @@ test('reads one exact AniDB episode and its registered accessible file', async (
 });
 
 test('missing local episode and empty local file list stay distinct', async () => {
+  const paths = [];
   const missing = await readShokoEpisodeFiles({ ...base,
-    fetchImpl: async () => new Response('', { status: 404 }) });
+    fetchImpl: async (url) => {
+      paths.push(url.pathname);
+      return paths.length === 1 ? new Response('', { status: 404 }) :
+        json({ ID: 1001, AnimeID: 42 });
+    } });
   assert.deepEqual(missing, { state: 'not_imported' });
+  assert.deepEqual(paths, ['/api/v3/Episode/AniDB/1001/Episode',
+    '/api/v3/Episode/AniDB/1001']);
   const empty = await readShokoEpisodeFiles({ ...base,
     fetchImpl: async () => json({ IDs: { ID: 555, ParentSeries: 99,
       AniDB: 1001 }, Files: [] }) });
   assert.deepEqual(empty, { state: 'ok', complete: true,
     shokoEpisodeId: 555, shokoSeriesId: 99, tmdbMovieIds: [], files: [] });
+});
+
+test('a 404 without exact AniDB metadata cannot prove a local episode is missing', async () => {
+  for (const confirmation of [
+    new Response('', { status: 404 }), json({ ID: 1001, AnimeID: 99 }),
+    json({ ID: 1002, AnimeID: 42 }), new Response('', { status: 503 }),
+  ]) {
+    let calls = 0;
+    const result = await readShokoEpisodeFiles({ ...base,
+      fetchImpl: async () => ++calls === 1
+        ? new Response('', { status: 404 }) : confirmation });
+    assert.deepEqual(result, { state: 'unavailable' });
+    assert.equal(calls, 2);
+  }
 });
 
 test('wrong identity, inaccessible location, and unregistered release hold the observation', async () => {

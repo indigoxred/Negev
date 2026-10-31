@@ -31,7 +31,20 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 404) return { state: 'not_imported' };
+    if (response.status === 404) {
+      // Shoko uses this 404 both for absent AniDB metadata and for an AniDB
+      // episode with no local Shoko episode. Confirm which case occurred.
+      const metadataUrl = new URL(`/api/v3/Episode/AniDB/${episodeId}`, base);
+      const metadataResponse = await fetchImpl(metadataUrl, {
+        method: 'GET', redirect: 'manual',
+        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (metadataResponse.status !== 200) return unavailable();
+      const metadata = await readBoundedJson(metadataResponse, 100_000);
+      return metadata?.ID === episodeId && metadata.AnimeID === anidbId
+        ? { state: 'not_imported' } : unavailable();
+    }
     if (response.status !== 200) return unavailable();
     episode = await readBoundedJson(response, 2_000_000);
   } catch { return unavailable(); }
