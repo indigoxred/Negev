@@ -1,8 +1,11 @@
-const slot = ({ userId, anidbId }) => {
+const slot = ({ userId, anidbId, selection = 'installment' }) => {
   if (![userId, anidbId].every((id) => Number.isSafeInteger(id) && id > 0)) {
     throw new TypeError('Invalid request key scope');
   }
-  return `negev-request-${userId}-${anidbId}`;
+  if (selection !== 'installment' && !/^episode-[1-9]\d*$/.test(selection)) {
+    throw new TypeError('Invalid request key selection');
+  }
+  return `negev-request-${userId}-${anidbId}-${selection}`;
 };
 
 // Keep a key only while the result is uncertain. A saved request can be

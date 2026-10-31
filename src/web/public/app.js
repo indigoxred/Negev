@@ -310,6 +310,39 @@ async function showDetail(item) {
         finally { button.disabled = false; }
       });
       check.append(label, button, result);
+      if (data.kind === 'series' && data.restricted === false &&
+          data.episodes.some((episode) => ['Episode', 'Special'].includes(episode.type))) {
+        const requestSelected = element('button', 'Request selected episode');
+        let requesting = false;
+        const updateSelection = () => {
+          const episode = data.episodes.find((entry) => String(entry.id) === select.value);
+          requestSelected.disabled = requesting ||
+            !['Episode', 'Special'].includes(episode?.type);
+          requestSelected.textContent = episode?.type === 'Special'
+            ? 'Request this Special' : 'Request this episode';
+        };
+        select.addEventListener('change', updateSelection);
+        updateSelection();
+        requestSelected.addEventListener('click', async () => {
+          if (requesting) return;
+          const episode = data.episodes.find((entry) => String(entry.id) === select.value);
+          if (!['Episode', 'Special'].includes(episode?.type)) return;
+          const scope = { userId: state.user.id, anidbId: item.anidbId,
+            selection: `episode-${episode.id}` };
+          requesting = true;
+          updateSelection();
+          try {
+            const saved = await api('/api/requests', { method: 'POST',
+              body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
+                episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
+            requestKeys.saved(scope);
+            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. Acquisition is not active in this preview.`);
+            await loadRequests();
+          } catch (error) { message(error.message, true); }
+          finally { requesting = false; updateSelection(); }
+        });
+        check.append(requestSelected);
+      }
       panel.append(check);
     }
     if (data.restricted !== false) {

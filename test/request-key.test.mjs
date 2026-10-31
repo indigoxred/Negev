@@ -16,7 +16,11 @@ test('an uncertain retry reuses its key but a saved request permits another', ()
   assert.equal(keys.pending({ userId: 4, anidbId: 42 }), 'key-1');
   assert.equal(keys.pending({ userId: 4, anidbId: 42 }), 'key-1');
   assert.equal(keys.pending({ userId: 5, anidbId: 42 }), 'key-2');
+  assert.equal(keys.pending({ userId: 4, anidbId: 42,
+    selection: 'episode-1001' }), 'key-3');
   keys.saved({ userId: 4, anidbId: 42 });
-  assert.equal(keys.pending({ userId: 4, anidbId: 42 }), 'key-3');
+  assert.equal(keys.pending({ userId: 4, anidbId: 42 }), 'key-4');
   assert.equal(keys.pending({ userId: 5, anidbId: 42 }), 'key-2');
+  assert.equal(keys.pending({ userId: 4, anidbId: 42,
+    selection: 'episode-1001' }), 'key-3');
 });

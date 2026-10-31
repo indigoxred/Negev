@@ -19,6 +19,7 @@ test('signed-in user searches AniDB and saves an exact held request across resta
   accounts.close();
   const methods = [];
   let showSecond = false;
+  let showSpecial = false;
   let calendarDay = '2026-10-31';
   const videoName = 'Example Series - 01.mkv';
   const info = Buffer.from(`d6:lengthi1000e4:name${Buffer.byteLength(videoName)}:${videoName}12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae`);
@@ -57,11 +58,13 @@ test('signed-in user searches AniDB and saves an exact held request across resta
         EpisodeNumber: 1, Type: 'Episode', Title: 'Movie', AirDate: '2026-01-01' }] });
     }
     if (parsed.pathname.endsWith('/Episode')) {
-      return json({ Total: showSecond ? 2 : 1,
+      return json({ Total: 1 + Number(showSecond) + Number(showSpecial),
         List: [{ ID: 1001, AnimeID: 1234,
           EpisodeNumber: 1, Type: 'Episode', Title: 'First', AirDate: '2026-10-01' },
         ...(showSecond ? [{ ID: 1002, AnimeID: 1234, EpisodeNumber: 2,
-          Type: 'Episode', Title: 'Second', AirDate: '2026-11-01' }] : [])] });
+          Type: 'Episode', Title: 'Second', AirDate: '2026-11-01' }] : []),
+        ...(showSpecial ? [{ ID: 1099, AnimeID: 1234, EpisodeNumber: 1,
+          Type: 'Special', Title: 'Extra', AirDate: '2026-10-01' }] : [])] });
     }
     if (parsed.pathname.endsWith('/AniDB/1234')) {
       return json({ ID: 1234, Title: 'Example Series', Type: 'TV',
@@ -143,6 +146,15 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     const afterAir = await service.app.inject({ method: 'GET',
       url: `/api/requests/${id}`, headers: { cookie } });
     assert.deepEqual(afterAir.json().episodeIds, [1001, 1002]);
+    showSpecial = true;
+    const special = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth(cookie, csrf), payload: { anidbId: 1234,
+        scope: 'episodes', episodeIds: [1099], requestKey: 'special-once' } });
+    assert.equal(special.statusCode, 202, special.body);
+    const specialRead = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${special.json().requestId}`, headers: { cookie } });
+    assert.deepEqual(specialRead.json().episodeIds, [1099]);
+    assert.equal(specialRead.json().monitorFuture, false);
     const movieSearch = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Movie', headers: { cookie } });
     assert.equal(movieSearch.statusCode, 200, movieSearch.body);
