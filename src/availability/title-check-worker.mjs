@@ -40,7 +40,8 @@ export function createTitleCheckWorker({ ledger, loadDetail, observeTarget,
           let result;
           try { result = await observeTarget({ anidbId: receipt.anidbId,
             episodeId: receipt.episodeId, kind: receipt.kind }); }
-          catch {
+          catch { result = { state: 'busy' }; }
+          if (result?.state === 'busy') {
             const deferred = ledger.defer({ claim: receipt,
               retryAtMs: now() + 5 * 60_000 });
             return deferred.state === 'deferred'

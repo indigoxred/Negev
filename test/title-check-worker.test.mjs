@@ -63,3 +63,18 @@ test('transient Shoko page outage defers without inventing a title result', asyn
   assert.equal((await worker.runOnce()).state, 'page_loaded');
   ledger.close();
 });
+
+test('metadata limiter busy does not count as an availability check', async () => {
+  const ledger = await setup();
+  const worker = createTitleCheckWorker({ ledger, now: () => 2,
+    loadDetail: async () => ({ state: 'details', anidbId: 42,
+      page: 1, kind: 'series', total: 1, nextPage: null,
+      episodes: [{ id: 1001 }] }),
+    observeTarget: async () => ({ state: 'busy' }),
+  });
+  await worker.runOnce();
+  assert.deepEqual(await worker.runOnce(), { state: 'deferred',
+    reason: 'observer_unavailable' });
+  assert.equal(ledger.getProgress({ anidbId: 42, nowMs: 3 }).checkedCount, 0);
+  ledger.close();
+});
