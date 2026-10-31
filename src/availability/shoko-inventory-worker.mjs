@@ -1,0 +1,119 @@
+import { DatabaseSync } from 'node:sqlite';
+
+const held = (reason) => ({ state: 'held', reason });
+const validId = (value) => Number.isSafeInteger(value) && value > 0;
+
+// Inventory is positive discovery only. Old rows are never deleted by a
+// partial pass, and they cannot by themselves establish current availability.
+export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
+  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
+      !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50) {
+    throw new TypeError('Invalid durable Shoko inventory configuration');
+  }
+  const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  try {
+    db.exec('PRAGMA journal_mode=WAL');
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_cursor (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      page INTEGER NOT NULL CHECK(page>0),
+      pass INTEGER NOT NULL CHECK(pass>0),
+      page_size INTEGER NOT NULL CHECK(page_size BETWEEN 1 AND 50)
+    ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_files (
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0),
+      updated TEXT NOT NULL,
+      state TEXT NOT NULL CHECK(state IN ('provisional','linked')),
+      pairs_json TEXT NOT NULL,
+      seen_pass INTEGER NOT NULL CHECK(seen_pass>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
+    db.prepare(`INSERT INTO shoko_inventory_cursor(id,page,pass,page_size)
+      VALUES (1,1,1,?) ON CONFLICT(id) DO NOTHING`).run(pageSize);
+    const size = db.prepare('SELECT page_size FROM shoko_inventory_cursor WHERE id=1').get()?.page_size;
+    if (size !== pageSize) throw new TypeError('Shoko inventory page size changed');
+  } catch (error) { db.close(); throw error; }
+  const cursor = db.prepare('SELECT page,pass,page_size AS pageSize FROM shoko_inventory_cursor WHERE id=1');
+  const find = db.prepare(`SELECT file_id AS fileId,updated,state,pairs_json AS pairsJson,
+    seen_pass AS seenPass,observed_ms AS observedMs FROM shoko_inventory_files WHERE file_id=?`);
+  const save = db.prepare(`INSERT INTO shoko_inventory_files
+    (file_id,updated,state,pairs_json,seen_pass,observed_ms) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(file_id) DO UPDATE SET updated=excluded.updated,state=excluded.state,
+      pairs_json=excluded.pairs_json,seen_pass=excluded.seen_pass,
+      observed_ms=excluded.observed_ms`);
+  const advance = db.prepare(`UPDATE shoko_inventory_cursor SET page=?,pass=?
+    WHERE id=1 AND page=? AND pass=?`);
+  return {
+    getCursor() { return { ...cursor.get() }; },
+    getFile(fileId) {
+      if (!validId(fileId)) throw new TypeError('Invalid Shoko file ID');
+      const row = find.get(fileId);
+      if (!row) return null;
+      const { pairsJson, ...other } = row;
+      return { ...other, pairs: JSON.parse(pairsJson) };
+    },
+    recordPage({ expected, result, observedMs }) {
+      if (!validId(expected?.page) || !validId(expected.pass) ||
+          !Number.isSafeInteger(observedMs) || observedMs < 0 ||
+          result?.state !== 'page' || result.page !== expected.page ||
+          !Number.isSafeInteger(result.total) || result.total < 0 ||
+          !Array.isArray(result.items) || result.items.length > pageSize ||
+          (result.items.length === 0 && (expected.page - 1) * pageSize < result.total)) {
+        return held('invalid_file_page');
+      }
+      const seen = new Set();
+      for (const item of result.items) {
+        if (!validId(item?.fileId) || seen.has(item.fileId) ||
+            typeof item.updated !== 'string' || !Number.isFinite(Date.parse(item.updated)) ||
+            !['provisional', 'linked'].includes(item.state) ||
+            !Array.isArray(item.pairs) || item.pairs.length > 100 ||
+            item.pairs.some((pair) => !validId(pair?.anidbId) || !validId(pair?.episodeId)) ||
+            (item.state === 'provisional') !== (item.pairs.length === 0)) {
+          return held('invalid_file_page');
+        }
+        seen.add(item.fileId);
+      }
+      let begun = false;
+      try {
+        db.exec('BEGIN IMMEDIATE'); begun = true;
+        const current = cursor.get();
+        if (current.page !== expected.page || current.pass !== expected.pass) {
+          db.exec('ROLLBACK'); begun = false;
+          return held('stale_cursor');
+        }
+        for (const item of result.items) {
+          save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
+            current.pass, observedMs);
+        }
+        const last = current.page * pageSize >= result.total;
+        const nextPage = last ? 1 : current.page + 1;
+        const nextPass = last ? current.pass + 1 : current.pass;
+        advance.run(nextPage, nextPass, current.page, current.pass);
+        db.exec('COMMIT'); begun = false;
+        return { state: 'recorded', page: current.page, pass: current.pass, nextPage };
+      } catch (error) {
+        if (begun) db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    close() { db.close(); },
+  };
+}
+
+// One explicitly called tick reads at most one bounded Shoko page. There is
+// no timer and no acquisition or Plex status side effect.
+export function createShokoInventoryWorker({ ledger, readPage, now = Date.now } = {}) {
+  if (typeof ledger?.getCursor !== 'function' || typeof ledger?.recordPage !== 'function' ||
+      typeof readPage !== 'function' || typeof now !== 'function') {
+    throw new TypeError('Invalid Shoko inventory worker');
+  }
+  return {
+    async tick() {
+      const expected = ledger.getCursor();
+      let result;
+      try { result = await readPage({ page: expected.page, pageSize: expected.pageSize }); }
+      catch { return held('file_page_unavailable'); }
+      if (result?.state !== 'page') return held('file_page_unavailable');
+      return ledger.recordPage({ expected, result, observedMs: now() });
+    },
+  };
+}
