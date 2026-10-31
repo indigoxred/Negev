@@ -20,6 +20,23 @@ test('loads a bounded compressed AniDB title dump and searches its aliases', asy
   assert.equal(source.search({ query: 'English Name' }).items[0].requestable, false);
 });
 
+test('catalogue decompression lets the event loop run before refresh completes', async () => {
+  const source = createAniDbTitleSource({
+    fetchImpl: async () => response(dump),
+  });
+  const order = [];
+  const refreshed = source.refresh().then((result) => {
+    order.push('refreshed');
+    return result;
+  });
+  await new Promise((resolve) => setImmediate(() => {
+    order.push('tick');
+    resolve();
+  }));
+  assert.deepEqual(await refreshed, { state: 'ready', titles: 1 });
+  assert.deepEqual(order, ['tick', 'refreshed']);
+});
+
 test('rejects redirects, malformed gzip and oversized expanded data without replacing a good index', async () => {
   let bytes = dump;
   let status = 200;

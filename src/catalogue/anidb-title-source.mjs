@@ -1,7 +1,9 @@
-import { gunzipSync } from 'node:zlib';
+import { promisify } from 'node:util';
+import { gunzip } from 'node:zlib';
 import { parseAniDbTitleDump, searchAniDbTitleIndex } from './anidb-title-index.mjs';
 
 const DUMP_URL = 'https://anidb.net/api/anime-titles.dat.gz';
+const gunzipAsync = promisify(gunzip);
 
 async function readCompressed(response, limit) {
   if (!response.body || typeof response.body[Symbol.asyncIterator] !== 'function') {
@@ -21,9 +23,9 @@ async function readCompressed(response, limit) {
   return Buffer.concat(chunks, size);
 }
 
-// Candidate source only. It is not wired to user search until the live dump
-// format and update behavior are checked. A failed refresh retains only the
-// prior verified in-memory index, visibly marked stale.
+// Optional source for user search. A failed refresh retains only the prior
+// parsed in-memory index, visibly marked stale. Installed catalogue behavior
+// still needs a live check before Negev's production cutover.
 export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
   maxCompressedBytes = 12_000_000,
   maxExpandedBytes = 32_000_000,
@@ -66,7 +68,8 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
         signal: AbortSignal.timeout(timeoutMs) });
       if (response.status !== 200) throw new TypeError('Title dump unavailable');
       const compressed = await readCompressed(response, maxCompressedBytes);
-      const expanded = gunzipSync(compressed, { maxOutputLength: maxExpandedBytes });
+      const expanded = await gunzipAsync(compressed,
+        { maxOutputLength: maxExpandedBytes });
       const text = new TextDecoder('utf-8', { fatal: true }).decode(expanded);
       const next = parseAniDbTitleDump(text, { maxBytes: maxExpandedBytes });
       index = next;
