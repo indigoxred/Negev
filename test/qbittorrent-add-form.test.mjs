@@ -4,20 +4,21 @@ import { buildStoppedTorrentAddForm } from '../src/acquisition/qbittorrent-add-f
 
 const input = {
   torrentBytes: Uint8Array.from([100, 52, 58, 105, 110, 102, 111, 101]),
-  savePath: '/negev-staging',
+  savePath: `/negev-staging/${'a'.repeat(40)}`,
   category: 'negev',
 };
 
 test('constructs one stopped qBittorrent v5 upload at an explicit staging path', async () => {
   const form = buildStoppedTorrentAddForm(input);
-  assert.equal(form.get('savepath'), '/negev-staging');
+  assert.equal(form.get('savepath'), input.savePath);
+  assert.equal(form.get('root_folder'), 'false');
   assert.equal(form.get('category'), 'negev');
   assert.equal(form.get('stopped'), 'true');
   assert.equal(form.has('paused'), false);
   assert.equal(form.get('autoTMM'), 'false');
   assert.equal(form.get('skip_checking'), 'false');
   assert.deepEqual([...form.keys()].sort(), [
-    'autoTMM', 'category', 'savepath', 'skip_checking', 'stopped', 'torrents',
+    'autoTMM', 'category', 'root_folder', 'savepath', 'skip_checking', 'stopped', 'torrents',
   ]);
   const file = form.get('torrents');
   assert.equal(file.name, 'candidate.torrent');
@@ -25,7 +26,7 @@ test('constructs one stopped qBittorrent v5 upload at an explicit staging path',
 });
 
 test('refuses ambiguous path, unsafe category, and unbounded or absent torrent data', () => {
-  for (const savePath of ['/', '/negev-staging/', '/negev-staging/../Import',
+  for (const savePath of ['/', '/negev-staging', '/negev-staging/', '/negev-staging/../Import',
     '/pure/Import', '/Shoko', 'relative', '/negev-staging\nother']) {
     assert.throws(() => buildStoppedTorrentAddForm({ ...input, savePath }), TypeError);
   }

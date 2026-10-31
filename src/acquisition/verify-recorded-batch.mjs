@@ -1,4 +1,5 @@
 import { verifyStagedBatch } from './verify-staged-batch.mjs';
+import { stagingSavePath } from './staging-save-path.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -24,6 +25,7 @@ export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
   const request = requests.getRequest(attempt.requestId);
   if (!request) return held('request_missing');
   return verifyStagedBatch({ root, request, attempt,
-    expectedTorrent: { hash: attempt.torrentHash, category: 'negev', savePath: '/negev-staging' },
+    expectedTorrent: { hash: attempt.torrentHash, category: 'negev',
+      savePath: stagingSavePath(attempt.torrentHash) },
     plannedFiles, observe, lookup, verify, verifySubtitle, readPacer });
 }

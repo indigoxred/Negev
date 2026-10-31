@@ -11,6 +11,7 @@ import { submitMissingCandidate } from '../src/acquisition/submit-missing-candid
 const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
+const savePath = `/negev-staging/${hash}`;
 const candidate = { indexerId: 3, guid: 'release-1', title: 'Example 01', size: 1000 };
 const proxy = 'http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=abc123&file=Example';
 const hostPath = '/srv/negev/staging';
@@ -18,7 +19,7 @@ const mount = (Source, Destination, RW = true) => ({ Type: 'bind', Source, Desti
 const mounts = { qbittorrent: [mount(hostPath, '/negev-staging')],
   shoko: [mount('/srv/library', '/pure')],
   plex: [mount('/srv/library', '/source-pure', false)] };
-const torrent = { hash, category: 'negev', save_path: '/negev-staging',
+const torrent = { hash, category: 'negev', save_path: savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: '01.mkv', size: 1000, priority: 1, progress: 0 }];

@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { observeStoppedManifest } from '../src/acquisition/observe-stopped-manifest.mjs';
 
-const expected = { hash: 'a'.repeat(40), category: 'negev', savePath: '/negev-staging' };
+const expected = { hash: 'a'.repeat(40), category: 'negev',
+  savePath: `/negev-staging/${'a'.repeat(40)}` };
 const config = { baseUrl: 'http://qbittorrent.internal:8080', sessionId: 'syntheticSID', expected };
-const torrent = { hash: expected.hash, category: 'negev', save_path: '/negev-staging',
+const torrent = { hash: expected.hash, category: 'negev', save_path: expected.savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1_000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Show/01.mkv', size: 1_000, priority: 1, progress: 0 }];

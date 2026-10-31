@@ -23,7 +23,9 @@ test('prepares original bytes, exact hash and stopped staging form without a dow
   assert.equal(result.state, 'prepared_stopped');
   assert.equal(result.expected.hash, hash);
   assert.equal(result.expected.category, 'negev');
-  assert.equal(result.expected.savePath, '/negev-staging');
+  assert.equal(result.expected.savePath, `/negev-staging/${hash}`);
+  assert.equal(result.form.get('savepath'), `/negev-staging/${hash}`);
+  assert.equal(result.form.get('root_folder'), 'false');
   assert.deepEqual(result.files, [{ name: 'Example.mkv', size: 1000 }]);
   assert.equal(result.form.get('stopped'), 'true');
   assert.equal(result.form.get('autoTMM'), 'false');

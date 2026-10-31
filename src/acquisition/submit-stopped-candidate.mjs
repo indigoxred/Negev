@@ -2,6 +2,7 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
+import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validHash = (value) => typeof value === 'string' &&
@@ -10,15 +11,16 @@ const validHash = (value) => typeof value === 'string' &&
 async function exactPreparedTorrent(prepared) {
   if (prepared?.state !== 'prepared_stopped' || !validHash(prepared.expected?.hash) ||
       prepared.expected.category !== 'negev' ||
-      prepared.expected.savePath !== '/negev-staging' ||
+      !matchesStagingSavePath(prepared.expected) ||
       !(prepared.form instanceof FormData)) return false;
   const form = prepared.form;
   const fields = [...form.keys()].sort();
   if (JSON.stringify(fields) !== JSON.stringify([
-    'autoTMM', 'category', 'savepath', 'skip_checking', 'stopped', 'torrents',
-  ].sort()) || form.get('savepath') !== '/negev-staging' ||
+    'autoTMM', 'category', 'root_folder', 'savepath', 'skip_checking', 'stopped', 'torrents',
+  ].sort()) || form.get('savepath') !== prepared.expected.savePath ||
       form.get('category') !== 'negev' || form.get('stopped') !== 'true' ||
-      form.get('autoTMM') !== 'false' || form.get('skip_checking') !== 'false') return false;
+      form.get('autoTMM') !== 'false' || form.get('skip_checking') !== 'false' ||
+      form.get('root_folder') !== 'false') return false;
   const torrent = form.get('torrents');
   if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > 2_000_000) return false;
   const metainfo = inspectTorrentMetainfo({ bytes: new Uint8Array(await torrent.arrayBuffer()) });

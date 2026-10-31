@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
+import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -15,8 +16,7 @@ export async function startStoppedCandidate({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash ||
-      !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
-      expected.category !== 'negev' || expected.savePath !== '/negev-staging' ||
+      !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
       typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||

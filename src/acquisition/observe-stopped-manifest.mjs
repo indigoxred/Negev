@@ -1,5 +1,6 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateStoppedManifest } from './evaluate-stopped-manifest.mjs';
+import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -12,8 +13,7 @@ export async function observeStoppedManifest({
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
       typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
-      !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
-      expected.category !== 'negev' || expected.savePath !== '/negev-staging' ||
+      !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid stopped-manifest configuration');
   }

@@ -9,12 +9,12 @@ import { startStoppedCandidate } from '../src/acquisition/start-stopped-candidat
 
 const hash = 'a'.repeat(40);
 const candidate = { indexerId: 7, guid: 'synthetic-release' };
-const expected = { hash, category: 'negev', savePath: '/negev-staging' };
+const expected = { hash, category: 'negev', savePath: `/negev-staging/${hash}` };
 const hostPath = '/srv/negev/staging';
 const bind = (source, destination) => ({ Type: 'bind', Source: source, Destination: destination, RW: true });
 const mounts = { qbittorrent: [bind(hostPath, '/negev-staging')],
   shoko: [bind('/srv/library', '/pure')], plex: [bind('/srv/library', '/source-pure')] };
-const torrent = { hash, category: 'negev', save_path: '/negev-staging',
+const torrent = { hash, category: 'negev', save_path: expected.savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
@@ -59,7 +59,7 @@ test('starts only the exact safe stopped manifest once after durable intent', as
       assert.equal(init.method, 'GET');
       reads++;
       if (endpoint.endsWith('/properties')) return Response.json({
-        save_path: '/negev-staging', download_path: '',
+        save_path: expected.savePath, download_path: '',
       });
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };
@@ -98,7 +98,7 @@ test('a stopped torrent whose incomplete path escapes staging cannot start', asy
       const endpoint = new URL(url).pathname;
       if (endpoint.endsWith('/start')) { posts++; throw Error('unexpected start'); }
       if (endpoint.endsWith('/properties')) return Response.json({
-        save_path: '/negev-staging', download_path: '/Shoko',
+        save_path: expected.savePath, download_path: '/Shoko',
       });
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };
@@ -116,7 +116,7 @@ test('a changed video filename or size cannot start against the saved plan', asy
           const endpoint = new URL(url).pathname;
           if (endpoint.endsWith('/start')) { posts++; throw Error('unexpected start'); }
           if (endpoint.endsWith('/properties')) return Response.json({
-            save_path: '/negev-staging', download_path: '',
+            save_path: expected.savePath, download_path: '',
           });
           return Response.json(endpoint.endsWith('/files') ? [altered] : [torrent]);
         } });
@@ -141,7 +141,7 @@ test('a lost start response remains unknown and cannot trigger a second POST', a
       const endpoint = new URL(url).pathname;
       if (endpoint.endsWith('/start')) { posts++; throw Error('response lost'); }
       if (endpoint.endsWith('/properties')) return Response.json({
-        save_path: '/negev-staging', download_path: '',
+        save_path: expected.savePath, download_path: '',
       });
       return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
     };

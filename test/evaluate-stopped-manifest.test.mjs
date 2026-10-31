@@ -3,9 +3,9 @@ import test from 'node:test';
 import { evaluateStoppedManifest } from '../src/acquisition/evaluate-stopped-manifest.mjs';
 
 const hash = 'a'.repeat(40);
-const expected = { hash, category: 'negev', savePath: '/negev-staging' };
+const expected = { hash, category: 'negev', savePath: `/negev-staging/${hash}` };
 const torrent = {
-  hash, category: 'negev', save_path: '/negev-staging',
+  hash, category: 'negev', save_path: expected.savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0,
   auto_tmm: false, force_start: false,
 };

@@ -14,12 +14,13 @@ const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
 const candidate = { indexerId: 7, guid: 'synthetic-release' };
 const hostPath = '/srv/negev/staging';
-const prepared = { state: 'prepared_stopped', expected: { hash, category: 'negev', savePath: '/negev-staging' },
-  form: buildStoppedTorrentAddForm({ torrentBytes: bytes, savePath: '/negev-staging', category: 'negev' }) };
+const savePath = `/negev-staging/${hash}`;
+const prepared = { state: 'prepared_stopped', expected: { hash, category: 'negev', savePath },
+  form: buildStoppedTorrentAddForm({ torrentBytes: bytes, savePath, category: 'negev' }) };
 const mount = (source, destination, rw = true) => ({ Type: 'bind', Source: source, Destination: destination, RW: rw });
 const mounts = { qbittorrent: [mount(hostPath, '/negev-staging')],
   shoko: [mount('/srv/library', '/pure')], plex: [mount('/srv/library', '/source-pure', false)] };
-const torrent = { hash, category: 'negev', save_path: '/negev-staging',
+const torrent = { hash, category: 'negev', save_path: savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
@@ -49,7 +50,7 @@ test('one stopped add is durably recorded before POST and exact manifest is reco
       calls.push({ endpoint, method: init.method, status: ledger.getAttempt(attemptId).status });
       if (endpoint.endsWith('/add')) {
         assert.equal(init.body.get('stopped'), 'true');
-        assert.equal(init.body.get('savepath'), '/negev-staging');
+        assert.equal(init.body.get('savepath'), savePath);
         assert.equal(ledger.getAttempt(attemptId).expectedHash, hash);
         return new Response('Ok.');
       }

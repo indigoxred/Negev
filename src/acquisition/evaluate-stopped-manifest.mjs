@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 const STOPPED_STATES = new Set(['stoppedDL', 'pausedDL']);
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts']);
@@ -27,8 +28,7 @@ export function torrentFileKind(name) {
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
 export function evaluateStoppedManifest({ torrent, files, expected }) {
-  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
-      expected.category !== 'negev' || expected.savePath !== '/negev-staging') {
+  if (!matchesStagingSavePath(expected) || expected.category !== 'negev') {
     throw new TypeError('Invalid stopped-torrent expectation');
   }
   if (!torrent || torrent.hash?.toLowerCase() !== expected.hash.toLowerCase() ||
