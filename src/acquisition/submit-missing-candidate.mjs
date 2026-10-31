@@ -2,6 +2,7 @@ import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { planTorrentTargets } from './plan-torrent-targets.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -35,15 +36,23 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
 // Server-side controlled-acquisition boundary. The caller must have chosen
 // the release and exact episode subset; a title match alone cannot do that.
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
-export async function submitMissingCandidate({ request, candidate, episodeIds,
+export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, readEvidence, publicLibraryIds, ledger, now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function') {
     throw new TypeError('Invalid stopped acquisition configuration');
   }
   const prepared = await prepareStoppedCandidate({ ...prowlarr, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
-  if (!exactFilePlan(prepared, plannedFiles, episodeIds)) return held('file_plan_mismatch');
-  const reserved = await reserveMissingTargets({ request, candidate, episodeIds,
+  let selectedEpisodeIds = episodeIds;
+  let selectedFiles = plannedFiles;
+  if (episodeIds === undefined && plannedFiles === undefined) {
+    const plan = planTorrentTargets({ request, detail, prepared });
+    if (plan.state !== 'planned_targets') return plan;
+    selectedEpisodeIds = plan.episodeIds;
+    selectedFiles = plan.plannedFiles;
+  }
+  if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds)) return held('file_plan_mismatch');
+  const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     readEvidence, publicLibraryIds, ledger, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   const nowMs = now();
@@ -51,7 +60,7 @@ export async function submitMissingCandidate({ request, candidate, episodeIds,
     candidate, hash: prepared.expected.hash, nowMs });
   if (bound.state === 'held') return bound;
   const plan = ledger.recordFilePlan({ attemptId: reserved.attemptId,
-    hash: prepared.expected.hash, plannedFiles, nowMs });
+    hash: prepared.expected.hash, plannedFiles: selectedFiles, nowMs });
   if (plan.state !== 'planned') return plan;
   return submitStoppedCandidate({ ...qbittorrent, ledger,
     attemptId: reserved.attemptId, candidate, prepared, nowMs });

@@ -8,7 +8,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { submitMissingCandidate } from '../src/acquisition/submit-missing-candidate.mjs';
 
-const info = Buffer.from('d6:lengthi1000e4:name11:Example.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
+const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
 const candidate = { indexerId: 3, guid: 'release-1', title: 'Example 01', size: 1000 };
@@ -21,15 +21,15 @@ const mounts = { qbittorrent: [mount(hostPath, '/negev-staging')],
 const torrent = { hash, category: 'negev', save_path: '/negev-staging',
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
-const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
+const files = [{ index: 0, name: '01.mkv', size: 1000, priority: 1, progress: 0 }];
 
-async function withLedgers(run) {
+async function withLedgers(run, intent = { state: 'ready', anidbId: 42,
+  kind: 'series', monitorFuture: false, episodeIds: [1001, 1002] }) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-coordinate-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
   const saved = requests.submit({ requesterId: 1, requestKey: 'one', nowMs: 100,
-    intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
-      episodeIds: [1001, 1002] } });
+    intent });
   const ledger = openAcquisitionLedger(dbPath);
   try { await run({ request: requests.getRequest(saved.requestId), ledger }); }
   finally { ledger.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
@@ -38,7 +38,7 @@ async function withLedgers(run) {
 function options({ request, ledger, readEvidence, prowlarrFetch, qbittorrentFetch,
   inspectMounts = async () => mounts }) {
   return { request, candidate, episodeIds: [1001],
-    plannedFiles: [{ name: 'Example.mkv', size: 1000, episodeIds: [1001] }], readEvidence,
+    plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], readEvidence,
     publicLibraryIds: [102], ledger, now: () => 201,
     prowlarr: { baseUrl: 'http://prowlarr.internal:9696/', apiKey: 'syntheticKey',
       query: 'Example', indexerIds: [3], fetchImpl: prowlarrFetch },
@@ -82,6 +82,42 @@ test('one exact missing target is reserved then submitted stopped once', async (
     assert.deepEqual(ledger.getFilePlan(result.attemptId), input.plannedFiles);
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
   }));
+
+test('an unambiguous series file creates the provisional subset without a caller plan', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const calls = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
+    const detail = { state: 'details', complete: true, total: 2,
+      anidbId: 42, kind: 'series', episodes: [
+        { id: 1001, number: 1, type: 'Episode' },
+        { id: 1002, number: 2, type: 'Episode' },
+      ] };
+    const result = await submitMissingCandidate({ ...input, detail,
+      episodeIds: undefined, plannedFiles: undefined });
+    assert.equal(result.state, 'stopped_observed');
+    assert.deepEqual(ledger.getAttempt(result.attemptId).episodeIds, [1001]);
+    assert.deepEqual(ledger.getFilePlan(result.attemptId), [
+      { name: '01.mkv', size: 1000, episodeIds: [1001] }]);
+    assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+  }));
+
+test('a one-video AniDB movie request follows the same stopped acquisition path', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const calls = [];
+    const input = options({ request, ledger,
+      readEvidence: async () => ({ ...absent(), episodeIds: [5001] }),
+      prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
+    const detail = { state: 'details', complete: true, total: 1,
+      anidbId: 42, kind: 'movie',
+      episodes: [{ id: 5001, number: 1, type: 'Episode' }] };
+    const result = await submitMissingCandidate({ ...input, detail,
+      episodeIds: undefined, plannedFiles: undefined });
+    assert.equal(result.state, 'stopped_observed');
+    assert.deepEqual(ledger.getAttempt(result.attemptId).episodeIds, [5001]);
+    assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+  }, { state: 'ready', anidbId: 42, kind: 'movie',
+    monitorFuture: false, episodeIds: [5001] }));
 
 test('a wrong video-to-episode plan holds before reservation or qBittorrent', async () =>
   withLedgers(async ({ request, ledger }) => {
