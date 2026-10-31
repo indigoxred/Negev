@@ -53,6 +53,8 @@
 
 **Interfaces:** A disconnected feed schedules bounded catch-up after reconnect, with no overlap with an active page read. Disabled startup performs no recent-file request. Existing inventory remains off until its sustained cost is measured.
 
-- [ ] Write failing disabled-start and reconnect tests with a saved watermark and changed Shoko head.
+- [x] Write failing disabled-start and reconnect tests with a saved watermark and changed Shoko head.
 - [ ] Wire only after Task 2 recovery and a narrow installed read-only contract check; keep all acquisition actions disabled.
 - [ ] Verify a real direct import, restart/reconnect and public Plex status before enabling on the NAS.
+
+Source wiring is present behind `NEGEV_SHOKO_RECENT=1` and defaults off. An isolated SQLite/service test verifies no read before an explicit tick, a missing baseline hold, a provisional-file retry, and linked recognition after restart. The 13 October installed response established the requested sort and timestamp shape, but a current-version and sustained-load check is still required before enabling this flag. The source wiring does not provide an operator baseline command or historical backfill yet.

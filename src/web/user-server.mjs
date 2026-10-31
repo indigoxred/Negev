@@ -8,6 +8,8 @@ import { createShokoFeedSupervisor } from
   '../availability/shoko-feed-supervisor.mjs';
 import { createShokoInventoryScheduler } from
   '../availability/shoko-inventory-scheduler.mjs';
+import { createShokoRecentScheduler } from
+  '../availability/shoko-recent-scheduler.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
 import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
 import { createDirectAvailabilityScheduler } from
@@ -17,6 +19,7 @@ import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
 let service;
 let shokoFeedSupervisor;
 let shokoInventory;
+let shokoRecent;
 let airingScheduler;
 let plexScheduler;
 let directAvailabilityScheduler;
@@ -35,12 +38,16 @@ try {
       keyPath: config.prowlarr.keyPath }) } : null;
   service = await createUserService({ ...config, plex, prowlarr,
     shokoApiKey, sessionKey,
-    onShokoReconciliationNeeded: () => shokoInventory?.requestSoon(),
+    onShokoReconciliationNeeded: () => {
+      shokoInventory?.requestSoon();
+      shokoRecent?.requestSoon();
+    },
     today: () => dateInZone(config.timeZone) });
   await service.app.listen({ host: config.host, port: config.port });
   const flagShokoGap = (reason) => {
     service.flagShokoReconciliation(reason);
     shokoInventory?.requestSoon();
+    shokoRecent?.requestSoon();
   };
   if (config.shokoEvents) {
     shokoFeedSupervisor = createShokoFeedSupervisor({
@@ -49,7 +56,10 @@ try {
           accept: (target, args) => {
             return forwardShokoEvent({
               consumer: { accept: service.acceptShokoEvent },
-              requestReconciliation: () => shokoInventory?.requestSoon(),
+              requestReconciliation: () => {
+                shokoInventory?.requestSoon();
+                shokoRecent?.requestSoon();
+              },
               target, args,
             });
           },
@@ -62,6 +72,13 @@ try {
   if (config.shokoInventory) {
     shokoInventory = createShokoInventoryScheduler({ tick: service.tickShokoInventory });
     shokoInventory.start();
+  }
+  if (config.shokoRecent) {
+    shokoRecent = createShokoRecentScheduler({
+      scan: service.tickShokoRecentScan,
+      drainOne: service.tickShokoRecentDrain,
+    });
+    shokoRecent.start();
   }
   if (config.airingWatch) {
     airingScheduler = createAiringScheduler({ runPage: service.pollAiringNextPage,
@@ -91,6 +108,7 @@ try {
       await plexScheduler?.close();
       await directAvailabilityScheduler?.close();
       await shokoInventory?.close();
+      await shokoRecent?.close();
       await shokoFeedSupervisor?.close();
     }
     finally { await service.close(); }
@@ -103,6 +121,7 @@ try {
     await plexScheduler?.close();
     await directAvailabilityScheduler?.close();
     await shokoInventory?.close();
+    await shokoRecent?.close();
     await shokoFeedSupervisor?.close();
   }
   finally { if (service) await service.close(); }

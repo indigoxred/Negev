@@ -21,6 +21,9 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parsed.shokoEvents, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: '1' }).shokoEvents, true);
   assert.equal(parsed.shokoInventory, false);
+  assert.equal(parsed.shokoRecent, false);
+  assert.equal(parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_RECENT: '1' }).shokoRecent, true);
   assert.equal(parsed.shokoHydration, false);
   assert.equal(parsed.prowlarr, null);
   assert.equal(parseUserServerConfig({ ...valid,
@@ -80,6 +83,7 @@ test('incomplete or ambiguous user-server configuration fails closed', () => {
     { NEGEV_LISTEN_HOST: '192.168.1.1' },
     { NEGEV_SHOKO_EVENTS: 'yes' },
     { NEGEV_SHOKO_INVENTORY: 'yes' },
+    { NEGEV_SHOKO_RECENT: 'yes' },
     { NEGEV_AIRING_WATCH: 'yes' },
     { NEGEV_AIRING_WATCH: '1' },
     { NEGEV_TIME_ZONE: 'Invalid/Timezone' },
@@ -114,6 +118,8 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_SHOKO_INVENTORY: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
+    NEGEV_SHOKO_RECENT: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
   assert.throws(() => parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_SHOKO_EVENTS: '1', NEGEV_DIRECT_AVAILABILITY: '1' }), TypeError);
   for (const change of [

@@ -18,6 +18,9 @@ import { buildUserApp } from './user-app.mjs';
 import { createMetadataLimiter } from './metadata-limiter.mjs';
 import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
 import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
+import { readShokoRecentPage } from '../availability/shoko-recent-catchup.mjs';
+import { openShokoRecentLedger } from '../availability/shoko-recent-ledger.mjs';
+import { createShokoRecentWorker } from '../availability/shoko-recent-worker.mjs';
 import { createShokoEventConsumer } from '../availability/shoko-event-consumer.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
@@ -38,6 +41,7 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
+  shokoRecent = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
@@ -46,6 +50,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
+      typeof shokoRecent !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
@@ -61,6 +66,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let progress;
   let hydration;
   let inventory;
+  let recent;
   let directAvailability;
   let plexObserver;
   try {
@@ -71,6 +77,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     progress = openRequestProgress(dbPath);
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
+    if (shokoRecent) recent = openShokoRecentLedger(dbPath);
     directAvailability = openDirectAvailabilityQueue(dbPath);
     const metadata = createMetadataLimiter();
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
@@ -235,6 +242,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
+    const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
+      readPage: (input) => metadata.run(() => readShokoRecentPage({
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
+      })),
+      refreshFile: async (fileId) => {
+        const result = await refreshShokoFile(fileId);
+        return result?.state === 'recorded_file' ? { ...result,
+          recognition: inventory.getFile(fileId)?.state } : result;
+      },
+    }) : null;
     const eventConsumer = createShokoEventConsumer({ refreshFile: refreshShokoFile,
       onReconciliationNeeded: onShokoReconciliationNeeded,
       onDeleted: (fileId) => {
@@ -250,6 +267,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(inventoryWorker.tick());
+      },
+      tickShokoRecentScan: () => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        return recentWorker ? track(recentWorker.scan()) :
+          Promise.resolve({ state: 'held', reason: 'recent_observer_disabled' });
+      },
+      tickShokoRecentDrain: () => {
+        if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
+        return recentWorker ? track(recentWorker.drainOne()) :
+          Promise.resolve({ state: 'held', reason: 'recent_observer_disabled' });
       },
       tickDirectAvailability: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
@@ -293,6 +320,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await Promise.allSettled([...observations]);
               plexObserver?.close();
               directAvailability.close();
+              recent?.close();
               inventory.close(); hydration.close(); progress.close();
               handoffs.close(); acquisitions.close(); requests.close(); accounts.close();
             }
@@ -301,7 +329,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); directAvailability?.close(); inventory?.close(); hydration?.close();
+    plexObserver?.close(); directAvailability?.close(); recent?.close();
+    inventory?.close(); hydration?.close();
     progress?.close(); handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();
     throw error;

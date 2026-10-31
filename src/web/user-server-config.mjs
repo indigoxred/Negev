@@ -135,6 +135,7 @@ export function parseUserServerConfig(env) {
   const shokoBaseUrl = env.NEGEV_SHOKO_URL;
   baseUrl(shokoBaseUrl, 'Shoko URL');
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
+      env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
       env.NEGEV_DIRECT_AVAILABILITY,
       env.NEGEV_SHOKO_HYDRATION].some((flag) =>
@@ -146,8 +147,9 @@ export function parseUserServerConfig(env) {
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
       (env.NEGEV_PLEX_INDEX !== '1' ||
-       env.NEGEV_SHOKO_INVENTORY !== '1')) {
-    throw new TypeError('Direct availability needs Shoko inventory and Plex index');
+       env.NEGEV_SHOKO_INVENTORY !== '1' &&
+       env.NEGEV_SHOKO_RECENT !== '1')) {
+    throw new TypeError('Direct availability needs a Shoko observer and Plex index');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
@@ -180,6 +182,7 @@ export function parseUserServerConfig(env) {
     shokoBaseUrl, shokoApiKeyPath,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
+    shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),

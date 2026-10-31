@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
+import { openShokoRecentLedger } from '../src/availability/shoko-recent-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
 const origin = 'http://localhost:3000';
@@ -265,6 +266,9 @@ test('account service records one Shoko direct-import page without dispatching a
         return json({ Total: 1, List: [{ ID: 10, Updated: '2026-10-31T00:00:00Z',
           SeriesIDs: [{ SeriesID: { AniDB: 42 }, EpisodeIDs: [{ AniDB: 1001 }] }] }] });
       } });
+    assert.deepEqual(await service.tickShokoRecentScan(),
+      { state: 'held', reason: 'recent_observer_disabled' });
+    assert.equal(calls, 0);
     assert.equal((await service.tickShokoInventory()).state, 'recorded');
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
     assert.equal(calls, 1);
@@ -286,6 +290,81 @@ test('account service records one Shoko direct-import page without dispatching a
       fetchImpl: async () => { throw new Error('No scan on startup'); } });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
     assert.equal(calls, 3);
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('opt-in recent import resumes a saved cursor and waits for Shoko recognition', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-recent-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const baseline = { fileId: 10, importedNs:
+    String(BigInt(Date.parse('2026-10-31T00:00:10Z')) * 1_000_000n) };
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const recent = openShokoRecentLedger(dbPath);
+  recent.bootstrap(baseline);
+  recent.close();
+  let service;
+  let linked = false;
+  let nowMs = 100;
+  const reads = [];
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false, shokoRecent: true,
+      now: () => nowMs,
+      fetchImpl: async (url, init) => {
+        reads.push(url.pathname);
+        assert.equal(init.method, 'GET');
+        if (url.pathname === '/api/v3/File') {
+          assert.equal(url.searchParams.get('sortOrder'), '-ImportedAt,-FileID');
+          return json({ Total: 2, List: [
+            { ID: 11, Imported: '2026-10-31T00:00:11Z' },
+            { ID: 10, Imported: '2026-10-31T00:00:10Z' },
+          ] });
+        }
+        assert.equal(url.pathname, '/api/v3/File/11');
+        return json({ ID: 11, Updated: linked
+          ? '2026-10-31T00:01:00Z' : '2026-10-31T00:00:11Z',
+        SeriesIDs: linked ? [{ SeriesID: { AniDB: 42 },
+          EpisodeIDs: [{ AniDB: 1001 }] }] : [] });
+      } });
+    assert.deepEqual(reads, []);
+    assert.deepEqual(await service.tickShokoRecentScan(),
+      { state: 'caught_up', added: 1 });
+    assert.deepEqual(await service.tickShokoRecentDrain(),
+      { state: 'retry_scheduled', fileId: 11 });
+    assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42,
+      episodeId: 1001 }), []);
+    nowMs = 300_100;
+    linked = true;
+    assert.deepEqual(await service.tickShokoRecentDrain(),
+      { state: 'acknowledged', fileId: 11 });
+    assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42,
+      episodeId: 1001 }), [11]);
+    assert.deepEqual(reads, ['/api/v3/File', '/api/v3/File',
+      '/api/v3/File/11', '/api/v3/File/11']);
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('recent import without an operator baseline cannot read Shoko or advance', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-recent-empty-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let service;
+  let reads = 0;
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false, shokoRecent: true,
+      fetchImpl: async () => { reads++; throw new Error('unexpected Shoko read'); } });
+    assert.deepEqual(await service.tickShokoRecentScan(),
+      { state: 'held', reason: 'recent_baseline_required' });
+    assert.equal(reads, 0);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
