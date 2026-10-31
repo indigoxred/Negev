@@ -13,6 +13,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     db.exec('PRAGMA journal_mode=WAL');
+    db.exec('PRAGMA foreign_keys=ON');
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_cursor (
       id INTEGER PRIMARY KEY CHECK(id=1),
       page INTEGER NOT NULL CHECK(page>0),
@@ -27,6 +28,14 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       seen_pass INTEGER NOT NULL CHECK(seen_pass>0),
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_pairs (
+      file_id INTEGER NOT NULL REFERENCES shoko_inventory_files(file_id),
+      anidb_id INTEGER NOT NULL CHECK(anidb_id>0),
+      episode_id INTEGER NOT NULL CHECK(episode_id>0),
+      PRIMARY KEY(file_id,anidb_id,episode_id)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS shoko_inventory_episode
+      ON shoko_inventory_pairs(anidb_id,episode_id,file_id)`);
     db.prepare(`INSERT INTO shoko_inventory_cursor(id,page,pass,page_size)
       VALUES (1,1,1,?) ON CONFLICT(id) DO NOTHING`).run(pageSize);
     const size = db.prepare('SELECT page_size FROM shoko_inventory_cursor WHERE id=1').get()?.page_size;
@@ -40,6 +49,11 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
     ON CONFLICT(file_id) DO UPDATE SET updated=excluded.updated,state=excluded.state,
       pairs_json=excluded.pairs_json,seen_pass=excluded.seen_pass,
       observed_ms=excluded.observed_ms`);
+  const removePairs = db.prepare('DELETE FROM shoko_inventory_pairs WHERE file_id=?');
+  const addPair = db.prepare(`INSERT INTO shoko_inventory_pairs(file_id,anidb_id,episode_id)
+    VALUES (?,?,?)`);
+  const findPairs = db.prepare(`SELECT file_id FROM shoko_inventory_pairs
+    WHERE anidb_id=? AND episode_id=? ORDER BY file_id`);
   const advance = db.prepare(`UPDATE shoko_inventory_cursor SET page=?,pass=?
     WHERE id=1 AND page=? AND pass=?`);
   return {
@@ -50,6 +64,12 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
       if (!row) return null;
       const { pairsJson, ...other } = row;
       return { ...other, pairs: JSON.parse(pairsJson) };
+    },
+    getObservedFileIds({ anidbId, episodeId }) {
+      if (!validId(anidbId) || !validId(episodeId)) {
+        throw new TypeError('Invalid AniDB episode identity');
+      }
+      return findPairs.all(anidbId, episodeId).map((row) => row.file_id);
     },
     recordPage({ expected, result, observedMs }) {
       if (!validId(expected?.page) || !validId(expected.pass) ||
@@ -83,6 +103,8 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 25 } = {}) {
         for (const item of result.items) {
           save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
             current.pass, observedMs);
+          removePairs.run(item.fileId);
+          for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
         }
         const last = current.page * pageSize >= result.total;
         const nextPage = last ? 1 : current.page + 1;

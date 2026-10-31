@@ -14,14 +14,16 @@ const linked = { ...provisional, updated: '2026-10-31T01:00:00Z', state: 'linked
 test('durable one-page ticks revisit provisional files without claiming deletion', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
   const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
   try {
-    let ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
     const first = createShokoInventoryWorker({ ledger, readPage: async ({ page }) =>
       ({ state: 'page', page, total: 2, items: page === 1 ? [provisional] : [{
         ...linked, fileId: 11 }] }), now: () => 100 });
     assert.deepEqual(await first.tick(), { state: 'recorded', page: 1, pass: 1, nextPage: 2 });
     assert.deepEqual(ledger.getFile(10), { ...provisional, seenPass: 1, observedMs: 100 });
     ledger.close();
+    ledger = null;
     ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
     const second = createShokoInventoryWorker({ ledger, readPage: async ({ page }) =>
       ({ state: 'page', page, total: 2, items: page === 2 ? [{ ...linked, fileId: 11 }] : [linked] }),
@@ -30,8 +32,8 @@ test('durable one-page ticks revisit provisional files without claiming deletion
     assert.deepEqual(await second.tick(), { state: 'recorded', page: 1, pass: 2, nextPage: 2 });
     assert.deepEqual(ledger.getFile(10), { ...linked, seenPass: 2, observedMs: 200 });
     assert.equal(ledger.getFile(11).seenPass, 1);
-    ledger.close();
-  } finally { await rm(dir, { recursive: true, force: true }); }
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10, 11]);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test('outage and stale concurrent page do not advance or erase observations', async () => {
@@ -72,5 +74,25 @@ test('an unverified file is held while the next linked file advances', async () 
     assert.equal((await worker.tick()).state, 'recorded');
     assert.equal(ledger.getFile(10).state, 'unverified');
     assert.deepEqual(ledger.getFile(11).pairs, linked.pairs);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [11]);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('later unverified evidence withdraws only its own provisional identity index', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
+    let item = linked;
+    const worker = createShokoInventoryWorker({ ledger, readPage: async () => ({
+      state: 'page', page: 1, total: 1, items: [item],
+    }) });
+    assert.equal((await worker.tick()).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
+    item = { ...linked, state: 'unverified', pairs: [] };
+    assert.equal((await worker.tick()).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), []);
+    assert.equal(ledger.getFile(10).state, 'unverified');
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
