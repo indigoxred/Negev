@@ -68,7 +68,7 @@ function showSession(data) {
 }
 async function refreshSession() {
   try { showSession(await api('/api/session')); await loadRequests(); }
-  catch { byId('auth').hidden = false; byId('workspace').hidden = true; }
+  catch { state.searchToken++; byId('auth').hidden = false; byId('workspace').hidden = true; }
 }
 async function loadRequests(append = false) {
   const list = byId('request-list');
@@ -191,6 +191,7 @@ byId('signout').addEventListener('click', async () => {
   try { await api('/api/logout', { method: 'POST', body: '{}' }); }
   catch (error) { message(error.message, true); return; }
   state.user = null;
+  state.searchToken++;
   state.csrf = null;
   state.nextBeforeId = null;
   state.releaseSearch = false;
