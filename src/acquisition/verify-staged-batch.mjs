@@ -49,6 +49,7 @@ export async function verifyStagedBatch({
   const plannedIds = new Set();
   for (const file of plannedFiles) {
     if (typeof file?.name !== 'string' || !file.name || plannedByName.has(file.name) ||
+        (file.size !== undefined && (!Number.isSafeInteger(file.size) || file.size < 1)) ||
         !Array.isArray(file.episodeIds) || file.episodeIds.length === 0 ||
         file.episodeIds.some((id) => !Number.isSafeInteger(id) || id <= 0 ||
           plannedIds.has(id))) return held('invalid_batch_plan');
@@ -68,7 +69,9 @@ export async function verifyStagedBatch({
       selected.length > 50 || selected.some((file) =>
         !Number.isSafeInteger(file?.index) || file.index < 0 ||
         typeof file.name !== 'string' || !plannedByName.has(file.name) ||
-        !Number.isSafeInteger(file.size) || file.size <= 0) ||
+        !Number.isSafeInteger(file.size) || file.size <= 0 ||
+        (plannedByName.get(file.name).size !== undefined &&
+          plannedByName.get(file.name).size !== file.size)) ||
       new Set(selected.map((file) => file.name)).size !== selected.length ||
       selected.reduce((sum, file) => sum + file.size, 0) > maxTotalBytes) {
     return held('manifest_or_budget_mismatch');

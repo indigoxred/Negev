@@ -50,4 +50,15 @@
 - [x] Write and run a failing coordinator regression for a mismatched filename.
 - [x] Require the exact metainfo plan before the stopped submission; confirm the focused tests pass.
 - [x] Run the full test suite and review the changed files.
-- [ ] Publish and verify Linux CI.
+- [x] Publish and verify Linux CI.
+
+### Task 3: Use the saved plan for post-download verification
+
+**Files:** Create `src/acquisition/verify-recorded-batch.mjs` and `test/verify-recorded-batch.test.mjs`; modify `src/acquisition/verify-staged-batch.mjs` and `README.md`.
+
+**Interfaces:** `verifyRecordedBatch({requests,acquisitions,attemptId,root,observe,lookup,verify,verifySubtitle,readPacer})` loads the request, attempt, start intent and saved plan. It passes only these saved identities to the existing staged verifier. `verifyStagedBatch` checks a saved planned size when present.
+
+- [x] Write and run failing restart, missing-plan/start, and changed-size tests.
+- [x] Implement the saved-ledger adapter and size comparison.
+- [x] Run focused tests; verify no hash is attempted on missing or changed evidence.
+- [ ] Run full tests, publish, and verify Linux CI.

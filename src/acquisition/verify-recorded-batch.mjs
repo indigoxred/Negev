@@ -1,0 +1,29 @@
+import { verifyStagedBatch } from './verify-staged-batch.mjs';
+
+const held = (reason) => ({ state: 'held', reason });
+
+// Recover the exact saved request, attempt, and provisional filename plan
+// before hashing. A caller may supply observers, but cannot replace that plan.
+export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
+  root, observe, lookup, verify, verifySubtitle, readPacer }) {
+  if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
+      typeof requests?.getRequest !== 'function' ||
+      typeof acquisitions?.getAttempt !== 'function' ||
+      typeof acquisitions?.getFilePlan !== 'function' ||
+      typeof acquisitions?.getStart !== 'function') {
+    throw new TypeError('Invalid recorded batch configuration');
+  }
+  const attempt = acquisitions.getAttempt(attemptId);
+  if (!attempt || attempt.status !== 'torrent_observed' || !attempt.torrentHash) {
+    return held('torrent_not_observed');
+  }
+  const start = acquisitions.getStart(attemptId);
+  if (!start || start.torrentHash !== attempt.torrentHash) return held('start_not_recorded');
+  const plannedFiles = acquisitions.getFilePlan(attemptId);
+  if (!plannedFiles) return held('file_plan_missing');
+  const request = requests.getRequest(attempt.requestId);
+  if (!request) return held('request_missing');
+  return verifyStagedBatch({ root, request, attempt,
+    expectedTorrent: { hash: attempt.torrentHash, category: 'negev', savePath: '/negev-staging' },
+    plannedFiles, observe, lookup, verify, verifySubtitle, readPacer });
+}
