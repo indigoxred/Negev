@@ -7,6 +7,8 @@ import { createPlexCardPageWorker, indexPlexCardPage,
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
 import { observePublicTarget } from './observe-public-target.mjs';
 import { readPlexGuidCards } from './plex-guid-cards.mjs';
+import { localPath, validMount } from './known-card-availability.mjs';
+import { probePhysicalCandidate } from './physical-plex-part.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validSections = (sections) => sections &&
@@ -40,6 +42,30 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     token: plexToken, ...input, fetchImpl });
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
     token: plexToken, ...input, fetchImpl });
+  const readCardForIndex = async (input) => {
+    const card = await readCard(input);
+    if (card?.state !== 'ok' || !Array.isArray(card.parts) ||
+        card.parts.length > 40) return card;
+    const mounts = (plexMounts ?? (plexMount ? [plexMount] : []))
+      .filter(validMount);
+    const backingRoots = validMount(shokoMount)
+      ? [shokoMount.localRoot] : [];
+    const parts = [];
+    for (const part of card.parts) {
+      if (!validId(part.size)) { parts.push(part); continue; }
+      const mapping = mounts.find((mount) => localPath(part.plexPath, mount));
+      if (!mapping) { parts.push(part); continue; }
+      const filePath = localPath(part.plexPath, mapping);
+      let candidate;
+      try { candidate = await probePhysicalCandidate({ filePath,
+        allowedRoot: mapping.localRoot, backingRoots,
+        expectedSize: part.size }); }
+      catch { parts.push(part); continue; }
+      parts.push(candidate.state === 'candidate'
+        ? { ...part, candidateKey: candidate.candidateKey } : part);
+    }
+    return { ...card, parts };
+  };
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, fetchImpl });
   return {
@@ -48,9 +74,10 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         return { state: 'held', reason: 'library_not_allowed' };
       }
       const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
-        readPage, readCard });
+        readPage, readCard: readCardForIndex });
       const page = await worker.tick();
-      const retry = await retryOnePlexCard({ libraryId, kind, index, now, readCard });
+      const retry = await retryOnePlexCard({ libraryId, kind, index, now,
+        readCard: readCardForIndex });
       return retry.state === 'no_due_retry' ? page :
         { ...page, retry: retry.state };
     },
@@ -59,7 +86,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         return Promise.resolve({ state: 'held', reason: 'library_not_allowed' });
       }
       return indexPlexCardPage({ libraryId, kind, offset: 0,
-        index, now, readPage, readCard });
+        index, now, readPage, readCard: readCardForIndex });
     },
     // observedShoko is supplied only by the internal presence probe, after its
     // own Shoko read. Never accept this value from a client request body.

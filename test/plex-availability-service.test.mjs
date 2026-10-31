@@ -3,8 +3,11 @@ import { afterEach, test } from 'node:test';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createPlexAvailabilityService } from '../src/availability/plex-availability-service.mjs';
 import { readShokoEpisodeFiles } from '../src/availability/shoko-episode-files.mjs';
+import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
+import { probePhysicalCandidate } from '../src/availability/physical-plex-part.mjs';
 
 const cleanup = [];
 afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
@@ -84,6 +87,44 @@ test('a direct Shoko import becomes Available only after public Plex card discov
   assert.deepEqual(await service.scanRecent({ libraryId: 102, kind: 'episode' }),
     { state: 'page_indexed', processed: 1, nextOffset: 0 });
   assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 4);
+  service.close();
+});
+
+test('paced Plex card scan stores a scoped physical identity hint', async () => {
+  const { config } = await fixture();
+  const service = createPlexAvailabilityService(config);
+  assert.equal((await service.tick({ libraryId: 102,
+    kind: 'episode' })).state, 'page_indexed');
+  service.close();
+  const db = new DatabaseSync(config.dbPath);
+  const row = db.prepare(`SELECT candidate_key AS candidateKey
+    FROM plex_part_candidates WHERE library_id=102 AND rating_key=500`).get();
+  assert.match(row.candidateKey, /^\d+:\d+:5$/);
+  db.close();
+});
+
+test('exact file key selects a playable episode among twelve same-size cards', async () => {
+  const { config, calls } = await fixture();
+  const source = path.join(config.shokoMount.localRoot, 'Anime', 'one.mkv');
+  const identity = await probePhysicalCandidate({ filePath: source,
+    allowedRoot: config.shokoMount.localRoot, expectedSize: 5 });
+  assert.equal(identity.state, 'candidate');
+  const index = openPlexCardIndex(config.dbPath);
+  for (let ratingKey = 500; ratingKey < 512; ratingKey++) {
+    index.recordCard({ libraryId: 102, ratingKey, kind: 'episode',
+      observedMs: 10, parts: [{ libraryId: 102, partId: ratingKey + 400,
+        size: 5, plexPath: `/source-pure/Anime/${ratingKey}.mkv`,
+        ...(ratingKey === 500 ? { candidateKey: identity.candidateKey } : {}) }] });
+  }
+  assert.equal(index.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).state, 'held');
+  index.close();
+  const service = createPlexAvailabilityService(config);
+  assert.deepEqual(await service.observeTarget({ anidbId: 42,
+    episodeId: 1001, kind: 'series' }),
+  { state: 'available', fileId: 51 });
+  assert.deepEqual(calls.filter((call) =>
+    call.startsWith('plex/library/metadata/')), ['plex/library/metadata/500']);
   service.close();
 });
 

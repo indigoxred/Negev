@@ -11,11 +11,11 @@ const inside = (root, candidate) => {
 const validRemote = (value) => typeof value === 'string' &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
   !/[\0\r\n\\]/.test(value);
-const validMount = (mapping) => validRemote(mapping?.appRoot) && mapping.appRoot !== '/' &&
+export const validMount = (mapping) => validRemote(mapping?.appRoot) && mapping.appRoot !== '/' &&
   typeof mapping.localRoot === 'string' && path.isAbsolute(mapping.localRoot) &&
   path.normalize(mapping.localRoot) === mapping.localRoot &&
   !/[\0\r\n]/.test(mapping.localRoot);
-const localPath = (remote, mapping) => {
+export const localPath = (remote, mapping) => {
   if (!validRemote(remote) || !inside(mapping.appRoot, remote)) return null;
   const relative = path.posix.relative(mapping.appRoot, remote);
   return path.join(mapping.localRoot, ...relative.split('/'));

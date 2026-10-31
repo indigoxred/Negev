@@ -31,6 +31,37 @@ test('one fresh Shoko read selects indexed same-size cards and proves public pla
   assert.equal(shokoReads, 1);
 });
 
+test('physical identity avoids an overloaded size lookup but still requires fresh Plex proof', async () => {
+  const queried = [];
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    cardIndex: {
+      lookupCards: () => { throw new Error('size lookup is overloaded'); },
+      lookupCardsByCandidateKey(input) {
+        queried.push(input);
+        return { state: 'candidates', cards: [{ libraryId: 102, ratingKey: 500 }] };
+      },
+    },
+  });
+  assert.deepEqual(queried, [{ keys: ['1:2:5'], libraryIds: [102], kind: 'episode' }]);
+  assert.deepEqual(result, { state: 'available', fileId: 51 });
+});
+
+test('keyed candidate is not Available when fresh physical proof disagrees', async () => {
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    proveImpl: async () => ({ state: 'held', reason: 'different_file' }),
+    cardIndex: {
+      lookupCards: () => { throw new Error('size lookup is overloaded'); },
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+    },
+  });
+  assert.equal(result.state, 'unknown');
+});
+
 test('movie target also checks native Anime episode candidates', async () => {
   const queried = [];
   const result = await observeIndexedTarget({ ...base,
