@@ -24,6 +24,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   const url = new URL(`/api/v3/Episode/AniDB/${episodeId}/Episode`, base);
   url.searchParams.set('includeFiles', 'true');
   url.searchParams.set('includeReleaseInfo', 'true');
+  url.searchParams.set('includeXRefs', 'true');
   url.searchParams.set('includeAbsolutePaths', 'true');
   let episode;
   try {

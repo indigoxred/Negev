@@ -22,6 +22,7 @@ test('reads one exact AniDB episode and its registered accessible file', async (
     assert.equal(url.pathname, '/api/v3/Episode/AniDB/1001/Episode');
     assert.equal(url.searchParams.get('includeFiles'), 'true');
     assert.equal(url.searchParams.get('includeReleaseInfo'), 'true');
+    assert.equal(url.searchParams.get('includeXRefs'), 'true');
     assert.equal(url.searchParams.get('includeAbsolutePaths'), 'true');
     assert.equal(init.method, 'GET');
     assert.equal(init.redirect, 'manual');
