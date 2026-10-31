@@ -7,7 +7,7 @@ const held = (reason) => ({ state: 'held', reason });
 // Read-only, double-observed qBittorrent manifest. It never starts a torrent.
 export async function observeStoppedManifest({
   baseUrl, sessionId, expected, fetchImpl = fetch, timeoutMs = 10_000,
-  allowSelectedPassive = false,
+  allowSelectedPassive = false, expectedFiles,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -51,6 +51,19 @@ export async function observeStoppedManifest({
     file.index, file.name, file.size, file.priority, file.progress,
   ]));
   if (fingerprint(files) !== fingerprint(filesAfter)) return held('manifest_changed');
+  if (expectedFiles !== undefined) {
+    if (!Array.isArray(expectedFiles) || expectedFiles.length < 1 ||
+        expectedFiles.length > 500 || expectedFiles.some((file) =>
+          typeof file?.name !== 'string' || !file.name ||
+          !Number.isSafeInteger(file.size) || file.size < 1)) {
+      throw new TypeError('Invalid expected torrent files');
+    }
+    const signature = (items) => items.map((file) =>
+      `${file.name}\0${file.size}`).sort();
+    if (JSON.stringify(signature(filesAfter)) !== JSON.stringify(signature(expectedFiles))) {
+      return held('metainfo_manifest_mismatch');
+    }
+  }
   return evaluateStoppedManifest({ torrent: after, files: filesAfter, expected,
     allowSelectedPassive });
 }

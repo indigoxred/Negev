@@ -12,7 +12,7 @@ async function exactPreparedTorrent(prepared) {
   if (prepared?.state !== 'prepared_stopped' || !validHash(prepared.expected?.hash) ||
       prepared.expected.category !== 'negev' ||
       !matchesStagingSavePath(prepared.expected) ||
-      !(prepared.form instanceof FormData)) return false;
+      !(prepared.form instanceof FormData)) return null;
   const form = prepared.form;
   const fields = [...form.keys()].sort();
   if (JSON.stringify(fields) !== JSON.stringify([
@@ -20,12 +20,12 @@ async function exactPreparedTorrent(prepared) {
   ].sort()) || form.get('savepath') !== prepared.expected.savePath ||
       form.get('category') !== 'negev' || form.get('stopped') !== 'true' ||
       form.get('autoTMM') !== 'false' || form.get('skip_checking') !== 'false' ||
-      form.get('root_folder') !== 'false') return false;
+      form.get('root_folder') !== 'false') return null;
   const torrent = form.get('torrents');
-  if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > 2_000_000) return false;
+  if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > 2_000_000) return null;
   const metainfo = inspectTorrentMetainfo({ bytes: new Uint8Array(await torrent.arrayBuffer()) });
   return metainfo.state === 'metainfo_checked' &&
-    metainfo.hash === prepared.expected.hash.toLowerCase();
+    metainfo.hash === prepared.expected.hash.toLowerCase() ? metainfo : null;
 }
 
 // Server-only one-send boundary. No route invokes this yet. Fresh Docker mount
@@ -50,7 +50,8 @@ export async function submitStoppedCandidate({
       typeof ledger.recordTorrent !== 'function') {
     throw new TypeError('Invalid stopped submission configuration');
   }
-  if (!(await exactPreparedTorrent(prepared))) return held('prepared_torrent_mismatch');
+  const metainfo = await exactPreparedTorrent(prepared);
+  if (!metainfo) return held('prepared_torrent_mismatch');
   let mounts, realPath;
   try {
     mounts = await inspectMounts();
@@ -91,7 +92,8 @@ export async function submitStoppedCandidate({
   }
 
   let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
-    fetchImpl, timeoutMs, allowSelectedPassive: true });
+    fetchImpl, timeoutMs, allowSelectedPassive: true,
+    expectedFiles: metainfo.files });
   if (observed.state === 'manifest_needs_exclusions') {
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),
@@ -104,7 +106,7 @@ export async function submitStoppedCandidate({
       });
     } catch { /* An uncertain response is resolved by the exact manifest below. */ }
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
-      fetchImpl, timeoutMs });
+      fetchImpl, timeoutMs, expectedFiles: metainfo.files });
   }
   if (observed.state !== 'manifest_safe') return observed;
   const recorded = ledger.recordTorrent({ attemptId, hash: expected.hash, nowMs });

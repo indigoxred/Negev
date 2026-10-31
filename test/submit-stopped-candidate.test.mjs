@@ -24,6 +24,39 @@ const torrent = { hash, category: 'negev', save_path: savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
+function encode(value) {
+  if (Buffer.isBuffer(value)) return Buffer.concat([Buffer.from(`${value.length}:`), value]);
+  if (typeof value === 'string') return encode(Buffer.from(value));
+  if (typeof value === 'number') return Buffer.from(`i${value}e`);
+  if (Array.isArray(value)) return Buffer.concat([Buffer.from('l'),
+    ...value.map(encode), Buffer.from('e')]);
+  const entries = Object.entries(value).sort(([a], [b]) =>
+    Buffer.compare(Buffer.from(a), Buffer.from(b)));
+  return Buffer.concat([Buffer.from('d'), ...entries.flatMap(([key, item]) =>
+    [encode(key), encode(item)]), Buffer.from('e')]);
+}
+const passiveInfo = { files: [{ length: 1000, path: ['Example.mkv'] },
+  { length: 20, path: ['readme.nfo'] }], name: 'Release',
+  'piece length': 16384, pieces: Buffer.alloc(20, 97) };
+const passiveBytes = encode({ info: passiveInfo });
+const passiveHash = createHash('sha1').update(encode(passiveInfo)).digest('hex');
+const passiveSavePath = `/negev-staging/${passiveHash}`;
+const passivePrepared = { state: 'prepared_stopped',
+  expected: { hash: passiveHash, category: 'negev', savePath: passiveSavePath },
+  form: buildStoppedTorrentAddForm({ torrentBytes: passiveBytes,
+    savePath: passiveSavePath, category: 'negev' }) };
+const passiveTorrent = { ...torrent, hash: passiveHash, save_path: passiveSavePath,
+  amount_left: 1020 };
+const unsafeInfo = { ...passiveInfo, files: [{ length: 1000,
+  path: ['Example.mkv'] }, { length: 20, path: ['setup.exe'] }] };
+const unsafeHash = createHash('sha1').update(encode(unsafeInfo)).digest('hex');
+const unsafeSavePath = `/negev-staging/${unsafeHash}`;
+const unsafePrepared = { state: 'prepared_stopped',
+  expected: { hash: unsafeHash, category: 'negev', savePath: unsafeSavePath },
+  form: buildStoppedTorrentAddForm({ torrentBytes: encode({ info: unsafeInfo }),
+    savePath: unsafeSavePath, category: 'negev' }) };
+const unsafeTorrent = { ...torrent, hash: unsafeHash, save_path: unsafeSavePath,
+  amount_left: 1020 };
 
 async function withAttempt(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-submit-'));
@@ -119,7 +152,7 @@ test('excludes only passive extras before accepting a pristine stopped torrent',
       if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
       if (endpoint.endsWith('/filePrio')) {
         assert.equal(added, true);
-        assert.equal(init.body.get('hash'), hash);
+        assert.equal(init.body.get('hash'), passiveHash);
         assert.equal(init.body.get('id'), '1');
         assert.equal(init.body.get('priority'), '0');
         excluded = true;
@@ -130,15 +163,17 @@ test('excludes only passive extras before accepting a pristine stopped torrent',
         index: 1, name: 'readme.nfo', size: 20,
         priority: excluded ? 0 : 1, progress: 0,
       }]);
-      return Response.json([torrent]);
+      return Response.json([passiveTorrent]);
     };
-    const result = await submitStoppedCandidate({ ...options, ledger,
+    const result = await submitStoppedCandidate({ ...options,
+      prepared: passivePrepared, ledger,
       attemptId, fetchImpl });
     assert.equal(result.state, 'stopped_observed');
     assert.equal(excluded, true);
     assert.equal(calls.filter(([method, endpoint]) =>
       method === 'POST' && endpoint.endsWith('/filePrio')).length, 1);
-    assert.deepEqual(result.videos, [{ index: 0, name: 'Example.mkv', size: 1000 }]);
+    assert.deepEqual(result.videos, [{ index: 0,
+      name: 'Example.mkv', size: 1000 }]);
   }));
 
 test('unsafe extra file never receives a priority write or torrent start', async () =>
@@ -150,12 +185,13 @@ test('unsafe extra file never receives a priority write or torrent start', async
       if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
       if (endpoint.endsWith('/filePrio')) { priorityWrites++; return new Response('Ok.'); }
       if (!added) return Response.json([]);
-      if (endpoint.endsWith('/files')) return Response.json([...files, {
+      if (endpoint.endsWith('/files')) return Response.json([files[0], {
         index: 1, name: 'setup.exe', size: 20, priority: 1, progress: 0,
       }]);
-      return Response.json([torrent]);
+      return Response.json([unsafeTorrent]);
     };
-    const result = await submitStoppedCandidate({ ...options, ledger,
+    const result = await submitStoppedCandidate({ ...options,
+      prepared: unsafePrepared, ledger,
       attemptId, fetchImpl });
     assert.deepEqual(result, { state: 'held', reason: 'unsafe_file' });
     assert.equal(priorityWrites, 0);

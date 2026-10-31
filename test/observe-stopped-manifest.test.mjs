@@ -44,3 +44,14 @@ test('rejects malformed configuration before contacting the downloader', async (
   await assert.rejects(() => observeStoppedManifest({ ...config, sessionId: 'bad;cookie',
     fetchImpl: async () => { throw Error('unexpected call'); } }), TypeError);
 });
+
+test('a renamed or added qBittorrent file cannot masquerade as the original metainfo', async () => {
+  for (const changed of [[{ ...files[0], name: 'renamed.mkv' }],
+    [...files, { index: 1, name: 'readme.nfo', size: 20, priority: 0, progress: 0 }]]) {
+    const result = await observeStoppedManifest({ ...config,
+      expectedFiles: [{ name: 'Show/01.mkv', size: 1_000 }],
+      fetchImpl: async (url) => Response.json(new URL(url).pathname.endsWith('/files')
+        ? changed : [torrent]) });
+    assert.deepEqual(result, { state: 'held', reason: 'metainfo_manifest_mismatch' });
+  }
+});
