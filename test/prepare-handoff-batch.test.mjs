@@ -53,6 +53,31 @@ test('wrong source bytes cannot prepare a handoff and never reach Import', async
     assert.deepEqual(await readdir(roots.holdingRoot), []);
   }));
 
+test('insufficient or unmeasurable holding space stops before creating a copy', async () =>
+  withRoots(async (roots) => {
+    for (const statfsImpl of [
+      async () => ({ bavail: 1n, bsize: 4096n }),
+      async () => { throw Error('filesystem unavailable'); },
+    ]) {
+      const result = await prepareHandoffBatch({ ...roots, verified, statfsImpl });
+      assert.equal(result.state, 'held');
+      assert.ok(['insufficient_handoff_space', 'handoff_space_unavailable']
+        .includes(result.reason));
+      assert.deepEqual(await readdir(roots.holdingRoot), []);
+      assert.deepEqual(await readdir(roots.importRoot), []);
+    }
+  }));
+
+test('space preflight includes the copy bytes and retained free-space reserve', async () =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), bytes);
+    const exact = await prepareHandoffBatch({ ...roots, verified,
+      minFreeAfterBytes: 7, statfsImpl: async () => ({ bavail: 10n, bsize: 1n }) });
+    assert.equal(exact.state, 'handoff_prepared');
+    assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
+
 test('a later bad video removes the private partial copy without touching either source', async () =>
   withRoots(async (roots) => {
     await mkdir(path.join(roots.stagingRoot, 'Show'));

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, realpath, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, open, realpath, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { ed2kFile } from '../identity/ed2k.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
@@ -8,6 +8,7 @@ import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const DEFAULT_BUDGET = 64 * 1024 ** 3;
+const DEFAULT_FREE_RESERVE = 2 * 1024 ** 3;
 
 function within(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -95,9 +96,12 @@ export async function prepareHandoffBatch({
   stagingRoot, holdingRoot, importRoot, verified,
   maxTotalBytes = DEFAULT_BUDGET, readPacer,
   readRateBytesPerSecond = 16 * 1024 ** 2,
+  minFreeAfterBytes = DEFAULT_FREE_RESERVE, statfsImpl = statfs,
 }) {
   if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 ||
       maxTotalBytes > 1024 ** 4 ||
+      !Number.isSafeInteger(minFreeAfterBytes) || minFreeAfterBytes < 0 ||
+      minFreeAfterBytes > 1024 ** 4 || typeof statfsImpl !== 'function' ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff preparation configuration');
   }
@@ -108,6 +112,20 @@ export async function prepareHandoffBatch({
   if (evidence.state !== 'valid') return held('invalid_verified_batch');
   const roots = await inspectRoots(stagingRoot, holdingRoot, importRoot);
   if (!roots) return held('unsafe_handoff_roots');
+  // Holding and Import were proven to share a filesystem. Check its
+  // unprivileged available blocks before creating a private duplicate.
+  let space;
+  try { space = await statfsImpl(roots[1], { bigint: true }); }
+  catch { return held('handoff_space_unavailable'); }
+  if (typeof space?.bavail !== 'bigint' || space.bavail < 0n ||
+      typeof space.bsize !== 'bigint' || space.bsize < 1n) {
+    return held('handoff_space_unavailable');
+  }
+  const copyBytes = [...evidence.manifest.videos, ...evidence.manifest.subtitles]
+    .reduce((total, file) => total + BigInt(file.size), 0n);
+  if (space.bavail * space.bsize < copyBytes + BigInt(minFreeAfterBytes)) {
+    return held('insufficient_handoff_space');
+  }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   let holdingPath;
   try {
