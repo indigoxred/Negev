@@ -48,11 +48,31 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
 });
 
 test('enabled startup fails closed when recovery does not finish', async () => {
+  let stopped = 0;
   await assert.rejects(startAcquisitionRuntime({
     config: { acquisitionRuntime: true, acquisition,
       qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
-    service: { openAcquisitionWorkers: () => ({ start: async () => ({ state: 'held' }) }) },
+    service: { openAcquisitionWorkers: () => ({
+      start: async () => ({ state: 'held' }),
+      stop: async () => { stopped++; },
+    }) },
     sessionGate: {}, makeInspector: () => async () => {},
     realpathImpl: async (value) => value,
   }), /reconciliation/);
+  assert.equal(stopped, 1);
+});
+
+test('startup stops its worker when reconciliation throws', async () => {
+  let stopped = 0;
+  await assert.rejects(startAcquisitionRuntime({
+    config: { acquisitionRuntime: true, acquisition,
+      qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
+    service: { openAcquisitionWorkers: () => ({
+      start: async () => { throw new Error('journal unavailable'); },
+      stop: async () => { stopped++; },
+    }) },
+    sessionGate: {}, makeInspector: () => async () => {},
+    realpathImpl: async (value) => value,
+  }), /journal unavailable/);
+  assert.equal(stopped, 1);
 });

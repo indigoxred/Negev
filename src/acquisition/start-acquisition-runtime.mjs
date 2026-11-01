@@ -19,10 +19,14 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
     inspectMounts: makeInspector({ socketPath: a.mountWitnessSocket }),
     realpathImpl, shokoProviderId: a.shokoProviderId,
   });
-  const result = await runtime.start();
-  if (result?.state !== 'reconciled') {
-    await runtime.stop?.();
-    throw new Error('Acquisition journal reconciliation incomplete');
+  try {
+    const result = await runtime.start();
+    if (result?.state !== 'reconciled') {
+      throw new Error('Acquisition journal reconciliation incomplete');
+    }
+  } catch (error) {
+    try { await runtime.stop?.(); } catch { /* Preserve startup failure. */ }
+    throw error;
   }
   return runtime;
 }
