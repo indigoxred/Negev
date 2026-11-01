@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
-import { prepareWitnessSocket } from '../src/acquisition/prepare-witness-socket.mjs';
+import { prepareWitnessSocket, probeWitnessSocket } from
+  '../src/acquisition/prepare-witness-socket.mjs';
 
 const socket = (overrides = {}) => ({
   isSocket: () => true, isSymbolicLink: () => false,
@@ -50,3 +56,25 @@ test('missing witness socket needs no cleanup', async () => {
     probe: async () => { throw Error('probed missing socket'); },
     unlinkImpl: async () => { throw Error('removed missing socket'); } }), 'absent');
 });
+
+test('a killed Linux listener leaves a socket that probes stale',
+  { skip: process.platform !== 'linux' }, async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-witness-'));
+    const socketPath = path.join(dir, 'mount.sock');
+    const code = `require('node:net').createServer().listen(${JSON.stringify(socketPath)},` +
+      `()=>process.stdout.write('ready\\n'))`;
+    const child = spawn(process.execPath, ['-e', code],
+      { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      const [ready] = await once(child.stdout, 'data',
+        { signal: AbortSignal.timeout(5_000) });
+      assert.match(ready.toString(), /ready/);
+      assert.equal(await probeWitnessSocket(socketPath), 'active');
+      child.kill('SIGKILL');
+      await once(child, 'exit', { signal: AbortSignal.timeout(5_000) });
+      assert.equal(await probeWitnessSocket(socketPath), 'stale');
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
