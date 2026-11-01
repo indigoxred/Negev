@@ -5,6 +5,7 @@ import { openPlexCardIndex } from './plex-card-index.mjs';
 import { createPlexCardPageWorker, indexPlexCardPage,
   retryOnePlexCard } from './plex-card-page-worker.mjs';
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
+import { observeFileCandidateTarget } from './observe-file-candidate-target.mjs';
 import { observePublicTarget } from './observe-public-target.mjs';
 import { readPlexGuidCards } from './plex-guid-cards.mjs';
 import { probeFirstTimePublicSections } from
@@ -97,6 +98,17 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, purpose: 'availability', fetchImpl });
   return {
+    // Internal file-centric path: the caller must obtain this candidate from
+    // a fresh Shoko file read. The exact Plex card and physical part are still
+    // rechecked before returning proof.
+    observeFileCandidate({ candidate, target } = {}) {
+      const publicLibraryIds = target?.kind === 'movie'
+        ? [...publicSections.episode, ...publicSections.movie]
+        : publicSections.episode;
+      return observeFileCandidateTarget({ candidate, target,
+        publicLibraryIds, cardIndex: index, readPlex: readCard,
+        shokoMount, plexMount, plexMounts, now });
+    },
     probeFirstTimeSections({ kind } = {}) {
       return probeFirstTimePublicSections({ kind, publicSections,
         readPage: (input) => readPlexSectionKeys({

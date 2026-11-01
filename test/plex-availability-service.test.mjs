@@ -133,6 +133,25 @@ test('a direct Shoko import becomes Available only after public Plex card discov
   service.close();
 });
 
+test('one fresh file candidate verifies its public card without a second Shoko episode read', async () => {
+  const { config, calls } = await fixture();
+  const service = createPlexAvailabilityService(config);
+  try {
+    await service.tick({ libraryId: 102, kind: 'episode' });
+    const candidate = { state: 'candidate', fileId: 51, size: 5,
+      anidbFileId: null, releaseEvidence: 'shoko_user_link',
+      pairs: [{ anidbId: 42, episodeId: 1001 }],
+      identities: [{ anidbId: 42, episodeId: 1001,
+        shokoSeriesId: 99, shokoEpisodeId: 555, tmdbMovieIds: [] }],
+      sourcePaths: ['/pure/Anime/one.mkv'] };
+    assert.deepEqual(await service.observeFileCandidate({ candidate,
+      target: { anidbId: 42, episodeId: 1001, kind: 'series' } }),
+    { state: 'available', fileId: 51,
+      proof: { fileId: 51, libraryId: 102, ratingKey: 500, partId: 900 } });
+    assert.equal(calls.some((call) => call.startsWith('shoko/')), false);
+  } finally { service.close(); }
+});
+
 test('an opt-in index tick reports bounded provider and filesystem probe counts', async () => {
   const { config } = await fixture({ detailedPage: true });
   const service = createPlexAvailabilityService(config);
