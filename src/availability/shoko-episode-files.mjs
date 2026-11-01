@@ -7,18 +7,40 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
   !value.includes('\0') && !value.includes('\r') && !value.includes('\n');
+const userCoverage = (refs) => {
+  const seen = new Set();
+  const coverage = [];
+  for (const ref of refs) {
+    const id = ref?.AnidbEpisodeID;
+    const start = ref?.PercentageStart;
+    const end = ref?.PercentageEnd;
+    if (!validId(id) || seen.has(id) ||
+        !Object.hasOwn(ref, 'PercentageStart') ||
+        !Object.hasOwn(ref, 'PercentageEnd') ||
+        ((start === null) !== (end === null)) ||
+        (start !== null && (!Number.isFinite(start) ||
+          !Number.isFinite(end) || start < 0 || end > 100 ||
+          start >= end))) return null;
+    seen.add(id);
+    coverage.push({ episodeId: id, start: start ?? 0, end: end ?? 100 });
+  }
+  return coverage;
+};
 
-// A single-episode, read-only Shoko observation. It never treats a missing
-// local episode as proven absence; the caller must verify catalogue identity
-// and import activity before making that decision.
+// A single-episode, read-only Shoko observation. The availability-only mode
+// accepts a Shoko User link as local episode evidence so the separate Plex
+// card/physical-file check can prove playback. New acquisition and handoff
+// identity checks retain the registered AniDB-file default. A missing local
+// episode never proves absence without catalogue and Import checks.
 export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeId,
-  fetchImpl = fetch, timeoutMs = 10_000 }) {
+  purpose = 'registered', fetchImpl = fetch, timeoutMs = 10_000 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
       typeof apiKey !== 'string' || !apiKey ||
       !validId(anidbId) || !validId(episodeId) ||
+      !['registered', 'availability'].includes(purpose) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko episode observation');
   const url = new URL(`/api/v3/Episode/AniDB/${episodeId}/Episode`, base);
@@ -68,8 +90,14 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       incomplete = true; continue;
     }
     const episodeIds = refs.map((ref) => ref.AnidbEpisodeID);
-    const identity = evaluatePreview({ status: 200, release: file.Release },
+    let identity = evaluatePreview({ status: 200, release: file.Release },
       { ed2k, size: file.Size, animeId: anidbId, episodeIds });
+    if (identity.state !== 'accepted' && purpose === 'availability' &&
+        file.Release.ProviderName === 'User' && file.Release.ID == null) {
+      const coverage = userCoverage(refs);
+      if (coverage) identity = { state: 'accepted', fileId: null,
+        coverage, releaseEvidence: 'shoko_user_link' };
+    }
     if (identity.state !== 'accepted') { incomplete = true; continue; }
     const sourcePaths = [];
     let invalidLocation = false;
@@ -84,7 +112,9 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     if (invalidLocation || sourcePaths.length === 0) {
       incomplete = true; continue;
     }
-    files.push({ fileId: file.ID, anidbFileId: identity.fileId, ed2k,
+    files.push({ fileId: file.ID, anidbFileId: identity.fileId,
+      ...(identity.releaseEvidence ? { releaseEvidence: identity.releaseEvidence } : {}),
+      ed2k,
       anidbId, episodeIds, coverage: identity.coverage,
       size: file.Size, sourcePaths });
   }

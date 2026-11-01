@@ -14,7 +14,7 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
   { recursive: true, force: true }))));
 const digest = 'A'.repeat(32);
 
-async function fixture({ detailedPage = false } = {}) {
+async function fixture({ detailedPage = false, userRelease = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));
   cleanup.push(root);
   await mkdir(path.join(root, 'Anime'), { recursive: true });
@@ -55,7 +55,11 @@ async function fixture({ detailedPage = false } = {}) {
       return Response.json({ IDs: { ID: 555, ParentSeries: 99,
         AniDB: 1001 }, Files: [{ ID: 51,
         Size: 5, IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: digest }],
-        Release: { ID: `anidb://${digest}+5`, ProviderName: 'AniDB',
+        Release: userRelease ? { ID: null, ProviderName: 'User',
+          IsCorrupted: false,
+          CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+            PercentageStart: 0, PercentageEnd: 100 }] } :
+        { ID: `anidb://${digest}+5`, ProviderName: 'AniDB',
           ReleaseURI: 'https://anidb.net/file/800', FileSize: 5,
           IsCorrupted: false, Hashes: [{ Type: 'ED2K', Value: digest }],
           CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
@@ -174,6 +178,18 @@ test('opt-in exact GUID probe can find a direct import before the paced index re
     episodeId: 1001, kind: 'series' });
   assert.deepEqual(result, { state: 'available', fileId: 51 });
   assert.equal(calls.includes('plex/library/sections/102/all'), true);
+  service.close();
+});
+
+test('public observer accepts a physically matched Shoko User link only for availability', async () => {
+  const { config } = await fixture({ userRelease: true });
+  const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+  assert.equal((await readShokoEpisodeFiles({ baseUrl: config.shokoBaseUrl,
+    apiKey: config.shokoApiKey, ...target,
+    fetchImpl: config.fetchImpl })).state, 'unavailable');
+  const service = createPlexAvailabilityService({ ...config, guidProbe: true });
+  assert.deepEqual(await service.observeTarget(target),
+    { state: 'available', fileId: 51 });
   service.close();
 });
 

@@ -50,6 +50,28 @@ test('exact Shoko release plus a readable public Plex Part proves one episode Av
     { state: 'available', fileId: 51 });
 });
 
+test('a Shoko User-linked legacy file needs the same exact public card and physical file', async () => {
+  const input = await fixture();
+  const user = { ...shokoPayload.Files[0], Release: { ID: null,
+    ProviderName: 'User', IsCorrupted: false,
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+      PercentageStart: 0, PercentageEnd: 100 }] } };
+  const shoko = await readShokoEpisodeFiles({ baseUrl: 'http://shoko:8111/',
+    apiKey: 'synthetic', anidbId: 42, episodeId: 1001,
+    purpose: 'availability', fetchImpl: async () => Response.json({
+      ...shokoPayload, Files: [user] }) });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko }),
+    { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko,
+    plex: { ...input.plex, parts: [{ ...input.plex.parts[0],
+      itemGuid: 'tv.plex.agents.custom.shoko://episode/e999' }] } }),
+  { state: 'unknown', reason: 'card_identity_unverified' });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    shoko: { ...shoko, files: [{ ...shoko.files[0],
+      coverage: [{ episodeId: 1001, start: 0, end: 50 }] }] } }),
+  { state: 'held', reason: 'partial_episode' });
+});
+
 test('a valid playable release stays Available beside an unverified Shoko sibling', async () => {
   const input = await fixture();
   assert.deepEqual(await observeKnownCardAvailability({ ...input,

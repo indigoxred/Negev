@@ -78,7 +78,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     return { ...page, cards };
   };
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
-    apiKey: shokoApiKey, ...input, fetchImpl });
+    apiKey: shokoApiKey, ...input, purpose: 'availability', fetchImpl });
   return {
     probeFirstTimeSections({ kind } = {}) {
       return probeFirstTimePublicSections({ kind, publicSections,

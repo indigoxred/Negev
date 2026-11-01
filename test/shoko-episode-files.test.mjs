@@ -107,3 +107,43 @@ test('one unregistered sibling does not hide a registered playable file', async 
   assert.equal(result.complete, false);
   assert.deepEqual(result.files.map((file) => file.fileId), [51]);
 });
+
+test('availability can observe a full Shoko User link without claiming AniDB file registration', async () => {
+  const user = { ...episode.Files[0], Release: { ID: null,
+    ProviderName: 'User', IsCorrupted: false,
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+      PercentageStart: 0, PercentageEnd: 100 }] } };
+  const payload = { ...episode, Files: [user] };
+  const fetchImpl = async () => json(payload);
+  assert.equal((await readShokoEpisodeFiles({ ...base, fetchImpl })).state,
+    'unavailable');
+  const observed = await readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl });
+  assert.equal(observed.state, 'ok');
+  assert.equal(observed.complete, true);
+  assert.deepEqual(observed.files, [{ fileId: 51, anidbFileId: null,
+    releaseEvidence: 'shoko_user_link', ed2k: digest, anidbId: 42,
+    episodeIds: [1001], coverage: [{ episodeId: 1001,
+      start: 0, end: 100 }], size: 123,
+    sourcePaths: ['/pure/Anime/Example/01.mkv'] }]);
+});
+
+test('availability User-link mode rejects malformed or cross-anime coverage', async () => {
+  const userRelease = { ID: null, ProviderName: 'User', IsCorrupted: false,
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+      PercentageStart: 0, PercentageEnd: 100 }] };
+  for (const changed of [
+    { ...userRelease, CrossReferences: [{ ...userRelease.CrossReferences[0],
+      AnidbAnimeID: 99 }] },
+    { ...userRelease, CrossReferences: [{ ...userRelease.CrossReferences[0],
+      PercentageEnd: 0 }] },
+    { ...userRelease, CrossReferences: [...userRelease.CrossReferences,
+      userRelease.CrossReferences[0]] },
+    { ...userRelease, IsCorrupted: true },
+  ]) {
+    const result = await readShokoEpisodeFiles({ ...base,
+      purpose: 'availability', fetchImpl: async () => json({ ...episode,
+        Files: [{ ...episode.Files[0], Release: changed }] }) });
+    assert.equal(result.state, 'unavailable');
+  }
+});
