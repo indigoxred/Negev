@@ -1,4 +1,5 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import { parsePlexCardParts } from './plex-item-parts.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const integer = (value, minimum = 0) => {
@@ -10,7 +11,8 @@ const integer = (value, minimum = 0) => {
 // Offset paging can shift while Plex changes; a page never proves the rest of
 // the library absent. Durable discovery/reconciliation belongs to the caller.
 export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
-  offset = 0, pageSize = 24, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  offset = 0, pageSize = 24, includeCards = false,
+  fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Plex URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -18,6 +20,7 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
       typeof token !== 'string' || !token || /[\r\n]/.test(token) ||
       integer(libraryId, 1) === null || !['episode', 'movie'].includes(kind) ||
       integer(offset) === null || integer(pageSize, 1) === null || pageSize > 50 ||
+      typeof includeCards !== 'boolean' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Plex section observation');
   let body;
@@ -54,6 +57,10 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
         [...url.searchParams.keys()].length !== 1 ||
         url.searchParams.get('type') !== type) return unavailable();
     url.searchParams.set('sort', 'addedAt:desc');
+    if (includeCards) {
+      url.searchParams.set('includeMedia', '1');
+      url.searchParams.set('includeGuids', '1');
+    }
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { 'X-Plex-Token': token, Accept: 'application/json',
         'X-Plex-Client-Identifier': 'negev-availability-observer',
@@ -98,6 +105,13 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
     seen.add(key);
     keys.push(key);
   }
+  const cards = includeCards ? metadata.map((item) => {
+    const parsed = parsePlexCardParts({ item,
+      containerLibraryId: container.librarySectionID,
+      ratingKey: item.ratingKey, expectedType: kind, libraryId });
+    return parsed.state === 'ok' ? parsed : null;
+  }) : null;
   return { state: 'page', libraryId: integer(libraryId), kind,
-    offset: integer(offset), totalSize, keys, complete: false };
+    offset: integer(offset), totalSize, keys, complete: false,
+    ...(includeCards ? { cards } : {}) };
 }

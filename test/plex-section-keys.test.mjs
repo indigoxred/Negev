@@ -66,6 +66,34 @@ test('reads one bounded, section-scoped Plex key page without exposing file path
     offset: 0, totalSize: 150, keys: [512, 513], complete: false });
 });
 
+test('optionally returns validated media Parts already present in a scoped page', async () => {
+  const detailed = { MediaContainer: { ...page.MediaContainer,
+    Metadata: [
+      { ...page.MediaContainer.Metadata[0],
+        guid: 'tv.plex.agents.custom.shoko://episode/e555',
+        grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+        Media: [{ Part: [{ id: 901, file: '/source-pure/one.mkv', size: 5 }] }] },
+      { ...page.MediaContainer.Metadata[1],
+        Media: [{ Part: [{ id: 902, file: '../invalid.mkv', size: 5 }] }] },
+    ] } };
+  let pageReads = 0;
+  const result = await readPlexSectionKeys({ ...base, includeCards: true,
+    fetchImpl: withSection(async (url) => {
+      pageReads++;
+      assert.equal(url.searchParams.get('includeGuids'), '1');
+      return Response.json(detailed);
+    }) });
+  assert.equal(pageReads, 1);
+  assert.deepEqual(result.keys, [512, 513]);
+  assert.deepEqual(result.cards[0], { state: 'ok', complete: true, parts: [{
+    partId: 901, plexPath: '/source-pure/one.mkv', size: 5,
+    libraryId: 102, cardType: 'episode',
+    itemGuid: 'tv.plex.agents.custom.shoko://episode/e555',
+    showGuid: 'tv.plex.agents.custom.shoko://show/99', externalGuids: [],
+  }] });
+  assert.equal(result.cards[1], null);
+});
+
 test('a movie page uses movie type and remains non-exhaustive even when empty', async () => {
   const result = await readPlexSectionKeys({ ...base, libraryId: 9, kind: 'movie',
     fetchImpl: withSection(async (url) => {

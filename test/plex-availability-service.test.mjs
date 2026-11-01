@@ -14,7 +14,7 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
   { recursive: true, force: true }))));
 const digest = 'A'.repeat(32);
 
-async function fixture() {
+async function fixture({ detailedPage = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));
   cleanup.push(root);
   await mkdir(path.join(root, 'Anime'), { recursive: true });
@@ -35,7 +35,11 @@ async function fixture() {
       }
       return Response.json({ MediaContainer: { librarySectionID: 102, offset: 0,
         totalSize: 1, size: 1, Metadata: [{ ratingKey: '500', type: 'episode',
-          librarySectionID: 102 }] } });
+          librarySectionID: 102,
+          ...(detailedPage ? { guid: 'tv.plex.agents.custom.shoko://episode/e555',
+            grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+            Media: [{ Part: [{ id: 900, size: 5,
+              file: '/source-pure/Anime/one.mkv' }] }] } : {}) }] } });
     }
     if (url.hostname === 'plex' && url.pathname === '/library/metadata/500') {
       return Response.json({ MediaContainer: { size: 1, Metadata: [{
@@ -101,6 +105,19 @@ test('paced Plex card scan stores a scoped physical identity hint', async () => 
     FROM plex_part_candidates WHERE library_id=102 AND rating_key=500`).get();
   assert.match(row.candidateKey, /^\d+:\d+:5$/);
   db.close();
+});
+
+test('detailed page indexes without card GET but availability rechecks the exact card', async () => {
+  const { config, calls } = await fixture({ detailedPage: true });
+  const service = createPlexAvailabilityService(config);
+  assert.deepEqual(await service.tick({ libraryId: 102, kind: 'episode' }),
+    { state: 'page_indexed', processed: 1, nextOffset: 0 });
+  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 0);
+  assert.deepEqual(await service.observeTarget({ anidbId: 42,
+    episodeId: 1001, kind: 'series' }),
+  { state: 'available', fileId: 51 });
+  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 1);
+  service.close();
 });
 
 test('exact file key selects a playable episode among twelve same-size cards', async () => {

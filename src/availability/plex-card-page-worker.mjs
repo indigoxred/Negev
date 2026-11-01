@@ -21,6 +21,8 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
   if (page?.state !== 'page' || page.libraryId !== libraryId ||
       page.kind !== kind || page.offset !== offset ||
       !Array.isArray(page.keys) || page.keys.length > pageSize ||
+      (page.cards !== undefined && (!Array.isArray(page.cards) ||
+        page.cards.length !== page.keys.length)) ||
       page.keys.some((key) => !validId(key)) ||
       new Set(page.keys).size !== page.keys.length ||
       (page.totalSize !== null &&
@@ -34,10 +36,16 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
     try { index.deferCard?.({ libraryId, ratingKey, kind, nowMs: observedMs }); }
     catch { /* The page remains positive-only and the next sweep can retry. */ }
   };
-  for (const ratingKey of page.keys) {
+  for (const [pageIndex, ratingKey] of page.keys.entries()) {
     let card;
-    try { card = await readCard({ libraryId, ratingKey,
-      expectedType: kind }); }
+    try {
+      const pageCard = page.cards?.[pageIndex];
+      card = pageCard?.state === 'ok' && pageCard.complete === true &&
+        Array.isArray(pageCard.parts) && pageCard.parts.length > 0 &&
+        pageCard.parts.every((part) => part.libraryId === libraryId &&
+          part.cardType === kind) ? pageCard : await readCard({ libraryId,
+          ratingKey, expectedType: kind });
+    }
     catch { skipped++; defer(ratingKey); continue; }
     if (card?.state !== 'ok' || card.complete !== true ||
         !Array.isArray(card.parts) || card.parts.length < 1) {

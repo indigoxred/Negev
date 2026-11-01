@@ -210,10 +210,11 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Plex index needs observer configuration');
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
-      (env.NEGEV_PLEX_INDEX !== '1' ||
+      ((env.NEGEV_PLEX_INDEX !== '1' &&
+        env.NEGEV_PLEX_GUID_PROBE !== '1') ||
        env.NEGEV_SHOKO_INVENTORY !== '1' &&
        env.NEGEV_SHOKO_RECENT !== '1')) {
-    throw new TypeError('Direct availability needs a Shoko observer and Plex index');
+    throw new TypeError('Direct availability needs a Shoko observer and Plex discovery');
   }
   const rawDirectDelay = env.NEGEV_DIRECT_ACTIVE_DELAY_MS;
   if (rawDirectDelay !== undefined &&

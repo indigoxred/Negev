@@ -33,6 +33,23 @@ test('a final short page wraps but never claims a complete Plex catalogue', asyn
   assert.deepEqual(result, { state: 'page_indexed', processed: 1, nextOffset: 0 });
 });
 
+test('page media avoids individual Plex reads while invalid rows fall back safely', async () => {
+  const calls = [];
+  const recorded = [];
+  const result = await indexPlexCardPage({ libraryId: 102, kind: 'episode',
+    offset: 0, pageSize: 2, now: () => 50,
+    readPage: async () => ({ state: 'page', libraryId: 102, kind: 'episode',
+      offset: 0, totalSize: 9, keys: [500, 501],
+      cards: [{ ...card(500), parts: card(500).parts.map((part) =>
+        ({ ...part, cardType: 'episode' })) }, null], complete: false }),
+    readCard: async ({ ratingKey }) => { calls.push(ratingKey); return card(ratingKey); },
+    index: { recordCard(input) { recorded.push(input); return { state: 'recorded_card' }; } },
+  });
+  assert.deepEqual(result, { state: 'page_indexed', processed: 2, nextOffset: 2 });
+  assert.deepEqual(calls, [501]);
+  assert.deepEqual(recorded.map((row) => row.ratingKey), [500, 501]);
+});
+
 test('card outage skips one card while later pages remain reachable', async () => {
   const recorded = [];
   const deferred = [];

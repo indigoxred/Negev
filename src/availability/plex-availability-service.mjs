@@ -38,12 +38,9 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   const index = openPlexCardIndex(dbPath);
   const allowed = ({ libraryId, kind }) =>
     ['episode', 'movie'].includes(kind) && publicSections[kind].includes(libraryId);
-  const readPage = (input) => readPlexSectionKeys({ baseUrl: plexBaseUrl,
-    token: plexToken, ...input, fetchImpl });
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
     token: plexToken, ...input, fetchImpl });
-  const readCardForIndex = async (input) => {
-    const card = await readCard(input);
+  const addCandidateKeys = async (card) => {
     if (card?.state !== 'ok' || !Array.isArray(card.parts) ||
         card.parts.length > 40) return card;
     const mounts = (plexMounts ?? (plexMount ? [plexMount] : []))
@@ -65,6 +62,18 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         ? { ...part, candidateKey: candidate.candidateKey } : part);
     }
     return { ...card, parts };
+  };
+  const readCardForIndex = async (input) =>
+    addCandidateKeys(await readCard(input));
+  const readPage = async (input) => {
+    const page = await readPlexSectionKeys({ baseUrl: plexBaseUrl,
+      token: plexToken, ...input, includeCards: true, fetchImpl });
+    if (page.state !== 'page') return page;
+    const cards = [];
+    for (const card of page.cards) {
+      cards.push(card === null ? null : await addCandidateKeys(card));
+    }
+    return { ...page, cards };
   };
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, fetchImpl });
