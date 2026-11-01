@@ -64,6 +64,67 @@ test('keyed candidate is not Available when fresh physical proof disagrees', asy
   }
 });
 
+test('a stale keyed card does not hide a second exact playable copy indexed by size', async () => {
+  const checked = [];
+  const goodPart = (await base.readPlex()).parts[0];
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    readPlex: async ({ ratingKey }) => {
+      checked.push(ratingKey);
+      return { state: 'ok', complete: true, parts: [ratingKey === 500
+        ? { ...goodPart, itemGuid: 'wrong-show' } : goodPart] };
+    },
+    cardIndex: {
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      lookupCards: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 },
+        { libraryId: 102, ratingKey: 501 }] }),
+    },
+  });
+  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.deepEqual(checked, [500, 501]);
+});
+
+test('size fallback never exceeds the ten-card fresh-read budget', async () => {
+  const keyedCards = Array.from({ length: 9 }, (_, index) => ({
+    libraryId: 102, ratingKey: 500 + index }));
+  let reads = 0;
+  const wrongPart = { ...(await base.readPlex()).parts[0], itemGuid: 'wrong-show' };
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    readPlex: async () => { reads++; return { state: 'ok', complete: true,
+      parts: [wrongPart] }; },
+    cardIndex: {
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: keyedCards }),
+      lookupCards: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 509 },
+        { libraryId: 102, ratingKey: 510 }] }),
+    },
+  });
+  assert.equal(result.state, 'unknown');
+  assert.equal(reads, 9);
+});
+
+test('a keyed Plex outage does not trigger a second wave of card reads', async () => {
+  let fallbackLookups = 0;
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    readPlex: async () => ({ state: 'unavailable' }),
+    cardIndex: {
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      lookupCards: () => { fallbackLookups++; return { state: 'candidates',
+        cards: [{ libraryId: 102, ratingKey: 501 }] }; },
+    },
+  });
+  assert.deepEqual(result, { state: 'unknown', reason: 'observer_incomplete' });
+  assert.equal(fallbackLookups, 0);
+});
+
 test('stale key, missing mount and overloaded fallback cannot imply availability', async () => {
   const keyed = { lookupCards: () => ({ state: 'held',
     reason: 'candidate_budget_exceeded' }),
