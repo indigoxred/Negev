@@ -112,6 +112,39 @@ function prowlarrConfig(env, dataDir) {
   return { baseUrl: env.NEGEV_PROWLARR_URL, keyPath, indexerIds };
 }
 
+function qbitSidecarConfig(env, dataDir, shokoImportFolderId) {
+  const names = ['NEGEV_QBITTORRENT_URL', 'NEGEV_QBITTORRENT_USERNAME',
+    'NEGEV_QBITTORRENT_PASSWORD_FILE', 'NEGEV_QBITTORRENT_IMPORT_SAVE_PATH'];
+  if (env.NEGEV_QBITTORRENT_SIDECAR_READ != null &&
+      !['0', '1'].includes(env.NEGEV_QBITTORRENT_SIDECAR_READ)) {
+    throw new TypeError('Invalid qBittorrent sidecar flag');
+  }
+  if (env.NEGEV_QBITTORRENT_SIDECAR_READ !== '1') {
+    if (names.some((name) => Object.hasOwn(env, name))) {
+      throw new TypeError('qBittorrent sidecar observation is disabled');
+    }
+    return null;
+  }
+  if (shokoImportFolderId === null) {
+    throw new TypeError('qBittorrent sidecar observation needs a scoped Import folder');
+  }
+  baseUrl(env.NEGEV_QBITTORRENT_URL, 'qBittorrent URL');
+  const username = env.NEGEV_QBITTORRENT_USERNAME;
+  const passwordPath = path.join(dataDir, 'secrets', 'qbittorrent.password');
+  const importSavePath = env.NEGEV_QBITTORRENT_IMPORT_SAVE_PATH;
+  if (typeof username !== 'string' || !username || username.length > 256 ||
+      /[\x00-\x1f\x7f]/.test(username) ||
+      env.NEGEV_QBITTORRENT_PASSWORD_FILE !== passwordPath ||
+      typeof importSavePath !== 'string' || importSavePath === '/' ||
+      !path.posix.isAbsolute(importSavePath) ||
+      path.posix.normalize(importSavePath) !== importSavePath ||
+      /[\0\r\n\\]/.test(importSavePath)) {
+    throw new TypeError('Invalid qBittorrent sidecar configuration');
+  }
+  return { baseUrl: env.NEGEV_QBITTORRENT_URL, username, passwordPath,
+    importSavePath };
+}
+
 export function dateInZone(timeZone, instant = new Date()) {
   if (typeof timeZone !== 'string' || !timeZone ||
       !(instant instanceof Date) || !Number.isFinite(instant.getTime())) {
@@ -153,6 +186,15 @@ export function parseUserServerConfig(env) {
        path.normalize(shokoImportRoot) !== shokoImportRoot ||
        /[\0\r\n]/.test(shokoImportRoot))) {
     throw new TypeError('Invalid Shoko Import root');
+  }
+  const rawImportFolderId = env.NEGEV_SHOKO_IMPORT_FOLDER_ID;
+  const shokoImportFolderId = rawImportFolderId === undefined ? null :
+    Number(rawImportFolderId);
+  if (rawImportFolderId !== undefined &&
+      (shokoImportRoot === null || typeof rawImportFolderId !== 'string' ||
+       !/^[1-9]\d*$/.test(rawImportFolderId) ||
+       !validId(shokoImportFolderId))) {
+    throw new TypeError('Invalid Shoko Import folder ID');
   }
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
       env.NEGEV_SHOKO_RECENT,
@@ -207,7 +249,7 @@ export function parseUserServerConfig(env) {
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
     acquisitionRuntime: false,
     sessionKeyPath: path.join(dataDir, 'session.key'),
-    shokoBaseUrl, shokoApiKeyPath, shokoImportRoot,
+    shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
@@ -217,6 +259,7 @@ export function parseUserServerConfig(env) {
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
     airingWatch, timeZone, plex: plexConfig(env, dataDir),
     prowlarr: prowlarrConfig(env, dataDir),
+    qbitSidecar: qbitSidecarConfig(env, dataDir, shokoImportFolderId),
     plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,
     secureCookies: exposed, host, port };
 }

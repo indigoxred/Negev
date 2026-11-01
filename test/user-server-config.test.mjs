@@ -122,6 +122,36 @@ test('optional read-only Shoko Import root must be a normalized absolute path', 
   }
 });
 
+test('recognized Import observation is opt-in and scopes its qBittorrent secret', () => {
+  const root = path.resolve('sample-import-root');
+  const scoped = { ...valid, NEGEV_SHOKO_IMPORT_ROOT: root,
+    NEGEV_SHOKO_IMPORT_FOLDER_ID: '1' };
+  assert.equal(parseUserServerConfig(valid).shokoImportFolderId, null);
+  assert.equal(parseUserServerConfig(scoped).shokoImportFolderId, 1);
+  const withQbit = { ...scoped, NEGEV_QBITTORRENT_SIDECAR_READ: '1',
+    NEGEV_QBITTORRENT_URL: 'http://qbittorrent.internal:8080',
+    NEGEV_QBITTORRENT_USERNAME: 'observer',
+    NEGEV_QBITTORRENT_PASSWORD_FILE:
+      path.join(dataDir, 'secrets', 'qbittorrent.password'),
+    NEGEV_QBITTORRENT_IMPORT_SAVE_PATH: '/Shoko' };
+  assert.deepEqual(parseUserServerConfig(withQbit).qbitSidecar, {
+    baseUrl: withQbit.NEGEV_QBITTORRENT_URL,
+    username: 'observer',
+    passwordPath: withQbit.NEGEV_QBITTORRENT_PASSWORD_FILE,
+    importSavePath: '/Shoko' });
+  for (const change of [
+    { NEGEV_QBITTORRENT_SIDECAR_READ: '0' },
+    { NEGEV_QBITTORRENT_USERNAME: '' },
+    { NEGEV_QBITTORRENT_PASSWORD_FILE: path.resolve('other.password') },
+    { NEGEV_QBITTORRENT_IMPORT_SAVE_PATH: '/Shoko/../Other' },
+    { NEGEV_QBITTORRENT_URL: 'http://user:pass@qbittorrent.internal:8080' },
+    { NEGEV_SHOKO_IMPORT_FOLDER_ID: '0' },
+    { NEGEV_SHOKO_IMPORT_ROOT: undefined },
+  ]) assert.throws(() => parseUserServerConfig({ ...withQbit, ...change }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_IMPORT_FOLDER_ID: '1' }), TypeError);
+});
+
 test('Airing date uses the configured local calendar day', () => {
   const moment = new Date('2026-10-31T13:30:00Z');
   assert.equal(dateInZone('Australia/Sydney', moment), '2026-11-01');

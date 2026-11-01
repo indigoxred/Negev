@@ -2,7 +2,10 @@ import { openUserStore } from '../auth/user-store.mjs';
 import { createUserService } from './user-service.mjs';
 import { dateInZone, parseUserServerConfig } from './user-server-config.mjs';
 import { readPrivatePlexToken, readPrivateProwlarrKey,
+  readPrivateQbittorrentPassword,
   readPrivateShokoKey } from './private-shoko-key.mjs';
+import { createQbittorrentSidecarObserver } from
+  '../availability/qbittorrent-sidecar-observer.mjs';
 import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
 import { createShokoFeedSupervisor } from
   '../availability/shoko-feed-supervisor.mjs';
@@ -37,8 +40,18 @@ try {
   const prowlarr = config.prowlarr ? { ...config.prowlarr,
     apiKey: await readPrivateProwlarrKey({ dataDir: config.dataDir,
       keyPath: config.prowlarr.keyPath }) } : null;
+  const qbitSidecarObserver = config.qbitSidecar ? {
+    importSavePath: config.qbitSidecar.importSavePath,
+    ...createQbittorrentSidecarObserver({
+      baseUrl: config.qbitSidecar.baseUrl,
+      username: config.qbitSidecar.username,
+      password: await readPrivateQbittorrentPassword({
+        dataDir: config.dataDir,
+        keyPath: config.qbitSidecar.passwordPath }),
+    }),
+  } : null;
   service = await createUserService({ ...config, plex, prowlarr,
-    shokoApiKey, sessionKey,
+    shokoApiKey, sessionKey, qbitSidecarObserver,
     onShokoReconciliationNeeded: () => {
       shokoInventory?.requestSoon();
       shokoRecent?.requestSoon();

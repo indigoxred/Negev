@@ -47,7 +47,8 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
-  shokoImportRoot = null,
+  shokoImportRoot = null, shokoImportFolderId = null,
+  qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   titleCheck = false,
   shokoRecent = false, anidbTitleDump = false,
@@ -66,6 +67,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
          path.parse(shokoImportRoot).root === shokoImportRoot ||
          path.normalize(shokoImportRoot) !== shokoImportRoot ||
          /[\0\r\n]/.test(shokoImportRoot))) ||
+      (shokoImportFolderId !== null &&
+        (!Number.isSafeInteger(shokoImportFolderId) ||
+         shokoImportFolderId < 1 || shokoImportRoot === null)) ||
+      (qbitSidecarObserver !== null &&
+        (shokoImportFolderId === null ||
+         typeof qbitSidecarObserver.readTorrent !== 'function' ||
+         typeof qbitSidecarObserver.importSavePath !== 'string' ||
+         !qbitSidecarObserver.importSavePath.startsWith('/'))) ||
       typeof shokoRecent !== 'boolean' || typeof anidbTitleDump !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
@@ -268,7 +277,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           readImportActivity: () => metadata.run(() =>
             readShokoImportActivity({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, fetchImpl,
-              ...(shokoImportRoot === null ? {} : { importRoot: shokoImportRoot }) })),
+              ...(shokoImportRoot === null ? {} : { importRoot: shokoImportRoot }),
+              ...(shokoImportFolderId === null ? {} :
+                { managedFolderId: shokoImportFolderId }),
+              ...(qbitSidecarObserver === null ? {} : {
+                readSidecarTorrent: qbitSidecarObserver.readTorrent,
+                qbitImportSavePath: qbitSidecarObserver.importSavePath }) })),
           readShokoEpisode: (target) => metadata.run(() =>
             readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, ...target, fetchImpl })),
