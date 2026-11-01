@@ -16,6 +16,20 @@ test('recognized videos and passive NFO files form a known Import baseline', () 
   { state: 'recognized_baseline', matchedVideos: 1, passiveFiles: 1 });
 });
 
+test('installed Shoko leading slash is normalized only for folder-relative locations', () => {
+  const withLeadingSlash = { ...file, Locations: [{ ...file.Locations[0],
+    RelativePath: '/show/01.mkv' }] };
+  assert.deepEqual(classifyShokoImportBaseline({ diskFiles,
+    shokoPage: { Total: 1, List: [withLeadingSlash] }, managedFolderId: 1 }),
+  { state: 'recognized_baseline', matchedVideos: 1, passiveFiles: 1 });
+  for (const relativePath of ['//show/01.mkv', '/../show/01.mkv', '/show/../01.mkv']) {
+    assert.equal(classifyShokoImportBaseline({ diskFiles,
+      shokoPage: { Total: 1, List: [{ ...file, Locations: [{
+        ...file.Locations[0], RelativePath: relativePath }] }] }, managedFolderId: 1 }).state,
+    'held');
+  }
+});
+
 test('a new video, incomplete sidecar, or unlinked Shoko video holds the baseline', () => {
   for (const [files, page] of [
     [[...diskFiles, { relativePath: 'new/02.mkv', size: 2_000 }],

@@ -7,6 +7,8 @@ const validPath = (value) => typeof value === 'string' && value.length > 0 &&
   value.length <= 4_096 && !value.includes('\\') &&
   !/[\0\r\n]/.test(value) && !value.startsWith('/') &&
   value.split('/').every((part) => part && part !== '.' && part !== '..');
+const folderRelativePath = (value) => typeof value === 'string' &&
+  value.startsWith('/') && !value.startsWith('//') ? value.slice(1) : value;
 const sidecarHash = (relativePath) => {
   const match = /^\.([0-9a-f]{40}|[0-9a-f]{64})\.parts$/i.exec(relativePath);
   return match?.[1].toLowerCase() ?? null;
@@ -87,7 +89,7 @@ export function classifyShokoImportBaseline({ diskFiles, shokoPage,
       location?.ManagedFolderID === managedFolderId);
     if (!locations.length) return held('missing_shoko_location');
     for (const location of locations) {
-      const relativePath = location.RelativePath;
+      const relativePath = folderRelativePath(location.RelativePath);
       if (!validPath(relativePath) || location.IsAccessible !== true ||
           matched.has(relativePath) || disk.get(relativePath) !== file.Size) {
         return held('shoko_location_mismatch');
