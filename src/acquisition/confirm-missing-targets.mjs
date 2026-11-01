@@ -26,7 +26,7 @@ export async function confirmMissingTargets({ request, episodeIds,
   }
   let snapshot;
   try { snapshot = await readEvidence({ anidbId: request.anidbId,
-    episodeIds: [...episodeIds] }); }
+    kind: request.kind, episodeIds: [...episodeIds] }); }
   catch { return held('availability_unavailable'); }
   const checkedAtMs = now();
   if (!Number.isSafeInteger(checkedAtMs) || checkedAtMs < 0) {

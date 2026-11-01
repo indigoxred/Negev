@@ -170,15 +170,20 @@ test('first-time evidence for a different episode or an unverified public sectio
 
 test('an AniDB movie target uses the same first-time gate', async () =>
   withLedgers(async ({ request, acquisitions }) => {
+    let observedKind;
     const result = await reserveMissingTargets({ request, candidate,
-      episodeIds: [1001], readEvidence: async () => evidence({
-        episodeIds: [1001], shoko: { state: 'unimported_targets',
-          anidbId: 42, episodeIds: [1001] },
-        plex: { state: 'ok', complete: true, sourceVerified: true,
-          libraryIds: [102, 123], parts: [] },
-      }), publicLibraryIds: [102, 123], ledger: acquisitions,
+      episodeIds: [1001], readEvidence: async (scope) => {
+        observedKind = scope.kind;
+        return evidence({
+          episodeIds: [1001], shoko: { state: 'unimported_targets',
+            anidbId: 42, episodeIds: [1001] },
+          plex: { state: 'ok', complete: true, sourceVerified: true,
+            libraryIds: [102, 123], parts: [] },
+        });
+      }, publicLibraryIds: [102, 123], ledger: acquisitions,
       now: () => 101 });
     assert.equal(result.state, 'reserved');
+    assert.equal(observedKind, 'movie');
   }, 'movie'));
 
 test('a complete-looking first-time Plex snapshot without source verification cannot reserve', async () =>
