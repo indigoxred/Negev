@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readShokoImportActivity } from '../src/availability/shoko-import-activity.mjs';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
 const input = { baseUrl: 'http://shoko.local/', apiKey: 'private-test-key' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
@@ -131,6 +132,39 @@ test('folder-scoped activity identifies an unrecognized Import video without cla
     assert.deepEqual(result, { state: 'busy',
       reason: 'unrecognized_import_video' });
     assert.deepEqual(calls, ['/api/v3/ManagedFolder/1/File']);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
+test('an exact owned pending file does not block an unrelated target', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  const evidence = evaluateHandoffEvidence({ anidbId: 42,
+    torrentHash: 'b'.repeat(40), files: [{ name: '01.mkv', size: 5,
+      ed2k: 'A'.repeat(32), anidbFileId: 801, episodeIds: [1001] }],
+    subtitles: [] });
+  const publishName = `negev-7-${evidence.digest.slice(0, 16)}`;
+  const handoff = { status: 'published_observed', publishName,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest };
+  try {
+    await mkdir(path.join(importRoot, publishName));
+    await writeFile(path.join(importRoot, publishName, '01.mkv'), 'video');
+    const read = async (target) => readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1, target,
+      getHandoff: (id) => id === 7 ? handoff : null,
+      fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
+        ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
+        : json({ Total: 1, List: [{ ID: 51, Size: 5, SeriesIDs: [],
+          Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+          Locations: [{ ManagedFolderID: 1,
+            RelativePath: `${publishName}/01.mkv`, IsAccessible: true }] }] }),
+    });
+    assert.deepEqual(await read({ anidbId: 43, episodeIds: [2001] }),
+      { state: 'quiet_observed' });
+    assert.deepEqual(await read({ anidbId: 42, episodeIds: [1001] }),
+      { state: 'busy', reason: 'target_pending_import' });
+    await writeFile(path.join(importRoot, 'manual.mkv'), 'unknown');
+    assert.deepEqual(await read({ anidbId: 43, episodeIds: [2001] }),
+      { state: 'busy', reason: 'unrecognized_import_video' });
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 

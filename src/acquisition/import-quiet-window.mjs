@@ -43,12 +43,14 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
     const beforeObservedAtMs = now();
     const beforeFeed = await readFeedState();
     if (!healthyFeed(beforeFeed)) return held();
-    const beforeActivity = await readActivity();
+    const beforeActivity = await readActivity({ anidbId,
+      episodeIds: [...episodeIds] });
     if (beforeActivity?.state !== 'quiet_observed') return held();
     if (requireFingerprint &&
         !/^[0-9a-f]{64}$/.test(beforeActivity.fingerprint)) return held();
     await wait(minQuietMs);
-    const afterActivity = await readActivity();
+    const afterActivity = await readActivity({ anidbId,
+      episodeIds: [...episodeIds] });
     const afterFeed = await readFeedState();
     const afterObservedAtMs = now();
     if (afterActivity?.state !== 'quiet_observed' ||

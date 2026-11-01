@@ -43,6 +43,19 @@ test('reports only an observed quiet window after two empty roots, idle queues a
     afterObservedAtMs: 1_120_000, feedGeneration: 7 });
 });
 
+test('both Import observations receive the exact requested target', async () => {
+  const scopes = [];
+  const result = await observeImportQuietWindow({ ...observers(),
+    readActivity: async (scope) => { scopes.push(scope);
+      return { state: 'quiet_observed' }; },
+  });
+  assert.equal(result.state, 'quiet_window_observed');
+  assert.deepEqual(scopes, [
+    { anidbId: 42, episodeIds: [1001] },
+    { anidbId: 42, episodeIds: [1001] },
+  ]);
+});
+
 test('a changed feed, unresolved file, queue activity or short interval cannot report quiet', async () => {
   for (const input of [
     { after: { state: 'connected', generation: 8, pendingPaths: 0,

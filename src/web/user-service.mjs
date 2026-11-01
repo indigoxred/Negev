@@ -214,10 +214,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const readImportActivity = shokoImportRoot !== null &&
-      shokoImportFolderId !== null ? (withFingerprint = false) => metadata.run(() =>
+      shokoImportFolderId !== null ? (withFingerprint = false, target = null) => metadata.run(() =>
         readShokoImportActivity({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
           managedFolderId: shokoImportFolderId, withFingerprint,
+          ...(target === null ? {} : { target,
+            getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
           ...(qbitSidecarObserver === null ? {} : {
             readSidecarTorrent: qbitSidecarObserver.readTorrent,
             qbitImportSavePath: qbitSidecarObserver.importSavePath }) })) : null;
@@ -453,7 +455,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           probePublic: (target) => metadata.run(() =>
             plexObserver.probeFirstTimeSections(target)),
           observeImport: (target) => observeImportQuietWindow({ ...target,
-            readActivity: () => readImportActivity(true),
+            readActivity: (scope) => readImportActivity(true, scope),
             readFeedState: readImportFeed,
             wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
             now, requireFingerprint: true,

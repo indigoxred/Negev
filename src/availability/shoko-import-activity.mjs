@@ -2,6 +2,8 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 import { readImportRootState } from './import-root-state.mjs';
 import { readImportRootInventory } from './import-root-inventory.mjs';
 import { classifyShokoImportBaseline } from './shoko-import-baseline.mjs';
+import { partitionOwnedPendingImports } from
+  './partition-owned-pending-imports.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -12,6 +14,7 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 // Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
+  target, getHandoff,
   withFingerprint = false, now = Date.now, fetchImpl = fetch,
   timeoutMs = 10_000 } = {}) {
   let base;
@@ -30,6 +33,13 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       typeof withFingerprint !== 'boolean' ||
       (withFingerprint && (importRoot === undefined ||
         managedFolderId === undefined)) ||
+      ((target !== undefined || getHandoff !== undefined) &&
+        (managedFolderId === undefined ||
+         typeof getHandoff !== 'function' ||
+         !Number.isSafeInteger(target?.anidbId) || target.anidbId < 1 ||
+         !Array.isArray(target.episodeIds) ||
+         target.episodeIds.length < 1 || target.episodeIds.length > 50 ||
+         target.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1))) ||
       typeof now !== 'function' ||
       typeof fetchImpl !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
@@ -62,8 +72,14 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       url.searchParams.set('include', 'XRefs');
       const page = await read(url, 2_000_000);
       if (!page) return unavailable();
-      const baseline = classifyShokoImportBaseline({ diskFiles: inventory.files,
-        shokoPage: page, managedFolderId, sidecarTorrents,
+      const attributed = target === undefined ? null :
+        partitionOwnedPendingImports({ diskFiles: inventory.files,
+          shokoPage: page, managedFolderId, getHandoff, target });
+      if (attributed?.state === 'held') return { state: 'busy',
+        reason: attributed.reason };
+      const baseline = classifyShokoImportBaseline({
+        diskFiles: attributed?.diskFiles ?? inventory.files,
+        shokoPage: attributed?.shokoPage ?? page, managedFolderId, sidecarTorrents,
         qbitImportSavePath, nowMs: now() });
       return baseline.state === 'recognized_baseline' ? inventory :
         { state: 'busy', reason: baseline.reason };
