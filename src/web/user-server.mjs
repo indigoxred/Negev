@@ -23,6 +23,7 @@ import { createDirectAvailabilityScheduler } from
   '../availability/direct-availability-scheduler.mjs';
 import { createAvailabilityCycle } from '../availability/availability-cycle.mjs';
 import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
+import { startAcquisitionRuntime } from '../acquisition/start-acquisition-runtime.mjs';
 
 let service;
 let shokoFeedSupervisor;
@@ -66,6 +67,7 @@ try {
       shokoRecent?.requestSoon();
     },
     today: () => dateInZone(config.timeZone) });
+  await startAcquisitionRuntime({ config, service, sessionGate: qbitSessionGate });
   await service.app.listen({ host: config.host, port: config.port });
   const reportShokoFeedStatus = createShokoFeedStatusReporter();
   const flagShokoGap = (reason) => {

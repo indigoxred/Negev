@@ -23,6 +23,14 @@ const mount = (value) => value && typeof value === 'object' &&
   !/[\0\r\n]/.test(value.localRoot);
 const within = (root, candidate) => candidate === root ||
   candidate.startsWith(`${root}/`);
+const validRuntimePath = (value) => typeof value === 'string' &&
+  path.isAbsolute(value) && path.parse(value).root !== value &&
+  path.normalize(value) === value && !/[\0\r\n]/.test(value);
+const runtimePathsOverlap = (a, b) => {
+  const relative = path.relative(a, b);
+  return relative === '' || (relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+};
 const validSourceText = (value) => typeof value === 'string' &&
   value.length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
 const validSourceRoot = (value) => typeof value === 'string' &&
@@ -201,9 +209,7 @@ export function parseUserServerConfig(env) {
       !['0', '1'].includes(env.NEGEV_ACQUISITION_RUNTIME)) {
     throw new TypeError('Invalid acquisition runtime flag');
   }
-  if (env.NEGEV_ACQUISITION_RUNTIME === '1') {
-    throw new TypeError('Acquisition runtime is unavailable until installed safety gates pass');
-  }
+  const acquisitionRuntime = env.NEGEV_ACQUISITION_RUNTIME === '1';
   const dataDir = env.NEGEV_DATA_DIR;
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir) ||
       path.normalize(dataDir) !== dataDir || dataDir.includes('\0')) {
@@ -288,8 +294,41 @@ export function parseUserServerConfig(env) {
   }
   const port = Number(rawPort);
   if (port > 65_535) throw new TypeError('Invalid user server port');
+  const plex = plexConfig(env, dataDir);
+  const prowlarr = prowlarrConfig(env, dataDir);
+  const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
+  const acquisitionNames = ['NEGEV_STAGING_HOST_PATH', 'NEGEV_HOLDING_ROOT',
+    'NEGEV_MOUNT_WITNESS_SOCKET', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID'];
+  let acquisition = null;
+  if (acquisitionRuntime) {
+    const stagingHostPath = env.NEGEV_STAGING_HOST_PATH;
+    const holdingRoot = env.NEGEV_HOLDING_ROOT;
+    const mountWitnessSocket = env.NEGEV_MOUNT_WITNESS_SOCKET;
+    const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
+    if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
+        shokoImportFolderId === null || shokoImportRoot === null ||
+        env.NEGEV_SHOKO_EVENTS !== '1' || env.NEGEV_SHOKO_RECENT !== '1' ||
+        env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
+        !validRuntimePath(stagingHostPath) || !validRuntimePath(holdingRoot) ||
+        stagingHostPath === shokoImportRoot ||
+        runtimePathsOverlap(shokoImportRoot, stagingHostPath) ||
+        runtimePathsOverlap(stagingHostPath, shokoImportRoot) ||
+        runtimePathsOverlap(shokoImportRoot, holdingRoot) ||
+        runtimePathsOverlap(holdingRoot, shokoImportRoot) ||
+        runtimePathsOverlap(stagingHostPath, holdingRoot) ||
+        runtimePathsOverlap(holdingRoot, stagingHostPath) ||
+        mountWitnessSocket !== path.join(dataDir, 'mount-witness', 'mount.sock') ||
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId)) {
+      throw new TypeError('Acquisition runtime is unavailable without guarded providers and mounts');
+    }
+    acquisition = { stagingHostPath, holdingRoot,
+      importRoot: path.join(shokoImportRoot, 'Negev'),
+      mountWitnessSocket, shokoProviderId };
+  } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
+    throw new TypeError('Acquisition runtime is disabled');
+  }
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
-    acquisitionRuntime: false,
+    acquisitionRuntime, acquisition,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
@@ -301,9 +340,8 @@ export function parseUserServerConfig(env) {
     titleCheck: env.NEGEV_TITLE_CHECK === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
-    airingWatch, timeZone, plex: plexConfig(env, dataDir),
-    prowlarr: prowlarrConfig(env, dataDir),
-    qbitSidecar: qbitSidecarConfig(env, dataDir, shokoImportFolderId),
+    airingWatch, timeZone, plex,
+    prowlarr, qbitSidecar,
     plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,
     secureCookies: exposed, host, port };
 }

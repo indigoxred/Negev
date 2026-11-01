@@ -109,6 +109,59 @@ test('acquisition cannot be advertised as enabled before installed safety gates 
     NEGEV_ACQUISITION_RUNTIME: '0' }).acquisitionRuntime, false);
 });
 
+test('acquisition opt-in requires every guarded provider and private mount witness', () => {
+  const importRoot = path.resolve('sample-import-root');
+  const configured = { ...valid,
+    NEGEV_SHOKO_IMPORT_ROOT: importRoot,
+    NEGEV_SHOKO_IMPORT_FOLDER_ID: '1',
+    NEGEV_SHOKO_EVENTS: '1', NEGEV_SHOKO_RECENT: '1',
+    NEGEV_DIRECT_AVAILABILITY: '1',
+    NEGEV_PLEX_OBSERVER: '1', NEGEV_PLEX_GUID_PROBE: '1',
+    NEGEV_PLEX_URL: 'http://plex.internal:32400',
+    NEGEV_PLEX_TOKEN_FILE: path.join(dataDir, 'secrets', 'plex.token'),
+    NEGEV_PLEX_SECTIONS: JSON.stringify({ episode: [102], movie: [] }),
+    NEGEV_SHOKO_MEDIA_MOUNT: JSON.stringify({ appRoot: '/pure', localRoot: path.resolve('media') }),
+    NEGEV_PLEX_MEDIA_MOUNTS: JSON.stringify([{ appRoot: '/anime', localRoot: path.resolve('media') }]),
+    NEGEV_PLEX_SOURCE_POLICY: JSON.stringify([{ libraryId: 102, type: 'show',
+      agent: 'tv.plex.agents.custom.shoko', scanner: 'Plex TV Series', roots: ['/anime/Relay'] }]),
+    NEGEV_PROWLARR_DISCOVERY: '1', NEGEV_PROWLARR_URL: 'http://prowlarr.internal:9696',
+    NEGEV_PROWLARR_KEY_FILE: path.join(dataDir, 'secrets', 'prowlarr.token'),
+    NEGEV_PROWLARR_INDEXERS: '[5]',
+    NEGEV_QBITTORRENT_SIDECAR_READ: '1',
+    NEGEV_QBITTORRENT_URL: 'http://qbittorrent.internal:8080',
+    NEGEV_QBITTORRENT_USERNAME: 'observer',
+    NEGEV_QBITTORRENT_PASSWORD_FILE: path.join(dataDir, 'secrets', 'qbittorrent.password'),
+    NEGEV_QBITTORRENT_IMPORT_SAVE_PATH: '/Shoko',
+    NEGEV_STAGING_HOST_PATH: path.resolve('staging'),
+    NEGEV_HOLDING_ROOT: path.resolve('holding'),
+    NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'mount-witness', 'mount.sock'),
+    NEGEV_SHOKO_RELEASE_PROVIDER_ID: '11111111-2222-3333-4444-555555555555',
+    NEGEV_ACQUISITION_RUNTIME: '1' };
+  const parsed = parseUserServerConfig(configured);
+  assert.equal(parsed.acquisitionRuntime, true);
+  assert.deepEqual(parsed.acquisition, {
+    stagingHostPath: configured.NEGEV_STAGING_HOST_PATH,
+    holdingRoot: configured.NEGEV_HOLDING_ROOT,
+    importRoot: path.join(importRoot, 'Negev'),
+    mountWitnessSocket: configured.NEGEV_MOUNT_WITNESS_SOCKET,
+    shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
+  });
+  for (const change of [
+    { NEGEV_PROWLARR_DISCOVERY: '0' },
+    { NEGEV_SHOKO_EVENTS: '0' },
+    { NEGEV_SHOKO_RECENT: '0' },
+    { NEGEV_DIRECT_AVAILABILITY: '0' },
+    { NEGEV_PLEX_SOURCE_POLICY: undefined },
+    { NEGEV_QBITTORRENT_SIDECAR_READ: '0' },
+    { NEGEV_STAGING_HOST_PATH: importRoot },
+    { NEGEV_HOLDING_ROOT: path.join(importRoot, 'holding') },
+    { NEGEV_HOLDING_ROOT: importRoot },
+    { NEGEV_HOLDING_ROOT: configured.NEGEV_STAGING_HOST_PATH },
+    { NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'docker.sock') },
+    { NEGEV_SHOKO_RELEASE_PROVIDER_ID: 'bad' },
+  ]) assert.throws(() => parseUserServerConfig({ ...configured, ...change }), TypeError);
+});
+
 test('optional read-only Shoko Import root must be a normalized absolute path', () => {
   assert.equal(parseUserServerConfig(valid).shokoImportRoot, null);
   const root = path.resolve('sample-import-root');
