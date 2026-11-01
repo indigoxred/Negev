@@ -2,6 +2,7 @@
 // the string-valued types in its XML title dump.
 const TITLE_TYPES = new Map([
   ['1', 'main'], ['2', 'synonym'], ['3', 'short'], ['4', 'official'],
+  ['5', 'kana'], ['6', 'card'],
 ]);
 
 // Pure parser for a candidate AniDB pipe-delimited title dump. The caller
@@ -27,7 +28,9 @@ function addRow(byId, row) {
   const rawId = row.slice(0, first);
   const type = TITLE_TYPES.get(row.slice(first + 1, second));
   const language = row.slice(second + 1, third);
-  const title = row.slice(third + 1).trim();
+  // One live official-title row contains an embedded tab. Treat that separator
+  // as a space for search while still rejecting other control characters.
+  const title = row.slice(third + 1).replace(/\t+/g, ' ').trim();
   const id = Number(rawId);
   if (!/^[1-9]\d*$/.test(rawId) || !Number.isSafeInteger(id) ||
       !type || !/^[a-z0-9-]{2,16}$/i.test(language) ||

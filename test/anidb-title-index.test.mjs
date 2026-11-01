@@ -27,6 +27,22 @@ test('indexes aliases under one exact AniDB ID and prefers the main title', () =
   assert.equal(searchAniDbTitleIndex(index, { query: 'The Movie', page: 1 }).items[0].anidbId, 10);
 });
 
+test('accepts live AniDB kana and title-card rows for search without using them as release queries', () => {
+  const index = parseAniDbTitleDump([
+    '10|1|x-jat|Main Title',
+    '10|5|ja|メインタイトル',
+    '10|6|en|Title Card',
+  ].join('\n'));
+  assert.equal(searchAniDbTitleIndex(index, { query: 'Title Card' }).items[0].anidbId, 10);
+  assert.deepEqual(index.get(10).releaseQueries, ['Main Title']);
+});
+
+test('normalizes an embedded title tab from the live dump to a searchable space', () => {
+  const index = parseAniDbTitleDump('10|1|x-jat|Main Title\n10|4|ja|Japanese\tTitle');
+  assert.equal(searchAniDbTitleIndex(index, { query: 'Japanese Title' }).items[0].anidbId, 10);
+  assert.deepEqual(index.get(10).releaseQueries, ['Main Title']);
+});
+
 test('pages distinct IDs and rejects a stale or malformed dump rather than partial results', () => {
   const index = parseAniDbTitleDump(fixture);
   assert.deepEqual(searchAniDbTitleIndex(index, { query: 'name', page: 2, pageSize: 1 }).items,
@@ -34,7 +50,7 @@ test('pages distinct IDs and rejects a stale or malformed dump rather than parti
   for (const bad of ['10|1|x-jat|Title\n0|1|x-jat|Bad',
     '10|1|x-jat|Title\n10|1|x-jat|Conflicting main',
     '10|1|x-jat|Title\n11|4|en|Alias',
-    '10|main|x-jat|Title', '10|5|x-jat|Title']) {
+    '10|main|x-jat|Title', '10|7|x-jat|Title']) {
     assert.throws(() => parseAniDbTitleDump(bad), TypeError);
   }
   assert.throws(() => parseAniDbTitleDump('x'.repeat(101), { maxBytes: 100 }), TypeError);
