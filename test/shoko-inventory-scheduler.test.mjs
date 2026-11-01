@@ -81,6 +81,18 @@ test('an excessive omission does not cause repeated five-minute full scans', asy
   await scheduler.close();
 });
 
+test('full feed reconciliation keeps the ordinary daily full-pass pace', async () => {
+  const clock = fakeClock();
+  const scheduler = createShokoInventoryScheduler({
+    tick: async () => ({ state: 'held', reason: 'full_reconciliation_pending' }),
+    ...clock,
+  });
+  scheduler.start();
+  await clock.fire();
+  assert.equal(clock.timers.values().next().value.delay, 24 * 60 * 60_000);
+  await scheduler.close();
+});
+
 test('delivered change receipts resume the paced page loop without failure backoff', async () => {
   const clock = fakeClock();
   const scheduler = createShokoInventoryScheduler({

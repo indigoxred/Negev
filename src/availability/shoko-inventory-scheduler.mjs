@@ -41,6 +41,11 @@ export function createShokoInventoryScheduler({ tick,
         // The safety cap needs review, not an intensive automatic rescan.
         delay = passDelay;
         lastState = 'review_needed';
+      } else if (result?.reason === 'full_reconciliation_pending') {
+        // A full Shoko pass can be expensive. Do not add extra full passes
+        // until the installed endpoint and NAS load have been measured.
+        delay = passDelay;
+        lastState = 'catchup_wait';
       } else lastState = 'retry_wait';
     } catch { lastState = 'retry_wait'; }
     if (requestedDuringPage) {
