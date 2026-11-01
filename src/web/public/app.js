@@ -201,8 +201,7 @@ async function loadRequests(append = false) {
             }
           } catch {
             candidates.replaceChildren(element('p', 'Release search is unavailable right now.', 'muted'));
-            button.disabled = false;
-          }
+          } finally { button.disabled = false; }
         });
         row.append(button, candidates);
       }
