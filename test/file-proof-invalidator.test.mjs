@@ -47,7 +47,7 @@ test('Shoko identity change withdraws only that file proof', async () => {
   }
 });
 
-test('Plex card change withdraws matching proof but ignores an older observation', async () => {
+test('Plex card change withdraws matching proof even when its read started earlier', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-proof-invalidate-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const proof = openFileProofLedger(dbPath, { positiveLifetimeMs: 1_000,
@@ -58,8 +58,9 @@ test('Plex card change withdraws matching proof but ignores an older observation
     proof.observe({ ...target, proof: { fileId: 7, libraryId: 102,
       ratingKey: 500, partId: 600 }, checkedMs: 200 });
     plex.recordCard({ ...card(500, 'b'), observedMs: 150 });
-    assert.deepEqual(proof.getCurrent(target), { state: 'available',
-      verifiedAtMs: 200 });
+    assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
+    proof.observe({ ...target, proof: { fileId: 7, libraryId: 102,
+      ratingKey: 500, partId: 600 }, checkedMs: 220 });
     plex.forgetCard({ libraryId: 102, ratingKey: 500, observedMs: 300 });
     assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
   } finally {
@@ -88,6 +89,33 @@ test('a changed Plex Part withdraws only its card while another playable copy st
     assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
   } finally {
     plex.close(); proof.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a change committed after proof insertion withdraws it even when the read started earlier', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-proof-invalidate-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const proof = openFileProofLedger(dbPath, { positiveLifetimeMs: 1_000,
+    now: () => 500 });
+  const shoko = openShokoInventoryLedger(dbPath);
+  const plex = openPlexCardIndex(dbPath);
+  try {
+    shoko.recordFileObservation({ item: shokoFile(7), observedMs: 100 });
+    plex.recordCard({ ...card(500), observedMs: 100 });
+    proof.observe({ ...target, proof: { fileId: 7, libraryId: 102,
+      ratingKey: 500, partId: 600 }, checkedMs: 300 });
+    shoko.recordFileObservation({ item: { ...shokoFile(7),
+      state: 'unverified', pairs: [] }, observedMs: 250 });
+    assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
+    shoko.recordFileObservation({ item: shokoFile(7,
+      '2026-11-02T01:00:00Z'), observedMs: 350 });
+    proof.observe({ ...target, proof: { fileId: 7, libraryId: 102,
+      ratingKey: 500, partId: 600 }, checkedMs: 400 });
+    plex.recordCard({ ...card(500, 'changed'), observedMs: 375 });
+    assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
+  } finally {
+    plex.close(); shoko.close(); proof.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

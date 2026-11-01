@@ -197,7 +197,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       }
     }
     invalidateDirect?.run(observedMs, fileId);
-    invalidateFileProof.invalidateFile(fileId, observedMs);
+    invalidateFileProof.invalidateFile(fileId);
   };
   function saveObservation(item, seenPass, observedMs) {
     const previous = find.get(item.fileId);

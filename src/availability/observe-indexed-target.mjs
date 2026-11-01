@@ -91,9 +91,27 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
       }
       return result;
     };
-    const checkCards = (knownCards) => observePublicTarget({ target,
-      publicLibraryIds, knownCards, shokoMount, plexMount, plexMounts,
-      readShoko: async () => shoko, readPlex: readKnownCard, proveImpl });
+    const checkCards = async (knownCards) => {
+      const revisions = new Map();
+      if (includeProof && typeof cardIndex.getCardRevision === 'function') {
+        for (const card of knownCards) {
+          const revision = cardIndex.getCardRevision(card);
+          if (Number.isSafeInteger(revision?.observedMs) &&
+              revision.observedMs >= 0 &&
+              typeof revision.identitySignature === 'string') {
+            revisions.set(`${card.libraryId}:${card.ratingKey}`, revision);
+          }
+        }
+      }
+      const outcome = await observePublicTarget({ target,
+        publicLibraryIds, knownCards, shokoMount, plexMount, plexMounts,
+        readShoko: async () => shoko, readPlex: readKnownCard, proveImpl });
+      const proof = outcome?.proof;
+      const revision = proof && revisions.get(
+        `${proof.libraryId}:${proof.ratingKey}`);
+      return outcome.state === 'available' && revision
+        ? { ...outcome, cardRevision: revision } : outcome;
+    };
     let result = await checkCards(cards);
     if (keyedCardsUsed && cards.length < 10 &&
         ['card_identity_unverified', 'card_discovery_incomplete'].includes(result.reason)) {

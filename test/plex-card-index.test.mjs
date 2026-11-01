@@ -43,6 +43,24 @@ test('a durable physical identity selects one of many same-size Parts', async ()
   reopened.close();
 });
 
+test('an exact card revision changes when its public Part changes', async () => {
+  const { ledger } = await index();
+  try {
+    assert.equal(ledger.getCardRevision({ libraryId: 102,
+      ratingKey: 500 }), null);
+    ledger.recordCard({ ...card(), observedMs: 100 });
+    const first = ledger.getCardRevision({ libraryId: 102,
+      ratingKey: 500 });
+    assert.equal(first.observedMs, 100);
+    assert.equal(typeof first.identitySignature, 'string');
+    ledger.recordCard({ ...card(500, 6), observedMs: 200 });
+    const second = ledger.getCardRevision({ libraryId: 102,
+      ratingKey: 500 });
+    assert.equal(second.observedMs, 200);
+    assert.notEqual(second.identitySignature, first.identitySignature);
+  } finally { ledger.close(); }
+});
+
 test('refresh and removal retire the old physical identity candidate', async () => {
   const { ledger } = await index();
   const first = card(); first.parts[0].candidateKey = '1:10:5';

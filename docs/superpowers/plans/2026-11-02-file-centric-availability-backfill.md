@@ -56,7 +56,7 @@
 
 **Files:** Modify `src/availability/shoko-inventory-worker.mjs` and `src/availability/plex-card-index.mjs`; add `src/availability/file-proof-invalidator.mjs`; test `test/file-proof-invalidator.test.mjs`.
 
-**Interfaces:** Transactional `invalidateFile(fileId,observedMs)` and `invalidateCard(libraryId,ratingKey,observedMs)` withdraw only linked proof rows, preserving request IDs and unrelated copies. Existing file-change and card-change receipts call these methods only when their source observation is newer than the saved proof. Invalid/incomplete scans cannot invalidate. A later exact recheck may restore the positive.
+**Interfaces:** Transactional `invalidateFile(fileId)` and `invalidateCard(libraryId,ratingKey)` withdraw only linked proof rows, preserving request IDs and unrelated copies. Accepted source changes call these methods regardless of read-start timestamp: a read begun before proof insertion can commit afterward. Stale or incomplete source observations rejected by their ledgers cannot invalidate. A later exact recheck may restore the positive.
 
 - [x] Write tests for Shoko unlink, card/Part removal, unrelated copy preservation, stale receipt rejection, and restart.
 - [x] Run red; implement hooks; run focused and full suite; commit.

@@ -25,7 +25,8 @@ test('joins one scoped public Plex card to an exact Shoko episode', async () => 
     readPlex: async (input) => { calls.push(['plex', input]); return part; },
     proveImpl: async () => ({ state: 'same_file', storageKey: '1:2:5' }) });
   assert.deepEqual(result, { state: 'available', fileId: 51,
-    proof: { fileId: 51, libraryId: 102, ratingKey: 600, partId: 700 } });
+    proof: { fileId: 51, libraryId: 102, ratingKey: 600,
+      partId: 700, storageKey: '1:2:5' } });
   assert.deepEqual(calls, [['shoko', { anidbId: 42, episodeId: 1001 }],
     ['plex', { libraryId: 102, ratingKey: 600, expectedType: 'episode' }]]);
 });
@@ -41,7 +42,8 @@ test('movie target can use a native episode card in the public Anime library', a
       return ratingKey === 600 ? { state: 'not_found' } : part;
     }, proveImpl: async () => ({ state: 'same_file', storageKey: '1:2:5' }) });
   assert.deepEqual(result, { state: 'available', fileId: 51,
-    proof: { fileId: 51, libraryId: 102, ratingKey: 601, partId: 700 } });
+    proof: { fileId: 51, libraryId: 102, ratingKey: 601,
+      partId: 700, storageKey: '1:2:5' } });
 });
 
 test('missing card, reader errors and incomplete inventory cannot claim absence', async () => {

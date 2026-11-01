@@ -1,5 +1,6 @@
-// Called within the source ledger's SQLite transaction. A delayed source
-// observation cannot withdraw a newer exact public-file proof.
+// Called inside an accepted source-change transaction. A source read may
+// have started before a proof but committed after it, so accepted changes
+// withdraw all proofs for that file/card regardless of read-start time.
 export function createFileProofInvalidator(db) {
   if (typeof db?.prepare !== 'function') {
     throw new TypeError('Invalid file proof invalidator database');
@@ -13,15 +14,15 @@ export function createFileProofInvalidator(db) {
     return db.prepare(sql);
   };
   return {
-    invalidateFile(fileId, observedMs) {
+    invalidateFile(fileId) {
       fileStatement ??= prepare(`DELETE FROM file_availability_proofs
-        WHERE file_id=? AND verified_ms<=?`);
-      return fileStatement?.run(fileId, observedMs).changes ?? 0;
+        WHERE file_id=?`);
+      return fileStatement?.run(fileId).changes ?? 0;
     },
-    invalidateCard(libraryId, ratingKey, observedMs) {
+    invalidateCard(libraryId, ratingKey) {
       cardStatement ??= prepare(`DELETE FROM file_availability_proofs
-        WHERE library_id=? AND rating_key=? AND verified_ms<=?`);
-      return cardStatement?.run(libraryId, ratingKey, observedMs).changes ?? 0;
+        WHERE library_id=? AND rating_key=?`);
+      return cardStatement?.run(libraryId, ratingKey).changes ?? 0;
     },
   };
 }

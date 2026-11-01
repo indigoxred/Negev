@@ -104,7 +104,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
             storageKey: witness.storageKey });
           parts.push({ storageKey: witness.storageKey, libraryId: part.libraryId, readable: true });
           provenParts.push({ fileId: file.fileId, libraryId: part.libraryId,
-            ratingKey: part.ratingKey, partId: part.partId });
+            ratingKey: part.ratingKey, partId: part.partId,
+            storageKey: witness.storageKey });
         } else if (['file_unavailable', 'file_changed'].includes(witness?.reason)) {
           incompletePhysical = true;
         } else if (witness?.reason !== 'different_file' && witness?.reason !== 'size_mismatch') {

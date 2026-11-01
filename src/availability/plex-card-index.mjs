@@ -132,7 +132,7 @@ export function openPlexCardIndex(dbPath) {
       }
     }
     invalidateProof?.run(observedMs, libraryId, ratingKey);
-    invalidateFileProof.invalidateCard(libraryId, ratingKey, observedMs);
+    invalidateFileProof.invalidateCard(libraryId, ratingKey);
   };
   const saveRemoval = db.prepare(`INSERT INTO plex_card_removals
     (library_id,rating_key,observed_ms) VALUES (?,?,?)
@@ -224,6 +224,15 @@ export function openPlexCardIndex(dbPath) {
     return identityQueries.get(libraryCount);
   };
   return {
+    getCardRevision({ libraryId, ratingKey } = {}) {
+      if (!validId(libraryId) || !validId(ratingKey)) {
+        throw new TypeError('Invalid Plex card revision target');
+      }
+      const row = previous.get(libraryId, ratingKey);
+      return row?.identity_signature == null ? null : {
+        observedMs: row.observed_ms,
+        identitySignature: row.identity_signature };
+    },
     forgetCard({ libraryId, ratingKey, observedMs }) {
       if (!validId(libraryId) || !validId(ratingKey) ||
           !Number.isSafeInteger(observedMs) || observedMs < 0) {

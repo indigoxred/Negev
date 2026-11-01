@@ -36,10 +36,15 @@ const base = { candidate, publicLibraryIds: [102],
 test('one Shoko file candidate can prove two distinct exact public episode cards', async () => {
   for (const [episodeId, ratingKey] of [[1001, 500], [1002, 501]]) {
     const result = await observeFileCandidateTarget({ ...base,
+      cardIndex: { ...base.cardIndex,
+        getCardRevision: () => ({ observedMs: 100,
+          identitySignature: `card-${ratingKey}` }) },
       target: { anidbId: 42, episodeId, kind: 'series' } });
     assert.deepEqual(result, { state: 'available', fileId: 51,
       proof: { fileId: 51, libraryId: 102, ratingKey,
-        partId: ratingKey + 100 } });
+        partId: ratingKey + 100, storageKey: '1:2:5' },
+      cardRevision: { observedMs: 100,
+        identitySignature: `card-${ratingKey}` } });
   }
 });
 
@@ -60,7 +65,7 @@ test('a movie can be proven by its exact public Plex Movie card', async () => {
   });
   assert.equal(result.state, 'available');
   assert.deepEqual(result.proof, { fileId: 51, libraryId: 123,
-    ratingKey: 700, partId: 800 });
+    ratingKey: 700, partId: 800, storageKey: '1:2:5' });
 });
 
 test('unlinked episode, missing Shoko IDs, and wrong Plex GUID cannot publish Available', async () => {
