@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, open, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, open, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -95,5 +95,26 @@ test('staged file hashing rejects a path replaced after validation', async (t) =
     }
     await writeFile(file, 'xyz');
     await assert.rejects(() => ed2kFile(file, { expectedStat }), /File changed/);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('file hashing rejects an in-place edit even when mtime is restored', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-edit-'));
+  const file = path.join(dir, 'episode.mkv');
+  const fixed = new Date('2020-01-01T00:00:00.000Z');
+  try {
+    await writeFile(file, 'abc');
+    await utimes(file, fixed, fixed);
+    const before = await stat(file, { bigint: true });
+    await assert.rejects(() => ed2kFile(file, {
+      expectedStat: before,
+      pacer: { afterBytes: async () => {
+        await writeFile(file, 'xyz');
+        await utimes(file, fixed, fixed);
+        const after = await stat(file, { bigint: true });
+        assert.equal(after.mtimeNs, before.mtimeNs);
+        assert.notEqual(after.ctimeNs, before.ctimeNs);
+      } },
+    }), /File changed/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

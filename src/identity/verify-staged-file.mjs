@@ -78,6 +78,7 @@ export async function verifyStagedFile({
     if (!after.isFile() || after.isSymbolicLink() ||
         after.dev !== before.dev || after.ino !== before.ino ||
         after.size !== before.size || after.mtimeNs !== before.mtimeNs ||
+        after.ctimeNs !== before.ctimeNs ||
         after.size !== BigInt(hash.size)) return held('file_changed_or_unavailable');
   } catch { return held('file_changed_or_unavailable'); }
 

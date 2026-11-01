@@ -92,7 +92,8 @@ export async function ed2kFile(path, { pacer, expectedStat,
     if (!before.isFile() || (expectedStat &&
         (before.dev !== expectedStat.dev || before.ino !== expectedStat.ino ||
           before.size !== expectedStat.size ||
-          before.mtimeNs !== expectedStat.mtimeNs))) {
+          before.mtimeNs !== expectedStat.mtimeNs ||
+          before.ctimeNs !== expectedStat.ctimeNs))) {
       throw new Error('File changed before hashing');
     }
     if (before.size === 0n) throw new Error('Cannot identify an empty video file');
@@ -115,7 +116,8 @@ export async function ed2kFile(path, { pacer, expectedStat,
     }
     const after = await file.stat({ bigint: true });
     if (after.dev !== before.dev || after.ino !== before.ino ||
-        after.size !== before.size || after.mtimeNs !== before.mtimeNs) {
+        after.size !== before.size || after.mtimeNs !== before.mtimeNs ||
+        after.ctimeNs !== before.ctimeNs) {
       throw new Error('File changed during hashing');
     }
     return { ed2k: ed2kFromChunkDigests(digests), size: Number(before.size) };

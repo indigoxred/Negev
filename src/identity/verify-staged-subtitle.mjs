@@ -46,7 +46,8 @@ export async function verifyStagedSubtitle({
     file = await open(fullPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const opened = await file.stat({ bigint: true });
     if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
-        opened.size !== before.size || opened.mtimeNs !== before.mtimeNs) {
+        opened.size !== before.size || opened.mtimeNs !== before.mtimeNs ||
+        opened.ctimeNs !== before.ctimeNs) {
       return held('file_changed_or_unavailable');
     }
     const hash = createHash('sha256');
@@ -61,7 +62,8 @@ export async function verifyStagedSubtitle({
     }
     const after = await file.stat({ bigint: true });
     if (after.dev !== opened.dev || after.ino !== opened.ino ||
-        after.size !== opened.size || after.mtimeNs !== opened.mtimeNs) {
+        after.size !== opened.size || after.mtimeNs !== opened.mtimeNs ||
+        after.ctimeNs !== opened.ctimeNs) {
       return held('file_changed_or_unavailable');
     }
     return { state: 'subtitle_verified', sha256: hash.digest('hex').toUpperCase(),

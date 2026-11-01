@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -40,6 +40,26 @@ test('verifies an exact file inside staging without importing or moving it', asy
     assert.deepEqual(result, { state: 'identity_verified', fileId: 123456,
       coverage: [{ episodeId: 1001, start: 0, end: 100 }], ed2k, size: 3 });
     assert.deepEqual(paced, [3]);
+  });
+});
+
+test('holds an edit made during provider lookup even when mtime is restored', async () => {
+  await withStage(async (root) => {
+    const file = path.join(root, 'episode.mkv');
+    const fixed = new Date('2020-01-01T00:00:00.000Z');
+    await writeFile(file, 'abc');
+    await utimes(file, fixed, fixed);
+    const before = await stat(file, { bigint: true });
+    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup: async (hash) => {
+        await writeFile(file, 'xyz');
+        await utimes(file, fixed, fixed);
+        const after = await stat(file, { bigint: true });
+        assert.equal(after.mtimeNs, before.mtimeNs);
+        assert.notEqual(after.ctimeNs, before.ctimeNs);
+        return matchingPreview(hash);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'file_changed_or_unavailable' });
   });
 });
 
