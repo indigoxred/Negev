@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createQbittorrentSidecarObserver } from
   '../src/availability/qbittorrent-sidecar-observer.mjs';
+import { createQbittorrentSessionGate } from
+  '../src/acquisition/qbittorrent-session-gate.mjs';
+import { createAcquisitionSessionRunners } from
+  '../src/acquisition/acquisition-session-runners.mjs';
 
 const hash = 'a'.repeat(40);
 
@@ -54,4 +58,34 @@ test('invalid sidecar hash never authenticates or contacts qBittorrent', async (
   });
   assert.equal(await observer.readTorrent('../wrong'), null);
   assert.equal(networkCalls, 0);
+});
+
+test('sidecar and acquisition share one login and rejected session', async () => {
+  let logins = 0;
+  let requests = 0;
+  const baseUrl = 'http://qbit.internal:8080';
+  const gate = createQbittorrentSessionGate({ baseUrl,
+    username: 'observer', password: 'synthetic-password',
+    login: async () => { logins++; return { state: 'authenticated',
+      sessionId: 'sharedSid' }; } });
+  const fetchImpl = async () => { requests++;
+    return new Response(null, { status: 403 }); };
+  const observer = createQbittorrentSidecarObserver({ baseUrl,
+    sessionGate: gate, fetchImpl });
+  assert.throws(() => createQbittorrentSidecarObserver({ baseUrl,
+    sessionGate: gate, username: 'other', fetchImpl }), TypeError);
+  const runners = createAcquisitionSessionRunners({ qbBaseUrl: baseUrl,
+    sessionGate: gate, fetchImpl,
+    processRequest: async () => ({ state: 'held', reason: 'no_candidate' }),
+    processStart: async () => ({ state: 'held', reason: 'no_start' }),
+    processCompletion: async () => ({ state: 'held', reason: 'no_completion' }),
+    processPublish: async () => ({ state: 'held', reason: 'no_publish' }),
+  });
+  assert.equal((await runners.processRequest({ requestId: 1 })).reason,
+    'no_candidate');
+  assert.equal(await observer.readTorrent(hash), null);
+  assert.equal((await runners.processStart({ attemptId: 2 })).reason,
+    'authentication_backoff');
+  assert.equal(logins, 1);
+  assert.equal(requests, 1);
 });

@@ -6,6 +6,8 @@ import { readPrivatePlexToken, readPrivateProwlarrKey,
   readPrivateShokoKey } from './private-shoko-key.mjs';
 import { createQbittorrentSidecarObserver } from
   '../availability/qbittorrent-sidecar-observer.mjs';
+import { createQbittorrentSessionGate } from
+  '../acquisition/qbittorrent-session-gate.mjs';
 import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
 import { createShokoFeedStatusReporter } from
   '../availability/shoko-feed-status.mjs';
@@ -42,14 +44,17 @@ try {
   const prowlarr = config.prowlarr ? { ...config.prowlarr,
     apiKey: await readPrivateProwlarrKey({ dataDir: config.dataDir,
       keyPath: config.prowlarr.keyPath }) } : null;
-  const qbitSidecarObserver = config.qbitSidecar ? {
-    importSavePath: config.qbitSidecar.importSavePath,
-    ...createQbittorrentSidecarObserver({
-      baseUrl: config.qbitSidecar.baseUrl,
+  const qbitSessionGate = config.qbitSidecar ?
+    createQbittorrentSessionGate({ baseUrl: config.qbitSidecar.baseUrl,
       username: config.qbitSidecar.username,
       password: await readPrivateQbittorrentPassword({
         dataDir: config.dataDir,
-        keyPath: config.qbitSidecar.passwordPath }),
+        keyPath: config.qbitSidecar.passwordPath }) }) : null;
+  const qbitSidecarObserver = qbitSessionGate ? {
+    importSavePath: config.qbitSidecar.importSavePath,
+    ...createQbittorrentSidecarObserver({
+      baseUrl: config.qbitSidecar.baseUrl,
+      sessionGate: qbitSessionGate,
     }),
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,

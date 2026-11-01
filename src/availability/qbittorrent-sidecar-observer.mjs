@@ -8,12 +8,18 @@ import { readQbittorrentSidecarTorrent } from
 // Diagnostic-only, exact-hash read. Failed authentication or a rejected SID
 // yields no evidence and the caller keeps Import held.
 export function createQbittorrentSidecarObserver({ baseUrl, username, password,
-  login, fetchImpl = fetch, now = Date.now } = {}) {
-  const gate = createQbittorrentSessionGate({ baseUrl, username, password,
-    ...(login === undefined ? {} : { login }), now });
-  if (typeof fetchImpl !== 'function') {
+  login, sessionGate, fetchImpl = fetch, now = Date.now } = {}) {
+  if (typeof fetchImpl !== 'function' ||
+      (sessionGate !== undefined &&
+        (typeof sessionGate?.get !== 'function' ||
+         typeof sessionGate.invalidate !== 'function' ||
+         username !== undefined || password !== undefined ||
+         login !== undefined))) {
     throw new TypeError('Invalid qBittorrent sidecar fetch');
   }
+  const gate = sessionGate ?? createQbittorrentSessionGate({
+    baseUrl, username, password,
+    ...(login === undefined ? {} : { login }), now });
   return { async readTorrent(hash) {
     if (typeof hash !== 'string' ||
         !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash)) return null;
