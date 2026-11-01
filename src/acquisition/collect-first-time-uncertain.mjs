@@ -8,7 +8,7 @@ const held = (reason) => ({ state: 'held', reason });
 // fingerprinted Import quiet window. This cannot claim full-library absence.
 export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   kind, tmdbMovieIds = [], publicLibraryIds, readEpisode, probePublic,
-  observeImport, now = Date.now } = {}) {
+  observeImport, readFeedState, now = Date.now } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
       episodeIds.length < 1 || episodeIds.length > 20 ||
       episodeIds.some((id) => !validId(id)) ||
@@ -21,7 +21,7 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
       !Array.isArray(tmdbMovieIds) || tmdbMovieIds.length > 4 ||
       tmdbMovieIds.some((id) => !validId(id)) ||
       new Set(tmdbMovieIds).size !== tmdbMovieIds.length ||
-      [readEpisode, probePublic, observeImport, now]
+      [readEpisode, probePublic, observeImport, readFeedState, now]
         .some((value) => typeof value !== 'function')) {
     throw new TypeError('Invalid uncertain first-time observation');
   }
@@ -59,6 +59,8 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
       episodeIds.some((id) => !fence.episodeIds.includes(id)) ||
       !Number.isSafeInteger(fence.beforeObservedAtMs) ||
       !Number.isSafeInteger(fence.afterObservedAtMs) ||
+      !Number.isSafeInteger(fence.feedGeneration) ||
+      fence.feedGeneration < 0 ||
       fence.beforeObservedAtMs < 0 ||
       fence.afterObservedAtMs - fence.beforeObservedAtMs < 120_000 ||
       fence.afterObservedAtMs - fence.beforeObservedAtMs > 330_000) {
@@ -68,6 +70,16 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   if (secondShoko.state !== 'unimported_targets') return secondShoko;
   const secondPublic = await inspectPublic();
   if (secondPublic.state !== 'healthy_unconfirmed') return secondPublic;
+  let finalFeed;
+  try { finalFeed = await readFeedState(); }
+  catch { return held('import_quiet_window_unverified'); }
+  if (finalFeed?.state !== 'connected' ||
+      finalFeed.generation !== fence.feedGeneration ||
+      finalFeed.pendingPaths !== 0 || finalFeed.pendingEvents !== 0 ||
+      finalFeed.inFlight !== false ||
+      finalFeed.reconciliationNeeded !== false) {
+    return held('import_quiet_window_unverified');
+  }
   const observedAtMs = now();
   if (!Number.isSafeInteger(observedAtMs) ||
       fence.afterObservedAtMs > observedAtMs ||
@@ -78,5 +90,6 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
     plex: secondPublic,
     importFence: { state: 'quiet_window_observed', ...scope,
       beforeObservedAtMs: fence.beforeObservedAtMs,
-      afterObservedAtMs: fence.afterObservedAtMs } };
+      afterObservedAtMs: fence.afterObservedAtMs,
+      feedGeneration: fence.feedGeneration } };
 }

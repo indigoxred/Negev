@@ -65,6 +65,7 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
       return held();
     }
     return { state: 'quiet_window_observed', anidbId,
-      episodeIds: [...episodeIds], beforeObservedAtMs, afterObservedAtMs };
+      episodeIds: [...episodeIds], beforeObservedAtMs, afterObservedAtMs,
+      feedGeneration: afterFeed.generation };
   } catch { return held(); }
 }

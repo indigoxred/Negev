@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -14,6 +14,65 @@ import { createUserService } from '../src/web/user-service.mjs';
 const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
+
+test('internal first-time observation uses installed Shoko, Plex and Import readers without acquisition', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-time-service-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const importRoot = path.join(dir, 'Import');
+  await mkdir(importRoot);
+  let clock = 100;
+  const reads = [];
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111/', shokoApiKey: 'synthetic',
+    shokoImportRoot: importRoot, shokoImportFolderId: 1,
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    readShokoConnectionState: () => ({ state: 'connected' }),
+    waitForImportQuiet: async (ms) => { clock += ms; },
+    now: () => clock,
+    plex: { plexBaseUrl: 'http://plex.internal:32400/',
+      plexToken: 'synthetic', publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMount: { appRoot: '/source-pure', localRoot: dir } },
+    fetchImpl: async (url, init) => {
+      reads.push(url.pathname);
+      assert.equal(init.method, 'GET');
+      if (url.pathname === '/api/v3/Episode/AniDB/1001/Episode') {
+        return new Response(null, { status: 404 });
+      }
+      if (url.pathname === '/api/v3/Episode/AniDB/1001') {
+        return Response.json({ ID: 1001, AnimeID: 42 });
+      }
+      if (url.pathname === '/api/v3/Queue') {
+        return Response.json({ WaitingCount: 0, BlockedCount: 0,
+          ScheduledCount: 0, TotalCount: 0, CurrentlyExecuting: [], Pools: [] });
+      }
+      if (url.pathname === '/library/sections/102/all') {
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          offset: 0, totalSize: 0, size: 0 } });
+      }
+      throw new Error(`Unexpected read: ${url.pathname}`);
+    },
+  });
+  try {
+    const snapshot = await service.observeFirstTimeUncertain({
+      anidbId: 42, episodeIds: [1001], kind: 'series' });
+    assert.equal(snapshot?.anidbId, 42, JSON.stringify({ snapshot, reads }));
+    assert.equal(snapshot.shoko.state, 'unimported_targets');
+    assert.equal(snapshot.plex.state, 'healthy_unconfirmed');
+    assert.equal(snapshot.plex.complete, false);
+    assert.equal(snapshot.importFence.state, 'quiet_window_observed');
+    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 2);
+    assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);
+    assert.equal(reads.some((path) => /torrent|download|prowlarr/i.test(path)), false);
+    service.flagShokoReconciliation('feed_disconnected');
+    const queueReads = reads.filter((path) => path === '/api/v3/Queue').length;
+    assert.deepEqual(await service.observeFirstTimeUncertain({
+      anidbId: 42, episodeIds: [1001], kind: 'series' }),
+    { state: 'held', reason: 'import_quiet_window_unverified' });
+    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length,
+      queueReads);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
 
 test('account service exposes an empty, admin-only operational review', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-review-service-'));

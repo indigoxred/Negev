@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
 import { openRequestProgress } from '../requests/request-progress.mjs';
@@ -41,9 +42,12 @@ import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
+import { collectFirstTimeUncertain } from
+  '../acquisition/collect-first-time-uncertain.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
-import { importFeedState } from '../acquisition/import-quiet-window.mjs';
+import { importFeedState, observeImportQuietWindow } from
+  '../acquisition/import-quiet-window.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
@@ -56,6 +60,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
   readShokoConnectionState = () => ({ state: 'disconnected' }),
+  waitForImportQuiet = (ms, signal) => sleep(ms, undefined, { signal }),
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
@@ -81,6 +86,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
       typeof readShokoConnectionState !== 'function' ||
+      typeof waitForImportQuiet !== 'function' ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
         typeof prowlarr.apiKey !== 'string' || !prowlarr.apiKey ||
         !Array.isArray(prowlarr.indexerIds) ||
@@ -208,10 +214,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const readImportActivity = shokoImportRoot !== null &&
-      shokoImportFolderId !== null ? () => metadata.run(() =>
+      shokoImportFolderId !== null ? (withFingerprint = false) => metadata.run(() =>
         readShokoImportActivity({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
-          managedFolderId: shokoImportFolderId,
+          managedFolderId: shokoImportFolderId, withFingerprint,
           ...(qbitSidecarObserver === null ? {} : {
             readSidecarTorrent: qbitSidecarObserver.readTorrent,
             qbitImportSavePath: qbitSidecarObserver.importSavePath }) })) : null;
@@ -306,6 +312,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const observations = new Set();
     let stopping = false;
     let stopPromise;
+    const quietAbort = new AbortController();
     const track = (task) => {
       observations.add(task);
       void task.then(() => observations.delete(task), () => observations.delete(task));
@@ -357,6 +364,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (before?.pairs.length) enqueueChangedFile({ before, after: null,
           observedMs: now(), priority: 'event' });
       } });
+    const readImportFeed = () => importFeedState({
+      connection: readShokoConnectionState(),
+      event: eventConsumer.getState(),
+      arrival: eventConsumer.getArrivalState(),
+    });
     return { app,
       pollAiringNextPage: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
@@ -422,15 +434,38 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       flagShokoReconciliation: (reason) => eventConsumer.flagReconciliation(reason),
       getShokoEventState: () => eventConsumer.getState(),
       getShokoArrivalState: () => eventConsumer.getArrivalState(),
-      getImportFeedState: () => importFeedState({
-        connection: readShokoConnectionState(),
-        event: eventConsumer.getState(),
-        arrival: eventConsumer.getArrivalState(),
-      }),
+      getImportFeedState: readImportFeed,
+      observeFirstTimeUncertain: (input) => {
+        if (stopping) return Promise.resolve({ state: 'held',
+          reason: 'service_stopping' });
+        if (!plexObserver || !readImportActivity) {
+          return Promise.resolve({ state: 'held',
+            reason: 'first_time_observer_unconfigured' });
+        }
+        const publicLibraryIds = input?.kind === 'movie'
+          ? [...plex.publicSections.episode, ...plex.publicSections.movie]
+          : [...plex.publicSections.episode];
+        return track(collectFirstTimeUncertain({ ...input,
+          publicLibraryIds, now,
+          readEpisode: (target) => metadata.run(() =>
+            readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
+              apiKey: shokoApiKey, ...target, fetchImpl })),
+          probePublic: (target) => metadata.run(() =>
+            plexObserver.probeFirstTimeCards(target)),
+          observeImport: (target) => observeImportQuietWindow({ ...target,
+            readActivity: () => readImportActivity(true),
+            readFeedState: readImportFeed,
+            wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
+            now, requireFingerprint: true,
+          }),
+          readFeedState: readImportFeed,
+        }));
+      },
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {
           stopping = true;
+          quietAbort.abort();
           stopPromise = (async () => {
             try { await app.close(); }
             finally {

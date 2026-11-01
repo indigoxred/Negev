@@ -9,7 +9,8 @@ import { observeImportQuietWindow } from
 
 const scope = { anidbId: 42, episodeIds: [1001] };
 const quiet = { state: 'quiet_window_observed', ...scope,
-  beforeObservedAtMs: 100, afterObservedAtMs: 120_100 };
+  beforeObservedAtMs: 100, afterObservedAtMs: 120_100,
+  feedGeneration: 5 };
 const publicState = { state: 'healthy_unconfirmed',
   libraryIds: [102], parts: [], complete: false };
 const providers = (overrides = {}) => ({ ...scope, kind: 'series',
@@ -17,6 +18,9 @@ const providers = (overrides = {}) => ({ ...scope, kind: 'series',
   readEpisode: async (target) => ({ state: 'not_imported', ...target }),
   probePublic: async () => publicState,
   observeImport: async () => quiet,
+  readFeedState: async () => ({ state: 'connected', generation: 5,
+    pendingPaths: 0, pendingEvents: 0, inFlight: false,
+    reconciliationNeeded: false }),
   now: () => 120_101, ...overrides });
 
 test('brackets the quiet window with fresh Shoko and scoped Plex checks', async () => {
@@ -105,4 +109,18 @@ test('a failed Import window does not make another Shoko or Plex request', async
     reason: 'import_quiet_window_unverified' });
   assert.equal(shokoReads, 1);
   assert.equal(plexReads, 1);
+});
+
+test('a Shoko event during final Plex reads invalidates the quiet window', async () => {
+  let generation = 5;
+  let plexReads = 0;
+  const result = await collectFirstTimeUncertain(providers({
+    probePublic: async () => { if (++plexReads === 2) generation++;
+      return publicState; },
+    readFeedState: async () => ({ state: 'connected', generation,
+      pendingPaths: 0, pendingEvents: 0, inFlight: false,
+      reconciliationNeeded: false }),
+  }));
+  assert.deepEqual(result, { state: 'held',
+    reason: 'import_quiet_window_unverified' });
 });

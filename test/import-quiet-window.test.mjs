@@ -40,7 +40,7 @@ test('reports only an observed quiet window after two empty roots, idle queues a
   const result = await observeImportQuietWindow(observers());
   assert.deepEqual(result, { state: 'quiet_window_observed', anidbId: 42,
     episodeIds: [1001], beforeObservedAtMs: 1_000_000,
-    afterObservedAtMs: 1_120_000 });
+    afterObservedAtMs: 1_120_000, feedGeneration: 7 });
 });
 
 test('a changed feed, unresolved file, queue activity or short interval cannot report quiet', async () => {
@@ -87,5 +87,5 @@ test('required Import fingerprint catches a changed folder during the quiet wind
     ...observers({ activities: [before, before] }), requireFingerprint: true,
   }), { state: 'quiet_window_observed', anidbId: 42,
     episodeIds: [1001], beforeObservedAtMs: 1_000_000,
-    afterObservedAtMs: 1_120_000 });
+    afterObservedAtMs: 1_120_000, feedGeneration: 7 });
 });
