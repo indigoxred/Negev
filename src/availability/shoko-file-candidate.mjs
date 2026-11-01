@@ -44,6 +44,21 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
       file.Release?.IsCorrupted !== false ||
       !Array.isArray(file.Release.CrossReferences) ||
       file.Release.CrossReferences.length !== item.pairs.length) return unavailable();
+  const identities = [];
+  for (const series of file.SeriesIDs) {
+    const shokoSeriesId = series?.SeriesID?.ID;
+    if (!validId(shokoSeriesId)) return unavailable();
+    for (const episode of series.EpisodeIDs) {
+      const shokoEpisodeId = episode?.ID;
+      const tmdbMovieIds = episode?.TMDB?.Movie ?? [];
+      if (!validId(shokoEpisodeId) || !Array.isArray(tmdbMovieIds) ||
+          tmdbMovieIds.length > 20 || tmdbMovieIds.some((id) => !validId(id)) ||
+          new Set(tmdbMovieIds).size !== tmdbMovieIds.length) return unavailable();
+      identities.push({ anidbId: series.SeriesID.AniDB,
+        episodeId: episode.AniDB, shokoSeriesId, shokoEpisodeId,
+        tmdbMovieIds });
+    }
+  }
   const refs = file.Release.CrossReferences;
   const linked = new Set(item.pairs.map(pairKey));
   if (refs.some((ref) => !ref ||
@@ -87,5 +102,6 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     return unavailable();
   }
   return { state: 'candidate', fileId, size: file.Size,
-    anidbFileId, releaseEvidence, pairs: item.pairs, sourcePaths };
+    anidbFileId, releaseEvidence, pairs: item.pairs,
+    identities, sourcePaths };
 }

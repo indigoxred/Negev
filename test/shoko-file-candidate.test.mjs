@@ -9,8 +9,9 @@ const refs = [1001, 1002].map((episodeId) => ({ AnidbAnimeID: 42,
   PercentageEnd: null }));
 const file = { ID: 51, Updated: '2026-11-01T00:00:00Z', Size: 123,
   IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: ed2k }],
-  SeriesIDs: [{ SeriesID: { AniDB: 42 }, EpisodeIDs:
-    [{ AniDB: 1001 }, { AniDB: 1002 }] }],
+  SeriesIDs: [{ SeriesID: { ID: 99, AniDB: 42 }, EpisodeIDs:
+    [{ ID: 555, AniDB: 1001, TMDB: { Movie: [] } },
+      { ID: 556, AniDB: 1002, TMDB: { Movie: [8001] } }] }],
   Release: { ID: `anidb://${ed2k}+123`, ProviderName: 'AniDB',
     ReleaseURI: 'https://anidb.net/file/800', FileSize: 123,
     IsCorrupted: false, Hashes: [{ Type: 'ED2K', Value: ed2k }],
@@ -35,6 +36,12 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
     anidbFileId: 800, releaseEvidence: 'registered',
     pairs: [{ anidbId: 42, episodeId: 1001 },
       { anidbId: 42, episodeId: 1002 }],
+    identities: [
+      { anidbId: 42, episodeId: 1001, shokoSeriesId: 99,
+        shokoEpisodeId: 555, tmdbMovieIds: [] },
+      { anidbId: 42, episodeId: 1002, shokoSeriesId: 99,
+        shokoEpisodeId: 556, tmdbMovieIds: [8001] },
+    ],
     sourcePaths: ['/pure/Anime/Example/01-02.mkv'] });
 });
 
@@ -52,6 +59,8 @@ test('unrecognized, partial, corrupt, and contradictory files cannot nominate ep
     { ...file, Locations: [{ ...file.Locations[0], AbsolutePath: '../outside.mkv' }] },
     { ...file, IsIgnored: true },
     { ...file, ID: 52 },
+    { ...file, SeriesIDs: [{ ...file.SeriesIDs[0],
+      EpisodeIDs: [{ AniDB: 1001 }, file.SeriesIDs[0].EpisodeIDs[1]] }] },
   ]) {
     assert.deepEqual(await readShokoFileCandidate({ ...base,
       fetchImpl: async () => json(changed) }), { state: 'unavailable' });
