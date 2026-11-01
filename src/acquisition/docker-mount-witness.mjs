@@ -172,3 +172,20 @@ export async function readMountWitness({ socketPath, now = Date.now,
   return { state: 'mount_evidence', mounts: item.mounts,
     observedAtMs: item.observedAtMs };
 }
+
+// Adapter for the existing stopped-submit and start gates. Both require a
+// fresh inspectMounts() callback before any qBittorrent write; a failed
+// witness becomes an exception that those gates convert to a hold.
+export function createMountInspector({ socketPath, read = readMountWitness } = {}) {
+  if (!absolute(socketPath) || path.posix.basename(socketPath) === 'docker.sock' ||
+      typeof read !== 'function') {
+    throw new TypeError('Invalid acquisition mount witness');
+  }
+  return async () => {
+    const result = await read({ socketPath });
+    if (result?.state !== 'mount_evidence' || !result.mounts) {
+      throw new TypeError('Mount witness unavailable');
+    }
+    return result.mounts;
+  };
+}

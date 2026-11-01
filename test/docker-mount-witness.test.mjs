@@ -4,7 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createMountWitnessHandler, inspectDockerContainer, readMountWitness } from
+import { createMountWitnessHandler, createMountInspector,
+  inspectDockerContainer, readMountWitness } from
   '../src/acquisition/docker-mount-witness.mjs';
 
 const names = { qbittorrent: 'downloader', shoko: 'importer',
@@ -131,6 +132,22 @@ test('mount witness validates fixed names and never accepts the raw Docker socke
   assert.throws(() => createMountWitnessHandler({ names: { ...names,
     plex: '../secrets' }, inspect: async () => null }), TypeError);
   await assert.rejects(readMountWitness({ socketPath: '/var/run/docker.sock' }),
+    TypeError);
+});
+
+test('acquisition mount callback returns only fresh witness mounts and holds on failure', async () => {
+  const socketPath = '/run/negev/mount.sock';
+  const mounts = { qbittorrent: [], shoko: [], plex: [] };
+  const inspect = createMountInspector({ socketPath,
+    read: async (input) => {
+      assert.equal(input.socketPath, socketPath);
+      return { state: 'mount_evidence', mounts };
+    } });
+  assert.equal(await inspect(), mounts);
+  const unavailable = createMountInspector({ socketPath,
+    read: async () => ({ state: 'held', reason: 'mount_witness_stale' }) });
+  await assert.rejects(unavailable());
+  assert.throws(() => createMountInspector({ socketPath: '/var/run/docker.sock' }),
     TypeError);
 });
 
