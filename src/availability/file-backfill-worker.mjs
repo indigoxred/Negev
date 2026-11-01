@@ -37,13 +37,14 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         if (claim.state !== 'claimed') return claim;
         const fileId = claim.fileIds[0];
         const budget = load();
-        const finish = (outcome, checkedPairs, available) => {
+        const finish = (outcome, checkedPairs, available, reason) => {
           const saved = cursor.record({ claim, outcomes: [{ fileId,
             ...outcome }], nowMs: now() });
           if (!['recorded', 'partial'].includes(saved.state)) return saved;
           failedReceipt = null;
           readFailures = 0;
           return { state: saved.state === 'partial' ? 'partial' : 'checked',
+            ...(reason ? { reason } : {}),
             checkedPairs, available, load: { ...budget } };
         };
         const sourceReadFailed = () => {
@@ -119,7 +120,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           }
           if (outcome?.reason === 'read_budget_exhausted') {
             if (index === start) {
-              return finish({ state: 'held' }, 1, 0);
+              // Defer this pathological file to the next pass so it cannot
+              // hold every later file, but report that no pair was checked.
+              return finish({ state: 'held' }, 0, 0, 'read_budget_exhausted');
             }
             end = index;
             break;
