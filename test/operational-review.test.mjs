@@ -6,17 +6,23 @@ test('combines terminal import holds and wrong-file rejections without exposing 
   const acquisitions = {
     listRejectedNeedsReview: () => [{ attemptId: 1, requestId: 7,
       anidbId: 42, reason: 'file_wrong_identity', observedMs: 100 }],
-    getAttempt: (id) => id === 2 ? { id, requestId: 8, anidbId: 43,
+    getAttempt: (id) => id === 2 || id === 3 ? { id,
+      requestId: id + 6, anidbId: id + 41,
       torrentHash: 'secret' } : null,
   };
   const publishQueue = { listReviewNeeded: () => [{ attemptId: 2,
     reason: 'identity_changed', checkedMs: 200 }] };
-  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue }), {
+  const startQueue = { listReviewNeeded: () => [{ attemptId: 3,
+    reason: 'provider_unavailable', checkedMs: 300 }] };
+  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue,
+    startQueue }), {
     state: 'review', items: [
       { attemptId: 1, requestId: 7, anidbId: 42,
         stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 100 },
       { attemptId: 2, requestId: 8, anidbId: 43,
         stage: 'import_hold', reason: 'identity_changed', observedMs: 200 },
+      { attemptId: 3, requestId: 9, anidbId: 44,
+        stage: 'start_hold', reason: 'provider_unavailable', observedMs: 300 },
     ], nextAfterAttemptId: null,
   });
 });
@@ -29,10 +35,13 @@ test('pages in attempt order and holds on inconsistent evidence', () => {
   };
   const publishQueue = { listReviewNeeded: () => [{ attemptId: 2,
     reason: 'identity_changed', checkedMs: 200 }] };
-  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue, limit: 1 }),
+  const startQueue = { listReviewNeeded: () => [] };
+  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue,
+    startQueue, limit: 1 }),
     { state: 'review', items: [{ attemptId: 1, requestId: 7,
       anidbId: 42, stage: 'release_rejected',
       reason: 'file_wrong_identity', observedMs: 100 }], nextAfterAttemptId: 1 });
-  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue, limit: 2 }),
+  assert.deepEqual(listOperationalReview({ acquisitions, publishQueue,
+    startQueue, limit: 2 }),
     { state: 'held', reason: 'review_evidence_unavailable' });
 });

@@ -35,6 +35,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listOperationalReview: () => ({ state: 'review', items: [{
       attemptId: 9, requestId: 1, anidbId: 1234,
       stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 900,
+    }, {
+      attemptId: 10, requestId: 2, anidbId: 1235,
+      stage: 'start_hold', reason: 'provider_unavailable', observedMs: 901,
     }], nextAfterAttemptId: null }),
     titleRegistry: {
       isKnownTitle: ({ anidbId }) => knownTitles.has(anidbId),
@@ -125,7 +128,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(review.statusCode, 200);
     assert.deepEqual(review.json().items, [{ attemptId: 9, requestId: 1,
       anidbId: 1234, stage: 'release_rejected',
-      reason: 'file_wrong_identity', observedMs: 900 }]);
+      reason: 'file_wrong_identity', observedMs: 900 },
+    { attemptId: 10, requestId: 2, anidbId: 1235,
+      stage: 'start_hold', reason: 'provider_unavailable', observedMs: 901 }]);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review?limit=100', headers: { cookie } })).statusCode, 400);
     assert.deepEqual(session.json().capabilities, {

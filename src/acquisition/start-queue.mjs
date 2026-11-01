@@ -58,6 +58,18 @@ export function openStartQueue(dbPath) {
     WHERE attempt_id=? AND version=? AND state IS NULL`);
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version FROM start_checks
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
+  const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId,
+    c.reason,c.checked_ms AS checkedMs FROM start_checks c
+    JOIN acquisition_attempts a ON a.id=c.attempt_id
+    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
+    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
+    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
+    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    WHERE c.attempt_id>? AND c.state='held' AND c.next_due_ms IS NULL
+      AND s.attempt_id IS NULL AND x.attempt_id IS NULL AND
+      j.attempt_id IS NULL AND t.attempt_id IS NULL
+    ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -99,6 +111,13 @@ export function openStartQueue(dbPath) {
     getResult(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid start attempt');
       return check.get(attemptId) ?? null;
+    },
+    listReviewNeeded({ afterAttemptId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 21) {
+        throw new TypeError('Invalid start review page');
+      }
+      return reviewNeeded.all(afterAttemptId, limit).map((row) => ({ ...row }));
     },
     reconcileUnresolved({ nowMs = Date.now(), limit = 20 } = {}) {
       if (!validTime(nowMs) || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {

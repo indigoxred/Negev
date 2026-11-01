@@ -130,6 +130,10 @@ test('a repeated unavailable start goes to review rather than polling forever', 
       version: second.version, state: 'held', reason: 'provider_unavailable',
       checkedMs: 1_801_002 }).state, 'recorded');
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+    assert.deepEqual(ctx.queue.listReviewNeeded(), [{
+      attemptId: first.attemptId, reason: 'provider_unavailable',
+      checkedMs: 1_801_002,
+    }]);
     assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
       ctx.ids[1].attemptId);
   }));
