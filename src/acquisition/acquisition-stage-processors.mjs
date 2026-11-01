@@ -14,7 +14,7 @@ const held = (reason) => ({ state: 'held', reason });
 // availability, mount, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
   handoffs, discoverCandidates, previewCandidate, loadDetail,
-  releaseQueries, readEvidence, publicSections, prowlarr,
+  releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
   stagingHostPath, holdingRoot, importRoot, inspectMounts, realpathImpl,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
@@ -25,7 +25,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
-        readEvidence, inspectMounts, realpathImpl, providerFetchImpl, now,
+        readEvidence, readPublicCoverage, inspectMounts, realpathImpl, providerFetchImpl, now,
         verifyHandoffMounts]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
@@ -66,6 +66,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       }
       const process = createAcquisitionRequestProcessor({
         readRequest: (id) => requests.getRequest(id),
+        readPublicCoverage,
         discoverCandidates, previewCandidate, loadDetail,
         submitCandidate: ({ request, ...selected }) =>
           submitMissingCandidate({ request, ...selected,

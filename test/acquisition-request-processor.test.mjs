@@ -186,6 +186,40 @@ test('a newly aired target invalidates the saved candidate position', async () =
   assert.deepEqual(seen, ['candidate-1', 'candidate-1']);
 });
 
+test('fully verified public coverage skips repeat indexer searches', async () => {
+  const calls = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => {
+      calls.push('coverage');
+      return { verifiedTargets: 2, targetCount: 2 };
+    },
+    discoverCandidates: async () => { throw Error('indexer was queried'); },
+    previewCandidate: async () => { throw Error('preview was queried'); },
+    loadDetail: async () => { throw Error('detail was queried'); },
+    submitCandidate: async () => { throw Error('torrent was submitted'); },
+  });
+  assert.deepEqual(await process({ requestId: 4, candidateOffset: 3 }),
+    { state: 'held', reason: 'target_already_available',
+      nextCandidateOffset: 0 });
+  assert.deepEqual(calls, ['coverage']);
+});
+
+test('partial public coverage still searches for missing requested episodes', async () => {
+  let searches = 0;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 1, targetCount: 2 }),
+    discoverCandidates: async () => { searches++;
+      return { state: 'candidates', requestId: 4, anidbId: 42, items: [] }; },
+    previewCandidate: async () => { throw Error('no candidate'); },
+    loadDetail: async () => { throw Error('no detail'); },
+    submitCandidate: async () => { throw Error('no submission'); },
+  });
+  assert.equal((await process({ requestId: 4 })).reason, 'no_release_candidates');
+  assert.equal(searches, 1);
+});
+
 test('an already playable first candidate does not hide a later missing episode', async () => {
   const seen = [];
   const process = createAcquisitionRequestProcessor({

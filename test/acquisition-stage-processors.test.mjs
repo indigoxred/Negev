@@ -30,6 +30,7 @@ const options = (calls) => ({
   loadDetail: async () => { throw Error('no detail'); },
   releaseQueries: async () => [],
   readEvidence: async () => { throw Error('no availability read'); },
+  readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 1 }),
   publicSections: { episode: [102], movie: [123] },
   prowlarr: { baseUrl: 'http://prowlarr:9696/', apiKey: 'synthetic',
     indexerIds: [1] },
@@ -64,6 +65,21 @@ test('missing safety providers are rejected before any work', () => {
   assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
     readEvidence: undefined }), TypeError);
   assert.deepEqual(calls, []);
+  assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
+    readPublicCoverage: undefined }), TypeError);
+});
+
+test('recent exact public coverage avoids the indexer in the wired request stage', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    readPublicCoverage: () => ({ verifiedTargets: 1, targetCount: 1 }) });
+  const result = await stages.processRequest({ requestId: 1,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('qBittorrent called'); },
+    providerFetchImpl: async () => { throw Error('Prowlarr called'); } });
+  assert.deepEqual(result, { state: 'held', reason: 'target_already_available',
+    nextCandidateOffset: 0 });
+  assert.deepEqual(calls, ['request:1']);
 });
 
 test('completion and publish hold before media work when the own mount is unproved', async () => {

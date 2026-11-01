@@ -596,6 +596,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             providerId: shokoProviderId },
           publicSections: plex.publicSections, prowlarr,
           firstTimePolicy: 'single_uncertain_attempt',
+          readPublicCoverage: ({ anidbId, episodeIds }) => {
+            const checkedMs = now();
+            return recentPublicCoverage({ episodeIds,
+              directIds: directAvailability.getRecentAvailableIds({
+                anidbId, nowMs: checkedMs }),
+              titleIds: titleChecks?.getRecentAvailableIds({
+                anidbId, nowMs: checkedMs }) ?? [],
+              fileIds: fileProofs?.getRecentAvailableIds({ anidbId }) ?? [],
+            });
+          },
           discoverCandidates, previewCandidate, releaseQueries,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {

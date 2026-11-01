@@ -13,9 +13,11 @@ const validReason = (value) => typeof value === 'string' &&
 // this processor cannot authorize absence or start the resulting torrent.
 export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
+  readPublicCoverage,
   maxPreflights = 3 } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
+      (readPublicCoverage !== undefined && typeof readPublicCoverage !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, candidateOffset = 0,
@@ -33,6 +35,20 @@ export function createAcquisitionRequestProcessor({ readRequest,
         request.episodeIds.some((id) => !validId(id)) ||
         new Set(request.episodeIds).size !== request.episodeIds.length) {
       return held('request_unavailable');
+    }
+    if (readPublicCoverage) {
+      let coverage;
+      try { coverage = await readPublicCoverage(request); }
+      catch { return held('availability_unverified'); }
+      if (!Number.isSafeInteger(coverage?.verifiedTargets) ||
+          coverage.verifiedTargets < 0 ||
+          coverage.verifiedTargets > request.episodeIds.length ||
+          coverage.targetCount !== request.episodeIds.length) {
+        return held('availability_unverified');
+      }
+      if (coverage.verifiedTargets === request.episodeIds.length) {
+        return { ...held('target_already_available'), nextCandidateOffset: 0 };
+      }
     }
     let found;
     try { found = await discoverCandidates({ requestId }); }
