@@ -7,6 +7,8 @@ import { readPrivatePlexToken, readPrivateProwlarrKey,
 import { createQbittorrentSidecarObserver } from
   '../availability/qbittorrent-sidecar-observer.mjs';
 import { startShokoSignalRFeed } from '../availability/shoko-signalr-feed.mjs';
+import { createShokoFeedStatusReporter } from
+  '../availability/shoko-feed-status.mjs';
 import { createShokoFeedSupervisor } from
   '../availability/shoko-feed-supervisor.mjs';
 import { createShokoInventoryScheduler } from
@@ -58,7 +60,9 @@ try {
     },
     today: () => dateInZone(config.timeZone) });
   await service.app.listen({ host: config.host, port: config.port });
+  const reportShokoFeedStatus = createShokoFeedStatusReporter();
   const flagShokoGap = (reason) => {
+    reportShokoFeedStatus(reason);
     service.flagShokoReconciliation(reason);
     shokoInventory?.requestSoon();
     shokoRecent?.requestSoon();
