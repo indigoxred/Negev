@@ -98,6 +98,32 @@ test('bad or inaccessible source hints cannot survive a newer page', async () =>
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('linked source hints page by file ID without treating absent hints as deletions', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-page-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger = openShokoInventoryLedger(dbPath);
+  try {
+    const hint = { size: 5, sourcePaths: ['/pure/Anime/episode.mkv'] };
+    for (const fileId of [10, 12, 14]) {
+      ledger.recordFileObservation({ item: { ...linked, fileId, hint },
+        observedMs: 100 + fileId });
+    }
+    assert.deepEqual(ledger.listFileHintIds({ afterFileId: 0, limit: 2 }),
+      [10, 12]);
+    ledger.close();
+    ledger = openShokoInventoryLedger(dbPath);
+    assert.deepEqual(ledger.listFileHintIds({ afterFileId: 12, limit: 2 }),
+      [14]);
+    ledger.recordFileObservation({ item: { ...linked, fileId: 12,
+      hint: null }, observedMs: 200 });
+    assert.deepEqual(ledger.listFileHintIds({ afterFileId: 0, limit: 10 }),
+      [10, 14]);
+    assert.deepEqual(ledger.listFileHintIds({ afterFileId: 14, limit: 10 }), []);
+    assert.throws(() => ledger.listFileHintIds({ afterFileId: 0,
+      limit: 1000 }), TypeError);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a failed change callback is redelivered after restart before another Shoko page', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-replay-'));
   const dbPath = path.join(dir, 'inventory.sqlite');

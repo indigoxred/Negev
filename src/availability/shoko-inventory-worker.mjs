@@ -143,6 +143,11 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     WHERE anidb_id=? AND episode_id=? ORDER BY file_id`);
   const findHint = db.prepare(`SELECT updated,size,paths_json AS pathsJson,
     observed_ms AS observedMs FROM shoko_inventory_file_hints WHERE file_id=?`);
+  const pageHintIds = db.prepare(`SELECT f.file_id AS fileId
+    FROM shoko_inventory_files f JOIN shoko_inventory_file_hints h
+      ON h.file_id=f.file_id AND h.updated=f.updated
+    WHERE f.state='linked' AND f.file_id>?
+    ORDER BY f.file_id LIMIT ?`);
   const saveHint = db.prepare(`INSERT INTO shoko_inventory_file_hints
     (file_id,updated,size,paths_json,observed_ms) VALUES (?,?,?,?,?)
     ON CONFLICT(file_id) DO UPDATE SET updated=excluded.updated,
@@ -282,6 +287,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         return validHint(value) ? { ...value, updated: hint.updated,
           observedMs: hint.observedMs } : null;
       } catch { return null; }
+    },
+    listFileHintIds({ afterFileId = 0, limit = 10 } = {}) {
+      if (!Number.isSafeInteger(afterFileId) || afterFileId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 10) {
+        throw new TypeError('Invalid Shoko hint page');
+      }
+      return pageHintIds.all(afterFileId, limit).map((row) => row.fileId);
     },
     getObservedFileIds({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {
