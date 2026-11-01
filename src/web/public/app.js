@@ -14,6 +14,7 @@ const state = { csrf: null, user: null, selected: null,
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
+const detailResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 function message(text, error = false) {
   const node = byId('message');
@@ -51,8 +52,12 @@ function showSession(data) {
     sessionResponses.invalidate();
     requestResponses.invalidate();
     reviewResponses.invalidate();
+    detailResponses.invalidate();
+    state.selected = null;
     byId('request-list').replaceChildren();
     byId('review-list').replaceChildren();
+    byId('detail').replaceChildren(element('p',
+      'Select a result to see its details.', 'muted'));
     state.nextBeforeId = null;
     nextReviewAttemptId = null;
   }
@@ -76,6 +81,7 @@ function clearWorkspace() {
   sessionResponses.invalidate();
   requestResponses.invalidate();
   reviewResponses.invalidate();
+  detailResponses.invalidate();
   state.user = null;
   state.csrf = null;
   state.selected = null;
@@ -363,12 +369,15 @@ byId('search-form').addEventListener('submit', async (event) => {
   }
 });
 async function showDetail(item, franchise = null) {
+  const detailRequest = detailResponses.invalidate();
+  const isCurrentDetail = () => detailResponses.isCurrent(detailRequest) &&
+    state.selected === item.anidbId;
   state.selected = item.anidbId;
   const panel = byId('detail');
   panel.replaceChildren(element('p', 'Loading details…', 'muted'));
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
-    if (state.selected !== item.anidbId) return;
+    if (!isCurrentDetail()) return;
     panel.replaceChildren(element('p', data.title || item.title, 'detail-title'));
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
@@ -418,9 +427,9 @@ async function showDetail(item, franchise = null) {
       try {
         const related = await api(`/api/catalogue/${next.anidbId}/related`);
         family.add(related);
-        if (state.selected === item.anidbId) renderFamily();
+        if (isCurrentDetail()) renderFamily();
       } catch {
-        if (state.selected === item.anidbId) {
+        if (isCurrentDetail()) {
           relatedList.append(element('p',
             'Could not expand this relationship now. Try again later.', 'muted'));
           relatedButton.disabled = false;
@@ -486,12 +495,12 @@ async function showDetail(item, franchise = null) {
         let pollTimer;
         let progressEpoch = 0;
         const showProgress = async () => {
-          if (state.selected !== item.anidbId) return;
+          if (!isCurrentDetail()) return;
           const epoch = ++progressEpoch;
           if (pollTimer) clearTimeout(pollTimer);
           try {
             const status = await api(url);
-            if (state.selected !== item.anidbId || epoch !== progressEpoch) return;
+            if (!isCurrentDetail() || epoch !== progressEpoch) return;
             if (status.state === 'not_started') progress.textContent =
               'Availability has not been checked for this title.';
             else if (status.state === 'held') progress.textContent =
@@ -563,7 +572,7 @@ async function showDetail(item, franchise = null) {
           more.disabled = true;
           try {
             const page = await api(`/api/catalogue/${item.anidbId}?page=${pager.nextPage}`);
-            if (state.selected !== item.anidbId) return;
+            if (!isCurrentDetail()) return;
             const added = pager.append(page);
             if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
             appendOptions(added.episodes);
@@ -595,6 +604,7 @@ async function showDetail(item, franchise = null) {
     });
     panel.append(button);
   } catch (error) {
+    if (!isCurrentDetail()) return;
     panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'));
     message(error.message, true);
   }
