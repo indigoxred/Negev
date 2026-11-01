@@ -18,7 +18,7 @@ function inactiveSidecar({ file, evidence, qbitImportSavePath, nowMs }) {
   const relativePath = file.relativePath;
   const hash = sidecarHash(relativePath);
   const torrent = evidence?.torrent;
-  return hash !== null && evidence.relativePath === relativePath &&
+  return hash !== null && evidence?.relativePath === relativePath &&
     typeof qbitImportSavePath === 'string' &&
     qbitImportSavePath.startsWith('/') &&
     path.posix.normalize(qbitImportSavePath) === qbitImportSavePath &&

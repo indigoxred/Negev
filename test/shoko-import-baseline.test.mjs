@@ -67,6 +67,9 @@ test('only an old, inactive, exactly owned qBittorrent parts sidecar is passive'
   const options = { diskFiles: withSidecar, shokoPage: { Total: 1, List: [file] },
     managedFolderId: 1, qbitImportSavePath: '/Shoko', nowMs: 4_700_000,
     sidecarTorrents: [{ relativePath: sidecarPath, torrent }] };
+  assert.deepEqual(classifyShokoImportBaseline({ ...options,
+    sidecarTorrents: [] }),
+  { state: 'held', reason: 'active_or_unknown_sidecar' });
   assert.deepEqual(classifyShokoImportBaseline(options),
     { state: 'recognized_baseline', matchedVideos: 1, passiveFiles: 2 });
   for (const changed of [
