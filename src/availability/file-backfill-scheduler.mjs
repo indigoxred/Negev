@@ -7,7 +7,7 @@ export function createFileBackfillScheduler({ tick,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof tick !== 'function' || typeof setTimer !== 'function' ||
       typeof clearTimer !== 'function' ||
-      !Number.isSafeInteger(intervalMs) || intervalMs < 60_000 ||
+      !Number.isSafeInteger(intervalMs) || intervalMs < 10_000 ||
       intervalMs > 5 * 60_000 ||
       !Number.isSafeInteger(failureDelayMs) ||
       failureDelayMs < intervalMs || failureDelayMs > 30 * 60_000) {

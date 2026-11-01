@@ -47,6 +47,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           source = inventory.getFile(fileId);
           candidate = await readCandidate({ fileId });
         } catch { return finish({ state: 'unknown' }, 0, 0); }
+        if (candidate?.state === 'busy') {
+          return { state: 'held', reason: 'metadata_busy' };
+        }
         if (source?.state !== 'linked' || !validTime(source.observedMs) ||
             candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
             candidate.updated !== source.updated || !validId(candidate.size) ||
@@ -73,6 +76,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
             let kind;
             try { kind = await resolveKind({ anidbId: pair.anidbId }); }
             catch { kind = null; }
+            if (kind?.state === 'busy') {
+              return { state: 'held', reason: 'metadata_busy' };
+            }
             kinds.set(pair.anidbId, kind);
           }
           const kind = kinds.get(pair.anidbId);
@@ -81,6 +87,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           try { outcome = await observeCandidate({ candidate,
             target: { ...pair, kind }, budget }); }
           catch { continue; }
+          if (outcome?.state === 'busy') {
+            return { state: 'held', reason: 'metadata_busy' };
+          }
           if (outcome?.reason === 'read_budget_exhausted') {
             if (index === start) {
               return finish({ state: 'held' }, 1, 0);
@@ -101,6 +110,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         let confirmed;
         try { confirmed = await readCandidate({ fileId }); }
         catch { confirmed = null; }
+        if (confirmed?.state === 'busy') {
+          return { state: 'held', reason: 'metadata_busy' };
+        }
         if (confirmed?.state !== 'candidate' ||
             fingerprint(confirmed) !== identity) {
           return finish({ state: 'unknown' }, end - start, 0);

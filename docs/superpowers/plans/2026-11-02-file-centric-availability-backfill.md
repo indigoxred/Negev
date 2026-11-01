@@ -67,8 +67,8 @@
 
 **Interfaces:** A one-file claim carries a `pairOffset` and candidate fingerprint. A `partial` outcome atomically replaces that claim with a new receipt for the same file and a strictly larger offset, instead of advancing to the next file. The fingerprint covers Shoko file update identity, release identity and the exact ordered AniDB episode pairs; a changed fingerprint resets processing to pair zero. A complete/Unknown/held outcome advances normally. The worker may claim only one file while continuation is active, keeping a fixed per-tick read budget without starving later pairs.
 
-- [ ] Write failing tests for a 12-episode file with a ten-pair tick, restart after the partial receipt, stale receipt rejection and changed-file reset.
-- [ ] Implement the narrow cursor extension and candidate update identity; run focused and full suite; commit.
+- [x] Write failing tests for a 12-episode file with a ten-pair tick, restart after the partial receipt, stale receipt rejection and changed-file reset.
+- [x] Implement the narrow cursor extension and candidate update identity; run focused and full suite; commit.
 
 ### Task 5: Bounded source worker and UI read composition
 
@@ -78,7 +78,7 @@
 
 The worker must resolve the AniDB title's actual `series`/`movie` kind, reread the Shoko candidate after each bounded group, and atomically reject proof insertion if either the Shoko file or Plex card/Part generation changed since its exact read. Proof insertion and source-change invalidation must share the same SQLite ordering; a post-event late insert cannot escape withdrawal merely by carrying a later timestamp.
 
-- [ ] Write tests for direct-Shoko-import positive, incomplete index Unknown, shared budget, multi-episode continuation, concurrent Shoko/Plex change before proof commit, retry after restart, expiry, acquisition isolation and opt-in parsing.
+- [x] Write tests for exact-file positive, incomplete index Unknown, shared budget, multi-episode continuation, concurrent Shoko/Plex change before proof commit, retry after restart, expiry, request-status isolation and opt-in parsing.
 - [ ] Run red; implement worker and wiring in small commits; run focused and full suite plus Linux CI.
 - [ ] Rehearse one isolated NAS tick with acquisition off, resource limits and private temporary SQLite; record timings, counts, index coverage and service load without printing paths or tokens.
 - [ ] Do not enable an installed broad scheduler until the load and rollback gates pass. A synthetic green suite is not operational proof.

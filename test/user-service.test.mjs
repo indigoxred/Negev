@@ -9,6 +9,7 @@ import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 import { openShokoInventoryLedger } from '../src/availability/shoko-inventory-worker.mjs';
 import { openShokoRecentLedger } from '../src/availability/shoko-recent-ledger.mjs';
 import { openTitleCheckLedger } from '../src/availability/title-check-ledger.mjs';
+import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
@@ -843,4 +844,58 @@ test('request history reflects recent title-check proof and loses it on expiry',
     clock = 30 * 60_000 + 906;
     assert.equal((await read()).publicAvailability, 'unverified');
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('opt-in file proof contributes to request progress and expires without Plex reads', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-file-progress-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  const owner = await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: owner.id, requestKey: 'film', nowMs: 900,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      monitorFuture: false, episodeIds: [1001] } });
+  requests.close();
+  let clock = 1_000;
+  let service;
+  try {
+    const prior = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => clock });
+    try {
+      prior.observe({ anidbId: 42, episodeId: 1001,
+        proof: { fileId: 10, libraryId: 102, ratingKey: 20, partId: 30 },
+        checkedMs: 998 });
+    } finally { prior.close(); }
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+      sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+      shokoInventoryHints: true, fileBackfill: true,
+      fileProofLifetimeMs: 30 * 60_000, now: () => clock,
+      plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+        publicSections: { episode: [102], movie: [] },
+        shokoMount: { appRoot: '/pure', localRoot: dir },
+        plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+      fetchImpl: async () => { throw Error('progress must not scan providers'); },
+    });
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const read = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } })).json().items[0].progress;
+    assert.equal((await read()).publicAvailability, 'unverified');
+    const proof = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => clock });
+    try {
+      assert.deepEqual(proof.observe({ anidbId: 42, episodeId: 1001,
+        proof: { fileId: 10, libraryId: 102, ratingKey: 20, partId: 30 },
+        checkedMs: 999 }), { state: 'recorded' });
+    } finally { proof.close(); }
+    assert.equal((await read()).publicVerifiedTargets, 1);
+    assert.equal((await service.tickFileBackfill()).state, 'idle');
+    clock = 30 * 60_000 + 1_000;
+    assert.equal((await read()).publicAvailability, 'unverified');
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });

@@ -24,6 +24,44 @@ const candidate = (count = 12, updated = '2026-11-02T00:00:00Z') => ({
     shokoEpisodeId: 2001 + index, tmdbMovieIds: [] })),
   sourcePaths: ['/pure/Anime/pack.mkv'] });
 
+for (const busyAt of ['first_file', 'kind', 'card', 'final_file']) {
+  test(`metadata contention at ${busyAt} retries the same file`, async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-'));
+    const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+    let fileReads = 0;
+    let kinds = 0;
+    let cards = 0;
+    const worker = createFileBackfillWorker({ cursor,
+      inventory: { listFileHintIds: ({ afterFileId }) =>
+        [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+      getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+        observedMs: 100 }) },
+      readCandidate: async () => {
+        fileReads++;
+        return busyAt === 'first_file' && fileReads === 1 ||
+          busyAt === 'final_file' && fileReads === 2
+          ? { state: 'busy' } : candidate(1);
+      },
+      resolveKind: async () => {
+        kinds++;
+        return busyAt === 'kind' && kinds === 1 ? { state: 'busy' } : 'series';
+      },
+      observeCandidate: async () => {
+        cards++;
+        return busyAt === 'card' && cards === 1
+          ? { state: 'busy' } : { state: 'unknown' };
+      },
+      proofs: { observeGuarded: () => { throw Error('No positive'); } },
+      now: () => 300 });
+    try {
+      assert.deepEqual(await worker.runOnce(), {
+        state: 'held', reason: 'metadata_busy' });
+      assert.equal((await worker.runOnce()).state, 'checked');
+      assert.equal((await worker.runOnce()).state, 'checked');
+    } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+}
+
 test('a 12-episode file advances in two bounded ticks and saves guarded positives', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-worker-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));

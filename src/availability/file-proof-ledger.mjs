@@ -7,11 +7,11 @@ const held = () => ({ state: 'held', reason: 'invalid_exact_proof' });
 // Positive evidence from the internal exact Shoko/public Plex same-file
 // observer. A stale proof is retained as history, never presented as current.
 export function openFileProofLedger(dbPath, { positiveLifetimeMs,
-  now = Date.now } = {}) {
+  now = Date.now, discardPriorProofs = false } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
       !Number.isSafeInteger(positiveLifetimeMs) ||
       positiveLifetimeMs < 1 || positiveLifetimeMs > 7 * 24 * 60 * 60_000 ||
-      typeof now !== 'function') {
+      typeof now !== 'function' || typeof discardPriorProofs !== 'boolean') {
     throw new TypeError('Invalid file proof ledger configuration');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -33,6 +33,9 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       ON file_availability_proofs(file_id,verified_ms)`);
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_card
       ON file_availability_proofs(library_id,rating_key,verified_ms)`);
+    // Source observers cannot witness changes while Negev is stopped. A new
+    // service process must earn each current positive again from exact bytes.
+    if (discardPriorProofs) db.exec('DELETE FROM file_availability_proofs');
   } catch (error) { db.close(); throw error; }
   const upsert = db.prepare(`INSERT INTO file_availability_proofs
     (anidb_id,episode_id,file_id,library_id,rating_key,part_id,verified_ms)
@@ -42,6 +45,9 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
   const current = db.prepare(`SELECT MAX(verified_ms) AS verifiedMs
     FROM file_availability_proofs WHERE anidb_id=? AND episode_id=?
       AND verified_ms<=?`);
+  const positiveForAnime = db.prepare(`SELECT DISTINCT episode_id AS episodeId
+    FROM file_availability_proofs WHERE anidb_id=? AND verified_ms>?
+      AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
   let sourceStillCurrent;
   return {
     observe({ anidbId, episodeId, proof, checkedMs } = {}) {
@@ -124,6 +130,14 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       return { state: row.verifiedMs + positiveLifetimeMs > nowMs
         ? 'available' : 'previously_available',
       verifiedAtMs: row.verifiedMs };
+    },
+    getRecentAvailableIds({ anidbId } = {}) {
+      if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      const nowMs = now();
+      if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
+      const rows = positiveForAnime.all(anidbId,
+        nowMs - positiveLifetimeMs, nowMs);
+      return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
     },
     close() { db.close(); },
   };

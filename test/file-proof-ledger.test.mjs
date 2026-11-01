@@ -69,3 +69,35 @@ test('incomplete identities and future receipts cannot become available', async 
     assert.deepEqual(ledger.getCurrent(episode), { state: 'unknown' });
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('a bounded title read returns only currently proven episode IDs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  const ledger = openFileProofLedger(path.join(dir, 'state.sqlite'),
+    { positiveLifetimeMs: 300, now: () => 1_500 });
+  try {
+    ledger.observe({ ...episode, proof, checkedMs: 1_400 });
+    ledger.observe({ anidbId: 42, episodeId: 1002,
+      proof: { ...proof, partId: 901 }, checkedMs: 1_000 });
+    assert.deepEqual(ledger.getRecentAvailableIds({ anidbId: 42 }), [1001]);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a new observer session discards old positives but accepts fresh proofs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  let clock = 1_000;
+  let ledger = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => clock });
+  try {
+    ledger.observe({ ...episode, proof, checkedMs: 900 });
+    ledger.close();
+    ledger = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 10_000, now: () => clock,
+      discardPriorProofs: true });
+    assert.deepEqual(ledger.getCurrent(episode), { state: 'unknown' });
+    assert.deepEqual(ledger.getRecentAvailableIds({ anidbId: 42 }), []);
+    clock = 1_001;
+    ledger.observe({ ...episode, proof, checkedMs: 1_001 });
+    assert.equal(ledger.getCurrent(episode).state, 'available');
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});

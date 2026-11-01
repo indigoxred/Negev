@@ -19,6 +19,8 @@ import { createShokoRecentScheduler } from
   '../availability/shoko-recent-scheduler.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
 import { createPlexIndexScheduler } from '../availability/plex-index-scheduler.mjs';
+import { createFileBackfillScheduler } from
+  '../availability/file-backfill-scheduler.mjs';
 import { createDirectAvailabilityScheduler } from
   '../availability/direct-availability-scheduler.mjs';
 import { createAvailabilityCycle } from '../availability/availability-cycle.mjs';
@@ -31,6 +33,7 @@ let shokoInventory;
 let shokoRecent;
 let airingScheduler;
 let plexScheduler;
+let fileBackfillScheduler;
 let directAvailabilityScheduler;
 try {
   const config = parseUserServerConfig(process.env);
@@ -120,6 +123,13 @@ try {
     });
     plexScheduler.start();
   }
+  if (config.fileBackfill) {
+    fileBackfillScheduler = createFileBackfillScheduler({
+      tick: service.tickFileBackfill,
+      intervalMs: config.fileBackfillIntervalMs,
+    });
+    fileBackfillScheduler.start();
+  }
   if (config.directAvailability || config.titleCheck) {
     const cycle = createAvailabilityCycle({
       runDirect: config.directAvailability ? service.tickDirectAvailability : null,
@@ -139,6 +149,7 @@ try {
     try {
       await airingScheduler?.stop();
       await plexScheduler?.close();
+      await fileBackfillScheduler?.close();
       await directAvailabilityScheduler?.close();
       await shokoInventory?.close();
       await shokoRecent?.close();
@@ -152,6 +163,7 @@ try {
   try {
     await airingScheduler?.stop();
     await plexScheduler?.close();
+    await fileBackfillScheduler?.close();
     await directAvailabilityScheduler?.close();
     await shokoInventory?.close();
     await shokoRecent?.close();

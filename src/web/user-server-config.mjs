@@ -239,6 +239,7 @@ export function parseUserServerConfig(env) {
       env.NEGEV_SHOKO_INVENTORY_HINTS,
       env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
+      env.NEGEV_FILE_BACKFILL,
       env.NEGEV_DIRECT_AVAILABILITY,
       env.NEGEV_TITLE_CHECK,
       env.NEGEV_SHOKO_HYDRATION,
@@ -252,6 +253,23 @@ export function parseUserServerConfig(env) {
   if (env.NEGEV_SHOKO_INVENTORY_HINTS === '1' &&
       env.NEGEV_SHOKO_INVENTORY !== '1') {
     throw new TypeError('Shoko path hints need inventory');
+  }
+  const fileBackfill = env.NEGEV_FILE_BACKFILL === '1';
+  const rawFileInterval = env.NEGEV_FILE_BACKFILL_INTERVAL_MS;
+  const rawProofLifetime = env.NEGEV_FILE_PROOF_LIFETIME_MS;
+  const validPositiveMs = (raw, minimum, maximum) =>
+    typeof raw === 'string' && /^[1-9]\d*$/.test(raw) &&
+    Number.isSafeInteger(Number(raw)) && Number(raw) >= minimum &&
+    Number(raw) <= maximum;
+  if (fileBackfill ?
+      (env.NEGEV_SHOKO_INVENTORY_HINTS !== '1' ||
+       env.NEGEV_PLEX_INDEX !== '1' ||
+       env.NEGEV_PLEX_OBSERVER !== '1' ||
+       !validPositiveMs(rawFileInterval, 10_000, 300_000) ||
+       !validPositiveMs(rawProofLifetime, 30 * 60_000,
+         7 * 24 * 60 * 60_000)) :
+      rawFileInterval !== undefined || rawProofLifetime !== undefined) {
+    throw new TypeError('File backfill needs measured Shoko/Plex inventory and proof policy');
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
       ((env.NEGEV_PLEX_INDEX !== '1' &&
@@ -339,6 +357,9 @@ export function parseUserServerConfig(env) {
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoInventoryHints: env.NEGEV_SHOKO_INVENTORY_HINTS === '1',
+    fileBackfill,
+    fileBackfillIntervalMs: fileBackfill ? Number(rawFileInterval) : null,
+    fileProofLifetimeMs: fileBackfill ? Number(rawProofLifetime) : null,
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     directActiveDelayMs: rawDirectDelay === undefined ? 60_000 :

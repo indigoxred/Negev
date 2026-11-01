@@ -252,6 +252,7 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     NEGEV_PLEX_SOURCE_POLICY: JSON.stringify(sourcePolicy) }), TypeError);
   assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
   assert.equal(parsed.plexIndex, false);
+  assert.equal(parsed.fileBackfill, false);
   assert.equal(parsed.directAvailability, false);
   assert.equal(parsed.directActiveDelayMs, 60_000);
   assert.equal(parsed.titleCheck, false);
@@ -261,6 +262,22 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parseUserServerConfig({ ...plex,
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
+  const backfill = { ...plex, NEGEV_PLEX_INDEX: '1',
+    NEGEV_SHOKO_INVENTORY: '1', NEGEV_SHOKO_INVENTORY_HINTS: '1',
+    NEGEV_FILE_BACKFILL: '1', NEGEV_FILE_BACKFILL_INTERVAL_MS: '10000',
+    NEGEV_FILE_PROOF_LIFETIME_MS: String(3 * 24 * 60 * 60_000) };
+  assert.equal(parseUserServerConfig(backfill).fileBackfill, true);
+  assert.equal(parseUserServerConfig(backfill).fileBackfillIntervalMs, 10_000);
+  assert.equal(parseUserServerConfig(backfill).fileProofLifetimeMs,
+    3 * 24 * 60 * 60_000);
+  for (const change of [
+    { NEGEV_SHOKO_INVENTORY_HINTS: '0' },
+    { NEGEV_PLEX_INDEX: '0' },
+    { NEGEV_FILE_BACKFILL_INTERVAL_MS: '9999' },
+    { NEGEV_FILE_PROOF_LIFETIME_MS: undefined },
+    { NEGEV_FILE_PROOF_LIFETIME_MS: '0' },
+  ]) assert.throws(() => parseUserServerConfig({ ...backfill, ...change }),
+    TypeError);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_SHOKO_INVENTORY: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',

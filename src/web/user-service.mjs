@@ -38,6 +38,9 @@ import { openDirectAvailabilityQueue, createDirectAvailabilityWorker,
 import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
 import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
 import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs';
+import { openFileBackfillCursor } from '../availability/file-backfill-cursor.mjs';
+import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
+import { createFileBackfillWorker } from '../availability/file-backfill-worker.mjs';
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
@@ -65,7 +68,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   shokoImportRoot = null, shokoImportFolderId = null,
   qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
-  titleCheck = false,
+  titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
   shokoRecent = false, shokoInventoryHints = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
@@ -78,6 +81,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
       typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
+      typeof fileBackfill !== 'boolean' ||
+      (fileBackfill && (!plex || !shokoInventoryHints ||
+        !Number.isSafeInteger(fileProofLifetimeMs) ||
+        fileProofLifetimeMs < 30 * 60_000 ||
+        fileProofLifetimeMs > 7 * 24 * 60 * 60_000)) ||
       (shokoImportRoot !== null &&
         (typeof shokoImportRoot !== 'string' ||
          !path.isAbsolute(shokoImportRoot) ||
@@ -117,6 +125,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let directAvailability;
   let titleChecks;
   let plexObserver;
+  let fileCursor;
+  let fileProofs;
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
@@ -133,6 +143,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now }) : null;
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
+    if (fileBackfill) {
+      fileCursor = openFileBackfillCursor(dbPath);
+      fileProofs = openFileProofLedger(dbPath, {
+        positiveLifetimeMs: fileProofLifetimeMs, now,
+        discardPriorProofs: true });
+    }
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {
       const pairs = new Map();
@@ -197,6 +213,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           ...target, kind: detail.kind }, undefined, true) : { state: 'unknown' };
       },
     });
+    const backfillWorker = fileBackfill ? createFileBackfillWorker({
+      cursor: fileCursor, inventory, proofs: fileProofs, now,
+      readCandidate: ({ fileId }) => metadata.run(() =>
+        readShokoFileCandidate({ baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, fileId, fetchImpl })),
+      resolveKind: async ({ anidbId }) => {
+        const detail = await metadata.run(() => loadDetail({ anidbId, page: 1 }));
+        if (detail?.state === 'busy') return detail;
+        return detail?.state === 'details' ? detail.kind : null;
+      },
+      observeCandidate: (input) => metadata.run(() =>
+        plexObserver.observeFileCandidate(input)),
+    }) : null;
     const titleWorker = titleChecks ? createTitleCheckWorker({
       ledger: titleChecks, now,
       loadDetail: (input) => metadata.run(() => loadDetail(input)),
@@ -278,6 +307,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                   anidbId: item.anidbId, nowMs: checkedMs }),
                 titleIds: titleChecks?.getRecentAvailableIds({
                   anidbId: item.anidbId, nowMs: checkedMs }) ?? [],
+                fileIds: fileProofs?.getRecentAvailableIds({
+                  anidbId: item.anidbId }) ?? [],
               });
             }
             coverage = recentPublicCoverage({ episodeIds: item.episodeIds,
@@ -314,9 +345,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             episodeId: episode.id, nowMs: now() };
           const direct = directAvailability.getStatus(target).state;
           const title = titleChecks?.getTargetStatus(target).state;
+          const file = fileProofs?.getCurrent(target).state;
           return { ...episode, availability:
-            direct === 'available' || title === 'available'
-              ? 'available' : title === 'previously_available'
+            direct === 'available' || title === 'available' || file === 'available'
+              ? 'available' : title === 'previously_available' ||
+                file === 'previously_available'
                 ? 'previously_available' : 'unknown' };
         }) };
       },
@@ -476,6 +509,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           reason: 'observer_not_configured' });
         return track(fileWorker.runOnce());
       },
+      tickFileBackfill: () => {
+        if (stopping) return Promise.resolve({ state: 'held',
+          reason: 'service_stopping' });
+        return backfillWorker ? track(backfillWorker.runOnce()) :
+          Promise.resolve({ state: 'held', reason: 'file_backfill_disabled' });
+      },
       tickTitleCheck: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return titleWorker ? track(titleWorker.runOnce()) :
@@ -561,6 +600,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
               plexObserver?.close();
+              fileProofs?.close(); fileCursor?.close();
               directAvailability.close();
               titleChecks?.close();
               recent?.close();
@@ -573,7 +613,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); directAvailability?.close(); titleChecks?.close(); recent?.close();
+    plexObserver?.close(); fileProofs?.close(); fileCursor?.close();
+    directAvailability?.close(); titleChecks?.close(); recent?.close();
     inventory?.close(); hydration?.close();
     progress?.close(); publishReview?.close(); handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();

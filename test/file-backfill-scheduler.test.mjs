@@ -52,3 +52,16 @@ test('file backfill backs off on failed or empty ticks and closes cleanly', asyn
   assert.deepEqual(await scheduler.runOnce(),
     { state: 'held', reason: 'file_backfill_closed' });
 });
+
+test('a measured faster interval is configurable but remains bounded', () => {
+  const clock = fakeClock();
+  const scheduler = createFileBackfillScheduler({
+    tick: async () => ({ state: 'checked' }), intervalMs: 10_000,
+    failureDelayMs: 5 * 60_000, ...clock });
+  scheduler.start();
+  assert.equal(clock.timers.values().next().value.delay, 10_000);
+  assert.throws(() => createFileBackfillScheduler({
+    tick: async () => ({ state: 'checked' }), intervalMs: 9_999 }),
+  TypeError);
+  void scheduler.close();
+});
