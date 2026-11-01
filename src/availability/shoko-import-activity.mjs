@@ -64,7 +64,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       for (const file of sidecarPaths) {
         const hash = /^\.([0-9a-f]{40}|[0-9a-f]{64})\.parts$/i
           .exec(file.relativePath)?.[1];
-        if (!hash || !readSidecarTorrent) return { state: 'busy' };
+        if (!hash || !readSidecarTorrent) return { state: 'busy',
+          reason: 'active_or_unknown_sidecar' };
         sidecarTorrents.push({ relativePath: file.relativePath,
           torrent: await readSidecarTorrent(hash.toLowerCase()) });
       }

@@ -229,6 +229,9 @@ test('opt-in activity brackets an inactive qBittorrent sidecar with exact hash r
   const hash = 'a'.repeat(40);
   try {
     await writeFile(path.join(importRoot, `.${hash}.parts`), 'pieces');
+    assert.deepEqual(await readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1 }),
+    { state: 'busy', reason: 'active_or_unknown_sidecar' });
     const seen = [];
     const result = await readShokoImportActivity({ ...input, importRoot,
       managedFolderId: 1, qbitImportSavePath: '/Shoko',
