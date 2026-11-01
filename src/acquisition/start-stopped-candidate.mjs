@@ -4,6 +4,8 @@ import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -19,7 +21,7 @@ export async function startStoppedCandidate({
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash ||
       !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
-      typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       typeof now !== 'function' || typeof readRequest !== 'function' ||
       typeof readEvidence !== 'function' ||
@@ -71,7 +73,8 @@ export async function startStoppedCandidate({
     const url = new URL('/api/v2/torrents/properties', base);
     url.searchParams.set('hash', expected.hash);
     const response = await fetchImpl(url, { method: 'GET',
-      headers: { Cookie: `SID=${sessionId}`, Accept: 'application/json' },
+      headers: { Cookie: qbittorrentSessionCookie(sessionId),
+        Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) return held('storage_path_unverified');
     paths = await readBoundedJson(response, 100_000);
@@ -116,7 +119,7 @@ export async function startStoppedCandidate({
   const body = new URLSearchParams({ hashes: expected.hash });
   try {
     await fetchImpl(new URL('/api/v2/torrents/start', base), {
-      method: 'POST', headers: { Cookie: `SID=${sessionId}` }, body,
+      method: 'POST', headers: { Cookie: qbittorrentSessionCookie(sessionId) }, body,
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
   } catch { /* Start may have reached qBittorrent; never repeat automatically. */ }

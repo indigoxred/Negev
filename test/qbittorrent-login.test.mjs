@@ -19,12 +19,25 @@ test('logs in once using same-origin form and returns only a validated SID', asy
   assert.equal(new URLSearchParams(calls[0].init.body).get('password'), input.password);
 });
 
+test('accepts qBittorrent 5.2+ empty success with its port-scoped cookie', async () => {
+  const result = await loginQbittorrent({ ...input, fetchImpl: async () =>
+    new Response(null, { status: 204, headers: {
+      'set-cookie': 'QBT_SID_8080=modern_123; Path=/; HttpOnly' } }) });
+  assert.deepEqual(result, { state: 'authenticated',
+    sessionId: 'QBT_SID_8080=modern_123' });
+});
+
 test('failed login, forbidden host, redirect, and malformed cookies hold without retry', async () => {
   for (const response of [
     new Response('Fails.', { status: 200 }),
     new Response('Forbidden', { status: 403 }),
     new Response(null, { status: 302, headers: { location: '/login' } }),
     new Response('Ok.', { status: 200, headers: { 'set-cookie': 'SID=bad; SID=evil; Path=/' } }),
+    new Response(null, { status: 204 }),
+    new Response(null, { status: 204, headers: {
+      'set-cookie': 'QBT_SID_99999=bad; Path=/' } }),
+    new Response(null, { status: 204, headers: {
+      'set-cookie': 'QBT_SID_8080=bad; QBT_SID_8080=evil' } }),
   ]) {
     let calls = 0;
     const result = await loginQbittorrent({ ...input, fetchImpl: async () => { calls++; return response; } });

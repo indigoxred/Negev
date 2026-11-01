@@ -30,6 +30,20 @@ test('sidecar observer logs in once and reads only an exact torrent hash', async
     `http://qbit.internal:8080/api/v2/torrents/info?hashes=${hash}`));
 });
 
+test('modern qBittorrent cookie is sent unchanged on the exact sidecar read', async () => {
+  const observer = createQbittorrentSidecarObserver({
+    baseUrl: 'http://qbit.internal:8080', username: 'observer',
+    password: 'synthetic-password',
+    login: async () => ({ state: 'authenticated',
+      sessionId: 'QBT_SID_8080=modern_123' }),
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.headers.Cookie, 'QBT_SID_8080=modern_123');
+      return Response.json([{ hash, state: 'missingFiles' }]);
+    },
+  });
+  assert.equal((await observer.readTorrent(hash)).hash, hash);
+});
+
 test('rejected sidecar session stays held without a login storm', async () => {
   let logins = 0;
   let requests = 0;

@@ -1,8 +1,8 @@
 import { loginQbittorrent } from './qbittorrent-login.mjs';
+import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
-const validSid = (value) => typeof value === 'string' &&
-  /^[A-Za-z0-9_-]{1,256}$/.test(value);
+const validSid = validQbittorrentSessionId;
 
 // One session for the paced acquisition runtime. A bad password or a 403
 // latches until restart so worker ticks cannot trigger qBittorrent's IP ban.

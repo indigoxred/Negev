@@ -1,4 +1,5 @@
 import { readBoundedText } from '../http/bounded-response.mjs';
+import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -28,17 +29,25 @@ export async function loginQbittorrent({
       body: form.toString(), redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status === 403) return held('authentication_forbidden');
-    if (response.status !== 200) return held('authentication_unavailable');
-    body = await readBoundedText(response, 64);
+    if (response.status !== 200 && response.status !== 204) {
+      return held('authentication_unavailable');
+    }
+    body = response.status === 204 ? '' : await readBoundedText(response, 64);
   } catch { return held('authentication_unavailable'); }
-  if (body.trim() !== 'Ok.') return held('authentication_failed');
+  if (response.status === 200 && body.trim() !== 'Ok.') {
+    return held('authentication_failed');
+  }
   const cookies = response.headers?.getSetCookie?.() ??
     [response.headers?.get?.('set-cookie')].filter(Boolean);
   const sid = cookies.flatMap((cookie) => {
-    const match = /^SID=([A-Za-z0-9_-]{1,256})(?:;|$)/.exec(cookie);
-    return match ? [match[1]] : [];
+    const match = /^(SID|QBT_SID_[1-9][0-9]{0,4})=([A-Za-z0-9_-]{1,256})(?:;|$)/.exec(cookie);
+    if (!match) return [];
+    const value = match[1] === 'SID' ? match[2] : `${match[1]}=${match[2]}`;
+    return validQbittorrentSessionId(value) ? [value] : [];
   });
   if (cookies.length !== 1 || sid.length !== 1 ||
-      /;\s*SID\s*=/i.test(cookies[0])) return held('authentication_unavailable');
+      /;\s*(?:SID|QBT_SID_[0-9]+)\s*=/i.test(cookies[0])) {
+    return held('authentication_unavailable');
+  }
   return { state: 'authenticated', sessionId: sid[0] };
 }

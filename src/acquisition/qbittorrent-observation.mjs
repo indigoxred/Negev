@@ -1,5 +1,7 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateCompletion } from './evaluate-completion.mjs';
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -12,14 +14,15 @@ export async function observeTorrentCompletion({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
-      typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
       typeof expected.category !== 'string' || !expected.category ||
       typeof expected.savePath !== 'string' || !expected.savePath.startsWith('/') ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid qBittorrent observation configuration');
   }
-  const headers = { Cookie: `SID=${sessionId}`, Accept: 'application/json' };
+  const headers = { Cookie: qbittorrentSessionCookie(sessionId),
+    Accept: 'application/json' };
   const read = async (endpoint, parameter, maxChars) => {
     const url = new URL(`/api/v2/torrents/${endpoint}`, base);
     url.searchParams.set(parameter, expected.hash);

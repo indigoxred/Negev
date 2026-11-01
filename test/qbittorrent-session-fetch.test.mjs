@@ -21,6 +21,23 @@ test('qBittorrent 403 invalidates only the matching SID', async () => {
   assert.deepEqual(invalidated, [sessionId]);
 });
 
+test('modern qBittorrent cookie is scoped to its API origin and invalidated on 403', async () => {
+  const modern = 'QBT_SID_18022=modern_123';
+  const invalidated = [];
+  const scopedFetch = createQbittorrentSessionFetch({ baseUrl, sessionId: modern,
+    sessionGate: { invalidate: (id) => { invalidated.push(id); } },
+    fetchImpl: async (_url, init) => {
+      assert.equal(new Headers(init.headers).get('cookie'), modern);
+      return new Response('Forbidden', { status: 403 });
+    },
+  });
+  await assert.rejects(() => scopedFetch('http://other.internal/api/v2/torrents/info', {
+    headers: { Cookie: modern }, redirect: 'manual' }), TypeError);
+  assert.equal((await scopedFetch(new URL('/api/v2/torrents/info', baseUrl), {
+    headers: { Cookie: modern }, redirect: 'manual' })).status, 403);
+  assert.deepEqual(invalidated, [modern]);
+});
+
 test('another service 403 does not invalidate the qBittorrent session', async () => {
   const invalidated = [];
   const scopedFetch = createQbittorrentSessionFetch({ baseUrl, sessionId,

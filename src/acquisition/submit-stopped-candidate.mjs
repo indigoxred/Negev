@@ -3,6 +3,8 @@ import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validHash = (value) => typeof value === 'string' &&
@@ -39,7 +41,7 @@ export async function submitStoppedCandidate({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash ||
-      typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
@@ -66,7 +68,7 @@ export async function submitStoppedCandidate({
     hash: expected.hash, nowMs });
   if (bound.state === 'held') return bound;
 
-  const headers = { Cookie: `SID=${sessionId}` };
+  const headers = { Cookie: qbittorrentSessionCookie(sessionId) };
   if (bound.state === 'prepared') {
     let version;
     try {

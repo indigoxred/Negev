@@ -30,6 +30,19 @@ test('reads the exact stopped torrent and file list twice before accepting the m
   assert.deepEqual(result, { state: 'manifest_safe', videos: [{ index: 0, name: 'Show/01.mkv', size: 1_000 }], subtitles: [] });
 });
 
+test('modern qBittorrent session reaches the stopped-manifest gate', async () => {
+  const cookie = 'QBT_SID_18022=modern_123';
+  const result = await observeStoppedManifest({ ...config, sessionId: cookie,
+    fetchImpl: async (url, init) => {
+      assert.equal(init.headers.Cookie, cookie);
+      const endpoint = new URL(url).pathname;
+      return Response.json(endpoint.endsWith('/files') ? files :
+        endpoint.endsWith('/properties') ? properties : [torrent]);
+    },
+  });
+  assert.equal(result.state, 'manifest_safe');
+});
+
 test('changed manifest, missing torrent and provider errors hold', async () => {
   const respond = (items) => async () => ({ status: 200, text: async () => JSON.stringify(items.shift()) });
   assert.deepEqual(await observeStoppedManifest({ ...config, fetchImpl: respond([[]]) }),

@@ -1,4 +1,7 @@
-// Keep qBittorrent's SID on its own API origin, and invalidate that exact
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
+
+// Keep qBittorrent's session on its own API origin, and invalidate that exact
 // session on 403. This wrapper does not retry an uncertain request or perform
 // login; the paced session gate controls the next authentication attempt.
 export function createQbittorrentSessionFetch({ baseUrl, sessionId,
@@ -7,8 +10,7 @@ export function createQbittorrentSessionFetch({ baseUrl, sessionId,
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||
       base.password || base.pathname !== '/' || base.search || base.hash ||
-      typeof sessionId !== 'string' ||
-      !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       typeof sessionGate?.invalidate !== 'function' ||
       typeof fetchImpl !== 'function') {
     throw new TypeError('Invalid qBittorrent session fetch');
@@ -19,7 +21,7 @@ export function createQbittorrentSessionFetch({ baseUrl, sessionId,
     catch { throw new TypeError('Invalid provider URL'); }
     const cookie = new Headers(init.headers ??
       (input instanceof Request ? input.headers : undefined)).get('cookie');
-    const usesSession = cookie === `SID=${sessionId}`;
+    const usesSession = cookie === qbittorrentSessionCookie(sessionId);
     if (cookie !== null && (!usesSession || target.origin !== base.origin ||
         !target.pathname.startsWith('/api/v2/') ||
         (init.redirect ?? (input instanceof Request ? input.redirect :

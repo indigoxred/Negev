@@ -1,6 +1,8 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateStoppedManifest } from './evaluate-stopped-manifest.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -13,12 +15,13 @@ export async function observeStoppedManifest({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
-      typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid stopped-manifest configuration');
   }
-  const headers = { Cookie: `SID=${sessionId}`, Accept: 'application/json' };
+  const headers = { Cookie: qbittorrentSessionCookie(sessionId),
+    Accept: 'application/json' };
   const read = async (endpoint, parameter, maxChars) => {
     const url = new URL(`/api/v2/torrents/${endpoint}`, base);
     url.searchParams.set(parameter, expected.hash);

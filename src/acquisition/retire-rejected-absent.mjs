@@ -1,4 +1,6 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import { qbittorrentSessionCookie, validQbittorrentSessionId } from
+  './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -11,7 +13,7 @@ export async function retireRejectedAbsent({ ledger, attemptId, baseUrl, session
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash ||
-      typeof sessionId !== 'string' || !/^[A-Za-z0-9_-]{1,256}$/.test(sessionId) ||
+      !validQbittorrentSessionId(sessionId) ||
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
@@ -30,7 +32,8 @@ export async function retireRejectedAbsent({ ledger, attemptId, baseUrl, session
 
   const url = new URL('/api/v2/torrents/info', base);
   url.searchParams.set('hashes', hash);
-  const headers = { Cookie: `SID=${sessionId}`, Accept: 'application/json' };
+  const headers = { Cookie: qbittorrentSessionCookie(sessionId),
+    Accept: 'application/json' };
   for (let observation = 0; observation < 2; observation++) {
     let torrents;
     try {
