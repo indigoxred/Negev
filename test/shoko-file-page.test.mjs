@@ -55,3 +55,32 @@ test('new inventory reads use one stable 100-file page', async () => {
     } });
   assert.deepEqual(result, { state: 'page', page: 1, total: 0, items: [] });
 });
+
+test('opt-in page hints provide bounded source paths without changing episode identity', async () => {
+  const linked = [{ SeriesID: { AniDB: 42 }, EpisodeIDs: [{ AniDB: 1001 }] }];
+  const withPath = { ...file(11, linked), Size: 5,
+    Locations: [{ FileID: 11, IsAccessible: true,
+      AbsolutePath: '/pure/Anime/one.mkv' }] };
+  const result = await readShokoFilePage({ ...base, includeHints: true,
+    fetchImpl: async (url) => {
+      assert.deepEqual(url.searchParams.getAll('include'),
+        ['XRefs,AbsolutePaths,ImportLimbo']);
+      return json({ Total: 4, List: [file(10, null), withPath] });
+    } });
+  assert.deepEqual(result, { state: 'page', page: 2, total: 4, items: [
+    { fileId: 10, updated: date, state: 'provisional', pairs: [], hint: null },
+    { fileId: 11, updated: date, state: 'linked',
+      pairs: [{ anidbId: 42, episodeId: 1001 }],
+      hint: { size: 5, sourcePaths: ['/pure/Anime/one.mkv'] } },
+  ] });
+  const unsafe = await readShokoFilePage({ ...base, includeHints: true,
+    fetchImpl: async () => json({ Total: 4, List: [
+      { ...withPath, Locations: [{ ...withPath.Locations[0],
+        AbsolutePath: '/pure/../escape.mkv' }] },
+      { ...withPath, ID: 12, Locations: [{ ...withPath.Locations[0],
+        FileID: 12 }] }] }) });
+  assert.equal(unsafe.items[0].state, 'linked');
+  assert.equal(unsafe.items[0].hint, null);
+  assert.deepEqual(unsafe.items[1].hint,
+    { size: 5, sourcePaths: ['/pure/Anime/one.mkv'] });
+});

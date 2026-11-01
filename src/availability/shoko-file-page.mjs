@@ -1,7 +1,27 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import path from 'node:path';
 
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
+const validPath = (value) => typeof value === 'string' &&
+  value.length <= 4096 && path.posix.isAbsolute(value) &&
+  path.posix.normalize(value) === value && !/[\0\r\n\\]/.test(value);
+
+const physicalHint = (file) => {
+  if (!validId(file?.Size) || !Array.isArray(file.Locations) ||
+      file.Locations.length < 1 || file.Locations.length > 20) return null;
+  const sourcePaths = [];
+  for (const location of file.Locations) {
+    if (location?.FileID !== file.ID ||
+        typeof location.IsAccessible !== 'boolean') return null;
+    if (!location.IsAccessible) continue;
+    if (!validPath(location.AbsolutePath)) return null;
+    sourcePaths.push(location.AbsolutePath);
+  }
+  return sourcePaths.length > 0 &&
+    new Set(sourcePaths).size === sourcePaths.length
+    ? { size: file.Size, sourcePaths } : null;
+};
 
 export function normalizeShokoFile(file) {
   if (!validId(file?.ID) || typeof file.Updated !== 'string' ||
@@ -32,7 +52,8 @@ export function normalizeShokoFile(file) {
 // One read-only inventory page, including Shoko's import-limbo files that its
 // default list hides. An empty page never proves an older file was deleted.
 export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
-  pageSize = 100, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  pageSize = 100, includeHints = false,
+  fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -40,13 +61,15 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
       typeof apiKey !== 'string' || !apiKey ||
       !Number.isSafeInteger(page) || page < 1 || page > 10_000 ||
       !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
+      typeof includeHints !== 'boolean' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko file page');
 
   const url = new URL('/api/v3/File', base);
   url.searchParams.set('page', String(page));
   url.searchParams.set('pageSize', String(pageSize));
-  url.searchParams.append('include', 'XRefs,ImportLimbo');
+  url.searchParams.append('include', includeHints
+    ? 'XRefs,AbsolutePaths,ImportLimbo' : 'XRefs,ImportLimbo');
   url.searchParams.set('sortOrder', 'FileID');
   let data;
   try {
@@ -64,7 +87,8 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
     const item = normalizeShokoFile(file);
     if (!item || seenFiles.has(item.fileId)) return unavailable();
     seenFiles.add(item.fileId);
-    items.push(item);
+    items.push(includeHints ? { ...item,
+      hint: item.state === 'linked' ? physicalHint(file) : null } : item);
   }
   if (items.length > data.Total) return unavailable();
   return { state: 'page', page, total: data.Total, items };
