@@ -41,3 +41,26 @@ test('incomplete pages, repeated IDs, and inaccessible locations fail closed', (
       shokoPage: page, managedFolderId: 1 }).state, 'held');
   }
 });
+
+test('only an old, inactive, exactly owned qBittorrent parts sidecar is passive', () => {
+  const hash = 'a'.repeat(40);
+  const sidecarPath = `.${hash}.parts`;
+  const withSidecar = [...diskFiles, { relativePath: sidecarPath, size: 500 }];
+  const torrent = { hash, state: 'missingFiles', category: 'Direct',
+    save_path: '/Shoko', progress: 0, dlspeed: 0, upspeed: 0,
+    force_start: false, last_activity: 1_000 };
+  const options = { diskFiles: withSidecar, shokoPage: { Total: 1, List: [file] },
+    managedFolderId: 1, qbitImportSavePath: '/Shoko', nowMs: 4_700_000,
+    sidecarTorrents: [{ relativePath: sidecarPath, torrent }] };
+  assert.deepEqual(classifyShokoImportBaseline(options),
+    { state: 'recognized_baseline', matchedVideos: 1, passiveFiles: 2 });
+  for (const changed of [
+    { state: 'downloading' }, { save_path: '/Downloads' },
+    { dlspeed: 1 }, { last_activity: 4_000 },
+    { hash: 'b'.repeat(40) }, { category: 'negev' },
+  ]) {
+    assert.equal(classifyShokoImportBaseline({ ...options,
+      sidecarTorrents: [{ relativePath: sidecarPath,
+        torrent: { ...torrent, ...changed } }] }).state, 'held');
+  }
+});

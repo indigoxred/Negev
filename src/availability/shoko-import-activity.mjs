@@ -11,7 +11,8 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 // that imports settled or a target is absent. Avoid /api/v3/File here:
 // Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
-  importRoot, managedFolderId, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
+  now = Date.now, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||
@@ -20,6 +21,12 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       (managedFolderId !== undefined &&
         (!Number.isSafeInteger(managedFolderId) || managedFolderId < 1 ||
          importRoot === undefined)) ||
+      (readSidecarTorrent !== undefined &&
+        (typeof readSidecarTorrent !== 'function' ||
+         managedFolderId === undefined ||
+         typeof qbitImportSavePath !== 'string' ||
+         !qbitImportSavePath.startsWith('/'))) ||
+      typeof now !== 'function' ||
       typeof fetchImpl !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid Shoko activity configuration');
@@ -35,13 +42,25 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       const inventory = await readImportRootInventory({ root: importRoot });
       if (inventory.state !== 'inventory') return unavailable();
       if (inventory.files.length === 0) return inventory;
+      const sidecarPaths = inventory.files.filter((file) =>
+        /\.parts$/i.test(file.relativePath));
+      if (sidecarPaths.length > 16) return { state: 'busy' };
+      const sidecarTorrents = [];
+      for (const file of sidecarPaths) {
+        const hash = /^\.([0-9a-f]{40}|[0-9a-f]{64})\.parts$/i
+          .exec(file.relativePath)?.[1];
+        if (!hash || !readSidecarTorrent) return { state: 'busy' };
+        sidecarTorrents.push({ relativePath: file.relativePath,
+          torrent: await readSidecarTorrent(hash.toLowerCase()) });
+      }
       const url = new URL(`/api/v3/ManagedFolder/${managedFolderId}/File`, base);
       url.searchParams.set('pageSize', '256');
       url.searchParams.set('include', 'XRefs');
       const page = await read(url, 2_000_000);
       if (!page) return unavailable();
       const baseline = classifyShokoImportBaseline({ diskFiles: inventory.files,
-        shokoPage: page, managedFolderId });
+        shokoPage: page, managedFolderId, sidecarTorrents,
+        qbitImportSavePath, nowMs: now() });
       return baseline.state === 'recognized_baseline' ? inventory : { state: 'busy' };
     };
     let beforeInventory;
@@ -81,8 +100,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       }
     }
     if (queue.ScheduledCount) return { state: 'scheduled_unverified' };
-    // Both observations of a mounted Import root were empty and the queue
-    // was idle between them. This is useful triage, never an absence fence.
+    // Both observations of a mounted Import root were empty or fully
+    // accounted for, and the queue was idle between them. This is useful
+    // triage, never an absence fence.
     return { state: importRoot === undefined
       ? 'queue_idle_unverified' : 'quiet_observed' };
   } catch { return unavailable(); }

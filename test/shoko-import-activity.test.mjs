@@ -138,3 +138,28 @@ test('opt-in baseline holds a file that appears during the queue read', async ()
     assert.deepEqual(result, { state: 'busy' });
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
+
+test('opt-in activity brackets an inactive qBittorrent sidecar with exact hash reads', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  const hash = 'a'.repeat(40);
+  try {
+    await writeFile(path.join(importRoot, `.${hash}.parts`), 'pieces');
+    const seen = [];
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1, qbitImportSavePath: '/Shoko',
+      now: () => 4_700_000,
+      readSidecarTorrent: async (value) => {
+        seen.push(value);
+        return { hash, state: 'missingFiles', category: 'Direct',
+          save_path: '/Shoko', progress: 0, dlspeed: 0, upspeed: 0,
+          force_start: false, last_activity: 1_000 };
+      },
+      fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
+        ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
+        : json({ Total: 0, List: [] }),
+    });
+    assert.deepEqual(result, { state: 'quiet_observed' });
+    assert.deepEqual(seen, [hash, hash]);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});

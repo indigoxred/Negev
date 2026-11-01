@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readImportRootInventory } from '../src/availability/import-root-inventory.mjs';
@@ -44,4 +44,24 @@ test('a transient root-level arrival changes the fingerprint after removal', asy
     assert.deepEqual(after.files, before.files);
     assert.notEqual(after.fingerprint, before.fingerprint);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('a symlink in Import cannot escape the bounded inventory', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-import-inventory-'));
+  const outside = await mkdtemp(path.join(tmpdir(), 'negev-import-outside-'));
+  try {
+    try { await symlink(outside, path.join(root, 'linked'), 'dir'); }
+    catch (error) {
+      if (process.platform === 'win32' && error.code === 'EPERM') {
+        t.skip('Windows account cannot create symlinks');
+        return;
+      }
+      throw error;
+    }
+    assert.deepEqual(await readImportRootInventory({ root }),
+      { state: 'unavailable' });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
