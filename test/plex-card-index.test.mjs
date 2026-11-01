@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
+import { openDirectAvailabilityQueue } from
+  '../src/availability/direct-availability-queue.mjs';
 import { createPlexCardPageWorker, indexPlexCardPage, retryOnePlexCard } from
   '../src/availability/plex-card-page-worker.mjs';
 
@@ -267,6 +269,37 @@ test('two identical complete key sweeps retire a card omitted from Plex', async 
   assert.equal(reopened.lookupCards({ sizes: [5], libraryIds: [102],
     kind: 'episode' }).cards.length, 1);
   reopened.close();
+});
+
+test('confirmed Plex sweep omission invalidates only its proven Available badge', async () => {
+  const { path: dbPath, ledger } = await index();
+  const queue = openDirectAvailabilityQueue(dbPath);
+  try {
+    for (const [episodeId, ratingKey] of [[1001, 500], [1002, 501]]) {
+      ledger.recordCard({ ...card(ratingKey), observedMs: 1 });
+      queue.enqueue({ anidbId: 42, episodeId, observedMs: episodeId });
+      const claim = queue.claimNext({ nowMs: episodeId });
+      queue.recordResult({ claim, state: 'available', checkedMs: episodeId,
+        proof: { fileId: episodeId, libraryId: 102, ratingKey,
+          partId: ratingKey + 100 } });
+    }
+    let clock = 2000;
+    const worker = createPlexCardPageWorker({ libraryId: 102,
+      kind: 'episode', index: ledger, now: () => clock++,
+      readPage: async ({ offset }) => ({ state: 'page', libraryId: 102,
+        kind: 'episode', offset, totalSize: 1, keys: [501] }),
+      readCard: async () => ({ state: 'ok', complete: true,
+        parts: card(501).parts }),
+    });
+    await worker.tick();
+    assert.equal(queue.getStatus({ anidbId: 42, episodeId: 1001,
+      nowMs: 2000 }).state, 'available');
+    await worker.tick();
+    assert.deepEqual(queue.getStatus({ anidbId: 42, episodeId: 1001,
+      nowMs: 2001 }), { state: 'unknown' });
+    assert.equal(queue.getStatus({ anidbId: 42, episodeId: 1002,
+      nowMs: 2001 }).state, 'available');
+  } finally { queue.close(); ledger.close(); }
 });
 
 test('two complete zero-item sweeps retire the final indexed card', async () => {

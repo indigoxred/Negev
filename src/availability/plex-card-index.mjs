@@ -425,6 +425,8 @@ export function openPlexCardIndex(dbPath) {
                     clearParts.run(libraryId, row.ratingKey);
                     clearCard.run(libraryId, row.ratingKey);
                     saveRemoval.run(libraryId, row.ratingKey, observedMs);
+                    saveChange.run(libraryId, row.ratingKey, observedMs);
+                    invalidateProvenCard(observedMs, libraryId, row.ratingKey);
                     clearRetry.run(libraryId, row.ratingKey);
                   }
                 }
