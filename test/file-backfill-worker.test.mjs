@@ -105,6 +105,42 @@ for (const failAt of ['first_file', 'kind', 'card', 'final_file']) {
   });
 }
 
+for (const unavailableAt of ['first_file', 'kind', 'card', 'final_file']) {
+  test(`a returned ${unavailableAt} outage retries once without blocking later files`, async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-outage-'));
+    const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+    let reads = 0;
+    let activeFile = 0;
+    const worker = createFileBackfillWorker({ cursor,
+      inventory: { listFileHintIds: ({ afterFileId }) =>
+        [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+      getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+        observedMs: 100 }) },
+      readCandidate: async ({ fileId }) => {
+        activeFile = fileId;
+        reads++;
+        if (fileId === 7 && (unavailableAt === 'first_file' ||
+            (unavailableAt === 'final_file' && reads % 2 === 0))) {
+          return { state: 'unavailable' };
+        }
+        return { ...candidate(1), fileId };
+      },
+      resolveKind: async () => activeFile === 7 && unavailableAt === 'kind'
+        ? { state: 'unavailable' } : 'series',
+      observeCandidate: async () => activeFile === 7 && unavailableAt === 'card'
+        ? { state: 'unknown', reason: 'observer_incomplete' }
+        : { state: 'unknown' },
+      proofs: { observeGuarded: () => { throw Error('No positive'); } },
+      now: () => 300 });
+    try {
+      assert.deepEqual(await worker.runOnce(), {
+        state: 'held', reason: 'source_read_unavailable' });
+      assert.equal((await worker.runOnce()).state, 'checked');
+      assert.equal((await worker.runOnce()).state, 'checked');
+    } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+}
+
 test('a 12-episode file advances in two bounded ticks and saves guarded positives', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-worker-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
@@ -147,6 +183,8 @@ test('a 12-episode file advances in two bounded ticks and saves guarded positive
         cardReads: 2, physicalProbes: 0 } });
     assert.deepEqual(seen.slice(10), [1011, 1012]);
     assert.equal(saved.length, 12);
+    assert.deepEqual(await worker.runOnce(), {
+      state: 'held', reason: 'source_read_unavailable' });
     assert.deepEqual(await worker.runOnce(), { state: 'checked',
       checkedPairs: 0, available: 0, load: {
         cardReads: 0, physicalProbes: 0 } });

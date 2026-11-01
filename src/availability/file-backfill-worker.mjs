@@ -65,6 +65,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         if (candidate?.state === 'busy') {
           return { state: 'held', reason: 'metadata_busy' };
         }
+        if (candidate?.state === 'unavailable') return sourceReadFailed();
         if (source?.state !== 'linked' || !validTime(source.observedMs) ||
             candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
             candidate.updated !== source.updated || !validId(candidate.size) ||
@@ -94,6 +95,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
             if (kind?.state === 'busy') {
               return { state: 'held', reason: 'metadata_busy' };
             }
+            if (kind?.state === 'unavailable') return sourceReadFailed();
             kinds.set(pair.anidbId, kind);
           }
           const kind = kinds.get(pair.anidbId);
@@ -104,6 +106,9 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           catch { return sourceReadFailed(); }
           if (outcome?.state === 'busy') {
             return { state: 'held', reason: 'metadata_busy' };
+          }
+          if (outcome?.reason === 'observer_incomplete') {
+            return sourceReadFailed();
           }
           if (outcome?.reason === 'read_budget_exhausted') {
             if (index === start) {
@@ -128,6 +133,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         if (confirmed?.state === 'busy') {
           return { state: 'held', reason: 'metadata_busy' };
         }
+        if (confirmed?.state === 'unavailable') return sourceReadFailed();
         if (confirmed?.state !== 'candidate' ||
             fingerprint(confirmed) !== identity) {
           return finish({ state: 'unknown' }, end - start, 0);
