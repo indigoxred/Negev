@@ -50,8 +50,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),
       nextCandidateOffset: 0 };
-    const fingerprint = createHash('sha256').update(JSON.stringify(
-      found.items.map((item) => [item.indexerId, item.guid]))).digest('hex');
+    // A watch can gain a newly aired target without the indexer's result
+    // order changing. Its old cursor must not skip an earlier release that
+    // could now cover that target.
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      episodeIds: [...request.episodeIds].sort((a, b) => a - b),
+      candidates: found.items.map((item) => [item.indexerId, item.guid]),
+    })).digest('hex');
     const seen = new Set();
     let selected;
     // Search ranking can change between passes. An index from another result

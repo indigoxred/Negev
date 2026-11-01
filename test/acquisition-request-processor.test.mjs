@@ -157,6 +157,35 @@ test('changed search order invalidates the saved candidate position', async () =
     'candidate-3', 'candidate-4']);
 });
 
+test('a newly aired target invalidates the saved candidate position', async () => {
+  let requestedIds = [1001];
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    maxPreflights: 1,
+    readRequest: () => ({ ...request, episodeIds: requestedIds }),
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return requestedIds.includes(1002) && item.guid === 'candidate-1'
+        ? { ...preflight, episodeIds: [1002],
+          files: [{ name: 'Example - 02.mkv', size: 1000,
+            episodeIds: [1002] }] }
+        : { state: 'held', reason: 'no_matching_episode' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.nextCandidateOffset, 1);
+  requestedIds = [1001, 1002];
+  assert.deepEqual(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }),
+  { state: 'stopped_observed', attemptId: 12 });
+  assert.deepEqual(seen, ['candidate-1', 'candidate-1']);
+});
+
 test('an already playable first candidate does not hide a later missing episode', async () => {
   const seen = [];
   const process = createAcquisitionRequestProcessor({
