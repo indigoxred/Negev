@@ -29,7 +29,7 @@ test('a complete video and subtitle pass exact identity into private holding onl
       plannedFiles: [{ name: videoFile.name, episodeIds: [1001] }],
       observe: async () => ({ state: 'complete', files: [videoFile], subtitles: [sidecar] }),
       lookup: async ({ ed2k, size }) => ({ status: 200, release: {
-        id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
+        id: `anidb://${ed2k}+${size}`, providerName: 'AniDB', isCorrupted: false,
         releaseURI: 'https://anidb.net/file/51', fileSize: size,
         hashes: [{ type: 'ED2K', value: ed2k }],
         crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,

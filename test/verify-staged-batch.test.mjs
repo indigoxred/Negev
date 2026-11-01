@@ -20,7 +20,7 @@ test('one reserved episode subset can verify without acquiring the whole request
     attempt: { ...attempt, episodeIds: [1002] }, expectedTorrent,
     plannedFiles: [plannedFiles[1]],
     observe: async () => ({ state: 'complete', files: [files[1]] }),
-    verify: async () => ({ state: 'identity_verified', fileId: 52,
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false, fileId: 52,
       coverage: [{ episodeId: 1002, start: 0, end: 100 }],
       ed2k: 'B'.repeat(32), size: 3 }),
     lookup: async () => null,
@@ -37,7 +37,7 @@ test('one two-episode video requires exact full AniDB coverage for both targets'
     observe: async () => ({ state: 'complete', files: pairedFiles }),
     lookup: async () => null };
   const verified = await verifyStagedBatch({ ...options,
-    verify: async () => ({ state: 'identity_verified', fileId: 51,
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false, fileId: 51,
       ed2k: 'B'.repeat(32), size: 3,
       coverage: [1001, 1002].map((episodeId) =>
         ({ episodeId, start: 0, end: 100 })) }),
@@ -45,7 +45,7 @@ test('one two-episode video requires exact full AniDB coverage for both targets'
   assert.equal(verified.state, 'batch_identity_verified');
   assert.deepEqual(verified.files[0].episodeIds, [1001, 1002]);
   const partial = await verifyStagedBatch({ ...options,
-    verify: async () => ({ state: 'identity_verified', fileId: 51,
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false, fileId: 51,
       ed2k: 'B'.repeat(32), size: 3,
       coverage: [{ episodeId: 1001, start: 0, end: 50 },
         { episodeId: 1002, start: 50, end: 100 }] }),
@@ -60,7 +60,7 @@ test('one release in a 501-episode installment verifies only its claimed target'
     attempt: { ...attempt, episodeIds: [2500] }, expectedTorrent,
     plannedFiles: [{ name: 'Show/01.mkv', episodeIds: [2500] }],
     observe: async () => ({ state: 'complete', files: [files[0]] }),
-    verify: async () => ({ state: 'identity_verified', fileId: 800,
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false, fileId: 800,
       coverage: [{ episodeId: 2500, start: 0, end: 100 }],
       ed2k: 'B'.repeat(32), size: 3 }),
     lookup: async () => null,
@@ -98,7 +98,8 @@ test('checks each selected file in sequence and rechecks torrent before reportin
       calls.push(relativePath);
       assert.equal(suppliedPacer, readPacer);
       assert.equal(expected.animeId, 42);
-      return { state: 'identity_verified', fileId: relativePath.includes('01') ? 51 : 52,
+      return { state: 'identity_verified', isCorrupted: false,
+        fileId: relativePath.includes('01') ? 51 : 52,
         coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002, start: 0, end: 100 }],
         ed2k: 'B'.repeat(32), size: 3 };
     },
@@ -124,10 +125,23 @@ test('one wrong or unavailable file holds the whole batch and stops later hashin
   assert.deepEqual(calls, ['Show/01.mkv']);
 });
 
+test('an unknown corruption flag cannot produce verified batch evidence', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]],
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    verify: async () => ({ state: 'identity_verified', fileId: 51,
+      coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'file_corruption_unverified' });
+});
+
 test('registered partial episode cannot reach handoff', async () => {
   const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files }),
-    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+    verify: async ({ relativePath }) => ({ state: 'identity_verified', isCorrupted: false,
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3,
       coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002,
         start: 0, end: relativePath.includes('01') ? 50 : 100 }] }),
@@ -157,7 +171,7 @@ test('a changed torrent after hashing cannot pass the batch', async () => {
   const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files: ++observations === 1 ? files :
       [{ ...files[0], size: 4 }, files[1]] }),
-    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+    verify: async ({ relativePath }) => ({ state: 'identity_verified', isCorrupted: false,
       coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002, start: 0, end: 100 }],
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
     lookup: async () => null,
@@ -171,7 +185,7 @@ test('a changed selected subtitle after video hashing holds the pack', async () 
   const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files,
       subtitles: [{ ...subtitle, size: ++observations === 1 ? 120 : 121 }] }),
-    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+    verify: async ({ relativePath }) => ({ state: 'identity_verified', isCorrupted: false,
       coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002, start: 0, end: 100 }],
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
     verifySubtitle: async () => ({ state: 'subtitle_verified', sha256: 'A'.repeat(64), size: 120 }),
@@ -184,7 +198,7 @@ test('unchanged selected subtitles are recorded in identity evidence', async () 
   const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
   const result = await verifyStagedBatch({ root: '/staging', request, attempt, expectedTorrent, plannedFiles,
     observe: async () => ({ state: 'complete', files, subtitles: [subtitle] }),
-    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+    verify: async ({ relativePath }) => ({ state: 'identity_verified', isCorrupted: false,
       coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002, start: 0, end: 100 }],
       fileId: relativePath.includes('01') ? 51 : 52, ed2k: 'B'.repeat(32), size: 3 }),
     verifySubtitle: async () => ({ state: 'subtitle_verified', sha256: 'A'.repeat(64), size: 120 }),
@@ -210,7 +224,7 @@ test('synthetic staged bytes pass only through exact AniDB file identities', asy
       lookup: async ({ ed2k, size }) => {
         const index = hashes.indexOf(ed2k);
         return { status: 200, release: {
-          id: `anidb://${ed2k}+${size}`, providerName: 'AniDB',
+          id: `anidb://${ed2k}+${size}`, providerName: 'AniDB', isCorrupted: false,
           releaseURI: `https://anidb.net/file/${51 + index}`, fileSize: size,
           hashes: [{ type: 'ED2K', value: ed2k }],
           crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001 + index,

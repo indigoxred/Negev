@@ -47,7 +47,7 @@ test('recorded exact batch is copied privately and journaled once, without publi
     observe: async () => { observations++; return { state: 'complete', files: [
       { index: 0, name, size: hash.size }], subtitles: [] }; },
     lookup: async () => null,
-    verify: async () => ({ state: 'identity_verified', fileId: 51,
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false, fileId: 51,
       ed2k: hash.ed2k, size: hash.size,
       coverage: [{ episodeId: 1001, start: 0, end: 100 }] }),
     nowMs: 205, readPacer: { afterBytes: async () => {} } });

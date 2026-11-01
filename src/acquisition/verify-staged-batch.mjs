@@ -102,6 +102,7 @@ export async function verifyStagedBatch({
         `file_${result?.reason ?? 'unavailable'}`);
     }
     if (result.isCorrupted === true) return held('file_corrupt_release');
+    if (result.isCorrupted !== false) return held('file_corruption_unverified');
     if (!Number.isSafeInteger(result.fileId) || result.fileId <= 0 ||
         fileIds.has(result.fileId) || result.size !== file.size ||
         !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');

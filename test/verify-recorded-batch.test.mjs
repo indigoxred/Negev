@@ -50,7 +50,7 @@ test('restart verification uses the stored file plan and exact target', async ()
       verify: async ({ expected, root }) => {
         assert.deepEqual(expected, { animeId: 42, episodeIds: [1001] });
         assert.equal(root, path.join(path.resolve('/staging'), hash));
-        return { state: 'identity_verified', fileId: 88, size: 1000,
+        return { state: 'identity_verified', isCorrupted: false, fileId: 88, size: 1000,
           ed2k: 'A'.repeat(32), coverage: [{ episodeId: 1001, start: 0, end: 100 }] };
       } }));
     assert.equal(result.state, 'batch_identity_verified');
