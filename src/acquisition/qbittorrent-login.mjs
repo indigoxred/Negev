@@ -40,7 +40,7 @@ export async function loginQbittorrent({
   const cookies = response.headers?.getSetCookie?.() ??
     [response.headers?.get?.('set-cookie')].filter(Boolean);
   const sid = cookies.flatMap((cookie) => {
-    const match = /^(SID|QBT_SID_[1-9][0-9]{0,4})=([A-Za-z0-9_-]{1,256})(?:;|$)/.exec(cookie);
+    const match = /^(SID|QBT_SID_[1-9][0-9]{0,4})=([A-Za-z0-9_+/-]{1,256})(?:;|$)/.exec(cookie);
     if (!match) return [];
     const value = match[1] === 'SID' ? match[2] : `${match[1]}=${match[2]}`;
     return validQbittorrentSessionId(value) ? [value] : [];

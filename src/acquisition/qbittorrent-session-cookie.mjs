@@ -1,4 +1,4 @@
-const TOKEN = '[A-Za-z0-9_-]{1,256}';
+const TOKEN = '[A-Za-z0-9_+/-]{1,256}';
 const LEGACY = new RegExp(`^${TOKEN}$`);
 const MODERN = new RegExp(`^QBT_SID_([1-9][0-9]{0,4})=(${TOKEN})$`);
 

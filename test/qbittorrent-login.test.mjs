@@ -22,9 +22,9 @@ test('logs in once using same-origin form and returns only a validated SID', asy
 test('accepts qBittorrent 5.2+ empty success with its port-scoped cookie', async () => {
   const result = await loginQbittorrent({ ...input, fetchImpl: async () =>
     new Response(null, { status: 204, headers: {
-      'set-cookie': 'QBT_SID_8080=modern_123; Path=/; HttpOnly' } }) });
+      'set-cookie': 'QBT_SID_8080=modern+/123; Path=/; HttpOnly' } }) });
   assert.deepEqual(result, { state: 'authenticated',
-    sessionId: 'QBT_SID_8080=modern_123' });
+    sessionId: 'QBT_SID_8080=modern+/123' });
 });
 
 test('failed login, forbidden host, redirect, and malformed cookies hold without retry', async () => {
