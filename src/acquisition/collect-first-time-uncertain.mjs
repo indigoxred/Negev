@@ -4,10 +4,11 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
 
 // Build the explicitly uncertain first-attempt snapshot. The same exact
-// Shoko targets and Plex GUIDs are checked on both sides of a connected,
-// fingerprinted Import quiet window. This cannot claim full-library absence.
+// Shoko targets and public Plex section health are checked on both sides of a
+// connected, fingerprinted Import quiet window. This cannot claim a public
+// title absent; the owner explicitly accepts one uncertain first attempt.
 export async function collectFirstTimeUncertain({ anidbId, episodeIds,
-  kind, tmdbMovieIds = [], publicLibraryIds, readEpisode, probePublic,
+  kind, publicLibraryIds, readEpisode, probePublic,
   observeImport, readFeedState, now = Date.now } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
       episodeIds.length < 1 || episodeIds.length > 20 ||
@@ -18,9 +19,6 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
       publicLibraryIds.length < 1 || publicLibraryIds.length > 4 ||
       publicLibraryIds.some((id) => !validId(id)) ||
       new Set(publicLibraryIds).size !== publicLibraryIds.length ||
-      !Array.isArray(tmdbMovieIds) || tmdbMovieIds.length > 4 ||
-      tmdbMovieIds.some((id) => !validId(id)) ||
-      new Set(tmdbMovieIds).size !== tmdbMovieIds.length ||
       [readEpisode, probePublic, observeImport, readFeedState, now]
         .some((value) => typeof value !== 'function')) {
     throw new TypeError('Invalid uncertain first-time observation');
@@ -29,10 +27,10 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   const inspectShoko = () => collectUnimportedTargets({ ...scope, readEpisode });
   const inspectPublic = async () => {
     let result;
-    try { result = await probePublic({ kind, episodeIds: [...episodeIds],
-      tmdbMovieIds: [...tmdbMovieIds] }); }
+    try { result = await probePublic({ kind }); }
     catch { return held('public_probe_unverified'); }
     if (result?.state !== 'healthy_unconfirmed' ||
+        result.probeCoverage !== 'health_only' ||
         result.complete !== false ||
         !Array.isArray(result.libraryIds) ||
         result.libraryIds.length !== publicLibraryIds.length ||
@@ -42,7 +40,8 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
       return held('public_probe_unverified');
     }
     return { state: 'healthy_unconfirmed',
-      libraryIds: [...publicLibraryIds], parts: [], complete: false };
+      libraryIds: [...publicLibraryIds], parts: [], complete: false,
+      probeCoverage: 'health_only' };
   };
   const firstShoko = await inspectShoko();
   if (firstShoko.state !== 'unimported_targets') return firstShoko;

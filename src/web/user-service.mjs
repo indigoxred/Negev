@@ -451,7 +451,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, ...target, fetchImpl })),
           probePublic: (target) => metadata.run(() =>
-            plexObserver.probeFirstTimeCards(target)),
+            plexObserver.probeFirstTimeSections(target)),
           observeImport: (target) => observeImportQuietWindow({ ...target,
             readActivity: () => readImportActivity(true),
             readFeedState: readImportFeed,

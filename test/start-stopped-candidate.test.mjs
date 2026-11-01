@@ -58,7 +58,7 @@ test('a saved first-time uncertainty policy is rechecked before a stopped torren
         shoko: { state: 'unimported_targets', anidbId: 42,
           episodeIds: [1001] },
         plex: { state: 'healthy_unconfirmed', libraryIds: [102],
-          parts: [] },
+          parts: [], complete: false, probeCoverage: 'health_only' },
         importFence: { state: 'settled', anidbId: 42,
           episodeIds: [1001], beforeObservedAtMs: 203,
           afterObservedAtMs: 204 } }),

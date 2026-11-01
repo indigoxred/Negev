@@ -46,6 +46,11 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
         return Response.json({ WaitingCount: 0, BlockedCount: 0,
           ScheduledCount: 0, TotalCount: 0, CurrentlyExecuting: [], Pools: [] });
       }
+      if (url.pathname === '/library/sections/102') {
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          Directory: [{ type: '4',
+            key: '/library/sections/102/all?type=4' }] } });
+      }
       if (url.pathname === '/library/sections/102/all') {
         return Response.json({ MediaContainer: { librarySectionID: 102,
           offset: 0, totalSize: 0, size: 0 } });
@@ -60,6 +65,7 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     assert.equal(snapshot.shoko.state, 'unimported_targets');
     assert.equal(snapshot.plex.state, 'healthy_unconfirmed');
     assert.equal(snapshot.plex.complete, false);
+    assert.equal(snapshot.plex.probeCoverage, 'health_only');
     assert.equal(snapshot.importFence.state, 'quiet_window_observed');
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 2);
     assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);

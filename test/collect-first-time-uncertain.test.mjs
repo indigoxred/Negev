@@ -12,7 +12,8 @@ const quiet = { state: 'quiet_window_observed', ...scope,
   beforeObservedAtMs: 100, afterObservedAtMs: 120_100,
   feedGeneration: 5 };
 const publicState = { state: 'healthy_unconfirmed',
-  libraryIds: [102], parts: [], complete: false };
+  libraryIds: [102], parts: [], complete: false,
+  probeCoverage: 'health_only' };
 const providers = (overrides = {}) => ({ ...scope, kind: 'series',
   publicLibraryIds: [102],
   readEpisode: async (target) => ({ state: 'not_imported', ...target }),
@@ -76,6 +77,9 @@ test('wrong scope, stale quiet result and provider failures remain held', async 
   })), { state: 'held', reason: 'public_probe_unverified' });
   assert.deepEqual(await collectFirstTimeUncertain(providers({
     probePublic: async () => ({ ...publicState, libraryIds: [103] }),
+  })), { state: 'held', reason: 'public_probe_unverified' });
+  assert.deepEqual(await collectFirstTimeUncertain(providers({
+    probePublic: async () => ({ ...publicState, probeCoverage: undefined }),
   })), { state: 'held', reason: 'public_probe_unverified' });
 });
 

@@ -83,7 +83,9 @@ export async function confirmMissingTargets({ request, episodeIds,
   const permissiveFirstTime = !strictFirstTime &&
     firstTimePolicy === 'single_uncertain_attempt' && unimportedScope &&
     scopedPlex && noObservedPublicPart &&
-    snapshot.plex.state === 'healthy_unconfirmed';
+    snapshot.plex.state === 'healthy_unconfirmed' &&
+    snapshot.plex.complete === false &&
+    snapshot.plex.probeCoverage === 'health_only';
   for (const episodeId of episodeIds) {
     if (strictFirstTime || permissiveFirstTime) continue;
     const result = evaluateExactAvailability({
