@@ -92,6 +92,19 @@ test('a rejected async handler is contained while its change remains pending', a
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a held change handler keeps its receipt for a later retry', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-held-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    assert.deepEqual(ledger.deliverPendingChanges({
+      handle: () => ({ state: 'held', reason: 'queue_unavailable' }) }),
+    { state: 'held', reason: 'change_delivery_failed' });
+    assert.deepEqual(ledger.deliverPendingChanges({ handle: () => {} }),
+      { state: 'delivered', count: 1 });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a bounded delivery batch reports backlog instead of acknowledging a later import', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-backlog-'));
   const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));

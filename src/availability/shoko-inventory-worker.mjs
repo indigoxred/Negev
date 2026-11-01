@@ -207,6 +207,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
             void Promise.resolve(result).catch(() => {});
             return held('change_delivery_failed');
           }
+          if (result?.state === 'held') return held('change_delivery_failed');
         } catch { return held('change_delivery_failed'); }
         if (markDelivered.run(change.id).changes !== 1) {
           return held('change_delivery_failed');
