@@ -19,18 +19,30 @@ export function openFileBackfillCursor(dbPath) {
       pass INTEGER NOT NULL CHECK(pass>0),
       receipt INTEGER NOT NULL CHECK(receipt>=0),
       pending_json TEXT,
-      claimed_ms INTEGER
+      claimed_ms INTEGER,
+      pair_offset INTEGER NOT NULL DEFAULT 0 CHECK(pair_offset BETWEEN 0 AND 100),
+      fingerprint TEXT
     ) STRICT`);
+    const columns = new Set(db.prepare('PRAGMA table_info(file_backfill_cursor)')
+      .all().map((column) => column.name));
+    if (!columns.has('pair_offset')) db.exec(`ALTER TABLE file_backfill_cursor
+      ADD COLUMN pair_offset INTEGER NOT NULL DEFAULT 0
+      CHECK(pair_offset BETWEEN 0 AND 100)`);
+    if (!columns.has('fingerprint')) db.exec(`ALTER TABLE file_backfill_cursor
+      ADD COLUMN fingerprint TEXT`);
     db.exec(`INSERT OR IGNORE INTO file_backfill_cursor
       (id,after_file_id,pass,receipt) VALUES (1,0,1,0)`);
   } catch (error) { db.close(); throw error; }
   const read = db.prepare(`SELECT after_file_id AS afterFileId,pass,receipt,
-    pending_json AS pendingJson,claimed_ms AS claimedMs
+    pending_json AS pendingJson,claimed_ms AS claimedMs,
+    pair_offset AS pairOffset,fingerprint
     FROM file_backfill_cursor WHERE id=1`);
   const saveClaim = db.prepare(`UPDATE file_backfill_cursor SET
-    after_file_id=?,pass=?,receipt=?,pending_json=?,claimed_ms=? WHERE id=1`);
+    after_file_id=?,pass=?,receipt=?,pending_json=?,claimed_ms=?,
+    pair_offset=?,fingerprint=? WHERE id=1`);
   const saveResult = db.prepare(`UPDATE file_backfill_cursor SET
-    after_file_id=?,pending_json=NULL,claimed_ms=NULL
+    after_file_id=?,pending_json=NULL,claimed_ms=NULL,
+    pair_offset=0,fingerprint=NULL
     WHERE id=1 AND receipt=? AND pending_json IS NOT NULL`);
   const validPage = (ids, afterFileId, limit) =>
     Array.isArray(ids) && ids.length <= limit && ids.every((id, index) =>
@@ -50,7 +62,8 @@ export function openFileBackfillCursor(dbPath) {
           }
           db.exec('COMMIT');
           return { state: 'claimed', pass: saved.pass,
-            receipt: saved.receipt, claimedMs: saved.claimedMs, fileIds };
+            receipt: saved.receipt, claimedMs: saved.claimedMs, fileIds,
+            pairOffset: saved.pairOffset, fingerprint: saved.fingerprint };
         }
         let afterFileId = saved.afterFileId;
         let pass = saved.pass;
@@ -70,28 +83,44 @@ export function openFileBackfillCursor(dbPath) {
         }
         if (ids.length === 0) {
           if (afterFileId !== saved.afterFileId) {
-            saveClaim.run(afterFileId, pass, saved.receipt, null, null);
+            saveClaim.run(afterFileId, pass, saved.receipt, null, null, 0, null);
           }
           db.exec('COMMIT');
           return { state: 'idle' };
         }
         const receipt = saved.receipt + 1;
         if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
-        saveClaim.run(afterFileId, pass, receipt, JSON.stringify(ids), nowMs);
+        saveClaim.run(afterFileId, pass, receipt, JSON.stringify(ids), nowMs,
+          0, null);
         db.exec('COMMIT');
         return { state: 'claimed', pass, receipt,
-          claimedMs: nowMs, fileIds: ids };
+          claimedMs: nowMs, fileIds: ids, pairOffset: 0, fingerprint: null };
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
     record({ claim, outcomes, nowMs } = {}) {
       if (!validTime(nowMs) || claim?.state !== 'claimed' ||
           !validId(claim.pass) || !validId(claim.receipt) ||
           !validTime(claim.claimedMs) || nowMs < claim.claimedMs ||
+          !Number.isSafeInteger(claim.pairOffset) || claim.pairOffset < 0 ||
+          claim.pairOffset > 100 ||
+          (claim.fingerprint !== null &&
+            !/^[0-9a-f]{64}$/.test(claim.fingerprint)) ||
           !Array.isArray(claim.fileIds) || claim.fileIds.length < 1 ||
           !validPage(claim.fileIds, 0, 10) ||
           !Array.isArray(outcomes) || outcomes.length !== claim.fileIds.length ||
           outcomes.some((item, index) => item?.fileId !== claim.fileIds[index] ||
-            !['available', 'unknown', 'held'].includes(item.state))) {
+            !['available', 'unknown', 'held', 'partial'].includes(item.state))) {
+        return held('invalid_file_backfill_result');
+      }
+      const partial = outcomes[0]?.state === 'partial';
+      if ((outcomes.some((item) => item.state === 'partial') && !partial) ||
+          (partial && (outcomes.length !== 1 ||
+          !Number.isSafeInteger(outcomes[0].nextPairOffset) ||
+          outcomes[0].nextPairOffset < 1 ||
+          (outcomes[0].fingerprint === claim.fingerprint &&
+            outcomes[0].nextPairOffset <= claim.pairOffset) ||
+          outcomes[0].nextPairOffset > 100 ||
+          !/^[0-9a-f]{64}$/.test(outcomes[0].fingerprint)))) {
         return held('invalid_file_backfill_result');
       }
       db.exec('BEGIN IMMEDIATE');
@@ -99,9 +128,20 @@ export function openFileBackfillCursor(dbPath) {
         const saved = read.get();
         if (saved.receipt !== claim.receipt || saved.pass !== claim.pass ||
             saved.claimedMs !== claim.claimedMs ||
-            saved.pendingJson !== JSON.stringify(claim.fileIds)) {
+            saved.pendingJson !== JSON.stringify(claim.fileIds) ||
+            saved.pairOffset !== claim.pairOffset ||
+            saved.fingerprint !== claim.fingerprint) {
           db.exec('ROLLBACK');
           return held('stale_file_backfill_claim');
+        }
+        if (partial) {
+          const receipt = saved.receipt + 1;
+          if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
+          saveClaim.run(saved.afterFileId, saved.pass, receipt,
+            saved.pendingJson, nowMs, outcomes[0].nextPairOffset,
+            outcomes[0].fingerprint);
+          db.exec('COMMIT');
+          return { state: 'partial', count: 1 };
         }
         const last = claim.fileIds.at(-1);
         if (last <= saved.afterFileId ||

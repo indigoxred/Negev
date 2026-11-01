@@ -65,3 +65,41 @@ test('an invalid inventory page holds without advancing or persisting a claim', 
     assert.deepEqual(claim.fileIds, [7, 8]);
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('a large linked file resumes at its saved episode offset after restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-backfill-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId }) =>
+    [7, 8].filter((id) => id > afterFileId).slice(0, 1) };
+  const fingerprint = 'a'.repeat(64);
+  let cursor = openFileBackfillCursor(dbPath);
+  try {
+    const first = cursor.claim({ inventory, nowMs: 100, limit: 1 });
+    assert.deepEqual(first.fileIds, [7]);
+    assert.equal(first.pairOffset, 0);
+    assert.equal(first.fingerprint, null);
+    assert.deepEqual(cursor.record({ claim: first, outcomes: [{ fileId: 7,
+      state: 'partial', nextPairOffset: 10, fingerprint }], nowMs: 200 }),
+    { state: 'partial', count: 1 });
+    cursor.close();
+    cursor = openFileBackfillCursor(dbPath);
+    const resumed = cursor.claim({ inventory, nowMs: 300, limit: 1 });
+    assert.equal(resumed.pairOffset, 10);
+    assert.equal(resumed.fingerprint, fingerprint);
+    assert.equal(resumed.receipt, first.receipt + 1);
+    assert.equal(cursor.record({ claim: first, outcomes: [{ fileId: 7,
+      state: 'unknown' }], nowMs: 300 }).state, 'held');
+    assert.deepEqual(cursor.record({ claim: resumed,
+      outcomes: [{ fileId: 7, state: 'partial',
+        nextPairOffset: 1, fingerprint: 'b'.repeat(64) }], nowMs: 301 }),
+    { state: 'partial', count: 1 });
+    const changed = cursor.claim({ inventory, nowMs: 302, limit: 1 });
+    assert.equal(changed.pairOffset, 1);
+    assert.equal(changed.fingerprint, 'b'.repeat(64));
+    assert.deepEqual(cursor.record({ claim: changed,
+      outcomes: [{ fileId: 7, state: 'available' }], nowMs: 301 }),
+    { state: 'recorded', count: 1 });
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 302, limit: 1 }).fileIds,
+      [8]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});

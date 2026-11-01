@@ -26,7 +26,8 @@
 - Shoko hint removed or changed: withdraw proofs for that file and queue recheck. Task 3 test.
 - Plex card/Part removed or changed: withdraw only affected proofs. Task 3 test.
 - Old proof beyond its configured lifetime: label previously verified, not currently Available. Task 2 test.
-- Incomplete public-card index, provider outage, or candidate budget: retain Unknown and advance the paced cursor. Task 4 test.
+- Incomplete public-card index, provider outage, or candidate budget: retain Unknown and advance the paced cursor. Task 5 test.
+- A file linked to more episodes than one exact-check budget: persist an episode offset and eventually visit every pair. Task 4 test.
 
 ---
 
@@ -59,13 +60,22 @@
 - [x] Write tests for Shoko unlink, card/Part removal, unrelated copy preservation, stale receipt rejection, and restart.
 - [x] Run red; implement hooks; run focused and full suite; commit.
 
-### Task 4: Bounded source worker and UI read composition
+### Task 4: Multi-episode continuation
+
+**Files:** Modify `src/availability/file-backfill-cursor.mjs` and `src/availability/shoko-file-candidate.mjs`; extend their focused tests.
+
+**Interfaces:** A one-file claim carries a `pairOffset` and candidate fingerprint. A `partial` outcome atomically replaces that claim with a new receipt for the same file and a strictly larger offset, instead of advancing to the next file. The fingerprint covers Shoko file update identity, release identity and the exact ordered AniDB episode pairs; a changed fingerprint resets processing to pair zero. A complete/Unknown/held outcome advances normally. The worker may claim only one file while continuation is active, keeping a fixed per-tick read budget without starving later pairs.
+
+- [ ] Write failing tests for a 12-episode file with a ten-pair tick, restart after the partial receipt, stale receipt rejection and changed-file reset.
+- [ ] Implement the narrow cursor extension and candidate update identity; run focused and full suite; commit.
+
+### Task 5: Bounded source worker and UI read composition
 
 **Files:** Create `src/availability/file-backfill-worker.mjs` and `src/availability/file-backfill-scheduler.mjs`; modify `src/web/user-service.mjs`, `src/web/user-server-config.mjs`, `src/web/user-server.mjs`; add focused tests.
 
 **Interfaces:** An opt-in worker claims at most ten IDs, re-reads each Shoko file, calls existing exact `observeFileCandidate` for each linked episode within a shared card/probe budget, records valid proofs and Unknown outcomes, then advances the cursor. A single timer runs only after both independent inventories are enabled, with no overlapping tick. The catalogue status reader combines fresh direct checks with fresh file proofs; unverified items remain unlabelled. Request-time acquisition still performs an independent live presence check.
 
-- [ ] Write tests for direct-Shoko-import positive, incomplete index Unknown, shared budget, retry after restart, expiry, acquisition isolation and opt-in parsing.
+- [ ] Write tests for direct-Shoko-import positive, incomplete index Unknown, shared budget, multi-episode continuation, retry after restart, expiry, acquisition isolation and opt-in parsing.
 - [ ] Run red; implement worker and wiring in small commits; run focused and full suite plus Linux CI.
 - [ ] Rehearse one isolated NAS tick with acquisition off, resource limits and private temporary SQLite; record timings, counts, index coverage and service load without printing paths or tokens.
 - [ ] Do not enable an installed broad scheduler until the load and rollback gates pass. A synthetic green suite is not operational proof.

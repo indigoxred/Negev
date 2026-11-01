@@ -107,7 +107,8 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
   if (sourcePaths.length === 0 || new Set(sourcePaths).size !== sourcePaths.length) {
     return unavailable();
   }
-  return { state: 'candidate', fileId, size: file.Size,
+  return { state: 'candidate', fileId, updated: item.updated,
+    size: file.Size,
     anidbFileId, releaseEvidence, pairs: item.pairs,
     identities, sourcePaths };
 }

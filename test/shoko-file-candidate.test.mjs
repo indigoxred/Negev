@@ -33,7 +33,8 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
       assert.equal(init.redirect, 'manual');
       return json(file);
     } });
-  assert.deepEqual(result, { state: 'candidate', fileId: 51, size: 123,
+  assert.deepEqual(result, { state: 'candidate', fileId: 51,
+    updated: '2026-11-01T00:00:00Z', size: 123,
     anidbFileId: 800, releaseEvidence: 'registered',
     pairs: [{ anidbId: 42, episodeId: 1001 },
       { anidbId: 42, episodeId: 1002 }],
