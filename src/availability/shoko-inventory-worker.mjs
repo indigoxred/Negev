@@ -1,8 +1,17 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const validHintPath = (value) => typeof value === 'string' &&
+  value.length <= 4096 && path.posix.isAbsolute(value) &&
+  path.posix.normalize(value) === value && !/[\0\r\n\\]/.test(value);
+const validHint = (hint) => validId(hint?.size) &&
+  Array.isArray(hint.sourcePaths) && hint.sourcePaths.length > 0 &&
+  hint.sourcePaths.length <= 20 &&
+  hint.sourcePaths.every(validHintPath) &&
+  new Set(hint.sourcePaths).size === hint.sourcePaths.length;
 const validItem = (item) => {
   if (!validId(item?.fileId) || typeof item.updated !== 'string' ||
       !Number.isFinite(Date.parse(item.updated)) ||
@@ -51,6 +60,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       anidb_id INTEGER NOT NULL CHECK(anidb_id>0),
       episode_id INTEGER NOT NULL CHECK(episode_id>0),
       PRIMARY KEY(file_id,anidb_id,episode_id)
+    ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_file_hints (
+      file_id INTEGER PRIMARY KEY REFERENCES shoko_inventory_files(file_id),
+      updated TEXT NOT NULL,
+      size INTEGER NOT NULL CHECK(size>0),
+      paths_json TEXT NOT NULL,
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
     ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_passes (
       pass INTEGER PRIMARY KEY CHECK(pass>0),
@@ -125,6 +141,15 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     VALUES (?,?,?)`);
   const findPairs = db.prepare(`SELECT file_id FROM shoko_inventory_pairs
     WHERE anidb_id=? AND episode_id=? ORDER BY file_id`);
+  const findHint = db.prepare(`SELECT updated,size,paths_json AS pathsJson,
+    observed_ms AS observedMs FROM shoko_inventory_file_hints WHERE file_id=?`);
+  const saveHint = db.prepare(`INSERT INTO shoko_inventory_file_hints
+    (file_id,updated,size,paths_json,observed_ms) VALUES (?,?,?,?,?)
+    ON CONFLICT(file_id) DO UPDATE SET updated=excluded.updated,
+      size=excluded.size,paths_json=excluded.paths_json,
+      observed_ms=excluded.observed_ms`);
+  const removeHint = db.prepare(`DELETE FROM shoko_inventory_file_hints
+    WHERE file_id=?`);
   const advance = db.prepare(`UPDATE shoko_inventory_cursor SET page=?,pass=?
     WHERE id=1 AND page=? AND pass=?`);
   const findPass = db.prepare(`SELECT pass,total,started_ms AS startedMs,
@@ -172,22 +197,38 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         (previous.observedMs === observedMs &&
           previous.seenPass === 0 && seenPass > 0))) return;
     const pairsJson = JSON.stringify(item.pairs);
-    if (!previous || previous.updated !== item.updated ||
-        previous.state !== item.state || previous.pairsJson !== pairsJson) {
+    const oldHint = findHint.get(item.fileId);
+    const hintProvided = Object.hasOwn(item, 'hint');
+    const hintChanged = oldHint && hintProvided &&
+      (!validHint(item.hint) || oldHint.size !== item.hint.size ||
+        oldHint.pathsJson !== JSON.stringify(item.hint.sourcePaths));
+    const identityChanged = !previous || previous.updated !== item.updated ||
+      previous.state !== item.state || previous.pairsJson !== pairsJson;
+    if (identityChanged || hintChanged) {
       const before = previous ? { fileId: item.fileId,
         updated: previous.updated, state: previous.state,
         pairs: JSON.parse(previous.pairsJson), seenPass: previous.seenPass,
         observedMs: previous.observedMs } : null;
-      const after = { ...item, seenPass, observedMs };
+      // Change receipts carry identity, never optional source paths or other
+      // page-only hints from a Shoko response.
+      const after = { fileId: item.fileId, updated: item.updated,
+        state: item.state, pairs: item.pairs, seenPass, observedMs };
       saveChange.run(item.fileId, observedMs,
         JSON.stringify(before), JSON.stringify(after));
     }
-    if (previous && (previous.updated !== item.updated ||
-        previous.state !== item.state || previous.pairsJson !== pairsJson)) {
+    if (previous && (identityChanged || hintChanged)) {
       invalidateProvenFile(item.fileId, observedMs);
     }
     save.run(item.fileId, item.updated, item.state, pairsJson,
       seenPass, observedMs);
+    if (item.state !== 'linked' ||
+        (previous && previous.updated !== item.updated) ||
+        hintProvided) {
+      if (item.state === 'linked' && validHint(item.hint)) {
+        saveHint.run(item.fileId, item.updated, item.hint.size,
+          JSON.stringify(item.hint.sourcePaths), observedMs);
+      } else removeHint.run(item.fileId);
+    }
     removePairs.run(item.fileId);
     for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
   }
@@ -226,6 +267,21 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       if (!row) return null;
       const { pairsJson, ...other } = row;
       return { ...other, pairs: JSON.parse(pairsJson) };
+    },
+    getFileHint(fileId) {
+      if (!validId(fileId)) throw new TypeError('Invalid Shoko file ID');
+      const file = find.get(fileId);
+      const hint = findHint.get(fileId);
+      if (file?.state !== 'linked' || hint?.updated !== file.updated ||
+          typeof hint.pathsJson !== 'string' || hint.pathsJson.length > 82_000) {
+        return null;
+      }
+      try {
+        const value = { size: hint.size,
+          sourcePaths: JSON.parse(hint.pathsJson) };
+        return validHint(value) ? { ...value, updated: hint.updated,
+          observedMs: hint.observedMs } : null;
+      } catch { return null; }
     },
     getObservedFileIds({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {

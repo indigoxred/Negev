@@ -14,6 +14,90 @@ const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
 const linked = { ...provisional, updated: '2026-10-31T01:00:00Z', state: 'linked',
   pairs: [{ anidbId: 42, episodeId: 1001 }] };
 
+test('inventory change receipts omit optional source path hints', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-receipt-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const ledger = openShokoInventoryLedger(dbPath);
+  try {
+    const item = { ...linked, hint: { size: 5,
+      sourcePaths: ['/pure/private/episode.mkv'] } };
+    assert.equal(ledger.recordFileObservation({ item, observedMs: 100 }).state,
+      'recorded_file');
+    const changes = [];
+    assert.deepEqual(ledger.deliverPendingChanges({
+      handle: (change) => changes.push(change) }),
+    { state: 'delivered', count: 1 });
+    assert.deepEqual(changes[0].after, { ...linked,
+      seenPass: 0, observedMs: 100 });
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const row = db.prepare(`SELECT after_json AS afterJson
+        FROM shoko_file_change_events ORDER BY id DESC LIMIT 1`).get();
+      assert.equal(row.afterJson.includes('/pure/private/'), false);
+    } finally { db.close(); }
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('source hints survive restart but are withdrawn when Shoko identity changes', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-state-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger = openShokoInventoryLedger(dbPath);
+  try {
+    const hint = { size: 5, sourcePaths: ['/pure/Anime/episode.mkv'] };
+    const withHint = { ...linked, hint };
+    assert.equal(ledger.recordFileObservation({ item: withHint,
+      observedMs: 100 }).state, 'recorded_file');
+    assert.deepEqual(ledger.getFileHint(linked.fileId), { ...hint,
+      updated: linked.updated, observedMs: 100 });
+    ledger.close();
+    ledger = openShokoInventoryLedger(dbPath);
+    assert.deepEqual(ledger.getFileHint(linked.fileId), { ...hint,
+      updated: linked.updated, observedMs: 100 });
+    ledger.recordFileObservation({ item: linked, observedMs: 200 });
+    assert.deepEqual(ledger.getFileHint(linked.fileId), { ...hint,
+      updated: linked.updated, observedMs: 100 });
+    ledger.recordFileObservation({ item: { ...linked,
+      updated: '2026-10-31T02:00:00Z' }, observedMs: 300 });
+    assert.equal(ledger.getFileHint(linked.fileId), null);
+    ledger.recordFileObservation({ item: { ...linked,
+      updated: '2026-10-31T02:00:00Z', hint }, observedMs: 400 });
+    assert.deepEqual(ledger.getFileHint(linked.fileId), { ...hint,
+      updated: '2026-10-31T02:00:00Z', observedMs: 400 });
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare(`UPDATE shoko_inventory_file_hints SET paths_json=?
+        WHERE file_id=?`).run('["/pure/../escape.mkv"]', linked.fileId);
+    } finally { db.close(); }
+    assert.equal(ledger.getFileHint(linked.fileId), null);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('bad or inaccessible source hints cannot survive a newer page', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-invalid-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    const hint = { size: 5, sourcePaths: ['/pure/Anime/episode.mkv'] };
+    const page = (item) => ({ state: 'page', page: 1,
+      total: 1, items: [item] });
+    let expected = ledger.getCursor();
+    assert.equal(ledger.recordPage({ expected,
+      result: page({ ...linked, hint }), observedMs: 100 }).state, 'recorded');
+    assert.equal(ledger.getFileHint(linked.fileId).size, 5);
+    expected = ledger.getCursor();
+    assert.equal(ledger.recordPage({ expected,
+      result: page({ ...linked, hint: null }), observedMs: 200 }).state,
+    'recorded');
+    assert.equal(ledger.getFileHint(linked.fileId), null);
+    expected = ledger.getCursor();
+    assert.equal(ledger.recordPage({ expected,
+      result: page({ ...linked, hint: { size: 5,
+        sourcePaths: ['/pure/../escape.mkv'] } }), observedMs: 300 }).state,
+    'recorded');
+    assert.equal(ledger.getFileHint(linked.fileId), null);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a failed change callback is redelivered after restart before another Shoko page', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-replay-'));
   const dbPath = path.join(dir, 'inventory.sqlite');
@@ -251,6 +335,31 @@ test('an explicit Shoko unlink clears its proven badge without waiting for a swe
       state: 'unverified', pairs: [] }, observedMs: 120 });
     assert.deepEqual(queue.getStatus({ ...target, nowMs: 120 }),
       { state: 'unknown' });
+  } finally {
+    ledger.close(); queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a lost Shoko source path withdraws a proven badge without unlinking its episode', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-withdraw-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const queue = openDirectAvailabilityQueue(dbPath);
+  const ledger = openShokoInventoryLedger(dbPath);
+  try {
+    const target = { anidbId: 42, episodeId: 1001 };
+    const hint = { size: 5, sourcePaths: ['/pure/Anime/episode.mkv'] };
+    ledger.recordFileObservation({ item: { ...linked, hint }, observedMs: 100 });
+    queue.enqueue({ ...target, observedMs: 110 });
+    const claim = queue.claimNext({ nowMs: 110 });
+    queue.recordResult({ claim, state: 'available', checkedMs: 111,
+      proof: { fileId: 10, libraryId: 102, ratingKey: 500, partId: 600 } });
+    assert.equal(queue.getStatus({ ...target, nowMs: 115 }).state, 'available');
+    ledger.recordFileObservation({ item: { ...linked, hint: null },
+      observedMs: 120 });
+    assert.equal(ledger.getFileHint(10), null);
+    assert.equal(queue.getStatus({ ...target, nowMs: 120 }).state, 'unknown');
+    assert.equal(queue.claimNext({ nowMs: 120 }).state, 'claimed');
   } finally {
     ledger.close(); queue.close();
     await rm(dir, { recursive: true, force: true });
