@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
+import { createFileProofInvalidator } from './file-proof-invalidator.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' && value.length <= 4096 &&
@@ -115,6 +116,7 @@ export function openPlexCardIndex(dbPath) {
   const saveChange = db.prepare(`INSERT INTO plex_card_change_events
     (library_id,rating_key,observed_ms) VALUES (?,?,?)`);
   let invalidateProof = null;
+  const invalidateFileProof = createFileProofInvalidator(db);
   const invalidateProvenCard = (observedMs, libraryId, ratingKey) => {
     if (!invalidateProof) {
       const columns = new Set(db.prepare(
@@ -130,6 +132,7 @@ export function openPlexCardIndex(dbPath) {
       }
     }
     invalidateProof?.run(observedMs, libraryId, ratingKey);
+    invalidateFileProof.invalidateCard(libraryId, ratingKey, observedMs);
   };
   const saveRemoval = db.prepare(`INSERT INTO plex_card_removals
     (library_id,rating_key,observed_ms) VALUES (?,?,?)

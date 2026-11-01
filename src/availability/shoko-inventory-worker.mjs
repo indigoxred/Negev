@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { createFileProofInvalidator } from './file-proof-invalidator.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -181,6 +182,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
   const markDelivered = db.prepare(`UPDATE shoko_file_change_events SET
     delivered=1 WHERE id=? AND delivered=0`);
   let invalidateDirect = null;
+  const invalidateFileProof = createFileProofInvalidator(db);
   const invalidateProvenFile = (fileId, observedMs) => {
     if (!invalidateDirect) {
       const columns = new Set(db.prepare(
@@ -195,6 +197,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       }
     }
     invalidateDirect?.run(observedMs, fileId);
+    invalidateFileProof.invalidateFile(fileId, observedMs);
   };
   function saveObservation(item, seenPass, observedMs) {
     const previous = find.get(item.fileId);

@@ -56,8 +56,8 @@
 
 **Interfaces:** Transactional `invalidateFile(fileId,observedMs)` and `invalidateCard(libraryId,ratingKey,observedMs)` withdraw only linked proof rows, preserving request IDs and unrelated copies. Existing file-change and card-change receipts call these methods only when their source observation is newer than the saved proof. Invalid/incomplete scans cannot invalidate. A later exact recheck may restore the positive.
 
-- [ ] Write tests for Shoko unlink, card/Part removal, unrelated copy preservation, stale receipt rejection, and restart.
-- [ ] Run red; implement hooks; run focused and full suite; commit.
+- [x] Write tests for Shoko unlink, card/Part removal, unrelated copy preservation, stale receipt rejection, and restart.
+- [x] Run red; implement hooks; run focused and full suite; commit.
 
 ### Task 4: Bounded source worker and UI read composition
 
