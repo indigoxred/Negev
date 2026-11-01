@@ -304,6 +304,108 @@ test('a read budget exhausted on the first pair is reported while later files co
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('an opt-in tick checks two distinct files under one shared read budget', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const seen = [];
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId,
+      pairs: [{ anidbId: 42, episodeId: 1000 + fileId }] }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file, budget }) => {
+      seen.push(file.fileId);
+      budget.cardReads++;
+      return { state: 'unknown' };
+    },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300, maxFilesPerTick: 2 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedFiles: 2, checkedPairs: 2, available: 0,
+      load: { cardReads: 2, physicalProbes: 0 } });
+    assert.deepEqual(seen, [7, 8]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a multi-file tick stops at its shared card budget and resumes next file', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-limit-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const seen = [];
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8, 9].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file, budget }) => {
+      seen.push(file.fileId);
+      budget.cardReads += file.fileId === 7 ? 10 : 1;
+      return { state: 'unknown' };
+    },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300, maxFilesPerTick: 2 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedFiles: 1, checkedPairs: 1, available: 0,
+      load: { cardReads: 10, physicalProbes: 0 } });
+    assert.deepEqual(seen, [7]);
+    assert.equal((await worker.runOnce()).checkedFiles, 2);
+    assert.deepEqual(seen, [7, 8, 9]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a multi-file tick does not revisit a file when its cursor wraps', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-wrap-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const seen = [];
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file }) => {
+      seen.push(file.fileId);
+      return { state: 'unknown' };
+    },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300, maxFilesPerTick: 3 });
+  try {
+    assert.equal((await worker.runOnce()).checkedFiles, 2);
+    assert.deepEqual(seen, [7, 8]);
+    assert.equal((await worker.runOnce()).checkedFiles, 2);
+    assert.deepEqual(seen, [7, 8, 7, 8]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a multi-file tick still reports a deferred over-budget file', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-defer-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file }) => file.fileId === 7
+      ? { state: 'unknown', reason: 'read_budget_exhausted' }
+      : { state: 'unknown' },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300, maxFilesPerTick: 2 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedFiles: 1, deferredFiles: 1, checkedPairs: 1, available: 0,
+      load: { cardReads: 0, physicalProbes: 0 } });
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('the worker saves one real SQLite proof only while both source generations stay current', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-worker-'));
   const dbPath = path.join(dir, 'state.sqlite');

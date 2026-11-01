@@ -9,11 +9,11 @@ const fingerprint = (candidate) => createHash('sha256').update(JSON.stringify([
   candidate.pairs, candidate.identities, candidate.sourcePaths,
 ])).digest('hex');
 
-// Source-only, one Shoko file per tick. A fresh exact observation is a
+// Source-only, bounded Shoko files per tick. A fresh exact observation is a
 // proposal; only the proof ledger's atomic source-generation guard may save it.
 export function createFileBackfillWorker({ cursor, inventory, readCandidate,
   resolveKind, observeCandidate, proofs, now = Date.now,
-  maxPairChecks = 10 } = {}) {
+  maxPairChecks = 10, maxFilesPerTick = 1 } = {}) {
   if (typeof cursor?.claim !== 'function' ||
       typeof cursor.record !== 'function' ||
       typeof inventory?.listFileHintIds !== 'function' ||
@@ -22,150 +22,186 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         typeof fn !== 'function') ||
       typeof proofs?.observeGuarded !== 'function' ||
       !Number.isSafeInteger(maxPairChecks) ||
-      maxPairChecks < 1 || maxPairChecks > 10) {
+      maxPairChecks < 1 || maxPairChecks > 10 ||
+      !Number.isSafeInteger(maxFilesPerTick) ||
+      maxFilesPerTick < 1 || maxFilesPerTick > 10) {
     throw new TypeError('Invalid file backfill worker');
   }
   let busy = false;
   let failedReceipt = null;
   let readFailures = 0;
+  const processOne = async (budget, seen) => {
+    const claim = cursor.claim({ inventory, nowMs: now(), limit: 1 });
+    if (claim.state !== 'claimed') return claim;
+    const fileId = claim.fileIds[0];
+    if (seen.has(fileId)) return { state: 'pass_repeated' };
+    seen.add(fileId);
+    const finish = (outcome, checkedPairs, available, reason) => {
+      const saved = cursor.record({ claim, outcomes: [{ fileId,
+        ...outcome }], nowMs: now() });
+      if (!['recorded', 'partial'].includes(saved.state)) return saved;
+      failedReceipt = null;
+      readFailures = 0;
+      return { state: saved.state === 'partial' ? 'partial' : 'checked',
+        ...(reason ? { reason } : {}),
+        checkedPairs, available, load: { ...budget } };
+    };
+    const sourceReadFailed = () => {
+      const receipt = `${claim.pass}:${claim.receipt}`;
+      if (failedReceipt !== receipt) {
+        failedReceipt = receipt;
+        readFailures = 0;
+      }
+      // The cursor survives restart while this retry counter does not.
+      // Age the saved claim out so repeated restarts cannot pin the pass.
+      const claimAgeMs = now() - claim.claimedMs;
+      if (Number.isSafeInteger(claimAgeMs) &&
+          claimAgeMs >= 15 * 60_000) {
+        return finish({ state: 'unknown' }, 0, 0);
+      }
+      if (++readFailures === 1) {
+        return { state: 'held', reason: 'source_read_unavailable' };
+      }
+      return finish({ state: 'unknown' }, 0, 0);
+    };
+    let source, candidate;
+    try {
+      source = inventory.getFile(fileId);
+      candidate = await readCandidate({ fileId });
+    } catch { return sourceReadFailed(); }
+    if (candidate?.state === 'busy') {
+      return { state: 'held', reason: 'metadata_busy' };
+    }
+    if (candidate?.state === 'unavailable') return sourceReadFailed();
+    if (source?.state !== 'linked' || !validTime(source.observedMs) ||
+        candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
+        candidate.updated !== source.updated || !validId(candidate.size) ||
+        !Array.isArray(candidate.pairs) || candidate.pairs.length < 1 ||
+        candidate.pairs.length > 100 || candidate.pairs.some((pair) =>
+          !validId(pair?.anidbId) || !validId(pair.episodeId))) {
+      return finish({ state: 'unknown' }, 0, 0);
+    }
+    const identity = fingerprint(candidate);
+    const start = claim.fingerprint === identity ? claim.pairOffset : 0;
+    if (start >= candidate.pairs.length) {
+      return finish({ state: 'unknown' }, 0, 0);
+    }
+    let end = Math.min(candidate.pairs.length, start + maxPairChecks);
+    const proposals = [];
+    const kinds = new Map();
+    for (let index = start; index < end; index++) {
+      if (budget.cardReads >= 10 || budget.physicalProbes >= 64) {
+        end = index;
+        break;
+      }
+      const pair = candidate.pairs[index];
+      if (!kinds.has(pair.anidbId)) {
+        let kind;
+        try { kind = await resolveKind({ anidbId: pair.anidbId }); }
+        catch { return sourceReadFailed(); }
+        if (kind?.state === 'busy') {
+          return { state: 'held', reason: 'metadata_busy' };
+        }
+        if (kind?.state === 'unavailable') return sourceReadFailed();
+        kinds.set(pair.anidbId, kind);
+      }
+      const kind = kinds.get(pair.anidbId);
+      if (!['series', 'movie'].includes(kind)) continue;
+      let outcome;
+      try { outcome = await observeCandidate({ candidate,
+        target: { ...pair, kind }, budget }); }
+      catch { return sourceReadFailed(); }
+      if (outcome?.state === 'busy') {
+        return { state: 'held', reason: 'metadata_busy' };
+      }
+      if (outcome?.reason === 'observer_incomplete') {
+        return sourceReadFailed();
+      }
+      if (outcome?.reason === 'read_budget_exhausted') {
+        if (index === start) {
+          // Defer this pathological file to the next pass so it cannot
+          // hold every later file, but report that no pair was checked.
+          return finish({ state: 'held' }, 0, 0, 'read_budget_exhausted');
+        }
+        end = index;
+        break;
+      }
+      if (outcome?.state === 'available' &&
+          outcome?.proof?.fileId === fileId &&
+          outcome?.fileId === fileId && outcome.cardRevision) {
+        proposals.push({ ...pair, proof: outcome.proof,
+          cardRevision: outcome.cardRevision });
+      }
+    }
+    if (budget.cardReads > 10 || budget.physicalProbes > 64) {
+      return { state: 'held', reason: 'file_backfill_budget_exceeded' };
+    }
+    let confirmed;
+    try { confirmed = await readCandidate({ fileId }); }
+    catch { return sourceReadFailed(); }
+    if (confirmed?.state === 'busy') {
+      return { state: 'held', reason: 'metadata_busy' };
+    }
+    if (confirmed?.state === 'unavailable') return sourceReadFailed();
+    if (confirmed?.state !== 'candidate' ||
+        fingerprint(confirmed) !== identity) {
+      return finish({ state: 'unknown' }, end - start, 0);
+    }
+    let available = 0;
+    for (const proposal of proposals) {
+      let saved;
+      try {
+        saved = proofs.observeGuarded({ anidbId: proposal.anidbId,
+          episodeId: proposal.episodeId, proof: proposal.proof,
+          revision: { source: { updated: source.updated,
+            observedMs: source.observedMs },
+          card: proposal.cardRevision }, checkedMs: now() });
+      } catch { return { state: 'held', reason: 'proof_write_unavailable' }; }
+      if (saved.state === 'recorded' || saved.state === 'stale') available++;
+    }
+    if (end < candidate.pairs.length) {
+      return finish({ state: 'partial', nextPairOffset: end,
+        fingerprint: identity }, end - start, available);
+    }
+    return finish({ state: available ? 'available' : 'unknown' },
+      end - start, available);
+  };
   return {
     async runOnce() {
       if (busy) return { state: 'held', reason: 'file_backfill_busy' };
       busy = true;
       try {
-        const claim = cursor.claim({ inventory, nowMs: now(), limit: 1 });
-        if (claim.state !== 'claimed') return claim;
-        const fileId = claim.fileIds[0];
         const budget = load();
-        const finish = (outcome, checkedPairs, available, reason) => {
-          const saved = cursor.record({ claim, outcomes: [{ fileId,
-            ...outcome }], nowMs: now() });
-          if (!['recorded', 'partial'].includes(saved.state)) return saved;
-          failedReceipt = null;
-          readFailures = 0;
-          return { state: saved.state === 'partial' ? 'partial' : 'checked',
-            ...(reason ? { reason } : {}),
-            checkedPairs, available, load: { ...budget } };
-        };
-        const sourceReadFailed = () => {
-          const receipt = `${claim.pass}:${claim.receipt}`;
-          if (failedReceipt !== receipt) {
-            failedReceipt = receipt;
-            readFailures = 0;
-          }
-          // The cursor survives restart while this retry counter does not.
-          // Age the saved claim out so repeated restarts cannot pin the pass.
-          const claimAgeMs = now() - claim.claimedMs;
-          if (Number.isSafeInteger(claimAgeMs) &&
-              claimAgeMs >= 15 * 60_000) {
-            return finish({ state: 'unknown' }, 0, 0);
-          }
-          if (++readFailures === 1) {
-            return { state: 'held', reason: 'source_read_unavailable' };
-          }
-          return finish({ state: 'unknown' }, 0, 0);
-        };
-        let source, candidate;
-        try {
-          source = inventory.getFile(fileId);
-          candidate = await readCandidate({ fileId });
-        } catch { return sourceReadFailed(); }
-        if (candidate?.state === 'busy') {
-          return { state: 'held', reason: 'metadata_busy' };
-        }
-        if (candidate?.state === 'unavailable') return sourceReadFailed();
-        if (source?.state !== 'linked' || !validTime(source.observedMs) ||
-            candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
-            candidate.updated !== source.updated || !validId(candidate.size) ||
-            !Array.isArray(candidate.pairs) || candidate.pairs.length < 1 ||
-            candidate.pairs.length > 100 || candidate.pairs.some((pair) =>
-              !validId(pair?.anidbId) || !validId(pair.episodeId))) {
-          return finish({ state: 'unknown' }, 0, 0);
-        }
-        const identity = fingerprint(candidate);
-        const start = claim.fingerprint === identity ? claim.pairOffset : 0;
-        if (start >= candidate.pairs.length) {
-          return finish({ state: 'unknown' }, 0, 0);
-        }
-        let end = Math.min(candidate.pairs.length, start + maxPairChecks);
-        const proposals = [];
-        const kinds = new Map();
-        for (let index = start; index < end; index++) {
-          if (budget.cardReads >= 10 || budget.physicalProbes >= 64) {
-            end = index;
-            break;
-          }
-          const pair = candidate.pairs[index];
-          if (!kinds.has(pair.anidbId)) {
-            let kind;
-            try { kind = await resolveKind({ anidbId: pair.anidbId }); }
-            catch { return sourceReadFailed(); }
-            if (kind?.state === 'busy') {
-              return { state: 'held', reason: 'metadata_busy' };
-            }
-            if (kind?.state === 'unavailable') return sourceReadFailed();
-            kinds.set(pair.anidbId, kind);
-          }
-          const kind = kinds.get(pair.anidbId);
-          if (!['series', 'movie'].includes(kind)) continue;
-          let outcome;
-          try { outcome = await observeCandidate({ candidate,
-            target: { ...pair, kind }, budget }); }
-          catch { return sourceReadFailed(); }
-          if (outcome?.state === 'busy') {
-            return { state: 'held', reason: 'metadata_busy' };
-          }
-          if (outcome?.reason === 'observer_incomplete') {
-            return sourceReadFailed();
-          }
-          if (outcome?.reason === 'read_budget_exhausted') {
-            if (index === start) {
-              // Defer this pathological file to the next pass so it cannot
-              // hold every later file, but report that no pair was checked.
-              return finish({ state: 'held' }, 0, 0, 'read_budget_exhausted');
-            }
-            end = index;
-            break;
-          }
-          if (outcome?.state === 'available' &&
-              outcome?.proof?.fileId === fileId &&
-              outcome?.fileId === fileId && outcome.cardRevision) {
-            proposals.push({ ...pair, proof: outcome.proof,
-              cardRevision: outcome.cardRevision });
-          }
-        }
-        if (budget.cardReads > 10 || budget.physicalProbes > 64) {
-          return { state: 'held', reason: 'file_backfill_budget_exceeded' };
-        }
-        let confirmed;
-        try { confirmed = await readCandidate({ fileId }); }
-        catch { return sourceReadFailed(); }
-        if (confirmed?.state === 'busy') {
-          return { state: 'held', reason: 'metadata_busy' };
-        }
-        if (confirmed?.state === 'unavailable') return sourceReadFailed();
-        if (confirmed?.state !== 'candidate' ||
-            fingerprint(confirmed) !== identity) {
-          return finish({ state: 'unknown' }, end - start, 0);
-        }
+        const seen = new Set();
+        let checkedFiles = 0;
+        let deferredFiles = 0;
+        let checkedPairs = 0;
         let available = 0;
-        for (const proposal of proposals) {
-          let saved;
-          try {
-            saved = proofs.observeGuarded({ anidbId: proposal.anidbId,
-              episodeId: proposal.episodeId, proof: proposal.proof,
-              revision: { source: { updated: source.updated,
-                observedMs: source.observedMs },
-              card: proposal.cardRevision }, checkedMs: now() });
-          } catch { return { state: 'held', reason: 'proof_write_unavailable' }; }
-          if (saved.state === 'recorded' || saved.state === 'stale') available++;
+        for (let index = 0; index < maxFilesPerTick; index++) {
+          if (budget.cardReads >= 10 || budget.physicalProbes >= 64) break;
+          const result = await processOne(budget, seen);
+          if (maxFilesPerTick === 1) return result;
+          if (result.state === 'checked') {
+            if (result.reason === 'read_budget_exhausted') deferredFiles++;
+            else checkedFiles++;
+            checkedPairs += result.checkedPairs;
+            available += result.available;
+            continue;
+          }
+          if (result.state === 'idle' || result.state === 'pass_repeated') break;
+          if (result.state === 'partial') {
+            return { ...result, checkedFiles,
+              ...(deferredFiles ? { deferredFiles } : {}),
+              checkedPairs: checkedPairs + result.checkedPairs,
+              available: available + result.available, load: { ...budget } };
+          }
+          return result;
         }
-        if (end < candidate.pairs.length) {
-          return finish({ state: 'partial', nextPairOffset: end,
-            fingerprint: identity }, end - start, available);
-        }
-        return finish({ state: available ? 'available' : 'unknown' },
-          end - start, available);
+        return checkedFiles || checkedPairs || seen.size
+          ? { state: 'checked', checkedFiles,
+            ...(deferredFiles ? { deferredFiles } : {}), checkedPairs, available,
+            load: { ...budget } }
+          : { state: 'idle' };
       } finally { busy = false; }
     },
   };

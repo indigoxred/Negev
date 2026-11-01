@@ -268,16 +268,24 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     NEGEV_FILE_PROOF_LIFETIME_MS: String(3 * 24 * 60 * 60_000) };
   assert.equal(parseUserServerConfig(backfill).fileBackfill, true);
   assert.equal(parseUserServerConfig(backfill).fileBackfillIntervalMs, 10_000);
+  assert.equal(parseUserServerConfig(backfill).fileBackfillFilesPerTick, 1);
+  assert.equal(parseUserServerConfig({ ...backfill,
+    NEGEV_FILE_BACKFILL_FILES_PER_TICK: '4' }).fileBackfillFilesPerTick, 4);
   assert.equal(parseUserServerConfig(backfill).fileProofLifetimeMs,
     3 * 24 * 60 * 60_000);
   for (const change of [
     { NEGEV_SHOKO_INVENTORY_HINTS: '0' },
     { NEGEV_PLEX_INDEX: '0' },
     { NEGEV_FILE_BACKFILL_INTERVAL_MS: '9999' },
+    { NEGEV_FILE_BACKFILL_FILES_PER_TICK: '0' },
+    { NEGEV_FILE_BACKFILL_FILES_PER_TICK: '11' },
+    { NEGEV_FILE_BACKFILL_FILES_PER_TICK: '4.5' },
     { NEGEV_FILE_PROOF_LIFETIME_MS: undefined },
     { NEGEV_FILE_PROOF_LIFETIME_MS: '0' },
   ]) assert.throws(() => parseUserServerConfig({ ...backfill, ...change }),
     TypeError);
+  assert.throws(() => parseUserServerConfig({ ...plex,
+    NEGEV_FILE_BACKFILL_FILES_PER_TICK: '4' }), TypeError);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_SHOKO_INVENTORY: '1', NEGEV_DIRECT_AVAILABILITY: '1' }).directAvailability, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',

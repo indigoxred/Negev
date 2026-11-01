@@ -257,6 +257,7 @@ export function parseUserServerConfig(env) {
   const fileBackfill = env.NEGEV_FILE_BACKFILL === '1';
   const rawFileInterval = env.NEGEV_FILE_BACKFILL_INTERVAL_MS;
   const rawProofLifetime = env.NEGEV_FILE_PROOF_LIFETIME_MS;
+  const rawFilesPerTick = env.NEGEV_FILE_BACKFILL_FILES_PER_TICK;
   const validPositiveMs = (raw, minimum, maximum) =>
     typeof raw === 'string' && /^[1-9]\d*$/.test(raw) &&
     Number.isSafeInteger(Number(raw)) && Number(raw) >= minimum &&
@@ -266,9 +267,12 @@ export function parseUserServerConfig(env) {
        env.NEGEV_PLEX_INDEX !== '1' ||
        env.NEGEV_PLEX_OBSERVER !== '1' ||
        !validPositiveMs(rawFileInterval, 10_000, 300_000) ||
+       (rawFilesPerTick !== undefined &&
+         !validPositiveMs(rawFilesPerTick, 1, 10)) ||
        !validPositiveMs(rawProofLifetime, 30 * 60_000,
          7 * 24 * 60 * 60_000)) :
-      rawFileInterval !== undefined || rawProofLifetime !== undefined) {
+      rawFileInterval !== undefined || rawProofLifetime !== undefined ||
+      rawFilesPerTick !== undefined) {
     throw new TypeError('File backfill needs measured Shoko/Plex inventory and proof policy');
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
@@ -359,6 +363,7 @@ export function parseUserServerConfig(env) {
     shokoInventoryHints: env.NEGEV_SHOKO_INVENTORY_HINTS === '1',
     fileBackfill,
     fileBackfillIntervalMs: fileBackfill ? Number(rawFileInterval) : null,
+    fileBackfillFilesPerTick: fileBackfill ? Number(rawFilesPerTick ?? 1) : 1,
     fileProofLifetimeMs: fileBackfill ? Number(rawProofLifetime) : null,
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',

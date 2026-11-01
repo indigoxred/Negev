@@ -69,6 +69,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
+  fileBackfillFilesPerTick = 1,
   shokoRecent = false, shokoInventoryHints = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
@@ -82,6 +83,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
       typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
       typeof fileBackfill !== 'boolean' ||
+      !Number.isSafeInteger(fileBackfillFilesPerTick) ||
+      fileBackfillFilesPerTick < 1 || fileBackfillFilesPerTick > 10 ||
       (fileBackfill && (!plex || !shokoInventoryHints ||
         !Number.isSafeInteger(fileProofLifetimeMs) ||
         fileProofLifetimeMs < 30 * 60_000 ||
@@ -216,6 +219,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const backfillWorker = fileBackfill ? createFileBackfillWorker({
       cursor: fileCursor, inventory, proofs: fileProofs, now,
+      maxFilesPerTick: fileBackfillFilesPerTick,
       readCandidate: ({ fileId }) => metadata.run(() =>
         readShokoFileCandidate({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fileId, fetchImpl })),

@@ -13,6 +13,7 @@ Negev is a self-hosted anime request and acquisition project for series and film
 - Shoko identifies imported files; a readable, matching Part in an allowed public Plex library proves playback availability. An incomplete observation remains Unknown.
 - Direct Shoko imports can update availability without a Negev request. A blocked or unrecognized item must not stop unrelated work.
 - Acquisition and broad observers are separate opt-ins, disabled by default. Their live settings require measured load, rollback, and genuine arrival checks before use.
+- The file backfill defaults to one file per tick. `NEGEV_FILE_BACKFILL_FILES_PER_TICK` can opt into 1–10 serial files under one shared limit of ten fresh Plex card reads and 64 physical metadata probes per tick; measure load before raising it.
 
 The current source includes guarded components for these flows, but the full operational chain remains unvalidated. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
 
