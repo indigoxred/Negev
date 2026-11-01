@@ -487,6 +487,24 @@ test('outage and stale concurrent page do not advance or erase observations', as
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('an inconsistent second page cannot replace a known file observation', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-invalid-page-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    assert.equal(ledger.recordFileObservation({ item: linked,
+      observedMs: 50 }).state, 'recorded_file');
+    const page = (items) => ledger.recordPage({ expected: ledger.getCursor(),
+      observedMs: 100, result: { state: 'page',
+        page: ledger.getCursor().page, total: 2, items } });
+    assert.equal(page([{ ...provisional, fileId: 11 }]).state, 'recorded');
+    assert.equal(page([provisional]).state, 'recorded');
+    assert.equal(ledger.getFile(10).state, 'linked');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('an unverified file is held while the next linked file advances', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
   const dbPath = path.join(dir, 'inventory.sqlite');

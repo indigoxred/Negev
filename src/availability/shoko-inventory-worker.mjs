@@ -344,9 +344,6 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
           db.exec('ROLLBACK'); begun = false;
           return held('stale_cursor');
         }
-        for (const item of result.items) {
-          saveObservation(item, current.pass, observedMs);
-        }
         let pass = findPass.get(current.pass);
         if (!pass) {
           startPass.run(current.pass, result.total, observedMs);
@@ -370,6 +367,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         const last = current.page * activePageSize >= result.total;
         let status = consistent ? (last && count === result.total
           ? 'complete' : 'running') : 'invalid';
+        // A drifting or out-of-order page may contain valid-looking file
+        // identities, but none of them is trusted inventory evidence.
+        if (consistent) {
+          for (const item of result.items) {
+            saveObservation(item, current.pass, observedMs);
+          }
+        }
         const retired = [];
         let retirementHeld;
         if (status === 'complete') {
