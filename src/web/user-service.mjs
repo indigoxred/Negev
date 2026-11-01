@@ -51,6 +51,12 @@ import { importFeedState, scopedImportFeedState,
   observeImportQuietWindow } from
   '../acquisition/import-quiet-window.mjs';
 
+const withinRoot = (root, candidate) => {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+};
+
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
@@ -476,6 +482,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         shokoProviderId, readPacer } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
+        }
+        // Publication must be restricted to Negev's child of the configured
+        // Shoko Import root. Preparing inside that watched root is forbidden.
+        if (shokoImportRoot === null ||
+            importRoot !== path.join(shokoImportRoot, 'Negev') ||
+            typeof holdingRoot !== 'string' ||
+            !path.isAbsolute(holdingRoot) ||
+            path.normalize(holdingRoot) !== holdingRoot ||
+            withinRoot(shokoImportRoot, holdingRoot)) {
+          throw new TypeError('Dedicated acquisition handoff roots required');
         }
         if (!prowlarr || !plexObserver || !readImportActivity ||
             !Array.isArray(plex?.sourcePolicy) ||

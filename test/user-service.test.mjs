@@ -90,16 +90,24 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     { state: 'held', reason: 'import_quiet_window_unverified' });
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length,
       queueReads);
-    const runtime = service.openAcquisitionWorkers({
+    const workerOptions = {
       qbBaseUrl: 'http://qb.internal:8080/',
       sessionGate: { get: async () => { throw Error('no login'); },
         invalidate: () => {} },
       stagingHostPath: path.join(dir, 'staging'),
-      holdingRoot: path.join(dir, 'holding'), importRoot,
+      holdingRoot: path.join(dir, 'holding'),
+      importRoot: path.join(importRoot, 'Negev'),
       inspectMounts: async () => { throw Error('no mount read'); },
       realpathImpl: async () => { throw Error('no path read'); },
       shokoProviderId: '11111111-2222-4333-8444-555555555555',
-    });
+    };
+    assert.throws(() => service.openAcquisitionWorkers({
+      ...workerOptions, importRoot }), TypeError);
+    assert.throws(() => service.openAcquisitionWorkers({
+      ...workerOptions, importRoot: path.join(dir, 'Anime') }), TypeError);
+    assert.throws(() => service.openAcquisitionWorkers({
+      ...workerOptions, holdingRoot: path.join(importRoot, 'holding') }), TypeError);
+    const runtime = service.openAcquisitionWorkers(workerOptions);
     assert.equal((await runtime.start()).state, 'reconciled');
     assert.equal(runtime.getStatus().state, 'waiting');
     assert.equal(reads.filter((path) => /torrent|download|prowlarr/i.test(path)).length, 0);
