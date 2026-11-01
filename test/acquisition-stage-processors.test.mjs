@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,6 +11,10 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openAcquisitionPipeline } from '../src/acquisition/acquisition-pipeline.mjs';
 import { openAcquisitionRuntime } from '../src/acquisition/acquisition-runtime.mjs';
+
+const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
+const torrentBytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
+const torrentHash = createHash('sha1').update(info).digest('hex');
 
 const request = { id: 1, status: 'held', anidbId: 42,
   kind: 'movie', episodeIds: [1001] };
@@ -59,6 +64,94 @@ test('missing safety providers are rejected before any work', () => {
   assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
     readEvidence: undefined }), TypeError);
   assert.deepEqual(calls, []);
+});
+
+test('movie request stage uses both public Plex sections before stopped submission', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-movie-stage-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'movie', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      episodeIds: [1001], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  let observedLibraries = [102];
+  const qbCalls = [];
+  const searchedQueries = [];
+  const release = { indexerId: 3, guid: 'movie-release',
+    title: 'Example 01', size: 1000, evidence: 'unverified' };
+  const proxy = 'http://prowlarr:9696/3/download?apikey=synthetic&link=abc123&file=Example';
+  const savePath = `/Downloads/negev/${torrentHash}`;
+  const qbFetch = async (url, init) => {
+    const endpoint = new URL(url).pathname;
+    qbCalls.push(endpoint);
+    if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+    if (endpoint.endsWith('/add')) return new Response('Ok.');
+    if (endpoint.endsWith('/info') &&
+        qbCalls.filter((call) => call.endsWith('/info')).length === 1) {
+      return Response.json([]);
+    }
+    return Response.json(endpoint.endsWith('/files')
+      ? [{ index: 0, name: '01.mkv', size: 1000, priority: 1, progress: 0 }]
+      : endpoint.endsWith('/properties')
+        ? { save_path: savePath, download_path: '' }
+        : [{ hash: torrentHash, category: 'negev', save_path: savePath,
+          state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
+          auto_tmm: false, force_start: false }]);
+  };
+  const prowlarrFetch = async (url) => {
+    if (new URL(url).pathname.endsWith('/search')) {
+      searchedQueries.push(new URL(url).searchParams.get('query'));
+      return Response.json([{ ...release, protocol: 'torrent', downloadUrl: proxy }]);
+    }
+    return new Response(torrentBytes,
+      { headers: { 'content-type': 'application/x-bittorrent' } });
+  };
+  try {
+    const processors = createAcquisitionStageProcessors({ ...options([]),
+      requests, acquisitions, handoffs,
+      prowlarr: { ...options([]).prowlarr, indexerIds: [3] },
+      discoverCandidates: async ({ requestId }) => ({ state: 'candidates',
+        requestId, anidbId: 42, items: [release] }),
+      previewCandidate: async ({ requestId }) => ({ state: 'preflight',
+        requestId, anidbId: 42, torrentHash, episodeIds: [1001],
+        files: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }] }),
+      loadDetail: async () => ({ state: 'details', complete: true, total: 1,
+        anidbId: 42, kind: 'movie', title: 'Example', restricted: false,
+        episodes: [{ id: 1001, number: 1, type: 'Episode' }] }),
+      readEvidence: async () => {
+        return { anidbId: 42, episodeIds: [1001], observedAtMs: 199,
+          importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
+            beforeObservedAtMs: 198, afterObservedAtMs: 199 },
+          shoko: { state: 'ok', complete: true, files: [] },
+          plex: { state: 'ok', complete: true, sourceVerified: true,
+            libraryIds: observedLibraries, parts: [] } };
+      },
+      inspectMounts: async () => ({ qbittorrent: [
+        { Type: 'bind', Source: '/srv/negev/staging',
+          Destination: '/Downloads/negev', RW: true }],
+      shoko: [{ Type: 'bind', Source: '/srv/library', Destination: '/pure', RW: true }],
+      plex: [{ Type: 'bind', Source: '/srv/library',
+        Destination: '/source-pure', RW: false }] }),
+      realpathImpl: async () => '/srv/negev/staging',
+      now: () => 200 });
+    const claim = { requestId: saved.requestId,
+      qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+      fetchImpl: qbFetch, providerFetchImpl: prowlarrFetch };
+    const incomplete = await processors.processRequest(claim);
+    assert.equal(incomplete.state, 'held');
+    assert.equal(incomplete.reason, 'target_not_proven_missing');
+    assert.equal(qbCalls.length, 0);
+    observedLibraries = [102, 123];
+    const result = await processors.processRequest(claim);
+    assert.equal(result.state, 'stopped_observed', JSON.stringify(result));
+    assert.equal(qbCalls.filter((call) => call.endsWith('/add')).length, 1);
+    assert.deepEqual(searchedQueries, ['Example', 'Example']);
+    assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds, [1001]);
+  } finally {
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('disabled acquisition runtime never opens journals or reads provider configuration', async () => {

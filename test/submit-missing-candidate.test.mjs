@@ -28,7 +28,7 @@ const torrent = { hash, category: 'negev', save_path: savePath,
   auto_tmm: false, force_start: false };
 const files = [{ index: 0, name: '01.mkv', size: 1000, priority: 1, progress: 0 }];
 const baseDetail = { state: 'details', complete: true, total: 2,
-  anidbId: 42, kind: 'series', restricted: false,
+  anidbId: 42, kind: 'series', title: 'Example', restricted: false,
   episodes: [{ id: 1001, number: 1, type: 'Episode' },
     { id: 1002, number: 2, type: 'Episode' }] };
 
@@ -168,7 +168,7 @@ test('an unambiguous series file creates the provisional subset without a caller
     const input = options({ request, ledger, readEvidence: async () => absent(),
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
     const detail = { state: 'details', complete: true, total: 2, restricted: false,
-      anidbId: 42, kind: 'series', episodes: [
+      anidbId: 42, kind: 'series', title: 'Example', episodes: [
         { id: 1001, number: 1, type: 'Episode' },
         { id: 1002, number: 2, type: 'Episode' },
       ] };
@@ -190,7 +190,7 @@ test('a one-video AniDB movie request follows the same stopped acquisition path'
           beforeObservedAtMs: 199, afterObservedAtMs: 200 } }),
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
     const detail = { state: 'details', complete: true, total: 1, restricted: false,
-      anidbId: 42, kind: 'movie',
+      anidbId: 42, kind: 'movie', title: 'Example',
       episodes: [{ id: 5001, number: 1, type: 'Episode' }] };
     const result = await submitMissingCandidate({ ...input, detail,
       episodeIds: undefined, plannedFiles: undefined });

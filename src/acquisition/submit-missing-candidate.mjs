@@ -58,7 +58,10 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       request.episodeIds.some((id) => !catalogueIds.has(id))) {
     return held('target_missing');
   }
-  let selectedQuery = prowlarr.query;
+  // Request preflight searches the canonical AniDB title but omits the
+  // query from its response. Reconstruct that same trusted query here rather
+  // than relying on a global Prowlarr query that the runtime does not set.
+  let selectedQuery = trustedReleaseQueries(detail.title)[0];
   if (searchQuery !== undefined) {
     let aliases;
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
@@ -68,6 +71,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     }
     selectedQuery = searchQuery;
   }
+  if (!selectedQuery) return held('untrusted_release_query');
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
