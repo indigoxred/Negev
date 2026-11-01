@@ -51,6 +51,13 @@ export function openDirectAvailabilityQueue(dbPath) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS plex_change_card
       ON plex_card_change_events(library_id,rating_key,id)`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_file_change_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id INTEGER NOT NULL CHECK(file_id>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS shoko_change_file
+      ON shoko_file_change_events(file_id,id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS direct_availability_priority_due
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
@@ -79,8 +86,12 @@ export function openDirectAvailabilityQueue(dbPath) {
     AND observed_ms=? AND version=? AND state='checking'`);
   const latestChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
     FROM plex_card_change_events`);
+  const latestShokoChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
+    FROM shoko_file_change_events`);
   const cardChanged = db.prepare(`SELECT id FROM plex_card_change_events
     WHERE library_id=? AND rating_key=? ORDER BY id DESC LIMIT 1`);
+  const shokoChanged = db.prepare(`SELECT id FROM shoko_file_change_events
+    WHERE file_id=? ORDER BY id DESC LIMIT 1`);
   const releaseChanged = db.prepare(`UPDATE direct_availability_targets SET
     state='pending',due_ms=?,priority=1,version=version+1
     WHERE anidb_id=? AND episode_id=? AND observed_ms=? AND version=?
@@ -153,13 +164,15 @@ export function openDirectAvailabilityQueue(dbPath) {
         const row = due.get(nowMs);
         if (!row) { db.exec('COMMIT'); begun = false; return { state: 'idle' }; }
         const changeId = latestChange.get().id;
+        const shokoChangeId = latestShokoChange.get().id;
         const updated = claim.run(nowMs + leaseMs, row.anidbId,
           row.episodeId, row.version);
         db.exec('COMMIT'); begun = false;
         if (updated.changes !== 1) return { state: 'idle' };
         return { state: 'claimed', target: { anidbId: row.anidbId,
           episodeId: row.episodeId }, observedMs: row.observedMs,
-          version: row.version + 1, startedMs: nowMs, changeId };
+          version: row.version + 1, startedMs: nowMs, changeId,
+          shokoChangeId };
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
     recordResult({ claim: receipt, state, checkedMs, proof = null }) {
@@ -167,6 +180,7 @@ export function openDirectAvailabilityQueue(dbPath) {
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
           !validId(receipt.version) || !validTime(receipt.startedMs) ||
           !validTime(receipt.changeId) ||
+          !validTime(receipt.shokoChangeId) ||
           !['available', 'unknown'].includes(state) || !validTime(checkedMs) ||
           (proof !== null && (state !== 'available' || !validProof(proof)))) {
         throw new TypeError('Invalid availability result');
@@ -181,6 +195,13 @@ export function openDirectAvailabilityQueue(dbPath) {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const change = proof && cardChanged.get(proof.libraryId,
           proof.ratingKey);
+        const fileChange = proof && shokoChanged.get(proof.fileId);
+        if (fileChange && fileChange.id > receipt.shokoChangeId) {
+          releaseChanged.run(checkedMs, receipt.target.anidbId,
+            receipt.target.episodeId, receipt.observedMs, receipt.version);
+          db.exec('COMMIT'); begun = false;
+          return { state: 'held', reason: 'shoko_changed' };
+        }
         if (change && change.id > receipt.changeId) {
           releaseChanged.run(checkedMs, receipt.target.anidbId,
             receipt.target.episodeId, receipt.observedMs, receipt.version);

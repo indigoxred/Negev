@@ -6,6 +6,8 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../src/availability/shoko-inventory-worker.mjs';
+import { openDirectAvailabilityQueue } from
+  '../src/availability/direct-availability-queue.mjs';
 
 const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
   state: 'provisional', pairs: [] };
@@ -35,6 +37,186 @@ test('durable one-page ticks revisit provisional files without claiming deletion
     assert.equal(ledger.getFile(11).seenPass, 1);
     assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42, episodeId: 1001 }), [10, 11]);
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('two matching complete omissions retire only the missing file and announce old pairs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+  try {
+    let items = [linked, { ...linked, fileId: 11,
+      pairs: [{ anidbId: 43, episodeId: 2001 }] }];
+    let instant = 100;
+    const changes = [];
+    const worker = createShokoInventoryWorker({ ledger, now: () => instant,
+      readPage: async () => ({ state: 'page', page: 1,
+        total: items.length, items }), onChangedFile: (change) => changes.push(change) });
+    assert.equal((await worker.tick()).state, 'recorded');
+    ledger.close();
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+    items = [linked]; instant = 200;
+    const resumed = createShokoInventoryWorker({ ledger, now: () => instant,
+      readPage: async () => ({ state: 'page', page: 1,
+        total: items.length, items }), onChangedFile: (change) => changes.push(change) });
+    assert.equal((await resumed.tick()).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 43,
+      episodeId: 2001 }), [11]);
+    instant = 300;
+    assert.equal((await resumed.tick()).state, 'recorded');
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 43,
+      episodeId: 2001 }), []);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+    assert.deepEqual(changes.at(-1).before.pairs,
+      [{ anidbId: 43, episodeId: 2001 }]);
+    assert.deepEqual(changes.at(-1).after.pairs, []);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('confirmed omission atomically invalidates a proven direct badge without a callback', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const queue = openDirectAvailabilityQueue(dbPath);
+  const ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+  try {
+    const page = (items, observedMs) => ledger.recordPage({
+      expected: ledger.getCursor(), observedMs,
+      result: { state: 'page', page: 1, total: items.length, items } });
+    page([linked], 100);
+    const target = { anidbId: 42, episodeId: 1001 };
+    queue.enqueue({ ...target, observedMs: 110 });
+    const claim = queue.claimNext({ nowMs: 110 });
+    queue.recordResult({ claim, state: 'available', checkedMs: 111,
+      proof: { fileId: 10, libraryId: 102, ratingKey: 500,
+        partId: 600 } });
+    page([], 200);
+    assert.equal(queue.getStatus({ ...target, nowMs: 200 }).state, 'available');
+    page([], 300);
+    assert.deepEqual(queue.getStatus({ ...target, nowMs: 300 }),
+      { state: 'unknown' });
+    assert.equal(queue.claimNext({ nowMs: 300 }).state, 'claimed');
+  } finally {
+    ledger.close(); queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a Shoko file change rejects an in-flight proof even when its page timestamp is earlier', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const queue = openDirectAvailabilityQueue(dbPath);
+  const ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    const target = { anidbId: 42, episodeId: 1001 };
+    queue.enqueue({ ...target, observedMs: 150 });
+    const claim = queue.claimNext({ nowMs: 200 });
+    ledger.recordFileObservation({ item: { ...linked,
+      state: 'unverified', pairs: [] }, observedMs: 190 });
+    assert.deepEqual(queue.recordResult({ claim, state: 'available',
+      checkedMs: 210, proof: { fileId: 10, libraryId: 102,
+        ratingKey: 500, partId: 600 } }),
+    { state: 'held', reason: 'shoko_changed' });
+    assert.deepEqual(queue.getStatus({ ...target, nowMs: 210 }),
+      { state: 'unknown' });
+  } finally {
+    ledger.close(); queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an explicit Shoko unlink clears its proven badge without waiting for a sweep', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-unlink-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  const queue = openDirectAvailabilityQueue(dbPath);
+  const ledger = openShokoInventoryLedger(dbPath, { pageSize: 2 });
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    const target = { anidbId: 42, episodeId: 1001 };
+    queue.enqueue({ ...target, observedMs: 110 });
+    const claim = queue.claimNext({ nowMs: 110 });
+    queue.recordResult({ claim, state: 'available', checkedMs: 111,
+      proof: { fileId: 10, libraryId: 102, ratingKey: 500,
+        partId: 600 } });
+    ledger.recordFileObservation({ item: { ...linked,
+      state: 'unverified', pairs: [] }, observedMs: 120 });
+    assert.deepEqual(queue.getStatus({ ...target, nowMs: 120 }),
+      { state: 'unknown' });
+  } finally {
+    ledger.close(); queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a newer targeted file event prevents two old inventory passes from retiring it', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 2 });
+  try {
+    const page = (items, observedMs) => ledger.recordPage({
+      expected: ledger.getCursor(), observedMs,
+      result: { state: 'page', page: 1, total: items.length, items } });
+    page([linked], 100);
+    page([], 200);
+    ledger.recordFileObservation({ item: linked, observedMs: 250 });
+    page([], 300);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('changed totals within a pass cannot become two-pass deletion evidence', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 50 });
+    const page = (pageNum, total, items, observedMs) =>
+      ledger.recordPage({ expected: ledger.getCursor(), observedMs,
+        result: { state: 'page', page: pageNum, total, items } });
+    page(1, 2, [{ ...provisional, fileId: 11 }], 100);
+    page(2, 3, [{ ...provisional, fileId: 12 }], 101);
+    page(3, 3, [{ ...provisional, fileId: 13 }], 102);
+    page(1, 2, [{ ...provisional, fileId: 11 }], 200);
+    page(2, 2, [{ ...provisional, fileId: 12 }], 201);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('two complete empty passes retire the final old file', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 2 });
+  try {
+    const page = (items, observedMs) => ledger.recordPage({
+      expected: ledger.getCursor(), observedMs,
+      result: { state: 'page', page: 1, total: items.length, items } });
+    page([linked], 100);
+    page([], 200);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+    page([], 300);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), []);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('duplicate IDs across offset pages never become deletion evidence', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'),
+    { pageSize: 1 });
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 50 });
+    const page = (items, total, observedMs) => ledger.recordPage({
+      expected: ledger.getCursor(), observedMs,
+      result: { state: 'page', page: ledger.getCursor().page, total, items } });
+    page([{ ...provisional, fileId: 11 }], 2, 100);
+    page([{ ...provisional, fileId: 11 }], 2, 101);
+    page([{ ...provisional, fileId: 11 }], 1, 200);
+    assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
+      episodeId: 1001 }), [10]);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test('outage and stale concurrent page do not advance or erase observations', async () => {

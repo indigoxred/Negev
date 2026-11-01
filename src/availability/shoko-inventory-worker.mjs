@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -51,6 +52,22 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       episode_id INTEGER NOT NULL CHECK(episode_id>0),
       PRIMARY KEY(file_id,anidb_id,episode_id)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_passes (
+      pass INTEGER PRIMARY KEY CHECK(pass>0),
+      total INTEGER NOT NULL CHECK(total>=0),
+      started_ms INTEGER NOT NULL CHECK(started_ms>=0),
+      seen_count INTEGER NOT NULL CHECK(seen_count>=0),
+      last_file_id INTEGER NOT NULL CHECK(last_file_id>=0),
+      digest TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('running','complete','invalid'))
+    ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_file_change_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      file_id INTEGER NOT NULL CHECK(file_id>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS shoko_change_file
+      ON shoko_file_change_events(file_id,id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_inventory_episode
       ON shoko_inventory_pairs(anidb_id,episode_id,file_id)`);
     const columns = db.prepare('PRAGMA table_info(shoko_inventory_cursor)').all();
@@ -95,12 +112,54 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     WHERE anidb_id=? AND episode_id=? ORDER BY file_id`);
   const advance = db.prepare(`UPDATE shoko_inventory_cursor SET page=?,pass=?
     WHERE id=1 AND page=? AND pass=?`);
+  const findPass = db.prepare(`SELECT pass,total,started_ms AS startedMs,
+    seen_count AS seenCount,last_file_id AS lastFileId,digest,status
+    FROM shoko_inventory_passes WHERE pass=?`);
+  const startPass = db.prepare(`INSERT INTO shoko_inventory_passes
+    (pass,total,started_ms,seen_count,last_file_id,digest,status)
+    VALUES (?,?,?,0,0,'','running')`);
+  const updatePass = db.prepare(`UPDATE shoko_inventory_passes SET
+    seen_count=?,last_file_id=?,digest=?,status=? WHERE pass=?`);
+  const prunePasses = db.prepare(`DELETE FROM shoko_inventory_passes
+    WHERE pass<?`);
+  const omitted = db.prepare(`SELECT file_id AS fileId,updated,state,
+    pairs_json AS pairsJson,seen_pass AS seenPass,
+    observed_ms AS observedMs FROM shoko_inventory_files
+    WHERE seen_pass<? AND observed_ms<? AND state='linked'
+    ORDER BY file_id LIMIT 101`);
+  const saveChange = db.prepare(`INSERT INTO shoko_file_change_events
+    (file_id,observed_ms) VALUES (?,?)`);
+  let invalidateDirect = null;
+  const invalidateProvenFile = (fileId, observedMs) => {
+    if (!invalidateDirect) {
+      const columns = new Set(db.prepare(
+        'PRAGMA table_info(direct_availability_targets)').all()
+        .map((column) => column.name));
+      if (columns.has('proof_file_id')) {
+        invalidateDirect = db.prepare(`UPDATE direct_availability_targets SET
+          state='pending',due_ms=?,priority=1,version=version+1,
+          verified_ms=NULL,proof_file_id=NULL,proof_library_id=NULL,
+          proof_rating_key=NULL,proof_part_id=NULL
+          WHERE proof_file_id=? AND state='available'`);
+      }
+    }
+    invalidateDirect?.run(observedMs, fileId);
+  };
   function saveObservation(item, seenPass, observedMs) {
     const previous = find.get(item.fileId);
     if (previous && (previous.observedMs > observedMs ||
         (previous.observedMs === observedMs &&
           previous.seenPass === 0 && seenPass > 0))) return;
-    save.run(item.fileId, item.updated, item.state, JSON.stringify(item.pairs),
+    const pairsJson = JSON.stringify(item.pairs);
+    if (!previous || previous.updated !== item.updated ||
+        previous.state !== item.state || previous.pairsJson !== pairsJson) {
+      saveChange.run(item.fileId, observedMs);
+    }
+    if (previous && (previous.updated !== item.updated ||
+        previous.state !== item.state || previous.pairsJson !== pairsJson)) {
+      invalidateProvenFile(item.fileId, observedMs);
+    }
+    save.run(item.fileId, item.updated, item.state, pairsJson,
       seenPass, observedMs);
     removePairs.run(item.fileId);
     for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
@@ -163,12 +222,63 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         for (const item of result.items) {
           saveObservation(item, current.pass, observedMs);
         }
+        let pass = findPass.get(current.pass);
+        if (!pass) {
+          startPass.run(current.pass, result.total, observedMs);
+          pass = findPass.get(current.pass);
+        }
+        const offset = (current.page - 1) * activePageSize;
+        const ordered = result.items.every((item, index) =>
+          item.fileId > (index === 0 ? pass.lastFileId :
+            result.items[index - 1].fileId));
+        const consistent = pass.status === 'running' &&
+          (current.page === 1 || pass.startedMs <= observedMs) &&
+          pass.total === result.total && pass.seenCount === offset &&
+          result.items.length === Math.min(activePageSize,
+            Math.max(0, result.total - offset)) && ordered &&
+          (current.page === 1 || pass.seenCount > 0);
+        const count = pass.seenCount + result.items.length;
+        const digest = consistent ? createHash('sha256')
+          .update(pass.digest).update('|')
+          .update(result.items.map((item) => item.fileId).join(','))
+          .digest('hex') : pass.digest;
         const last = current.page * activePageSize >= result.total;
+        let status = consistent ? (last && count === result.total
+          ? 'complete' : 'running') : 'invalid';
+        const retired = [];
+        let retirementHeld;
+        if (status === 'complete') {
+          const prior = findPass.get(current.pass - 1);
+          if (prior?.status === 'complete' && prior.total === result.total &&
+              prior.digest === digest) {
+            const candidates = omitted.all(prior.pass, prior.startedMs);
+            if (candidates.length > 100) {
+              status = 'invalid';
+              retirementHeld = 'omission_budget_exceeded';
+            } else {
+              for (const before of candidates) {
+                const old = { fileId: before.fileId, updated: before.updated,
+                  state: before.state, pairs: JSON.parse(before.pairsJson),
+                  seenPass: before.seenPass, observedMs: before.observedMs };
+                saveObservation({ fileId: old.fileId, updated: old.updated,
+                  state: 'unverified', pairs: [] }, current.pass, observedMs);
+                retired.push({ before: old, after: { ...old,
+                  state: 'unverified', pairs: [], seenPass: current.pass,
+                  observedMs } });
+              }
+            }
+          }
+        }
+        updatePass.run(count, result.items.at(-1)?.fileId ?? pass.lastFileId,
+          digest, status, current.pass);
         const nextPage = last ? 1 : current.page + 1;
         const nextPass = last ? current.pass + 1 : current.pass;
         advance.run(nextPage, nextPass, current.page, current.pass);
+        if (last) prunePasses.run(current.pass - 1);
         db.exec('COMMIT'); begun = false;
-        return { state: 'recorded', page: current.page, pass: current.pass, nextPage };
+        return { state: 'recorded', page: current.page, pass: current.pass,
+          nextPage, ...(retired.length ? { retired } : {}),
+          ...(retirementHeld ? { retirementHeld } : {}) };
       } catch (error) {
         if (begun) db.exec('ROLLBACK');
         throw error;
@@ -211,6 +321,13 @@ export function createShokoInventoryWorker({ ledger, readPage, now = Date.now,
             onChangedFile({ before: previous[i], after: current, observedMs });
           }
         }
+        for (const change of saved.retired ?? []) {
+          onChangedFile({ ...change, observedMs });
+        }
+      }
+      if (saved.state === 'recorded' && saved.retired) {
+        const { retired, ...summary } = saved;
+        return summary;
       }
       return saved;
     },
