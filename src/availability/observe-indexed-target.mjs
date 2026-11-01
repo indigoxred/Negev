@@ -10,7 +10,8 @@ const unknown = (reason) => ({ state: 'unknown', reason });
 // An empty or stale index has no negative meaning.
 export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex,
   readShoko, readPlex, shokoMount, plexMount, plexMounts, proveImpl,
-  probeImpl = probePhysicalCandidate, now = Date.now } = {}) {
+  probeImpl = probePhysicalCandidate, now = Date.now,
+  includeProof = false } = {}) {
   if (typeof cardIndex?.lookupCards !== 'function' ||
       typeof readShoko !== 'function' || typeof readPlex !== 'function' ||
       typeof probeImpl !== 'function' || typeof now !== 'function') {
@@ -74,7 +75,7 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
   catch { return unknown('card_discovery_incomplete'); }
   if (cards.length === 0) return unknown('card_discovery_incomplete');
   try {
-    return await observePublicTarget({ target, publicLibraryIds,
+    const result = await observePublicTarget({ target, publicLibraryIds,
       knownCards: cards, shokoMount, plexMount, plexMounts,
       readShoko: async () => shoko,
       readPlex: async (input) => {
@@ -91,5 +92,7 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
         }
         return result;
       }, proveImpl });
+    return result.state === 'available' && !includeProof
+      ? { state: 'available', fileId: result.fileId } : result;
   } catch { return unknown('observer_incomplete'); }
 }

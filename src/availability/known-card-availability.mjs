@@ -71,6 +71,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   const publicIds = new Set(publicLibraryIds);
   const files = [];
   const parts = [];
+  const provenParts = [];
   let checks = 0;
   let incompletePhysical = false;
   for (const file of shoko.files) {
@@ -102,6 +103,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
             episodeIds: file.episodeIds, coverage: file.coverage,
             storageKey: witness.storageKey });
           parts.push({ storageKey: witness.storageKey, libraryId: part.libraryId, readable: true });
+          provenParts.push({ fileId: file.fileId, libraryId: part.libraryId,
+            ratingKey: part.ratingKey, partId: part.partId });
         } else if (['file_unavailable', 'file_changed'].includes(witness?.reason)) {
           incompletePhysical = true;
         } else if (witness?.reason !== 'different_file' && witness?.reason !== 'size_mismatch') {
@@ -123,6 +126,12 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   }
   // One known card cannot establish a complete negative observation.
   if (result.state === 'absent') return unknown('observer_incomplete');
-  if (result.state === 'available' || result.state === 'held') return result;
+  if (result.state === 'available') {
+    const proof = provenParts.find((part) => part.fileId === result.fileId &&
+      Number.isSafeInteger(part.ratingKey) && part.ratingKey > 0 &&
+      Number.isSafeInteger(part.partId) && part.partId > 0);
+    return proof ? { ...result, proof } : result;
+  }
+  if (result.state === 'held') return result;
   return incompletePhysical ? unknown('physical_evidence_incomplete') : result;
 }

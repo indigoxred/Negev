@@ -2,6 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
+const validProof = (proof) => validId(proof?.fileId) &&
+  validId(proof.libraryId) && validId(proof.ratingKey) &&
+  validId(proof.partId);
 const positiveLifetimeMs = 30 * 60_000;
 const retryMs = 5 * 60_000;
 const leaseMs = 10 * 60_000;
@@ -24,13 +27,30 @@ export function openDirectAvailabilityQueue(dbPath) {
       priority INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0,1)),
       state TEXT NOT NULL CHECK(state IN ('pending','checking','available','unknown')),
       verified_ms INTEGER,
+      proof_file_id INTEGER,
+      proof_library_id INTEGER,
+      proof_rating_key INTEGER,
+      proof_part_id INTEGER,
       PRIMARY KEY(anidb_id,episode_id)
     ) STRICT`);
-    if (!db.prepare(`PRAGMA table_info(direct_availability_targets)`).all()
-      .some((column) => column.name === 'priority')) {
-      db.exec(`ALTER TABLE direct_availability_targets ADD COLUMN
-        priority INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0,1))`);
+    const columns = new Set(db.prepare(`PRAGMA table_info(direct_availability_targets)`)
+      .all().map((column) => column.name));
+    for (const [name, declaration] of [
+      ['priority', 'INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0,1))'],
+      ['proof_file_id', 'INTEGER'], ['proof_library_id', 'INTEGER'],
+      ['proof_rating_key', 'INTEGER'], ['proof_part_id', 'INTEGER'],
+    ]) {
+      if (!columns.has(name)) db.exec(`ALTER TABLE direct_availability_targets
+        ADD COLUMN ${name} ${declaration}`);
     }
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_card_change_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      library_id INTEGER NOT NULL CHECK(library_id>0),
+      rating_key INTEGER NOT NULL CHECK(rating_key>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS plex_change_card
+      ON plex_card_change_events(library_id,rating_key,id)`);
     db.exec(`CREATE INDEX IF NOT EXISTS direct_availability_priority_due
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
@@ -42,17 +62,29 @@ export function openDirectAvailabilityQueue(dbPath) {
     VALUES (?,?,?, ?,1,?,'pending',NULL)`);
   const replace = db.prepare(`UPDATE direct_availability_targets SET
     observed_ms=?,due_ms=?,version=version+1,priority=?,
-    state='pending',verified_ms=NULL
+    state='pending',verified_ms=NULL,proof_file_id=NULL,
+    proof_library_id=NULL,proof_rating_key=NULL,proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND observed_ms<=?`);
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
     observed_ms AS observedMs,version FROM direct_availability_targets
     WHERE due_ms<=? ORDER BY priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
   const claim = db.prepare(`UPDATE direct_availability_targets SET
-    state='checking',due_ms=?,version=version+1,priority=0,verified_ms=NULL
+    state='checking',due_ms=?,version=version+1,priority=0,verified_ms=NULL,
+    proof_file_id=NULL,proof_library_id=NULL,proof_rating_key=NULL,
+    proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND version=?`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
-    state=?,due_ms=?,verified_ms=? WHERE anidb_id=? AND episode_id=?
+    state=?,due_ms=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
+    proof_rating_key=?,proof_part_id=? WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);
+  const latestChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
+    FROM plex_card_change_events`);
+  const cardChanged = db.prepare(`SELECT id FROM plex_card_change_events
+    WHERE library_id=? AND rating_key=? ORDER BY id DESC LIMIT 1`);
+  const releaseChanged = db.prepare(`UPDATE direct_availability_targets SET
+    state='pending',due_ms=?,priority=1,version=version+1
+    WHERE anidb_id=? AND episode_id=? AND observed_ms=? AND version=?
+      AND state='checking'`);
   const positiveForAnime = db.prepare(`SELECT episode_id AS episodeId
     FROM direct_availability_targets WHERE anidb_id=? AND state='available'
     AND verified_ms>? AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
@@ -120,31 +152,51 @@ export function openDirectAvailabilityQueue(dbPath) {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const row = due.get(nowMs);
         if (!row) { db.exec('COMMIT'); begun = false; return { state: 'idle' }; }
+        const changeId = latestChange.get().id;
         const updated = claim.run(nowMs + leaseMs, row.anidbId,
           row.episodeId, row.version);
         db.exec('COMMIT'); begun = false;
         if (updated.changes !== 1) return { state: 'idle' };
         return { state: 'claimed', target: { anidbId: row.anidbId,
           episodeId: row.episodeId }, observedMs: row.observedMs,
-          version: row.version + 1 };
+          version: row.version + 1, startedMs: nowMs, changeId };
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
-    recordResult({ claim: receipt, state, checkedMs }) {
+    recordResult({ claim: receipt, state, checkedMs, proof = null }) {
       if (receipt?.state !== 'claimed' || !validId(receipt.target?.anidbId) ||
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
-          !validId(receipt.version) || !['available', 'unknown'].includes(state) ||
-          !validTime(checkedMs)) throw new TypeError('Invalid availability result');
-      if (checkedMs < receipt.observedMs) {
+          !validId(receipt.version) || !validTime(receipt.startedMs) ||
+          !validTime(receipt.changeId) ||
+          !['available', 'unknown'].includes(state) || !validTime(checkedMs) ||
+          (proof !== null && (state !== 'available' || !validProof(proof)))) {
+        throw new TypeError('Invalid availability result');
+      }
+      if (checkedMs < receipt.observedMs || checkedMs < receipt.startedMs) {
         return { state: 'held', reason: 'clock_regressed' };
       }
       const dueMs = checkedMs + (state === 'available'
         ? positiveLifetimeMs : retryMs);
-      const updated = record.run(state, dueMs,
-        state === 'available' ? checkedMs : null,
-        receipt.target.anidbId, receipt.target.episodeId,
-        receipt.observedMs, receipt.version);
-      return updated.changes === 1 ? { state: 'recorded' } :
-        { state: 'held', reason: 'stale_claim' };
+      let begun = false;
+      try {
+        db.exec('BEGIN IMMEDIATE'); begun = true;
+        const change = proof && cardChanged.get(proof.libraryId,
+          proof.ratingKey);
+        if (change && change.id > receipt.changeId) {
+          releaseChanged.run(checkedMs, receipt.target.anidbId,
+            receipt.target.episodeId, receipt.observedMs, receipt.version);
+          db.exec('COMMIT'); begun = false;
+          return { state: 'held', reason: 'card_changed' };
+        }
+        const updated = record.run(state, dueMs,
+          state === 'available' ? checkedMs : null,
+          proof?.fileId ?? null, proof?.libraryId ?? null,
+          proof?.ratingKey ?? null, proof?.partId ?? null,
+          receipt.target.anidbId, receipt.target.episodeId,
+          receipt.observedMs, receipt.version);
+        db.exec('COMMIT'); begun = false;
+        return updated.changes === 1 ? { state: 'recorded' } :
+          { state: 'held', reason: 'stale_claim' };
+      } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
     close() { db.close(); },
   };
@@ -152,10 +204,11 @@ export function openDirectAvailabilityQueue(dbPath) {
 
 // An explicit tick checks one target. No automatic timer or broad Plex scan.
 export function createDirectAvailabilityWorker({ queue, observeTarget,
-  now = Date.now } = {}) {
+  now = Date.now, requireProof = false } = {}) {
   if (typeof queue?.claimNext !== 'function' ||
       typeof queue?.recordResult !== 'function' ||
-      typeof observeTarget !== 'function' || typeof now !== 'function') {
+      typeof observeTarget !== 'function' || typeof now !== 'function' ||
+      typeof requireProof !== 'boolean') {
     throw new TypeError('Invalid direct availability worker');
   }
   let busy = false;
@@ -169,9 +222,13 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
         let outcome;
         try { outcome = await observeTarget(receipt.target); }
         catch { outcome = { state: 'unknown' }; }
-        const state = outcome?.state === 'available' ? 'available' : 'unknown';
+        const proof = outcome?.proof;
+        const state = outcome?.state === 'available' &&
+          (proof == null ? !requireProof : validProof(proof))
+          ? 'available' : 'unknown';
         const saved = queue.recordResult({ claim: receipt, state,
-          checkedMs: now() });
+          checkedMs: now(), proof: state === 'available'
+            ? proof ?? null : null });
         return saved.state === 'recorded'
           ? { state: 'checked', target: receipt.target, result: state }
           : saved;

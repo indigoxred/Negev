@@ -6,6 +6,7 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
   '../src/availability/direct-availability-queue.mjs';
+import { openPlexCardIndex } from '../src/availability/plex-card-index.mjs';
 
 async function fixture(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-availability-'));
@@ -38,6 +39,162 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
     assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 101 + 30 * 60_000 }),
       { state: 'unknown' });
   });
+});
+
+test('one card withdrawal invalidates every proved episode, survives restart, and leaves another card', async () => {
+  await fixture(async (ctx) => {
+    const index = openPlexCardIndex(ctx.dbPath);
+    try {
+      const card = (ratingKey) => ({ libraryId: 102, ratingKey,
+        kind: 'episode', observedMs: 10, parts: [{ libraryId: 102,
+          partId: ratingKey + 100, size: 5,
+          plexPath: `/source-pure/${ratingKey}.mkv` }] });
+      index.recordCard(card(500)); index.recordCard(card(501));
+      for (const episodeId of [1001, 1002, 1003]) {
+        const target = { anidbId: 42, episodeId };
+        ctx.queue.enqueue({ ...target, observedMs: 20 });
+        const claim = ctx.queue.claimNext({ nowMs: 20 });
+        const ratingKey = episodeId === 1003 ? 501 : 500;
+        assert.equal(ctx.queue.recordResult({ claim, state: 'available',
+          checkedMs: 21, proof: { fileId: 51, libraryId: 102, ratingKey,
+            partId: ratingKey + 100 } }).state, 'recorded');
+      }
+      index.forgetCard({ libraryId: 102, ratingKey: 500, observedMs: 30 });
+      ctx.reopen();
+      for (const episodeId of [1001, 1002]) {
+        assert.deepEqual(ctx.queue.getStatus({ anidbId: 42,
+          episodeId, nowMs: 31 }), { state: 'unknown' });
+      }
+      assert.deepEqual(ctx.queue.getStatus({ anidbId: 42,
+        episodeId: 1003, nowMs: 31 }),
+      { state: 'available', verifiedAtMs: 21 });
+      assert.deepEqual(ctx.queue.getRecentAvailableIds({ anidbId: 42,
+        nowMs: 31 }), [1003]);
+      index.recordCard({ ...card(500), observedMs: 32 });
+      assert.equal(ctx.queue.claimNext({ nowMs: 32 }).state, 'claimed');
+    } finally { index.close(); }
+  });
+});
+
+test('card replacement invalidates a positive and rejects an in-flight old proof', async () => {
+  await fixture(async (ctx) => {
+    const index = openPlexCardIndex(ctx.dbPath);
+    try {
+      const card = (partId, observedMs) => ({ libraryId: 102,
+        ratingKey: 500, kind: 'episode', observedMs,
+        parts: [{ libraryId: 102, partId, size: 5,
+          plexPath: `/source-pure/${partId}.mkv` }] });
+      index.recordCard(card(600, 10));
+      const target = { anidbId: 42, episodeId: 1001 };
+      ctx.queue.enqueue({ ...target, observedMs: 20 });
+      let claim = ctx.queue.claimNext({ nowMs: 20 });
+      const proof = { fileId: 51, libraryId: 102, ratingKey: 500,
+        partId: 600 };
+      ctx.queue.recordResult({ claim, state: 'available', checkedMs: 21, proof });
+      index.recordCard(card(601, 30));
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 31 }),
+        { state: 'unknown' });
+      claim = ctx.queue.claimNext({ nowMs: 31 });
+      index.forgetCard({ libraryId: 102, ratingKey: 500, observedMs: 32 });
+      assert.deepEqual(ctx.queue.recordResult({ claim,
+        state: 'available', checkedMs: 33, proof }),
+      { state: 'held', reason: 'card_changed' });
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 33 }),
+        { state: 'unknown' });
+    } finally { index.close(); }
+  });
+});
+
+test('unchanged Plex refresh preserves proof but a card identity remap invalidates it', async () => {
+  await fixture(async (ctx) => {
+    const index = openPlexCardIndex(ctx.dbPath);
+    try {
+      const card = (observedMs, itemGuid) => ({ libraryId: 102,
+        ratingKey: 500, kind: 'episode', observedMs,
+        parts: [{ libraryId: 102, partId: 600, size: 5,
+          plexPath: '/source-pure/500.mkv', itemGuid }] });
+      index.recordCard(card(10, 'shoko://episode/1'));
+      const target = { anidbId: 42, episodeId: 1001 };
+      ctx.queue.enqueue({ ...target, observedMs: 20 });
+      const claim = ctx.queue.claimNext({ nowMs: 20 });
+      ctx.queue.recordResult({ claim, state: 'available', checkedMs: 21,
+        proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+          partId: 600 } });
+      index.recordCard(card(30, 'shoko://episode/1'));
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 31 }),
+        { state: 'available', verifiedAtMs: 21 });
+      index.recordCard(card(32, 'shoko://episode/2'));
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 33 }),
+        { state: 'unknown' });
+    } finally { index.close(); }
+  });
+});
+
+test('a delayed card page rejects an in-flight proof even with an earlier page timestamp', async () => {
+  await fixture(async (ctx) => {
+    const index = openPlexCardIndex(ctx.dbPath);
+    try {
+      const card = (partId, observedMs) => ({ libraryId: 102,
+        ratingKey: 500, kind: 'episode', observedMs,
+        parts: [{ libraryId: 102, partId, size: 5,
+          plexPath: `/source-pure/${partId}.mkv` }] });
+      index.recordCard(card(600, 10));
+      const target = { anidbId: 42, episodeId: 1001 };
+      ctx.queue.enqueue({ ...target, observedMs: 20 });
+      const claim = ctx.queue.claimNext({ nowMs: 20 });
+      index.recordCard(card(601, 15));
+      assert.deepEqual(ctx.queue.recordResult({ claim,
+        state: 'available', checkedMs: 21,
+        proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+          partId: 600 } }), { state: 'held', reason: 'card_changed' });
+    } finally { index.close(); }
+  });
+});
+
+test('production worker treats a malformed or missing card proof as Unknown', async () => {
+  await fixture(async (ctx) => {
+    const first = { anidbId: 42, episodeId: 1001 };
+    const second = { anidbId: 42, episodeId: 1002 };
+    ctx.queue.enqueue({ ...first, observedMs: 20 });
+    ctx.queue.enqueue({ ...second, observedMs: 20 });
+    const worker = createDirectAvailabilityWorker({ queue: ctx.queue,
+      now: () => 21, requireProof: true,
+      observeTarget: async (target) => target.episodeId === 1001
+        ? { state: 'available' } :
+        { state: 'available', proof: { libraryId: 102 } } });
+    assert.equal((await worker.runOnce()).result, 'unknown');
+    assert.equal((await worker.runOnce()).result, 'unknown');
+    assert.deepEqual(ctx.queue.getStatus({ ...first, nowMs: 21 }),
+      { state: 'unknown' });
+    assert.deepEqual(ctx.queue.getStatus({ ...second, nowMs: 21 }),
+      { state: 'unknown' });
+  });
+});
+
+test('card index opened first still invalidates a later availability queue', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-card-first-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const index = openPlexCardIndex(dbPath);
+  const queue = openDirectAvailabilityQueue(dbPath);
+  try {
+    const card = (partId, observedMs) => ({ libraryId: 102,
+      ratingKey: 500, kind: 'episode', observedMs,
+      parts: [{ libraryId: 102, partId, size: 5,
+        plexPath: `/source-pure/${partId}.mkv` }] });
+    index.recordCard(card(600, 10));
+    const target = { anidbId: 42, episodeId: 1001 };
+    queue.enqueue({ ...target, observedMs: 20 });
+    const claim = queue.claimNext({ nowMs: 20 });
+    queue.recordResult({ claim, state: 'available', checkedMs: 21,
+      proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+        partId: 600 } });
+    index.recordCard(card(601, 30));
+    assert.deepEqual(queue.getStatus({ ...target, nowMs: 31 }),
+      { state: 'unknown' });
+  } finally {
+    queue.close(); index.close();
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('direct availability worker allows only one Plex comparison at a time', async () => {

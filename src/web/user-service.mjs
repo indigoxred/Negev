@@ -153,16 +153,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
-    const observeCurrentPublic = (target, observedShoko) => {
+    const observeCurrentPublic = (target, observedShoko,
+      includeProof = false) => {
       if (directAvailability.getObservation(target) &&
           inventory.getObservedFileIds(target).length === 0) {
         return Promise.resolve({ state: 'unknown', reason: 'shoko_identity_changed' });
       }
       return metadata.run(() => plexObserver.observeTarget(target,
-        observedShoko));
+        observedShoko, { includeProof }));
     };
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
-      now, observeTarget: async (target) => {
+      now, requireProof: true, observeTarget: async (target) => {
         if (!plexObserver) return { state: 'unknown' };
         if (inventory.getObservedFileIds(target).length === 0) {
           return { state: 'unknown' };
@@ -170,7 +171,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const detail = await metadata.run(() => loadDetail({
           anidbId: target.anidbId, page: 1 }));
         if (detail?.state !== 'details') return { state: 'unknown' };
-        return observeCurrentPublic({ ...target, kind: detail.kind });
+        return observeCurrentPublic({ ...target, kind: detail.kind },
+          undefined, true);
       } });
     const titleWorker = titleChecks ? createTitleCheckWorker({
       ledger: titleChecks, now,

@@ -49,7 +49,8 @@ export async function observePublicTarget({ target, publicLibraryIds, knownCards
       incomplete = true;
       continue;
     }
-    parts.push(...result.parts);
+    parts.push(...result.parts.map((part) => ({ ...part,
+      ratingKey: card.ratingKey })));
   }
   const result = await observeKnownCardAvailability({ target, shoko,
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds,

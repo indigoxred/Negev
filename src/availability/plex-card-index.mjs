@@ -8,6 +8,12 @@ const validPath = (value) => typeof value === 'string' && value.length <= 4096 &
 const validCandidateKey = (value, size) => typeof value === 'string' &&
   value.length <= 128 && /^(0|[1-9]\d{0,30}):([1-9]\d{0,30}):([1-9]\d{0,15})$/.test(value) &&
   (size === undefined || value.slice(value.lastIndexOf(':') + 1) === String(size));
+const validGuid = (value) => value == null || (typeof value === 'string' &&
+  value.length <= 512 && !/[\0\r\n]/.test(value));
+const cardSignature = (kind, parts) => JSON.stringify([kind,
+  [...parts].sort((a, b) => a.partId - b.partId).map((part) => [
+    part.partId, part.size, part.plexPath, part.itemGuid ?? null,
+    part.showGuid ?? null, [...(part.externalGuids ?? [])].sort()])]);
 
 // Positive discovery only. Stored paths are private candidates, not playback
 // proof. A target check must re-read each card and prove the physical Part.
@@ -23,8 +29,13 @@ export function openPlexCardIndex(dbPath) {
       rating_key INTEGER NOT NULL CHECK(rating_key>0),
       kind TEXT NOT NULL CHECK(kind IN ('episode','movie')),
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
+      identity_signature TEXT,
       PRIMARY KEY(library_id,rating_key)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(plex_card_observations)').all()
+      .some((column) => column.name === 'identity_signature')) {
+      db.exec('ALTER TABLE plex_card_observations ADD COLUMN identity_signature TEXT');
+    }
     db.exec(`CREATE TABLE IF NOT EXISTS plex_part_candidates (
       library_id INTEGER NOT NULL,
       rating_key INTEGER NOT NULL,
@@ -48,6 +59,14 @@ export function openPlexCardIndex(dbPath) {
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
       PRIMARY KEY(library_id,rating_key)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS plex_card_change_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      library_id INTEGER NOT NULL CHECK(library_id>0),
+      rating_key INTEGER NOT NULL CHECK(rating_key>0),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS plex_change_card
+      ON plex_card_change_events(library_id,rating_key,id)`);
     db.exec('CREATE INDEX IF NOT EXISTS plex_candidate_size ON plex_part_candidates(file_size,library_id,rating_key)');
     db.exec('CREATE INDEX IF NOT EXISTS plex_candidate_identity ON plex_part_candidates(candidate_key,library_id,rating_key)');
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_cursors (
@@ -87,10 +106,30 @@ export function openPlexCardIndex(dbPath) {
     db.exec('CREATE INDEX IF NOT EXISTS plex_retry_due ON plex_card_retries(library_id,kind,due_ms)');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
-  const previous = db.prepare(`SELECT observed_ms FROM plex_card_observations
+  const previous = db.prepare(`SELECT observed_ms,identity_signature
+    FROM plex_card_observations
     WHERE library_id=? AND rating_key=?`);
   const previousRemoval = db.prepare(`SELECT observed_ms FROM plex_card_removals
     WHERE library_id=? AND rating_key=?`);
+  const saveChange = db.prepare(`INSERT INTO plex_card_change_events
+    (library_id,rating_key,observed_ms) VALUES (?,?,?)`);
+  let invalidateProof = null;
+  const invalidateProvenCard = (observedMs, libraryId, ratingKey) => {
+    if (!invalidateProof) {
+      const columns = new Set(db.prepare(
+        'PRAGMA table_info(direct_availability_targets)').all()
+        .map((column) => column.name));
+      if (columns.has('proof_library_id') && columns.has('proof_rating_key')) {
+        invalidateProof = db.prepare(`UPDATE direct_availability_targets SET
+          state='pending',due_ms=?,priority=1,version=version+1,
+          verified_ms=NULL,proof_file_id=NULL,proof_library_id=NULL,
+          proof_rating_key=NULL,proof_part_id=NULL
+          WHERE proof_library_id=? AND proof_rating_key=?
+            AND state='available'`);
+      }
+    }
+    invalidateProof?.run(observedMs, libraryId, ratingKey);
+  };
   const saveRemoval = db.prepare(`INSERT INTO plex_card_removals
     (library_id,rating_key,observed_ms) VALUES (?,?,?)
     ON CONFLICT(library_id,rating_key) DO UPDATE SET
@@ -98,9 +137,11 @@ export function openPlexCardIndex(dbPath) {
   const clearRemoval = db.prepare(`DELETE FROM plex_card_removals
     WHERE library_id=? AND rating_key=?`);
   const saveCard = db.prepare(`INSERT INTO plex_card_observations
-    (library_id,rating_key,kind,observed_ms) VALUES (?,?,?,?)
+    (library_id,rating_key,kind,observed_ms,identity_signature)
+    VALUES (?,?,?,?,?)
     ON CONFLICT(library_id,rating_key) DO UPDATE SET
-    kind=excluded.kind,observed_ms=excluded.observed_ms`);
+    kind=excluded.kind,observed_ms=excluded.observed_ms,
+    identity_signature=excluded.identity_signature`);
   const clearParts = db.prepare(`DELETE FROM plex_part_candidates
     WHERE library_id=? AND rating_key=?`);
   const clearCard = db.prepare(`DELETE FROM plex_card_observations
@@ -199,6 +240,8 @@ export function openPlexCardIndex(dbPath) {
           clearCard.run(libraryId, ratingKey);
         }
         saveRemoval.run(libraryId, ratingKey, observedMs);
+        saveChange.run(libraryId, ratingKey, observedMs);
+        invalidateProvenCard(observedMs, libraryId, ratingKey);
         clearRetry.run(libraryId, ratingKey);
         db.exec('COMMIT'); begun = false;
         return { state: old ? 'card_forgotten' : 'card_absent' };
@@ -215,6 +258,10 @@ export function openPlexCardIndex(dbPath) {
           parts.some((part) => !validId(part?.partId) ||
             part.libraryId !== libraryId || !validId(part.size) ||
             !validPath(part.plexPath) ||
+            !validGuid(part.itemGuid) || !validGuid(part.showGuid) ||
+            (part.externalGuids != null && (!Array.isArray(part.externalGuids) ||
+              part.externalGuids.length > 50 ||
+              part.externalGuids.some((guid) => !validGuid(guid)))) ||
             (part.candidateKey != null &&
               !validCandidateKey(part.candidateKey, part.size))) ||
           new Set(parts.map((part) => part.partId)).size !== parts.length) {
@@ -230,7 +277,13 @@ export function openPlexCardIndex(dbPath) {
           db.exec('ROLLBACK'); begun = false;
           return { state: 'stale_card' };
         }
-        saveCard.run(libraryId, ratingKey, kind, observedMs);
+        const signature = cardSignature(kind, parts);
+        const changed = !old || old.identity_signature !== signature;
+        saveCard.run(libraryId, ratingKey, kind, observedMs, signature);
+        if (changed) {
+          saveChange.run(libraryId, ratingKey, observedMs);
+          invalidateProvenCard(observedMs, libraryId, ratingKey);
+        }
         if (removed) clearRemoval.run(libraryId, ratingKey);
         clearParts.run(libraryId, ratingKey);
         for (const part of parts) addPart.run(libraryId, ratingKey,

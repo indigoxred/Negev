@@ -14,6 +14,9 @@ import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const publicResult = (result, includeProof) => includeProof ||
+  result?.state !== 'available' ? result :
+  { state: 'available', fileId: result.fileId };
 const validSections = (sections) => sections &&
   ['episode', 'movie'].every((kind) => Array.isArray(sections[kind]) &&
     sections[kind].length <= 20 && sections[kind].every((id) => validId(id)) &&
@@ -115,7 +118,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     },
     // observedShoko is supplied only by the internal presence probe, after its
     // own Shoko read. Never accept this value from a client request body.
-    async observeTarget(target, observedShoko) {
+    async observeTarget(target, observedShoko, { includeProof = false } = {}) {
       if (!validId(target?.anidbId) || !validId(target.episodeId) ||
           !['series', 'movie'].includes(target.kind)) {
         throw new TypeError('Invalid availability target');
@@ -155,14 +158,18 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
             const result = await observePublicTarget({ target, publicLibraryIds,
               knownCards: cards, shokoMount, plexMount, plexMounts,
               readShoko: async () => shoko, readPlex: readCard });
-            if (result.state === 'available') return result;
+            if (result.state === 'available') {
+              return publicResult(result, includeProof);
+            }
           }
         }
       }
-      return observeIndexedTarget({ target, publicLibraryIds,
+      const result = await observeIndexedTarget({ target, publicLibraryIds,
+        includeProof,
         cardIndex: index, shokoMount, plexMount, plexMounts,
         readShoko: shoko ? async () => shoko : readShoko,
         readPlex: readCard });
+      return publicResult(result, includeProof);
     },
     close() { index.close(); },
   };

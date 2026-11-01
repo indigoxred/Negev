@@ -12,7 +12,7 @@ const localRoot = path.resolve('local');
 const mounts = { shokoMount: { appRoot: '/pure', localRoot },
   plexMount: { appRoot: '/source-pure', localRoot } };
 const part = { state: 'ok', complete: true, parts: [{ libraryId: 102,
-  plexPath: '/source-pure/a.mkv', size: 5,
+  partId: 700, plexPath: '/source-pure/a.mkv', size: 5,
   cardType: 'episode', externalGuids: [],
   itemGuid: 'tv.plex.agents.custom.shoko://episode/e555',
   showGuid: 'tv.plex.agents.custom.shoko://show/99' }] };
@@ -24,7 +24,8 @@ test('joins one scoped public Plex card to an exact Shoko episode', async () => 
     readShoko: async (input) => { calls.push(['shoko', input]); return shoko; },
     readPlex: async (input) => { calls.push(['plex', input]); return part; },
     proveImpl: async () => ({ state: 'same_file', storageKey: '1:2:5' }) });
-  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.deepEqual(result, { state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 600, partId: 700 } });
   assert.deepEqual(calls, [['shoko', { anidbId: 42, episodeId: 1001 }],
     ['plex', { libraryId: 102, ratingKey: 600, expectedType: 'episode' }]]);
 });
@@ -39,7 +40,8 @@ test('movie target can use a native episode card in the public Anime library', a
       assert.equal(expectedType, 'episode');
       return ratingKey === 600 ? { state: 'not_found' } : part;
     }, proveImpl: async () => ({ state: 'same_file', storageKey: '1:2:5' }) });
-  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.deepEqual(result, { state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 601, partId: 700 } });
 });
 
 test('missing card, reader errors and incomplete inventory cannot claim absence', async () => {

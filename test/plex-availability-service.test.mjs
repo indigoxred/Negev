@@ -122,11 +122,14 @@ test('a direct Shoko import becomes Available only after public Plex card discov
     { state: 'page_indexed', processed: 1, nextOffset: 0 });
   assert.deepEqual(await service.observeTarget(target),
     { state: 'available', fileId: 51 });
+  assert.deepEqual(await service.observeTarget(target, undefined,
+    { includeProof: true }), { state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 500, partId: 900 } });
   assert.deepEqual(await service.observeTarget({ ...target, kind: 'movie' }),
     { state: 'available', fileId: 51 });
   assert.deepEqual(await service.scanRecent({ libraryId: 102, kind: 'episode' }),
     { state: 'page_indexed', processed: 1, nextOffset: 0 });
-  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 4);
+  assert.equal(calls.filter((call) => call === 'plex/library/metadata/500').length, 5);
   service.close();
 });
 
