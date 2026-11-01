@@ -57,6 +57,18 @@ test('provider failure backs off and never overlaps another page', async () => {
   await scheduler.close();
 });
 
+test('an invalid full-pass page retries after five minutes, not a day', async () => {
+  const clock = fakeClock();
+  const scheduler = createShokoInventoryScheduler({
+    tick: async () => ({ state: 'held', reason: 'invalid_file_pass' }),
+    ...clock,
+  });
+  scheduler.start();
+  await clock.fire();
+  assert.equal(clock.timers.values().next().value.delay, 5 * 60_000);
+  await scheduler.close();
+});
+
 test('delivered change receipts resume the paced page loop without failure backoff', async () => {
   const clock = fakeClock();
   const scheduler = createShokoInventoryScheduler({

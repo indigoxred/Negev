@@ -400,11 +400,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         }
         updatePass.run(count, result.items.at(-1)?.fileId ?? pass.lastFileId,
           digest, status, current.pass);
-        const nextPage = last ? 1 : current.page + 1;
-        const nextPass = last ? current.pass + 1 : current.pass;
+        const abandonPass = status === 'invalid';
+        const nextPage = last || abandonPass ? 1 : current.page + 1;
+        const nextPass = last || abandonPass ? current.pass + 1 : current.pass;
         advance.run(nextPage, nextPass, current.page, current.pass);
-        if (last) prunePasses.run(current.pass - 1);
+        if (last || abandonPass) prunePasses.run(current.pass - 1);
         db.exec('COMMIT'); begun = false;
+        if (abandonPass) return held('invalid_file_pass');
         return { state: 'recorded', page: current.page, pass: current.pass,
           nextPage, ...(retired.length ? { retired } : {}),
           ...(retirementHeld ? { retirementHeld } : {}) };

@@ -498,7 +498,9 @@ test('an inconsistent second page cannot replace a known file observation', asyn
       observedMs: 100, result: { state: 'page',
         page: ledger.getCursor().page, total: 2, items } });
     assert.equal(page([{ ...provisional, fileId: 11 }]).state, 'recorded');
-    assert.equal(page([provisional]).state, 'recorded');
+    assert.deepEqual(page([provisional]),
+      { state: 'held', reason: 'invalid_file_pass' });
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 2, pageSize: 1 });
     assert.equal(ledger.getFile(10).state, 'linked');
     assert.deepEqual(ledger.getObservedFileIds({ anidbId: 42,
       episodeId: 1001 }), [10]);
