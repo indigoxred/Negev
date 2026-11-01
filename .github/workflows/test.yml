@@ -80,3 +80,25 @@ jobs:
           docker logs negev-user-ci
           docker stop negev-user-ci
           exit 1
+      - run: |
+          media_root="$(mktemp -d)"
+          trap 'rm -rf "$media_root"' EXIT
+          mkdir -p "$media_root/holding" "$media_root/import"
+          chmod 755 "$media_root" "$media_root/holding" "$media_root/import"
+          docker run --rm --network none \
+            --mount "type=bind,src=$media_root,dst=/fixture,readonly" \
+            --entrypoint node negev-user-test:ci --input-type=module -e '
+              import { verifyHandoffMountRoots as verify } from "./src/acquisition/handoff-mount-roots.mjs";
+              const bound = await verify({ holdingRoot: "/fixture/holding", importRoot: "/fixture/import" });
+              if (bound.state !== "mounted_handoff_roots") throw Error("Parent bind was not accepted");
+              const overlay = await verify({ holdingRoot: "/app/src", importRoot: "/app" });
+              if (overlay.reason !== "handoff_mount_unavailable") throw Error("Container root was accepted");
+            '
+          docker run --rm --network none \
+            --mount "type=bind,src=$media_root/holding,dst=/holding,readonly" \
+            --mount "type=bind,src=$media_root/import,dst=/import,readonly" \
+            --entrypoint node negev-user-test:ci --input-type=module -e '
+              import { verifyHandoffMountRoots as verify } from "./src/acquisition/handoff-mount-roots.mjs";
+              const separate = await verify({ holdingRoot: "/holding", importRoot: "/import" });
+              if (separate.reason !== "handoff_mount_unavailable") throw Error("Separate binds were accepted");
+            '
