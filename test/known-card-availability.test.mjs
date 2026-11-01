@@ -63,6 +63,16 @@ test('a Shoko User-linked legacy file needs the same exact public card and physi
   assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko }),
     { state: 'available', fileId: 51 });
   assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko,
+    target: { ...input.target, kind: 'movie' } }),
+  { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input,
+    shoko: { ...shoko, tmdbMovieIds: [2468] },
+    target: { ...input.target, kind: 'movie' },
+    plex: { ...input.plex, parts: [{ ...input.plex.parts[0],
+      cardType: 'movie', itemGuid: 'plex://movie/local', showGuid: null,
+      externalGuids: ['tmdb://2468'] }] } }),
+  { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko,
     plex: { ...input.plex, parts: [{ ...input.plex.parts[0],
       itemGuid: 'tv.plex.agents.custom.shoko://episode/e999' }] } }),
   { state: 'unknown', reason: 'card_identity_unverified' });
