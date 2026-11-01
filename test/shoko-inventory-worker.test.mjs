@@ -14,6 +14,88 @@ const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
 const linked = { ...provisional, updated: '2026-10-31T01:00:00Z', state: 'linked',
   pairs: [{ anidbId: 42, episodeId: 1001 }] };
 
+test('a failed change callback is redelivered after restart before another Shoko page', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-replay-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
+    const first = createShokoInventoryWorker({ ledger, now: () => 100,
+      readPage: async () => ({ state: 'page', page: 1,
+        total: 1, items: [linked] }),
+      onChangedFile: () => { throw Error('queue temporarily unavailable'); } });
+    assert.deepEqual(await first.tick(),
+      { state: 'held', reason: 'change_delivery_failed' });
+    assert.equal(ledger.getCursor().pass, 2);
+    ledger.close(); ledger = null;
+    ledger = openShokoInventoryLedger(dbPath, { pageSize: 1 });
+    const delivered = [];
+    const resumed = createShokoInventoryWorker({ ledger, now: () => 200,
+      readPage: async () => { throw Error('page should not be read first'); },
+      onChangedFile: (change) => delivered.push(change) });
+    assert.deepEqual(await resumed.tick(), { state: 'delivered', count: 1 });
+    assert.deepEqual(delivered, [{ before: null, after: {
+      ...linked, seenPass: 1, observedMs: 100 }, observedMs: 100 }]);
+    assert.deepEqual(await resumed.tick(),
+      { state: 'held', reason: 'file_page_unavailable' });
+    assert.equal(delivered.length, 1);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('old change rows remain historical when the delivery receipt is introduced', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-upgrade-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger;
+  try {
+    const queue = openDirectAvailabilityQueue(dbPath);
+    queue.close();
+    const db = new DatabaseSync(dbPath);
+    db.prepare(`INSERT INTO shoko_file_change_events
+      (file_id,observed_ms) VALUES (10,50)`).run();
+    db.close();
+    ledger = openShokoInventoryLedger(dbPath);
+    const delivered = [];
+    const handle = (change) => delivered.push(change);
+    assert.deepEqual(ledger.deliverPendingChanges({ handle }),
+      { state: 'delivered', count: 0 });
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    assert.deepEqual(ledger.deliverPendingChanges({ handle }),
+      { state: 'delivered', count: 1 });
+    assert.equal(delivered.length, 1);
+    assert.equal(delivered[0].after.fileId, 10);
+  } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('an async change handler cannot acknowledge its receipt before completion', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-async-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    assert.deepEqual(ledger.deliverPendingChanges({ handle: async () => {} }),
+      { state: 'held', reason: 'change_delivery_failed' });
+    assert.deepEqual(ledger.deliverPendingChanges({ handle: () => {} }),
+      { state: 'delivered', count: 1 });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a bounded delivery batch reports backlog instead of acknowledging a later import', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-change-backlog-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  try {
+    ledger.recordFileObservation({ item: linked, observedMs: 100 });
+    ledger.recordFileObservation({ item: { ...linked,
+      updated: '2026-10-31T02:00:00Z' }, observedMs: 101 });
+    const delivered = [];
+    const handle = (change) => delivered.push(change);
+    assert.deepEqual(ledger.deliverPendingChanges({ handle, limit: 1 }),
+      { state: 'held', reason: 'change_delivery_backlog' });
+    assert.equal(delivered.length, 1);
+    assert.deepEqual(ledger.deliverPendingChanges({ handle, limit: 1 }),
+      { state: 'delivered', count: 1 });
+    assert.equal(delivered.length, 2);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('durable one-page ticks revisit provisional files without claiming deletion', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-inventory-'));
   const dbPath = path.join(dir, 'inventory.sqlite');

@@ -339,19 +339,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
       }
       return track((async () => {
-        const before = inventory.getFile(fileId);
         const result = await metadata.run(() => readShokoOneFile({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
         }));
         if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
         const observedMs = now();
         const saved = inventory.recordFileObservation({ item: result.item, observedMs });
-        const after = inventory.getFile(fileId);
-        if (saved.state === 'recorded_file' && after?.observedMs === observedMs &&
-            (before?.updated !== after.updated || before?.state !== after.state ||
-             JSON.stringify(before?.pairs) !== JSON.stringify(after.pairs))) {
-          enqueueChangedFile({ before, after, observedMs, priority: 'event' });
-        }
+        if (saved.state !== 'recorded_file') return saved;
+        const delivery = inventory.deliverPendingChanges({
+          handle: (change) => enqueueChangedFile({ ...change, priority: 'event' }),
+        });
+        if (delivery.state === 'held') return delivery;
         return saved;
       })());
     };

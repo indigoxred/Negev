@@ -57,6 +57,17 @@ test('provider failure backs off and never overlaps another page', async () => {
   await scheduler.close();
 });
 
+test('delivered change receipts resume the paced page loop without failure backoff', async () => {
+  const clock = fakeClock();
+  const scheduler = createShokoInventoryScheduler({
+    tick: async () => ({ state: 'delivered', count: 1 }), ...clock,
+  });
+  scheduler.start();
+  await clock.fire();
+  assert.equal(clock.timers.values().next().value.delay, 60_000);
+  await scheduler.close();
+});
+
 test('a feed gap restarts a rested inventory pass within one minute', async () => {
   const clock = fakeClock();
   const scheduler = createShokoInventoryScheduler({

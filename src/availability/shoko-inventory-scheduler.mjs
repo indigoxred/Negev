@@ -33,6 +33,10 @@ export function createShokoInventoryScheduler({ tick,
       if (result?.state === 'recorded') {
         delay = result.nextPage === 1 ? passDelay : pageDelay;
         lastState = result.nextPage === 1 ? 'pass_complete' : 'page_complete';
+      } else if (result?.state === 'delivered' ||
+          result?.reason === 'change_delivery_backlog') {
+        delay = pageDelay;
+        lastState = 'change_replay';
       } else lastState = 'retry_wait';
     } catch { lastState = 'retry_wait'; }
     if (requestedDuringPage) {

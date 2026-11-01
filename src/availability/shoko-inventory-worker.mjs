@@ -64,10 +64,25 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_file_change_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       file_id INTEGER NOT NULL CHECK(file_id>0),
-      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
+      before_json TEXT,
+      after_json TEXT,
+      delivered INTEGER NOT NULL DEFAULT 1 CHECK(delivered IN (0,1))
     ) STRICT`);
+    const changeColumns = new Set(db.prepare(
+      'PRAGMA table_info(shoko_file_change_events)').all()
+      .map((column) => column.name));
+    for (const [name, declaration] of [
+      ['before_json', 'TEXT'], ['after_json', 'TEXT'],
+      ['delivered', 'INTEGER NOT NULL DEFAULT 1 CHECK(delivered IN (0,1))'],
+    ]) {
+      if (!changeColumns.has(name)) db.exec(`ALTER TABLE shoko_file_change_events
+        ADD COLUMN ${name} ${declaration}`);
+    }
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_change_file
       ON shoko_file_change_events(file_id,id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS shoko_change_undelivered
+      ON shoko_file_change_events(id) WHERE delivered=0`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_inventory_episode
       ON shoko_inventory_pairs(anidb_id,episode_id,file_id)`);
     const columns = db.prepare('PRAGMA table_info(shoko_inventory_cursor)').all();
@@ -128,7 +143,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     WHERE seen_pass<? AND observed_ms<? AND state='linked'
     ORDER BY file_id LIMIT 101`);
   const saveChange = db.prepare(`INSERT INTO shoko_file_change_events
-    (file_id,observed_ms) VALUES (?,?)`);
+    (file_id,observed_ms,before_json,after_json,delivered)
+    VALUES (?,?,?,?,0)`);
+  const nextUndelivered = db.prepare(`SELECT id,observed_ms AS observedMs,
+    before_json AS beforeJson,after_json AS afterJson
+    FROM shoko_file_change_events WHERE delivered=0 ORDER BY id LIMIT 1`);
+  const markDelivered = db.prepare(`UPDATE shoko_file_change_events SET
+    delivered=1 WHERE id=? AND delivered=0`);
   let invalidateDirect = null;
   const invalidateProvenFile = (fileId, observedMs) => {
     if (!invalidateDirect) {
@@ -153,7 +174,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     const pairsJson = JSON.stringify(item.pairs);
     if (!previous || previous.updated !== item.updated ||
         previous.state !== item.state || previous.pairsJson !== pairsJson) {
-      saveChange.run(item.fileId, observedMs);
+      const before = previous ? { fileId: item.fileId,
+        updated: previous.updated, state: previous.state,
+        pairs: JSON.parse(previous.pairsJson), seenPass: previous.seenPass,
+        observedMs: previous.observedMs } : null;
+      const after = { ...item, seenPass, observedMs };
+      saveChange.run(item.fileId, observedMs,
+        JSON.stringify(before), JSON.stringify(after));
     }
     if (previous && (previous.updated !== item.updated ||
         previous.state !== item.state || previous.pairsJson !== pairsJson)) {
@@ -165,6 +192,31 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
   }
   return {
+    deliverPendingChanges({ handle, limit = 100 } = {}) {
+      if (typeof handle !== 'function' || !Number.isSafeInteger(limit) ||
+          limit < 1 || limit > 100) throw new TypeError('Invalid change delivery');
+      let count = 0;
+      while (count < limit) {
+        const change = nextUndelivered.get();
+        if (!change) break;
+        try {
+          const result = handle({ before: JSON.parse(change.beforeJson),
+            after: JSON.parse(change.afterJson),
+            observedMs: change.observedMs });
+          if (result && typeof result.then === 'function') {
+            return held('change_delivery_failed');
+          }
+        } catch { return held('change_delivery_failed'); }
+        if (markDelivered.run(change.id).changes !== 1) {
+          return held('change_delivery_failed');
+        }
+        count++;
+      }
+      if (count === limit && nextUndelivered.get()) {
+        return held('change_delivery_backlog');
+      }
+      return { state: 'delivered', count };
+    },
     getCursor() { return { ...cursor.get() }; },
     getFile(fileId) {
       if (!validId(fileId)) throw new TypeError('Invalid Shoko file ID');
@@ -293,12 +345,17 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
 export function createShokoInventoryWorker({ ledger, readPage, now = Date.now,
   onChangedFile } = {}) {
   if (typeof ledger?.getCursor !== 'function' || typeof ledger?.recordPage !== 'function' ||
+      typeof ledger?.deliverPendingChanges !== 'function' ||
       typeof readPage !== 'function' || typeof now !== 'function' ||
       (onChangedFile !== undefined && typeof onChangedFile !== 'function')) {
     throw new TypeError('Invalid Shoko inventory worker');
   }
   return {
     async tick() {
+      if (onChangedFile) {
+        const pending = ledger.deliverPendingChanges({ handle: onChangedFile });
+        if (pending.state === 'held' || pending.count > 0) return pending;
+      }
       const expected = ledger.getCursor();
       // Timestamp the page before its HTTP read. A targeted event recheck
       // completed during that read must outrank this older page snapshot.
@@ -307,23 +364,10 @@ export function createShokoInventoryWorker({ ledger, readPage, now = Date.now,
       try { result = await readPage({ page: expected.page, pageSize: expected.pageSize }); }
       catch { return held('file_page_unavailable'); }
       if (result?.state !== 'page') return held('file_page_unavailable');
-      const previous = onChangedFile ? result.items.map((item) =>
-        ledger.getFile(item.fileId)) : [];
       const saved = ledger.recordPage({ expected, result, observedMs });
       if (saved.state === 'recorded' && onChangedFile) {
-        for (let i = 0; i < result.items.length; i++) {
-          const item = result.items[i];
-          const current = ledger.getFile(item.fileId);
-          if (current?.observedMs === observedMs &&
-              (previous[i]?.updated !== current.updated ||
-               previous[i]?.state !== current.state ||
-               JSON.stringify(previous[i]?.pairs) !== JSON.stringify(current.pairs))) {
-            onChangedFile({ before: previous[i], after: current, observedMs });
-          }
-        }
-        for (const change of saved.retired ?? []) {
-          onChangedFile({ ...change, observedMs });
-        }
+        const delivery = ledger.deliverPendingChanges({ handle: onChangedFile });
+        if (delivery.state === 'held') return delivery;
       }
       if (saved.state === 'recorded' && saved.retired) {
         const { retired, ...summary } = saved;
