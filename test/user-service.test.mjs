@@ -563,6 +563,55 @@ test('account service records one Shoko direct-import page without dispatching a
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a busy account metadata slot keeps a new direct-import target due', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-direct-busy-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  let unblock;
+  let entered;
+  const blocked = new Promise((resolve) => { unblock = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  let service;
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+      sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+      now: () => 100,
+      plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+        publicSections: { episode: [102], movie: [] },
+        shokoMount: { appRoot: '/pure', localRoot: dir },
+        plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+      fetchImpl: async (url) => {
+        if (url.pathname === '/api/v3/File') return json({ Total: 1,
+          List: [{ ID: 10, Updated: '2026-10-31T00:00:00Z',
+            SeriesIDs: [{ SeriesID: { AniDB: 42 },
+              EpisodeIDs: [{ AniDB: 1001 }] }] }] });
+        if (url.hostname === 'plex.internal') {
+          entered();
+          await blocked;
+          return new Response(null, { status: 503 });
+        }
+        throw new Error(`Unexpected metadata read: ${url.pathname}`);
+      },
+    });
+    assert.equal((await service.tickShokoInventory()).state, 'recorded');
+    const plexRead = service.tickPublicPlexPage({ libraryId: 102, kind: 'episode' });
+    await started;
+    assert.deepEqual(await service.tickDirectAvailability(),
+      { state: 'held', reason: 'metadata_busy' });
+    unblock();
+    await plexRead;
+    assert.deepEqual(service.getDirectAvailabilityStatus({ anidbId: 42,
+      episodeId: 1001 }), { state: 'unknown' });
+    const retry = await service.tickDirectAvailability();
+    assert.equal(retry.state, 'checked');
+    assert.deepEqual(retry.target, { anidbId: 42, episodeId: 1001 });
+  } finally {
+    unblock();
+    await service?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('opt-in inventory hints stay private in the durable Shoko ledger', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-hint-inventory-'));
   const dbPath = path.join(dir, 'negev.sqlite');
