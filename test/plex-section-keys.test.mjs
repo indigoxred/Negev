@@ -30,6 +30,23 @@ test('uses the section advertised type pivot before requesting an episode page',
   assert.deepEqual(result.keys, [512, 513]);
 });
 
+test('accepts Plex section all and search-type links without a typed all pivot', async () => {
+  const paths = [];
+  const result = await readPlexSectionKeys({ ...base, pageSize: 4,
+    fetchImpl: async (url) => {
+      paths.push(`${url.pathname}${url.search}`);
+      if (url.pathname === '/library/sections/102') {
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          Directory: [{ key: 'all' }, { key: 'search?type=2' },
+            { key: 'search?type=4' }] } });
+      }
+      return Response.json(page);
+    } });
+  assert.deepEqual(paths, ['/library/sections/102?includeDetails=1',
+    '/library/sections/102/all?type=4&sort=addedAt%3Adesc']);
+  assert.deepEqual(result.keys, [512, 513]);
+});
+
 test('reads one bounded, section-scoped Plex key page without exposing file paths', async () => {
   let calls = 0;
   const result = await readPlexSectionKeys({ ...base, fetchImpl: withSection(async (url, options) => {

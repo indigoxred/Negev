@@ -38,8 +38,17 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
     if (integer(section?.librarySectionID) !== integer(libraryId) ||
         !Array.isArray(section.Directory) || section.Directory.length > 100) return unavailable();
     const pivots = section.Directory.filter((entry) => String(entry?.type) === type);
-    if (pivots.length !== 1 || typeof pivots[0].key !== 'string') return unavailable();
-    const url = new URL(pivots[0].key, base);
+    let pivotKey;
+    if (pivots.length === 1 && typeof pivots[0].key === 'string') {
+      pivotKey = pivots[0].key;
+    } else if (pivots.length === 0 &&
+        section.Directory.filter((entry) => entry?.key === 'all').length === 1 &&
+        section.Directory.filter((entry) => entry?.key === `search?type=${type}`).length === 1) {
+      // Plex can advertise a generic all link and a separate typed search
+      // link. Require both before constructing the scoped all-page URL.
+      pivotKey = `/library/sections/${libraryId}/all?type=${type}`;
+    } else return unavailable();
+    const url = new URL(pivotKey, base);
     if (url.origin !== base.origin || url.username || url.password || url.hash ||
         url.pathname !== `/library/sections/${libraryId}/all` ||
         [...url.searchParams.keys()].length !== 1 ||
