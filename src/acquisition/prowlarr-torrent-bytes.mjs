@@ -58,7 +58,10 @@ export async function fetchProwlarrTorrentBytes({
       item.indexerId === candidate.indexerId && item.protocol === 'torrent' &&
       item.title === candidate.title && item.size === candidate.size);
     if (matches.length !== 1) return held('candidate_changed');
-    const proxyUrl = matches[0].downloadUrl;
+    // Prowlarr may place a torrent descriptor proxy in magnetUrl while
+    // leaving downloadUrl null (observed with the installed Nyaa indexer).
+    // The same strict proxy-origin and query checks apply to either field.
+    const proxyUrl = matches[0].downloadUrl ?? matches[0].magnetUrl;
     if (typeof proxyUrl !== 'string' ||
         !isTrustedProxy(proxyUrl, base, apiKey, candidate.indexerId)) return held('untrusted_proxy');
 

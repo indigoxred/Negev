@@ -27,6 +27,34 @@ test('fetches only the matching Prowlarr-proxied torrent bytes without redirecti
   assert.deepEqual(result.bytes, bytes);
 });
 
+test('accepts a Prowlarr-proxied magnetUrl when downloadUrl is absent', async () => {
+  const calls = [];
+  const result = await fetchProwlarrTorrentBytes({ ...config,
+    fetchImpl: async (url) => {
+      calls.push(new URL(url).pathname);
+      return calls.length === 1
+        ? Response.json([{ ...candidate, protocol: 'torrent', magnetUrl: proxy }])
+        : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } });
+    } });
+  assert.equal(result.state, 'torrent_bytes');
+  assert.deepEqual(calls, ['/api/v1/search', '/3/download']);
+});
+
+test('raw magnets and off-origin magnetUrl values remain held', async () => {
+  for (const magnetUrl of ['magnet:?xt=urn:btih:abc',
+    'https://nyaa.si/download/123.torrent']) {
+    let calls = 0;
+    const result = await fetchProwlarrTorrentBytes({ ...config,
+      fetchImpl: async () => {
+        calls++;
+        if (calls > 1) throw Error('unexpected retrieval');
+        return Response.json([{ ...candidate, protocol: 'torrent', magnetUrl }]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'untrusted_proxy' });
+    assert.equal(calls, 1);
+  }
+});
+
 test('a missing, duplicate, or changed candidate never retrieves bytes', async () => {
   for (const items of [[], [{ ...release, guid: 'other' }], [release, release],
     [{ ...release, protocol: 'usenet' }], [{ ...release, title: 'Other 01' }],
