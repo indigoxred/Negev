@@ -66,8 +66,10 @@ export async function readPlexGuidCards({ baseUrl, token, libraryId, kind,
     const exactGuid = item?.guid === guid ||
       (kind === 'movie' && Array.isArray(item?.Guid) &&
         item.Guid.length <= 50 && item.Guid.some((entry) => entry?.id === guid));
+    const itemLibrary = item?.librarySectionID == null ? null :
+      integer(item.librarySectionID, 1);
     if (ratingKey === null || keys.has(ratingKey) ||
-        integer(item?.librarySectionID, 1) !== integer(libraryId) ||
+        (item?.librarySectionID != null && itemLibrary !== integer(libraryId)) ||
         item?.type !== kind || !exactGuid) return unavailable();
     keys.add(ratingKey);
     cards.push({ libraryId: integer(libraryId), ratingKey, kind });

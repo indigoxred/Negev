@@ -30,6 +30,14 @@ test('an empty filtered result is only no-match evidence, never absence proof', 
   { state: 'cards', cards: [], complete: true });
 });
 
+test('accepts a scoped container when Plex omits librarySectionID on its item', async () => {
+  const result = await readPlexGuidCards({ ...base,
+    fetchImpl: async () => page([{ ratingKey: 500,
+      type: 'episode', guid: base.guid }]) });
+  assert.deepEqual(result, { state: 'cards', cards: [{ libraryId: 102,
+    ratingKey: 500, kind: 'episode' }], complete: true });
+});
+
 test('an explicit zero-item GUID result may omit Metadata', async () => {
   const result = await readPlexGuidCards({ ...base,
     fetchImpl: async () => Response.json({ MediaContainer: {
