@@ -22,6 +22,13 @@ async function fixture({ detailedPage = false, userRelease = false } = {}) {
   const calls = [];
   const fetchImpl = async (url) => {
     calls.push(`${url.hostname}${url.pathname}`);
+    if (url.hostname === 'plex' && url.pathname === '/library/sections') {
+      return Response.json({ MediaContainer: { size: 1, Directory: [{
+        key: '102', type: 'show', agent: 'tv.plex.agents.custom.shoko',
+        scanner: 'Plex TV Series',
+        Location: [{ path: '/anime-native/Relay' }],
+      }] } });
+    }
     if (url.hostname === 'plex' && url.pathname === '/library/sections/102') {
       return Response.json({ MediaContainer: { librarySectionID: 102,
         Directory: [{ type: '4', key: '/library/sections/102/all?type=4' }] } });
@@ -85,9 +92,23 @@ test('first-time section probe reports only Plex health even when a card exists'
   const service = createPlexAvailabilityService(config);
   assert.deepEqual(await service.probeFirstTimeSections({ kind: 'series' }),
     { state: 'healthy_unconfirmed', libraryIds: [102], parts: [],
-      complete: false, probeCoverage: 'health_only' });
+      complete: false, probeCoverage: 'health_only', sourceVerified: false });
   assert.deepEqual(calls, ['plex/library/sections/102',
     'plex/library/sections/102/all']);
+  service.close();
+});
+
+test('first-time source policy verifies the public Plex library before page reads', async () => {
+  const { config, calls } = await fixture();
+  config.sourcePolicy = [{ libraryId: 102, type: 'show',
+    agent: 'tv.plex.agents.custom.shoko', scanner: 'Plex TV Series',
+    roots: ['/anime-native/Relay'] }];
+  const service = createPlexAvailabilityService(config);
+  assert.deepEqual(await service.probeFirstTimeSections({ kind: 'series' }),
+    { state: 'healthy_unconfirmed', libraryIds: [102], parts: [],
+      complete: false, probeCoverage: 'health_only', sourceVerified: true });
+  assert.deepEqual(calls.slice(0, 2),
+    ['plex/library/sections', 'plex/library/sections/102']);
   service.close();
 });
 

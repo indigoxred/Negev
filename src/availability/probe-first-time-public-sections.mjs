@@ -5,7 +5,7 @@ const held = (reason) => ({ state: 'held', reason });
 // responsive and still has the expected type. It cannot identify a missing
 // anime: Plex's Shoko episode GUID uses a local Shoko ID, not an AniDB ID.
 export async function probeFirstTimePublicSections({ kind, publicSections,
-  readPage } = {}) {
+  readPage, readSources, expectedSources } = {}) {
   const episodes = publicSections?.episode;
   const movies = publicSections?.movie;
   if (!['series', 'movie'].includes(kind) ||
@@ -14,7 +14,11 @@ export async function probeFirstTimePublicSections({ kind, publicSections,
       episodes.length + movies.length > 4 ||
       [...episodes, ...movies].some((id) => !validId(id)) ||
       new Set([...episodes, ...movies]).size !== episodes.length + movies.length ||
-      typeof readPage !== 'function') {
+      typeof readPage !== 'function' ||
+      (expectedSources !== undefined &&
+        (typeof readSources !== 'function' ||
+         !Array.isArray(expectedSources) || expectedSources.length < 1 ||
+         expectedSources.length > 4))) {
     throw new TypeError('Invalid first-time Plex section probe');
   }
   const sections = [
@@ -23,6 +27,42 @@ export async function probeFirstTimePublicSections({ kind, publicSections,
       ? movies.map((libraryId) => ({ libraryId, kind: 'movie' })) : []),
   ];
   if (sections.length === 0) return held('public_library_unconfigured');
+  let sourceVerified = false;
+  if (expectedSources !== undefined) {
+    let snapshot;
+    try {
+      snapshot = await readSources({ libraryIds: sections.map((item) =>
+        item.libraryId) });
+    } catch { return held('public_source_unverified'); }
+    if (snapshot?.state !== 'source_snapshot' ||
+        !Array.isArray(snapshot.sections) ||
+        snapshot.sections.length !== sections.length) {
+      return held('public_source_unverified');
+    }
+    for (const section of sections) {
+      const id = section.libraryId;
+      const actual = snapshot.sections.filter((item) => item?.libraryId === id);
+      const expected = expectedSources.filter((item) => item?.libraryId === id);
+      if (actual.length !== 1 || expected.length !== 1 ||
+          actual[0].type !== (section.kind === 'episode' ? 'show' : 'movie') ||
+          expected[0].type !== actual[0].type ||
+          typeof expected[0].agent !== 'string' || !expected[0].agent ||
+          expected[0].agent !== actual[0].agent ||
+          typeof expected[0].scanner !== 'string' || !expected[0].scanner ||
+          expected[0].scanner !== actual[0].scanner ||
+          !Array.isArray(actual[0].roots) ||
+          !Array.isArray(expected[0].roots) ||
+          actual[0].roots.length < 1 ||
+          actual[0].roots.length !== expected[0].roots.length ||
+          new Set(actual[0].roots).size !== actual[0].roots.length ||
+          new Set(expected[0].roots).size !== expected[0].roots.length ||
+          JSON.stringify([...actual[0].roots].sort()) !==
+            JSON.stringify([...expected[0].roots].sort())) {
+        return held('public_source_unverified');
+      }
+    }
+    sourceVerified = true;
+  }
   for (const section of sections) {
     let result;
     try { result = await readPage({ ...section, offset: 0, pageSize: 1 }); }
@@ -39,5 +79,6 @@ export async function probeFirstTimePublicSections({ kind, publicSections,
   }
   return { state: 'healthy_unconfirmed',
     libraryIds: sections.map((section) => section.libraryId),
-    parts: [], complete: false, probeCoverage: 'health_only' };
+    parts: [], complete: false, probeCoverage: 'health_only',
+    sourceVerified };
 }

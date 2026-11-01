@@ -23,12 +23,44 @@ const mount = (value) => value && typeof value === 'object' &&
   !/[\0\r\n]/.test(value.localRoot);
 const within = (root, candidate) => candidate === root ||
   candidate.startsWith(`${root}/`);
+const validSourceText = (value) => typeof value === 'string' &&
+  value.length > 0 && value.length <= 256 && !/[\x00-\x1f\x7f]/.test(value);
+const validSourceRoot = (value) => typeof value === 'string' &&
+  value !== '/' && value.length <= 4_096 &&
+  path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
+  !/[\\\x00-\x1f\x7f]/.test(value);
+
+function plexSourcePolicy(raw, sections) {
+  if (raw === undefined) return null;
+  let policy;
+  try { policy = JSON.parse(raw); }
+  catch { throw new TypeError('Invalid Plex source policy'); }
+  const count = sections.episode.length + sections.movie.length;
+  if (!Array.isArray(policy) || policy.length !== count || count > 4 ||
+      policy.some((entry) => !entry || typeof entry !== 'object' ||
+        Array.isArray(entry) ||
+        Object.keys(entry).sort().join(',') !==
+          'agent,libraryId,roots,scanner,type' ||
+        !validId(entry.libraryId) ||
+        entry.type !== (sections.episode.includes(entry.libraryId)
+          ? 'show' : sections.movie.includes(entry.libraryId)
+            ? 'movie' : null) ||
+        !validSourceText(entry.agent) || !validSourceText(entry.scanner) ||
+        !Array.isArray(entry.roots) || entry.roots.length < 1 ||
+        entry.roots.length > 16 ||
+        entry.roots.some((root) => !validSourceRoot(root)) ||
+        new Set(entry.roots).size !== entry.roots.length) ||
+      new Set(policy.map((entry) => entry.libraryId)).size !== count) {
+    throw new TypeError('Invalid Plex source policy');
+  }
+  return policy;
+}
 
 function plexConfig(env, dataDir) {
   const names = ['NEGEV_PLEX_URL', 'NEGEV_PLEX_TOKEN_FILE',
     'NEGEV_PLEX_SECTIONS', 'NEGEV_SHOKO_MEDIA_MOUNT',
     'NEGEV_PLEX_MEDIA_MOUNTS', 'NEGEV_PLEX_TOKEN',
-    'NEGEV_PLEX_GUID_PROBE'];
+    'NEGEV_PLEX_GUID_PROBE', 'NEGEV_PLEX_SOURCE_POLICY'];
   if (env.NEGEV_PLEX_OBSERVER != null &&
       !['0', '1'].includes(env.NEGEV_PLEX_OBSERVER)) {
     throw new TypeError('Invalid Plex observer flag');
@@ -75,9 +107,10 @@ function plexConfig(env, dataDir) {
         index !== otherIndex && within(entry.appRoot, other.appRoot)))) {
     throw new TypeError('Invalid scoped Plex observer');
   }
+  const sourcePolicy = plexSourcePolicy(env.NEGEV_PLEX_SOURCE_POLICY, sections);
   return { plexBaseUrl: env.NEGEV_PLEX_URL, plexTokenPath,
     publicSections: sections, shokoMount, plexMounts,
-    guidProbe: env.NEGEV_PLEX_GUID_PROBE === '1' };
+    guidProbe: env.NEGEV_PLEX_GUID_PROBE === '1', sourcePolicy };
 }
 
 function prowlarrConfig(env, dataDir) {

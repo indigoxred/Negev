@@ -13,7 +13,7 @@ const quiet = { state: 'quiet_window_observed', ...scope,
   feedGeneration: 5 };
 const publicState = { state: 'healthy_unconfirmed',
   libraryIds: [102], parts: [], complete: false,
-  probeCoverage: 'health_only' };
+  probeCoverage: 'health_only', sourceVerified: true };
 const providers = (overrides = {}) => ({ ...scope, kind: 'series',
   publicLibraryIds: [102],
   readEpisode: async (target) => ({ state: 'not_imported', ...target }),
@@ -44,6 +44,13 @@ test('brackets the quiet window with fresh Shoko and scoped Plex checks', async 
     firstTimePolicy: 'single_uncertain_attempt' }),
   { state: 'missing_confirmed', checkedAtMs: 120_102,
     evidencePolicy: 'first_time_permissive' });
+  const withoutSource = await confirmMissingTargets({ request,
+    episodeIds: scope.episodeIds, publicLibraryIds: [102],
+    readEvidence: async () => ({ ...snapshot,
+      plex: { ...snapshot.plex, sourceVerified: false } }),
+    now: () => 120_102,
+    firstTimePolicy: 'single_uncertain_attempt' });
+  assert.equal(withoutSource.state, 'held');
 });
 
 test('a file or public card arriving during the quiet window stops acquisition', async () => {
@@ -80,6 +87,9 @@ test('wrong scope, stale quiet result and provider failures remain held', async 
   })), { state: 'held', reason: 'public_probe_unverified' });
   assert.deepEqual(await collectFirstTimeUncertain(providers({
     probePublic: async () => ({ ...publicState, probeCoverage: undefined }),
+  })), { state: 'held', reason: 'public_probe_unverified' });
+  assert.deepEqual(await collectFirstTimeUncertain(providers({
+    probePublic: async () => ({ ...publicState, sourceVerified: false }),
   })), { state: 'held', reason: 'public_probe_unverified' });
 });
 

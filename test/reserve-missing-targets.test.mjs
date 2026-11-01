@@ -58,7 +58,7 @@ test('an observed quiet window authorizes only the explicit one-attempt first-ti
     const snapshot = evidence({ episodeIds: [1001], observedAtMs: 120_100,
       shoko: { state: 'unimported_targets', anidbId: 42, episodeIds: [1001] },
       plex: { state: 'healthy_unconfirmed', libraryIds: [102], parts: [],
-        complete: false, probeCoverage: 'health_only' },
+        complete: false, probeCoverage: 'health_only', sourceVerified: true },
       importFence: { state: 'quiet_window_observed', anidbId: 42,
         episodeIds: [1001], beforeObservedAtMs: 100,
         afterObservedAtMs: 120_100 } });
@@ -173,7 +173,8 @@ test('explicit first-time uncertainty policy permits one bounded target attempt 
       shoko: { state: 'unimported_targets', anidbId: 42,
         episodeIds: [1001] },
       plex: { state: 'healthy_unconfirmed', libraryIds: [102],
-        parts: [], complete: false, probeCoverage: 'health_only' } });
+        parts: [], complete: false, probeCoverage: 'health_only',
+        sourceVerified: true } });
     const input = { request, episodeIds: [1001],
       readEvidence: async () => snapshot, publicLibraryIds: [102],
       ledger: acquisitions, now: () => 101,
@@ -198,7 +199,8 @@ test('first-time uncertainty never treats a Plex outage, visible part, or missin
       shoko: { state: 'unimported_targets', anidbId: 42,
         episodeIds: [1001] },
       plex: { state: 'healthy_unconfirmed', libraryIds: [102],
-        parts: [], complete: false, probeCoverage: 'health_only' } });
+        parts: [], complete: false, probeCoverage: 'health_only',
+        sourceVerified: true } });
     for (const override of [
       { plex: { state: 'unavailable' } },
       { plex: { state: 'healthy_unconfirmed', libraryIds: [103],

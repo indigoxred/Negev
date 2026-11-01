@@ -85,6 +85,7 @@ export async function confirmMissingTargets({ request, episodeIds,
     scopedPlex && noObservedPublicPart &&
     snapshot.plex.state === 'healthy_unconfirmed' &&
     snapshot.plex.complete === false &&
+    snapshot.plex.sourceVerified === true &&
     snapshot.plex.probeCoverage === 'health_only';
   for (const episodeId of episodeIds) {
     if (strictFirstTime || permissiveFirstTime) continue;

@@ -9,6 +9,7 @@ import { observePublicTarget } from './observe-public-target.mjs';
 import { readPlexGuidCards } from './plex-guid-cards.mjs';
 import { probeFirstTimePublicSections } from
   './probe-first-time-public-sections.mjs';
+import { readPlexLibrarySources } from './plex-library-sources.mjs';
 import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
 
@@ -25,7 +26,7 @@ const validSections = (sections) => sections &&
 // service credentials. Nothing schedules its ticks or exposes it to users yet.
 export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   shokoApiKey, plexBaseUrl, plexToken, publicSections, shokoMount,
-  plexMount, plexMounts, guidProbe = false,
+  plexMount, plexMounts, guidProbe = false, sourcePolicy = null,
   fetchImpl = fetch, now = Date.now } = {}) {
   if (!validSections(publicSections) ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
@@ -34,6 +35,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       typeof plexToken !== 'string' || !plexToken ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof guidProbe !== 'boolean' ||
+      (sourcePolicy !== null && (!Array.isArray(sourcePolicy) ||
+        sourcePolicy.length < 1 || sourcePolicy.length > 4)) ||
       (guidProbe && publicSections.episode.length + publicSections.movie.length > 4)) {
     throw new TypeError('Invalid Plex availability service');
   }
@@ -84,6 +87,11 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       return probeFirstTimePublicSections({ kind, publicSections,
         readPage: (input) => readPlexSectionKeys({
           baseUrl: plexBaseUrl, token: plexToken, ...input, fetchImpl }),
+        ...(sourcePolicy === null ? {} : {
+          expectedSources: sourcePolicy,
+          readSources: ({ libraryIds }) => readPlexLibrarySources({
+            baseUrl: plexBaseUrl, token: plexToken, libraryIds, fetchImpl }),
+        }),
       });
     },
     async tick({ libraryId, kind }) {

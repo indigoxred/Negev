@@ -31,6 +31,7 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
     catch { return held('public_probe_unverified'); }
     if (result?.state !== 'healthy_unconfirmed' ||
         result.probeCoverage !== 'health_only' ||
+        result.sourceVerified !== true ||
         result.complete !== false ||
         !Array.isArray(result.libraryIds) ||
         result.libraryIds.length !== publicLibraryIds.length ||
@@ -41,7 +42,7 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
     }
     return { state: 'healthy_unconfirmed',
       libraryIds: [...publicLibraryIds], parts: [], complete: false,
-      probeCoverage: 'health_only' };
+      probeCoverage: 'health_only', sourceVerified: true };
   };
   const firstShoko = await inspectShoko();
   if (firstShoko.state !== 'unimported_targets') return firstShoko;

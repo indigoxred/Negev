@@ -5,6 +5,38 @@ import { probeFirstTimePublicSections } from
 
 const page = ({ libraryId, kind }) => ({ state: 'page', libraryId, kind,
   offset: 0, totalSize: 14, keys: [1], complete: false });
+const source = (libraryId) => ({ libraryId, type: 'show',
+  agent: 'tv.plex.agents.custom.shoko', scanner: 'Plex TV Series',
+  roots: ['/anime-native/!ShokoRelayVFS_CurrentSep30'] });
+
+test('pins each public source before a first-time observation can proceed', async () => {
+  const expectedSources = [source(102)];
+  const calls = [];
+  const result = await probeFirstTimePublicSections({ kind: 'series',
+    publicSections: { episode: [102], movie: [] }, expectedSources,
+    readSources: async ({ libraryIds }) => {
+      calls.push(['sources', libraryIds]);
+      return { state: 'source_snapshot', sections: [source(102)] };
+    },
+    readPage: async (input) => { calls.push(['page', input.libraryId]);
+      return page(input); },
+  });
+  assert.deepEqual(calls, [['sources', [102]], ['page', 102]]);
+  assert.equal(result.sourceVerified, true);
+  for (const changed of [
+    { agent: 'tv.plex.agents.series' },
+    { scanner: 'Other Scanner' },
+    { roots: ['/anime-native/direct'] },
+  ]) {
+    const held = await probeFirstTimePublicSections({ kind: 'series',
+      publicSections: { episode: [102], movie: [] }, expectedSources,
+      readSources: async () => ({ state: 'source_snapshot',
+        sections: [{ ...source(102), ...changed }] }),
+      readPage: async () => { throw Error('Source drift must stop page reads'); },
+    });
+    assert.deepEqual(held, { state: 'held', reason: 'public_source_unverified' });
+  }
+});
 
 test('checks configured Plex sections without treating an AniDB episode ID as a Shoko GUID', async () => {
   const calls = [];
@@ -17,7 +49,7 @@ test('checks configured Plex sections without treating an AniDB episode ID as a 
   ]);
   assert.deepEqual(result, { state: 'healthy_unconfirmed',
     libraryIds: [102, 103], parts: [], complete: false,
-    probeCoverage: 'health_only' });
+    probeCoverage: 'health_only', sourceVerified: false });
 });
 
 test('movie checks both configured episode and movie sections without claiming a missing title', async () => {

@@ -31,6 +31,9 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     now: () => clock,
     plex: { plexBaseUrl: 'http://plex.internal:32400/',
       plexToken: 'synthetic', publicSections: { episode: [102], movie: [] },
+      sourcePolicy: [{ libraryId: 102, type: 'show',
+        agent: 'tv.plex.agents.custom.shoko', scanner: 'Plex TV Series',
+        roots: ['/anime-native/Relay'] }],
       shokoMount: { appRoot: '/pure', localRoot: dir },
       plexMount: { appRoot: '/source-pure', localRoot: dir } },
     fetchImpl: async (url, init) => {
@@ -45,6 +48,13 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
       if (url.pathname === '/api/v3/Queue') {
         return Response.json({ WaitingCount: 0, BlockedCount: 0,
           ScheduledCount: 0, TotalCount: 0, CurrentlyExecuting: [], Pools: [] });
+      }
+      if (url.pathname === '/library/sections') {
+        return Response.json({ MediaContainer: { size: 1, Directory: [{
+          key: '102', type: 'show', agent: 'tv.plex.agents.custom.shoko',
+          scanner: 'Plex TV Series',
+          Location: [{ path: '/anime-native/Relay' }],
+        }] } });
       }
       if (url.pathname === '/library/sections/102') {
         return Response.json({ MediaContainer: { librarySectionID: 102,
@@ -66,6 +76,7 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     assert.equal(snapshot.plex.state, 'healthy_unconfirmed');
     assert.equal(snapshot.plex.complete, false);
     assert.equal(snapshot.plex.probeCoverage, 'health_only');
+    assert.equal(snapshot.plex.sourceVerified, true);
     assert.equal(snapshot.importFence.state, 'quiet_window_observed');
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 2);
     assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);

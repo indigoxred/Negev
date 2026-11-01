@@ -171,6 +171,25 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parsed.plex.plexBaseUrl, plex.NEGEV_PLEX_URL);
   assert.equal(parsed.plex.plexTokenPath, plex.NEGEV_PLEX_TOKEN_FILE);
   assert.deepEqual(parsed.plex.publicSections, { episode: [102], movie: [9] });
+  assert.equal(parsed.plex.sourcePolicy, null);
+  const sourcePolicy = [{ libraryId: 102, type: 'show',
+    agent: 'tv.plex.agents.custom.shoko', scanner: 'Plex TV Series',
+    roots: ['/anime-native/Relay'] },
+  { libraryId: 9, type: 'movie', agent: 'com.plexapp.agents.themoviedb',
+    scanner: 'Plex Movie', roots: ['/movies'] }];
+  assert.deepEqual(parseUserServerConfig({ ...plex,
+    NEGEV_PLEX_SOURCE_POLICY: JSON.stringify(sourcePolicy) }).plex.sourcePolicy,
+  sourcePolicy);
+  for (const policy of [sourcePolicy.slice(0, 1),
+    [{ ...sourcePolicy[0], roots: ['/wrong'] }, sourcePolicy[0]],
+    [{ ...sourcePolicy[0], roots: ['/'] }, sourcePolicy[1]],
+    [{ ...sourcePolicy[0], agent: '' }, sourcePolicy[1]],
+    [{ ...sourcePolicy[0], type: 'movie' }, sourcePolicy[1]]]) {
+    assert.throws(() => parseUserServerConfig({ ...plex,
+      NEGEV_PLEX_SOURCE_POLICY: JSON.stringify(policy) }), TypeError);
+  }
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_PLEX_SOURCE_POLICY: JSON.stringify(sourcePolicy) }), TypeError);
   assert.equal(Object.hasOwn(parsed.plex, 'plexToken'), false);
   assert.equal(parsed.plexIndex, false);
   assert.equal(parsed.directAvailability, false);
