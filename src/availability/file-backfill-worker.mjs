@@ -195,7 +195,11 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
               checkedPairs: checkedPairs + result.checkedPairs,
               available: available + result.available, load: { ...budget } };
           }
-          return result;
+          return checkedFiles || checkedPairs || deferredFiles
+            ? { ...result, checkedFiles,
+              ...(deferredFiles ? { deferredFiles } : {}),
+              checkedPairs, available, load: { ...budget } }
+            : result;
         }
         return checkedFiles || checkedPairs || seen.size
           ? { state: 'checked', checkedFiles,

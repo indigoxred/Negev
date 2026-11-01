@@ -331,6 +331,36 @@ test('an opt-in tick checks two distinct files under one shared read budget', as
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a busy second file retains the first file progress and shared load', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-busy-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  let secondReads = 0;
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => {
+      if (fileId === 8 && ++secondReads === 1) return { state: 'busy' };
+      return { ...candidate(1), fileId };
+    },
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ budget }) => {
+      budget.cardReads++;
+      return { state: 'unknown' };
+    },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300, maxFilesPerTick: 2 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'held',
+      reason: 'metadata_busy', checkedFiles: 1, checkedPairs: 1,
+      available: 0, load: { cardReads: 1, physicalProbes: 0 } });
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedFiles: 2, checkedPairs: 2, available: 0,
+      load: { cardReads: 2, physicalProbes: 0 } });
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a multi-file tick stops at its shared card budget and resumes next file', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-batch-limit-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
