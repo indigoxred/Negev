@@ -157,7 +157,10 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
             observedMs: source.observedMs },
           card: proposal.cardRevision }, checkedMs: now() });
       } catch { return { state: 'held', reason: 'proof_write_unavailable' }; }
-      if (saved.state === 'recorded' || saved.state === 'stale') available++;
+      if (!['recorded', 'stale'].includes(saved?.state)) {
+        return sourceReadFailed();
+      }
+      available++;
     }
     if (end < candidate.pairs.length) {
       return finish({ state: 'partial', nextPairOffset: end,

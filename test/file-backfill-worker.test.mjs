@@ -24,6 +24,38 @@ const candidate = (count = 12, updated = '2026-11-02T00:00:00Z') => ({
     shokoEpisodeId: 2001 + index, tmdbMovieIds: [] })),
   sourcePaths: ['/pure/Anime/pack.mkv'] });
 
+test('a rejected source-generation proof keeps its file due for a fresh check', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-race-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  let proofWrites = 0;
+  let cardReads = 0;
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file }) => {
+      cardReads++;
+      return { state: 'available', fileId: file.fileId,
+        proof: { fileId: file.fileId }, cardRevision: { observedMs: 200 } };
+    },
+    proofs: { observeGuarded: () => ++proofWrites === 1
+      ? { state: 'held', reason: 'source_generation_changed' }
+      : { state: 'recorded' } },
+    now: () => 300 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'held',
+      reason: 'source_read_unavailable' });
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedPairs: 1, available: 1,
+      load: { cardReads: 0, physicalProbes: 0 } });
+    assert.equal(cardReads, 2);
+    assert.equal((await worker.runOnce()).state, 'checked');
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 for (const busyAt of ['first_file', 'kind', 'card', 'final_file']) {
   test(`metadata contention at ${busyAt} retries the same file`, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-'));
