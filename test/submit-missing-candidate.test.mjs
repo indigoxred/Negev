@@ -15,12 +15,12 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from
 const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
-const savePath = `/negev-staging/${hash}`;
+const savePath = `/Downloads/negev/${hash}`;
 const candidate = { indexerId: 3, guid: 'release-1', title: 'Example 01', size: 1000 };
 const proxy = 'http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=abc123&file=Example';
 const hostPath = '/srv/negev/staging';
 const mount = (Source, Destination, RW = true) => ({ Type: 'bind', Source, Destination, RW });
-const mounts = { qbittorrent: [mount(hostPath, '/negev-staging')],
+const mounts = { qbittorrent: [mount(hostPath, '/Downloads/negev')],
   shoko: [mount('/srv/library', '/pure')],
   plex: [mount('/srv/library', '/source-pure', false)] };
 const torrent = { hash, category: 'negev', save_path: savePath,
@@ -250,7 +250,7 @@ test('an unsafe mount holds before qBittorrent and keeps the attempt inspectable
       readEvidence: async () => absent(), prowlarrFetch: prowlarrFetch(),
       qbittorrentFetch: async () => { qbCalls++; throw Error('unexpected downloader call'); },
       inspectMounts: async () => ({ ...mounts,
-        qbittorrent: [...mounts.qbittorrent, mount('/srv/library', '/negev-staging/Show')] }) }));
+        qbittorrent: [...mounts.qbittorrent, mount('/srv/library', '/Downloads/negev/Show')] }) }));
     assert.deepEqual(result, { state: 'held', reason: 'staging_destination_shadowed' });
     assert.equal(qbCalls, 0);
     assert.equal(ledger.getAttempt(1).status, 'reserved');

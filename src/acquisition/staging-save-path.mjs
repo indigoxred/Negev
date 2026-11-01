@@ -6,7 +6,7 @@ export function stagingSavePath(hash) {
   if (typeof hash !== 'string' || !HASH.test(hash)) {
     throw new TypeError('Invalid torrent hash for staging');
   }
-  return `/negev-staging/${hash}`;
+  return `/Downloads/negev/${hash}`;
 }
 
 export function matchesStagingSavePath(expected) {

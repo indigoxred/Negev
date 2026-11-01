@@ -3,7 +3,7 @@ import test from 'node:test';
 import { observeStoppedManifest } from '../src/acquisition/observe-stopped-manifest.mjs';
 
 const expected = { hash: 'a'.repeat(40), category: 'negev',
-  savePath: `/negev-staging/${'a'.repeat(40)}` };
+  savePath: `/Downloads/negev/${'a'.repeat(40)}` };
 const config = { baseUrl: 'http://qbittorrent.internal:8080', sessionId: 'syntheticSID', expected };
 const torrent = { hash: expected.hash, category: 'negev', save_path: expected.savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1_000,

@@ -14,11 +14,11 @@ const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
 const hash = createHash('sha1').update(info).digest('hex');
 const candidate = { indexerId: 7, guid: 'synthetic-release' };
 const hostPath = '/srv/negev/staging';
-const savePath = `/negev-staging/${hash}`;
+const savePath = `/Downloads/negev/${hash}`;
 const prepared = { state: 'prepared_stopped', expected: { hash, category: 'negev', savePath },
   form: buildStoppedTorrentAddForm({ torrentBytes: bytes, savePath, category: 'negev' }) };
 const mount = (source, destination, rw = true) => ({ Type: 'bind', Source: source, Destination: destination, RW: rw });
-const mounts = { qbittorrent: [mount(hostPath, '/negev-staging')],
+const mounts = { qbittorrent: [mount(hostPath, '/Downloads/negev')],
   shoko: [mount('/srv/library', '/pure')], plex: [mount('/srv/library', '/source-pure', false)] };
 const torrent = { hash, category: 'negev', save_path: savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,
@@ -40,7 +40,7 @@ const passiveInfo = { files: [{ length: 1000, path: ['Example.mkv'] },
   'piece length': 16384, pieces: Buffer.alloc(20, 97) };
 const passiveBytes = encode({ info: passiveInfo });
 const passiveHash = createHash('sha1').update(encode(passiveInfo)).digest('hex');
-const passiveSavePath = `/negev-staging/${passiveHash}`;
+const passiveSavePath = `/Downloads/negev/${passiveHash}`;
 const passivePrepared = { state: 'prepared_stopped',
   expected: { hash: passiveHash, category: 'negev', savePath: passiveSavePath },
   form: buildStoppedTorrentAddForm({ torrentBytes: passiveBytes,
@@ -50,7 +50,7 @@ const passiveTorrent = { ...torrent, hash: passiveHash, save_path: passiveSavePa
 const unsafeInfo = { ...passiveInfo, files: [{ length: 1000,
   path: ['Example.mkv'] }, { length: 20, path: ['setup.exe'] }] };
 const unsafeHash = createHash('sha1').update(encode(unsafeInfo)).digest('hex');
-const unsafeSavePath = `/negev-staging/${unsafeHash}`;
+const unsafeSavePath = `/Downloads/negev/${unsafeHash}`;
 const unsafePrepared = { state: 'prepared_stopped',
   expected: { hash: unsafeHash, category: 'negev', savePath: unsafeSavePath },
   form: buildStoppedTorrentAddForm({ torrentBytes: encode({ info: unsafeInfo }),

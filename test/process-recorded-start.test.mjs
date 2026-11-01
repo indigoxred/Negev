@@ -35,7 +35,7 @@ test('start processor reconstructs the exact saved torrent and request', async (
       start: async (input) => {
         calls++;
         assert.deepEqual(input.expected, { hash, category: 'negev',
-          savePath: `/negev-staging/${hash}` });
+          savePath: `/Downloads/negev/${hash}` });
         assert.equal(input.hostPath, '/srv/staging');
         assert.equal((await input.readRequest(request.requestId)).id, request.requestId);
         return { state: 'held', reason: 'provider_unavailable' };

@@ -51,10 +51,10 @@ async function fixture(run) {
     calls.push({ path: u.pathname, method: init.method });
     if (u.pathname.startsWith('/api/v2/torrents/')) {
       const body = u.pathname.endsWith('/info') ? [{ hash: torrentHash,
-        category: 'negev', save_path: `/negev-staging/${torrentHash}`,
+        category: 'negev', save_path: `/Downloads/negev/${torrentHash}`,
         auto_tmm: false, force_start: false, state: 'uploading', progress: 1,
         amount_left: 0 }] : u.pathname.endsWith('/properties')
-        ? { save_path: `/negev-staging/${torrentHash}`, download_path: '' }
+        ? { save_path: `/Downloads/negev/${torrentHash}`, download_path: '' }
         : [{ index: 0, name: '01.mkv', size: identity.size,
           priority: 1, progress: 1, is_seed: true }];
       return { status: 200, text: async () => JSON.stringify(body) };

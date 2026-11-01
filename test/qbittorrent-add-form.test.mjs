@@ -4,7 +4,7 @@ import { buildStoppedTorrentAddForm } from '../src/acquisition/qbittorrent-add-f
 
 const input = {
   torrentBytes: Uint8Array.from([100, 52, 58, 105, 110, 102, 111, 101]),
-  savePath: `/negev-staging/${'a'.repeat(40)}`,
+  savePath: `/Downloads/negev/${'a'.repeat(40)}`,
   category: 'negev',
 };
 
@@ -27,8 +27,8 @@ test('constructs one stopped qBittorrent v5 upload at an explicit staging path',
 });
 
 test('refuses ambiguous path, unsafe category, and unbounded or absent torrent data', () => {
-  for (const savePath of ['/', '/negev-staging', '/negev-staging/', '/negev-staging/../Import',
-    '/pure/Import', '/Shoko', 'relative', '/negev-staging\nother']) {
+  for (const savePath of ['/', '/Downloads/negev', '/Downloads/negev/', '/Downloads/negev/../Import',
+    '/pure/Import', '/Shoko', 'relative', '/Downloads/negev\nother']) {
     assert.throws(() => buildStoppedTorrentAddForm({ ...input, savePath }), TypeError);
   }
   for (const category of ['', 'negev,Sonarr', 'with space']) {

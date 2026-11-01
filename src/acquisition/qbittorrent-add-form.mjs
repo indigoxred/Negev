@@ -5,7 +5,7 @@ import { matchesStagingSavePath } from './staging-save-path.mjs';
 export function buildStoppedTorrentAddForm({ torrentBytes, savePath, category }) {
   if (!(torrentBytes instanceof Uint8Array) ||
       torrentBytes.byteLength < 1 || torrentBytes.byteLength > 2_000_000 ||
-      !matchesStagingSavePath({ hash: savePath?.slice('/negev-staging/'.length), savePath }) ||
+      !matchesStagingSavePath({ hash: savePath?.slice('/Downloads/negev/'.length), savePath }) ||
       category !== 'negev') {
     throw new TypeError('Invalid isolated torrent-add input');
   }

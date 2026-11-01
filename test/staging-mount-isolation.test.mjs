@@ -3,7 +3,7 @@ import test from 'node:test';
 import { evaluateStagingMountIsolation } from '../src/acquisition/staging-mount-isolation.mjs';
 
 const staging = '/srv/negev/staging';
-const bind = { Type: 'bind', Source: staging, Destination: '/negev-staging', RW: true };
+const bind = { Type: 'bind', Source: staging, Destination: '/Downloads/negev', RW: true };
 const mounts = {
   qbittorrent: [bind, { Type: 'bind', Source: '/srv/library/import', Destination: '/Shoko', RW: true }],
   shoko: [{ Type: 'bind', Source: '/srv/library', Destination: '/pure', RW: true }],
@@ -13,23 +13,33 @@ const check = (evidence) => evaluateStagingMountIsolation(evidence, { hostPath: 
 
 test('accepts a narrow writable qBittorrent bind outside Shoko and Plex mounts', () => {
   assert.deepEqual(check(mounts),
-    { state: 'isolated_mount', hostPath: staging, containerPath: '/negev-staging' });
+    { state: 'isolated_mount', hostPath: staging, containerPath: '/Downloads/negev' });
 });
 
 test('accepts a dedicated subdirectory of an existing qBittorrent download root', () => {
   const hostPath = '/srv/downloads/negev';
   const existingRoot = { Type: 'bind', Source: '/srv/downloads',
     Destination: '/Downloads', RW: true };
-  const dedicated = { Type: 'bind', Source: hostPath,
-    Destination: '/negev-staging', RW: true };
-  const evidence = { ...mounts, qbittorrent: [existingRoot, dedicated,
+  const evidence = { ...mounts, qbittorrent: [existingRoot,
     mounts.qbittorrent[1]] };
   assert.deepEqual(evaluateStagingMountIsolation(evidence, { hostPath }),
-    { state: 'isolated_mount', hostPath, containerPath: '/negev-staging' });
+    { state: 'isolated_mount', hostPath, containerPath: '/Downloads/negev' });
   assert.deepEqual(evaluateStagingMountIsolation({ ...evidence,
     shoko: [{ Type: 'bind', Source: '/srv/downloads',
       Destination: '/watched', RW: true }] }, { hostPath }),
   { state: 'held', reason: 'staging_visible_to_shoko' });
+  assert.deepEqual(evaluateStagingMountIsolation({ ...evidence,
+    qbittorrent: [...evidence.qbittorrent, { Type: 'bind',
+      Source: '/srv/other', Destination: '/Downloads/negev/sub', RW: true }] },
+  { hostPath }), { state: 'held', reason: 'staging_destination_shadowed' });
+  for (const wrongRoot of [
+    { ...existingRoot, Source: '/srv/other' },
+    { ...existingRoot, RW: false },
+  ]) {
+    assert.deepEqual(evaluateStagingMountIsolation({ ...evidence,
+      qbittorrent: [wrongRoot, mounts.qbittorrent[1]] }, { hostPath }),
+    { state: 'held', reason: 'staging_bind_mismatch' });
+  }
 });
 
 test('holds missing, broad, duplicate, or wrong qBittorrent staging mounts', () => {
@@ -59,7 +69,7 @@ test('holds any Shoko or Plex mount covering staging or inside staging', () => {
 
 test('holds a qBittorrent mount nested under the staging destination', () => {
   const nested = { Type: 'bind', Source: '/srv/library',
-    Destination: '/negev-staging/Show', RW: true };
+    Destination: '/Downloads/negev/Show', RW: true };
   assert.deepEqual(check({ ...mounts, qbittorrent: [...mounts.qbittorrent, nested] }),
     { state: 'held', reason: 'staging_destination_shadowed' });
 });

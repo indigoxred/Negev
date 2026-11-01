@@ -9,10 +9,10 @@ import { startStoppedCandidate } from '../src/acquisition/start-stopped-candidat
 
 const hash = 'a'.repeat(40);
 const candidate = { indexerId: 7, guid: 'synthetic-release' };
-const expected = { hash, category: 'negev', savePath: `/negev-staging/${hash}` };
+const expected = { hash, category: 'negev', savePath: `/Downloads/negev/${hash}` };
 const hostPath = '/srv/negev/staging';
 const bind = (source, destination) => ({ Type: 'bind', Source: source, Destination: destination, RW: true });
-const mounts = { qbittorrent: [bind(hostPath, '/negev-staging')],
+const mounts = { qbittorrent: [bind(hostPath, '/Downloads/negev')],
   shoko: [bind('/srv/library', '/pure')], plex: [bind('/srv/library', '/source-pure')] };
 const torrent = { hash, category: 'negev', save_path: expected.savePath,
   state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 1000,

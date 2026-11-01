@@ -96,7 +96,7 @@ test('a stopped-manifest 403 holds and invalidates without another API call', as
   const hash = 'a'.repeat(40);
   const result = await observeStoppedManifest({ baseUrl, sessionId,
     expected: { hash, category: 'negev',
-      savePath: `/negev-staging/${hash}` }, fetchImpl });
+      savePath: `/Downloads/negev/${hash}` }, fetchImpl });
   assert.deepEqual(result, { state: 'held', reason: 'provider_unavailable' });
   assert.deepEqual(invalidated, [sessionId]);
   assert.equal(calls, 1);
