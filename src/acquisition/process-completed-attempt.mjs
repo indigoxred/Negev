@@ -9,10 +9,11 @@ import { prepareRecordedHandoff } from './prepare-recorded-handoff.mjs';
 export async function processCompletedAttempt({
   requests, acquisitions, handoffs, attemptId,
   stagingHostPath, holdingRoot, importRoot,
-  qbittorrent, shoko, fetchImpl = fetch, nowMs,
+  qbittorrent, shoko, fetchImpl = fetch, shokoFetchImpl = fetchImpl, nowMs,
   readPacer,
 }) {
   if (typeof fetchImpl !== 'function' ||
+      typeof shokoFetchImpl !== 'function' ||
       typeof qbittorrent?.baseUrl !== 'string' ||
       typeof qbittorrent?.sessionId !== 'string' ||
       typeof shoko?.baseUrl !== 'string' ||
@@ -29,7 +30,7 @@ export async function processCompletedAttempt({
     }),
     lookup: ({ ed2k, size }) => previewAniDbRelease({
       baseUrl: shoko.baseUrl, providerId: shoko.providerId,
-      apiKey: shoko.apiKey, ed2k, size, fetchImpl,
+      apiKey: shoko.apiKey, ed2k, size, fetchImpl: shokoFetchImpl,
     }),
   });
 }

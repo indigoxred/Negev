@@ -21,7 +21,7 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
         processPublish].some((fn) => typeof fn !== 'function')) {
     throw new TypeError('Invalid acquisition session runners');
   }
-  const withSession = (processor) => async (input) => {
+  const withSession = (processor, providers = {}) => async (input) => {
     let session;
     try { session = await sessionGate.get(); }
     catch { return held('authentication_unavailable'); }
@@ -34,14 +34,16 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
       scopedFetch = createQbittorrentSessionFetch({ baseUrl: qbBaseUrl,
         sessionId: session.sessionId, sessionGate, fetchImpl });
     } catch { return held('authentication_unavailable'); }
-    return processor({ ...input,
+    return processor({ ...input, ...providers,
       qbittorrent: { baseUrl: qbBaseUrl, sessionId: session.sessionId },
       fetchImpl: scopedFetch });
   };
   return {
-    processRequest: withSession(processRequest),
+    processRequest: withSession(processRequest,
+      { providerFetchImpl: fetchImpl }),
     processStart: withSession(processStart),
-    processCompletion: withSession(processCompletion),
+    processCompletion: withSession(processCompletion,
+      { shokoFetchImpl: fetchImpl }),
     processPublish,
   };
 }

@@ -58,3 +58,31 @@ test('one authenticated session is scoped to qBittorrent and invalidated on 403'
     { state: 'started', sessionId: 'session_1' });
   assert.equal(logins, 2);
 });
+
+test('completion gets a separate Shoko transport while sharing the qBittorrent session', async () => {
+  const calls = [];
+  const providerFetch = async (url) => {
+    calls.push(String(url));
+    return new Response('ok');
+  };
+  const run = createAcquisitionSessionRunners({
+    qbBaseUrl: 'http://qb:8080/',
+    sessionGate: { get: async () => ({ state: 'authenticated',
+      sessionId: 'session_1' }), invalidate: () => {} },
+    fetchImpl: providerFetch,
+    processRequest: async () => ({ state: 'held', reason: 'unused' }),
+    processStart: async () => ({ state: 'held', reason: 'unused' }),
+    processCompletion: async ({ qbittorrent, fetchImpl,
+      shokoFetchImpl }) => {
+      assert.equal(qbittorrent.sessionId, 'session_1');
+      assert.notEqual(fetchImpl, providerFetch);
+      assert.equal(shokoFetchImpl, providerFetch);
+      await shokoFetchImpl('http://shoko:8111/api/v3/test');
+      return { state: 'held', reason: 'test_only' };
+    },
+    processPublish: async () => ({ state: 'held', reason: 'unused' }),
+  });
+  assert.deepEqual(await run.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'test_only' });
+  assert.deepEqual(calls, ['http://shoko:8111/api/v3/test']);
+});

@@ -95,6 +95,30 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
   });
 });
 
+test('completion keeps qBittorrent and Shoko reads on their supplied transports', async () => {
+  await fixture(async (context) => {
+    const { handoffs, attemptId, config, ...stores } = context;
+    let qbitReads = 0;
+    let shokoReads = 0;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, ...config,
+      fetchImpl: (url, init) => {
+        assert.equal(new URL(url).origin, 'http://qbit.internal:8080');
+        qbitReads++;
+        return config.fetchImpl(url, init);
+      },
+      shokoFetchImpl: (url, init) => {
+        assert.equal(new URL(url).origin, 'http://shoko.internal:8111');
+        shokoReads++;
+        return config.fetchImpl(url, init);
+      },
+    });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    assert.ok(qbitReads > 0);
+    assert.equal(shokoReads, 1);
+  });
+});
+
 test('incomplete torrent holds before reading staged bytes or Shoko', async () => {
   await fixture(async (context) => {
     const { calls, handoffs, attemptId, config, ...stores } = context;
