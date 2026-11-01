@@ -25,9 +25,7 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     throw new TypeError('Invalid Shoko file candidate configuration');
   }
   const url = new URL(`/api/v3/File/${fileId}`, base);
-  url.searchParams.append('include', 'XRefs');
-  url.searchParams.append('include', 'ReleaseInfo');
-  url.searchParams.set('includeAbsolutePaths', 'true');
+  url.searchParams.set('include', 'XRefs,ReleaseInfo,AbsolutePaths');
   let file;
   try {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',

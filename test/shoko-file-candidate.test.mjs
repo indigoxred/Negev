@@ -26,8 +26,9 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
   const result = await readShokoFileCandidate({ ...base,
     fetchImpl: async (url, init) => {
       assert.equal(url.pathname, '/api/v3/File/51');
-      assert.deepEqual(url.searchParams.getAll('include'), ['XRefs', 'ReleaseInfo']);
-      assert.equal(url.searchParams.get('includeAbsolutePaths'), 'true');
+      assert.deepEqual(url.searchParams.getAll('include'),
+        ['XRefs,ReleaseInfo,AbsolutePaths']);
+      assert.equal(url.searchParams.has('includeAbsolutePaths'), false);
       assert.equal(init.method, 'GET');
       assert.equal(init.redirect, 'manual');
       return json(file);
