@@ -59,15 +59,23 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
   }
   const refs = file.Release.CrossReferences;
   const linked = new Set(item.pairs.map(pairKey));
+  const userLink = file.Release.ProviderName === 'User' &&
+    file.Release.ID == null;
+  const referenceKeys = refs.map((ref) => {
+    if (validId(ref?.AnidbAnimeID)) {
+      return `${ref.AnidbAnimeID}:${ref.AnidbEpisodeID}`;
+    }
+    if (!userLink || ref?.AnidbAnimeID !== null) return null;
+    const matches = item.pairs.filter((pair) =>
+      pair.episodeId === ref.AnidbEpisodeID);
+    return matches.length === 1 ? pairKey(matches[0]) : null;
+  });
   if (refs.some((ref) => !ref ||
-      !linked.has(`${ref.AnidbAnimeID}:${ref.AnidbEpisodeID}`) ||
       !Object.hasOwn(ref, 'PercentageStart') ||
       !Object.hasOwn(ref, 'PercentageEnd') ||
-      (ref.PercentageStart !== null && ref.PercentageStart !== 0) ||
-      (ref.PercentageEnd !== null && ref.PercentageEnd !== 100) ||
-      ((ref.PercentageStart === null) !== (ref.PercentageEnd === null))) ||
-      new Set(refs.map((ref) =>
-        `${ref.AnidbAnimeID}:${ref.AnidbEpisodeID}`)).size !== refs.length) {
+      ref.PercentageStart !== 0 || ref.PercentageEnd !== 100) ||
+      referenceKeys.some((key) => !linked.has(key)) ||
+      new Set(referenceKeys).size !== refs.length) {
     return unavailable();
   }
   let anidbFileId = null;
@@ -85,7 +93,7 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     if (decision.state !== 'accepted') return unavailable();
     anidbFileId = decision.fileId;
     releaseEvidence = 'registered';
-  } else if (file.Release.ProviderName === 'User' && file.Release.ID == null) {
+  } else if (userLink) {
     releaseEvidence = 'shoko_user_link';
   } else return unavailable();
   const sourcePaths = [];

@@ -5,8 +5,8 @@ import { readShokoFileCandidate } from
 
 const ed2k = 'A'.repeat(32);
 const refs = [1001, 1002].map((episodeId) => ({ AnidbAnimeID: 42,
-  AnidbEpisodeID: episodeId, PercentageStart: null,
-  PercentageEnd: null }));
+  AnidbEpisodeID: episodeId, PercentageStart: 0,
+  PercentageEnd: 100 }));
 const file = { ID: 51, Updated: '2026-11-01T00:00:00Z', Size: 123,
   IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: ed2k }],
   SeriesIDs: [{ SeriesID: { ID: 99, AniDB: 42 }, EpisodeIDs:
@@ -53,6 +53,8 @@ test('unrecognized, partial, corrupt, and contradictory files cannot nominate ep
     { ...file, Release: { ...file.Release, CrossReferences: [
       { ...refs[0], PercentageStart: 0, PercentageEnd: 50 }, refs[1]] } },
     { ...file, Release: { ...file.Release, CrossReferences: [refs[0]] } },
+    { ...file, Release: { ...file.Release, CrossReferences: [
+      { ...refs[0], PercentageStart: null }, refs[1]] } },
     { ...file, Release: { ...file.Release, CrossReferences: [null, refs[1]] } },
     { ...file, Hashes: {} },
     { ...file, Hashes: [{ Type: 'ED2K', Value: 'bad' }] },
@@ -70,13 +72,26 @@ test('unrecognized, partial, corrupt, and contradictory files cannot nominate ep
 
 test('a supported Shoko User link can nominate exact episodes without claiming AniDB registration', async () => {
   const userFile = { ...file, Release: { ID: null, ProviderName: 'User',
-    IsCorrupted: false, CrossReferences: refs } };
+    IsCorrupted: false, CrossReferences: refs.map((ref) => ({ ...ref,
+      AnidbAnimeID: null })) } };
   const result = await readShokoFileCandidate({ ...base,
     fetchImpl: async () => json(userFile) });
   assert.equal(result.state, 'candidate');
   assert.equal(result.releaseEvidence, 'shoko_user_link');
   assert.equal(result.anidbFileId, null);
   assert.equal(result.pairs.length, 2);
+});
+
+test('an omitted anime ID cannot choose between two Shoko pairs with the same episode ID', async () => {
+  const ambiguous = { ...file,
+    SeriesIDs: [...file.SeriesIDs, { SeriesID: { ID: 100, AniDB: 43 },
+      EpisodeIDs: [{ ID: 557, AniDB: 1001, TMDB: { Movie: [] } }] }],
+    Release: { ID: null, ProviderName: 'User', IsCorrupted: false,
+      CrossReferences: [...refs.map((ref) => ({ ...ref,
+        AnidbAnimeID: null })), { AnidbAnimeID: null,
+        AnidbEpisodeID: 1001, PercentageStart: 0, PercentageEnd: 100 }] } };
+  assert.deepEqual(await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json(ambiguous) }), { state: 'unavailable' });
 });
 
 test('Shoko outage or missing exact file stays inconclusive', async () => {
