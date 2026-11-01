@@ -75,11 +75,21 @@ test('unfinished claim survives restart and does not stall a later attempt', asy
     const first = ctx.queue.claimNext({ nowMs: 1_000 });
     ctx.reopen();
     assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).attemptId, ctx.attemptIds[1]);
+    assert.deepEqual(ctx.queue.listReviewNeeded({ nowMs: 1_001 }), [
+      { attemptId: ctx.attemptIds[0], reason: 'completion_interrupted',
+        observedMs: 1_001 },
+      { attemptId: ctx.attemptIds[1], reason: 'completion_interrupted',
+        observedMs: 1_001 },
+    ]);
     assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_002 }),
       { state: 'reviewed', resolved: [], held: [ctx.attemptIds[0], ctx.attemptIds[1]] });
     assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId, pass: first.pass,
       state: 'held', reason: 'provider_unavailable', checkedMs: 1_003 }).state,
     'recorded');
+    assert.deepEqual(ctx.queue.listReviewNeeded({ nowMs: 1_004 }), [
+      { attemptId: ctx.attemptIds[1], reason: 'completion_interrupted',
+        observedMs: 1_004 },
+    ]);
   });
 });
 
@@ -109,6 +119,7 @@ test('restart reconciliation accepts durable handoff or rejection evidence only'
     assert.equal(ctx.acquisitions.recordTerminalRejection({ attemptId: second.attemptId,
       hash: ctx.hashes[1], reason: 'file_wrong_identity', nowMs: 1_003 }).state,
     'rejected_held');
+    assert.deepEqual(ctx.queue.listReviewNeeded({ nowMs: 1_003 }), []);
     ctx.reopen();
     assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_004 }),
       { state: 'reviewed', resolved: [ctx.attemptIds[0], ctx.attemptIds[1]], held: [] });

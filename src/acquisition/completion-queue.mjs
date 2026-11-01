@@ -69,6 +69,17 @@ export function openCompletionQueue(dbPath) {
   const rejected = db.prepare('SELECT 1 FROM acquisition_rejections WHERE attempt_id=?');
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,pass FROM completion_checks
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
+  const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
+    FROM completion_checks c
+    JOIN acquisition_attempts a ON a.id=c.attempt_id AND a.status='torrent_observed'
+    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
+    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
+    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    WHERE c.attempt_id>? AND c.state IS NULL AND h.attempt_id IS NULL
+      AND j.attempt_id IS NULL AND x.attempt_id IS NULL AND t.attempt_id IS NULL
+    ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -127,6 +138,16 @@ export function openCompletionQueue(dbPath) {
     getResult(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
       return check.get(attemptId) ?? null;
+    },
+    listReviewNeeded({ afterAttemptId = 0, limit = 20,
+      nowMs = Date.now() } = {}) {
+      if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 21 ||
+          !validTime(nowMs)) throw new TypeError('Invalid completion review page');
+      // This is the time the unresolved state was observed, not a fabricated
+      // interruption timestamp. Old claims did not save their claim time.
+      return reviewNeeded.all(afterAttemptId, limit).map(({ attemptId }) => ({
+        attemptId, reason: 'completion_interrupted', observedMs: nowMs }));
     },
     listUnresolved({ afterId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||

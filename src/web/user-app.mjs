@@ -217,7 +217,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
           item.attemptId <= (index === 0 ? afterAttemptId : result.items[index - 1].attemptId) ||
           !Number.isSafeInteger(item.requestId) || item.requestId < 1 ||
           !Number.isSafeInteger(item.anidbId) || item.anidbId < 1 ||
-          !['release_rejected', 'import_hold', 'start_hold'].includes(item.stage) ||
+          !['release_rejected', 'import_hold', 'start_hold',
+            'completion_interrupted'].includes(item.stage) ||
           typeof item.reason !== 'string' ||
           !/^[a-z][a-z0-9_]{0,79}$/.test(item.reason) ||
           !Number.isSafeInteger(item.observedMs) || item.observedMs < 0)) {

@@ -251,7 +251,9 @@ async function loadOperationalReview(append = false) {
       const row = element('div', undefined, 'request-row');
       const label = item.stage === 'release_rejected'
         ? 'Downloaded file rejected' : item.stage === 'start_hold'
-          ? 'Download start needs review' : 'Import held';
+          ? 'Download start needs review' :
+          item.stage === 'completion_interrupted'
+            ? 'File check interrupted' : 'Import held';
       row.append(element('strong', `${label} · Request #${item.requestId}`),
         element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
       list.append(row);

@@ -7,6 +7,7 @@ import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
 import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mjs';
 import { openStartQueue } from '../acquisition/start-queue.mjs';
+import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
 import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
@@ -123,6 +124,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let handoffs;
   let publishReview;
   let startReview;
+  let completionReview;
   let progress;
   let hydration;
   let inventory;
@@ -139,6 +141,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     handoffs = openHandoffLedger(dbPath);
     publishReview = openHandoffPublishQueue(dbPath);
     startReview = openStartQueue(dbPath);
+    completionReview = openCompletionQueue(dbPath);
     progress = openRequestProgress(dbPath);
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
@@ -368,7 +371,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       discoverCandidates, previewCandidate,
       listOperationalReview: (input) => listOperationalReview({
         acquisitions, publishQueue: publishReview,
-        startQueue: startReview, ...input }),
+        startQueue: startReview, completionQueue: completionReview,
+        ...input }),
       probeRequestTargets: plexObserver ? ({ request, episodeIds }) =>
         probeTargetPresence({ anidbId: request.anidbId,
           kind: request.kind, episodeIds, now,
@@ -614,7 +618,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               titleChecks?.close();
               recent?.close();
               inventory.close(); hydration.close(); progress.close();
-              startReview.close(); publishReview.close(); handoffs.close(); acquisitions.close();
+              completionReview.close(); startReview.close(); publishReview.close();
+              handoffs.close(); acquisitions.close();
               requests.close(); accounts.close();
             }
           })();
@@ -625,7 +630,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     plexObserver?.close(); fileProofs?.close(); fileCursor?.close();
     directAvailability?.close(); titleChecks?.close(); recent?.close();
     inventory?.close(); hydration?.close();
-    progress?.close(); startReview?.close(); publishReview?.close();
+    progress?.close(); completionReview?.close(); startReview?.close();
+    publishReview?.close();
     handoffs?.close(); acquisitions?.close();
     requests?.close(); accounts?.close();
     throw error;
