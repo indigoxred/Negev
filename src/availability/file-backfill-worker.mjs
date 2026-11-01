@@ -26,6 +26,8 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
     throw new TypeError('Invalid file backfill worker');
   }
   let busy = false;
+  let failedReceipt = null;
+  let readFailures = 0;
   return {
     async runOnce() {
       if (busy) return { state: 'held', reason: 'file_backfill_busy' };
@@ -39,14 +41,27 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           const saved = cursor.record({ claim, outcomes: [{ fileId,
             ...outcome }], nowMs: now() });
           if (!['recorded', 'partial'].includes(saved.state)) return saved;
+          failedReceipt = null;
+          readFailures = 0;
           return { state: saved.state === 'partial' ? 'partial' : 'checked',
             checkedPairs, available, load: { ...budget } };
+        };
+        const sourceReadFailed = () => {
+          const receipt = `${claim.pass}:${claim.receipt}`;
+          if (failedReceipt !== receipt) {
+            failedReceipt = receipt;
+            readFailures = 0;
+          }
+          if (++readFailures === 1) {
+            return { state: 'held', reason: 'source_read_unavailable' };
+          }
+          return finish({ state: 'unknown' }, 0, 0);
         };
         let source, candidate;
         try {
           source = inventory.getFile(fileId);
           candidate = await readCandidate({ fileId });
-        } catch { return finish({ state: 'unknown' }, 0, 0); }
+        } catch { return sourceReadFailed(); }
         if (candidate?.state === 'busy') {
           return { state: 'held', reason: 'metadata_busy' };
         }
@@ -75,7 +90,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           if (!kinds.has(pair.anidbId)) {
             let kind;
             try { kind = await resolveKind({ anidbId: pair.anidbId }); }
-            catch { kind = null; }
+            catch { return sourceReadFailed(); }
             if (kind?.state === 'busy') {
               return { state: 'held', reason: 'metadata_busy' };
             }
@@ -86,7 +101,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           let outcome;
           try { outcome = await observeCandidate({ candidate,
             target: { ...pair, kind }, budget }); }
-          catch { continue; }
+          catch { return sourceReadFailed(); }
           if (outcome?.state === 'busy') {
             return { state: 'held', reason: 'metadata_busy' };
           }
@@ -109,7 +124,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         }
         let confirmed;
         try { confirmed = await readCandidate({ fileId }); }
-        catch { confirmed = null; }
+        catch { return sourceReadFailed(); }
         if (confirmed?.state === 'busy') {
           return { state: 'held', reason: 'metadata_busy' };
         }
