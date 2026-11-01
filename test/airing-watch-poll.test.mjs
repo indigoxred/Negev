@@ -115,3 +115,28 @@ test('one catalogue poll advances two durable requests without duplicate targets
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('an ended series stays watched until its expected final episode appears', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'negev-airing-late-'));
+  const ledger = openRequestLedger(path.join(root, 'requests.sqlite'));
+  try {
+    const saved = ledger.submit({ requesterId: 1, requestKey: 'late-final',
+      intent: { state: 'ready', anidbId: 42, kind: 'series',
+        monitorFuture: true, episodeIds: [1001] }, nowMs: 1 });
+    const ended = details(42, { endDate: '2026-02-15', episodeCount: 3 });
+    const first = await pollAiringWatches({ ledger, today: '2026-02-20',
+      intervalMs: 0, loadDetail: async () => ended });
+    assert.equal(first.results[0].watchClosed, false);
+    assert.deepEqual(ledger.getRequest(saved.requestId).episodeIds, [1001, 1002]);
+    assert.equal(ledger.listActiveAirings().length, 1);
+
+    const complete = { ...ended, total: 3, episodes: [...ended.episodes,
+      { id: 1003, type: 'Episode', airDate: '2026-02-15' }] };
+    const second = await pollAiringWatches({ ledger, today: '2026-02-21',
+      intervalMs: 0, loadDetail: async () => complete });
+    assert.deepEqual(second.results[0].addedEpisodeIds, [1003]);
+    assert.equal(second.results[0].watchClosed, true);
+    assert.deepEqual(ledger.getRequest(saved.requestId).episodeIds,
+      [1001, 1002, 1003]);
+  } finally { ledger.close(); await rm(root, { recursive: true, force: true }); }
+});

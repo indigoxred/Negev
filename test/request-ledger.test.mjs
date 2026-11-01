@@ -230,7 +230,7 @@ test('completed detail adds final episodes once and closes only that airing watc
   const completed = one.submit({ requesterId: 8, requestKey: 'completed',
     intent: { ...intent, monitorFuture: false }, nowMs: 1_001 });
   const detail = { state: 'details', anidbId: 1234, kind: 'series',
-    complete: true, total: 3, episodes: [
+    complete: true, total: 3, episodeCount: 3, episodes: [
       { id: 1001, type: 'Episode' }, { id: 1002, type: 'Episode' },
       { id: 1003, type: 'Episode' },
     ] };
@@ -292,7 +292,7 @@ test('a completed season with a long backlog advances in bounded batches before 
     const saved = ledger.submit({ requesterId: 7, requestKey: 'airing', intent, nowMs: 1_000 });
     const episodes = Array.from({ length: 32 }, (_, i) => ({ id: 1001 + i, type: 'Episode' }));
     const detail = { state: 'details', anidbId: 1234, kind: 'series',
-      complete: true, total: episodes.length, episodes };
+      complete: true, total: episodes.length, episodeCount: episodes.length, episodes };
     const first = ledger.advanceAiring({ requestId: saved.requestId, detail,
       releaseState: 'completed', today: '2026-02-01' });
     assert.equal(first.addedEpisodeIds.length, 25);

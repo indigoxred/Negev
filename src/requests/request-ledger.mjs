@@ -187,7 +187,11 @@ export function openRequestLedger(dbPath) {
           insertLink.run(requestId, findTarget.get(watch.anidb_id, episode.id).id);
           addedEpisodeIds.push(episode.id);
         }
-        const watchClosed = releaseState === 'completed' && selected.length === pending.length;
+        // An end date can arrive before AniDB lists the final episode. Keep
+        // polling until the detail includes its stated regular-episode count.
+        const watchClosed = releaseState === 'completed' &&
+          Number.isSafeInteger(detail.episodeCount) && detail.episodeCount > 0 &&
+          regular.length >= detail.episodeCount && selected.length === pending.length;
         if (watchClosed) closeWatch.run(requestId);
         return { state: 'advanced', addedEpisodeIds: addedEpisodeIds.sort((a, b) => a - b),
           deferredEpisodeIds: pending.filter((episode) => !selected.includes(episode))
