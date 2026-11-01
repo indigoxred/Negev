@@ -119,6 +119,58 @@ test('opt-in folder-scoped baseline does not treat an already recognized Import 
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
+test('opt-in larger baseline reads every stable Shoko page before claiming quiet', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-paged-'));
+  const files = Array.from({ length: 257 }, (_, index) => ({
+    ID: index + 1, Size: 1, SeriesIDs: [{ ID: 42 }],
+    Locations: [{ ManagedFolderID: 1,
+      RelativePath: `episode-${String(index).padStart(3, '0')}.mkv`,
+      IsAccessible: true }],
+  }));
+  try {
+    await Promise.all(files.map((file) => writeFile(
+      path.join(importRoot, file.Locations[0].RelativePath), 'x')));
+    const pages = [];
+    const fetchImpl = async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/v3/Queue') return json({
+        WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+        TotalCount: 0, CurrentlyExecuting: [], Pools: [],
+      });
+      const page = Number(parsed.searchParams.get('page') ?? 1);
+      pages.push(page);
+      return json({ Total: files.length,
+        List: files.slice((page - 1) * 256, page * 256) });
+    };
+    assert.deepEqual(await readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1, maxBaselineEntries: 512, fetchImpl }),
+    { state: 'quiet_observed' });
+    assert.deepEqual(pages, [1, 2, 1, 2]);
+    pages.length = 0;
+    assert.deepEqual(await readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1, maxBaselineEntries: 512, fetchImpl,
+      target: { anidbId: 43, episodeIds: [2001] },
+      getHandoff: () => null }), { state: 'quiet_observed' });
+    assert.deepEqual(pages, [1, 2, 1, 2]);
+    pages.length = 0;
+    let changed = false;
+    const inconsistent = await readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1, maxBaselineEntries: 512,
+      fetchImpl: async (url) => {
+        const parsed = new URL(url);
+        if (parsed.pathname === '/api/v3/Queue') return fetchImpl(url);
+        const page = Number(parsed.searchParams.get('page') ?? 1);
+        if (page === 2 && !changed) {
+          changed = true;
+          return json({ Total: 258, List: files.slice(256) });
+        }
+        return fetchImpl(url);
+      },
+    });
+    assert.notEqual(inconsistent.state, 'quiet_observed');
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
 test('folder-scoped activity identifies an unrecognized Import video without claiming its target', async () => {
   const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
   try {

@@ -43,12 +43,14 @@ function inactiveSidecar({ file, evidence, qbitImportSavePath, nowMs }) {
 // video already in Import. This is an observed baseline, not proof that a
 // future file cannot arrive or that Shoko's queue has settled.
 export function classifyShokoImportBaseline({ diskFiles, shokoPage,
-  managedFolderId, sidecarTorrents = [], qbitImportSavePath, nowMs } = {}) {
+  managedFolderId, sidecarTorrents = [], qbitImportSavePath, nowMs,
+  maxFiles = 256 } = {}) {
   if (!validId(managedFolderId) || !Array.isArray(diskFiles) ||
-      diskFiles.length > 256 || !Array.isArray(shokoPage?.List) ||
+      !Number.isSafeInteger(maxFiles) || maxFiles < 1 || maxFiles > 1_000 ||
+      diskFiles.length > maxFiles || !Array.isArray(shokoPage?.List) ||
       !Array.isArray(sidecarTorrents) || sidecarTorrents.length > 16 ||
       !Number.isSafeInteger(shokoPage.Total) || shokoPage.Total < 0 ||
-      shokoPage.Total > 256 || shokoPage.List.length !== shokoPage.Total) {
+      shokoPage.Total > maxFiles || shokoPage.List.length !== shokoPage.Total) {
     return held('incomplete_import_baseline');
   }
   const disk = new Map();

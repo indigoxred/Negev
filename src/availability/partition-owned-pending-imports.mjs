@@ -17,9 +17,11 @@ const folderRelative = (value) => typeof value === 'string' &&
 // Manual, partially published or ambiguous files stay in the baseline and
 // continue to hold. This is attribution, not proof of Shoko import or Plex.
 export function partitionOwnedPendingImports({ diskFiles, shokoPage,
-  managedFolderId, getHandoff, target } = {}) {
-  if (!Array.isArray(diskFiles) || diskFiles.length > 256 ||
-      !Array.isArray(shokoPage?.List) || shokoPage.List.length > 256 ||
+  managedFolderId, getHandoff, target, maxEntries = 256 } = {}) {
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 ||
+      maxEntries > 1_000 || !Array.isArray(diskFiles) ||
+      diskFiles.length > maxEntries ||
+      !Array.isArray(shokoPage?.List) || shokoPage.List.length > maxEntries ||
       shokoPage.Total !== shokoPage.List.length ||
       !validId(managedFolderId) || typeof getHandoff !== 'function' ||
       !validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||

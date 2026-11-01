@@ -16,7 +16,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
   target, getHandoff,
   withFingerprint = false, now = Date.now, fetchImpl = fetch,
-  timeoutMs = 10_000 } = {}) {
+  timeoutMs = 10_000, maxBaselineEntries = 256 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||
@@ -31,6 +31,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
          typeof qbitImportSavePath !== 'string' ||
          !qbitImportSavePath.startsWith('/'))) ||
       typeof withFingerprint !== 'boolean' ||
+      !Number.isSafeInteger(maxBaselineEntries) ||
+      maxBaselineEntries < 1 || maxBaselineEntries > 1_000 ||
       (withFingerprint && (importRoot === undefined ||
         managedFolderId === undefined)) ||
       ((target !== undefined || getHandoff !== undefined) &&
@@ -53,7 +55,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
   };
   try {
     const readRecognizedBaseline = async () => {
-      const inventory = await readImportRootInventory({ root: importRoot });
+      const inventory = await readImportRootInventory({ root: importRoot,
+        maxEntries: maxBaselineEntries });
       if (inventory.state !== 'inventory') return unavailable();
       if (inventory.files.length === 0) return {
         ...inventory, unrelatedPendingKeys: [] };
@@ -69,20 +72,38 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
         sidecarTorrents.push({ relativePath: file.relativePath,
           torrent: await readSidecarTorrent(hash.toLowerCase()) });
       }
-      const url = new URL(`/api/v3/ManagedFolder/${managedFolderId}/File`, base);
-      url.searchParams.set('pageSize', '256');
-      url.searchParams.set('include', 'XRefs');
-      const page = await read(url, 2_000_000);
-      if (!page) return unavailable();
+      const pageSize = Math.min(256, maxBaselineEntries);
+      const items = [];
+      let total = null;
+      for (let pageNumber = 1;
+        pageNumber <= Math.ceil(maxBaselineEntries / pageSize);
+        pageNumber++) {
+        const url = new URL(`/api/v3/ManagedFolder/${managedFolderId}/File`, base);
+        url.searchParams.set('pageSize', String(pageSize));
+        url.searchParams.set('page', String(pageNumber));
+        url.searchParams.set('include', 'XRefs');
+        const page = await read(url, 2_000_000);
+        if (!Number.isSafeInteger(page?.Total) || page.Total < 0 ||
+            page.Total > maxBaselineEntries || !Array.isArray(page.List) ||
+            (total !== null && total !== page.Total)) return unavailable();
+        total = page.Total;
+        const expected = Math.min(pageSize, total - items.length);
+        if (page.List.length !== expected) return unavailable();
+        items.push(...page.List);
+        if (items.length === total) break;
+      }
+      if (items.length !== total) return unavailable();
+      const page = { Total: total, List: items };
       const attributed = target === undefined ? null :
         partitionOwnedPendingImports({ diskFiles: inventory.files,
-          shokoPage: page, managedFolderId, getHandoff, target });
+          shokoPage: page, managedFolderId, getHandoff, target,
+          maxEntries: maxBaselineEntries });
       if (attributed?.state === 'held') return { state: 'busy',
         reason: attributed.reason };
       const baseline = classifyShokoImportBaseline({
         diskFiles: attributed?.diskFiles ?? inventory.files,
         shokoPage: attributed?.shokoPage ?? page, managedFolderId, sidecarTorrents,
-        qbitImportSavePath, nowMs: now() });
+        qbitImportSavePath, nowMs: now(), maxFiles: maxBaselineEntries });
       return baseline.state === 'recognized_baseline' ?
         { ...inventory, unrelatedPendingKeys:
           attributed?.unrelatedPendingKeys ?? [] } :
