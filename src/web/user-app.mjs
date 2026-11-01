@@ -29,6 +29,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   discoverCandidates, previewCandidate, probeRequestTargets,
   readImportActivity,
   listOperationalReview,
+  getAcquisitionStatus = () => ({ state: 'disabled' }),
   publicAvailabilityConfigured = false } = {}) {
   let origin;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
@@ -47,6 +48,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       (secureCookies && origin.protocol !== 'https:') ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
       typeof readRequest !== 'function' ||
+      typeof getAcquisitionStatus !== 'function' ||
       typeof publicAvailabilityConfigured !== 'boolean') {
     throw new TypeError('Invalid user app configuration');
   }
@@ -165,11 +167,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   app.get('/api/session', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const { id, username, role } = request.negevUser;
+    const reportedState = getAcquisitionStatus()?.state;
+    const acquisitionState = ['waiting', 'running', 'reconciling',
+      'reconciliation_held', 'reconciliation_failed', 'stopping', 'stopped']
+      .includes(reportedState) ? reportedState : 'disabled';
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
       availabilityChecks: publicAvailabilityConfigured,
+      acquisitionState,
       ...(typeof startTitleCheck === 'function' &&
         typeof getTitleCheck === 'function' ? { titleChecks: true } : {}) } };
   });

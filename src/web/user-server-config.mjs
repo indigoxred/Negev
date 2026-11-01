@@ -197,8 +197,8 @@ export function dateInZone(timeZone, instant = new Date()) {
   } catch { throw new TypeError('Invalid local time zone'); }
 }
 
-// Explicit, inert-by-default account-backed listener. It has no acquisition
-// or public-availability worker and does not replace the private diagnostic.
+// Explicit, inert-by-default account-backed listener. Acquisition requires
+// a separate guarded opt-in and does not replace the private diagnostic.
 export function parseUserServerConfig(env) {
   if (env?.NEGEV_USER_SERVER !== '1') throw new TypeError('User server mode required');
   if (Object.hasOwn(env, 'NEGEV_QBITTORRENT_PASSWORD') ||

@@ -18,9 +18,11 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const observed = [];
   const discovered = [];
   const previewed = [];
+  let acquisitionState = 'disabled';
   const knownTitles = new Set([1234]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
+    getAcquisitionStatus: () => ({ state: acquisitionState }),
     readImportActivity: async () => ({ state: 'busy',
       reason: 'unrecognized_import_video' }),
     submitRequest: async (command) => requestLedger.submit({
@@ -126,7 +128,17 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review?limit=100', headers: { cookie } })).statusCode, 400);
     assert.deepEqual(session.json().capabilities, {
-      releaseSearch: true, detailLoad: false, availabilityChecks: false });
+      releaseSearch: true, detailLoad: false, availabilityChecks: false,
+      acquisitionState: 'disabled' });
+    acquisitionState = 'waiting';
+    const activeSession = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    assert.equal(activeSession.json().capabilities.acquisitionState, 'waiting');
+    acquisitionState = 'reconciliation_held';
+    const heldSession = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    assert.equal(heldSession.json().capabilities.acquisitionState,
+      'reconciliation_held');
     const related = await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/related', headers: { cookie } });
     assert.equal(related.statusCode, 200);
@@ -222,7 +234,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const friendSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie: friendCookie } });
     assert.deepEqual(friendSession.json().capabilities, {
-      releaseSearch: false, detailLoad: false, availabilityChecks: false });
+      releaseSearch: false, detailLoad: false, availabilityChecks: false,
+      acquisitionState: 'reconciliation_held' });
     const memberInvite = await app.inject({ method: 'POST', url: '/api/invitations',
       headers: { cookie: friendCookie, origin,
         'x-negev-csrf': friendSession.json().csrfToken }, payload: {} });

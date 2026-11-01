@@ -4,8 +4,8 @@ import { openAcquisitionPipeline } from './acquisition-pipeline.mjs';
 import { createPipelineScheduler } from './acquisition-pipeline-scheduler.mjs';
 
 // Disabled construction is intentionally inert, including database access.
-// The user server does not yet opt into this runtime: its configuration still
-// rejects acquisition until installed evidence and mount gates pass.
+// The account server can opt in only with every configured guard present;
+// source wiring alone is not installed evidence or deployment approval.
 export function openAcquisitionRuntime(options = {}) {
   if (typeof options?.enabled !== 'boolean') {
     throw new TypeError('Explicit acquisition runtime flag required');

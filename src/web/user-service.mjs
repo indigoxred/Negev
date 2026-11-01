@@ -231,8 +231,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           ...(qbitSidecarObserver === null ? {} : {
             readSidecarTorrent: qbitSidecarObserver.readTorrent,
             qbitImportSavePath: qbitSidecarObserver.importSavePath }) })) : null;
+    let acquisitionRuntime;
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       readImportActivity,
+      getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
+        { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
       readRequest: (id) => requests.getRequest(id),
@@ -382,7 +385,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const readScopedImportFeed = (allowedPendingKeys) =>
       scopedImportFeedState({ connection: readShokoConnectionState(),
         snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys });
-    let acquisitionRuntime;
     const observeFirstTimeUncertain = (input) => {
       if (stopping) return Promise.resolve({ state: 'held',
         reason: 'service_stopping' });

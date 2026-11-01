@@ -10,7 +10,7 @@ const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
   nextBeforeId: null, releaseSearch: false, detailLoad: false,
-  titleChecks: false, searchToken: 0 };
+  titleChecks: false, acquisitionState: 'disabled', searchToken: 0 };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
@@ -19,6 +19,15 @@ function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
   node.classList.toggle('error', error);
+}
+function acquisitionNotice() {
+  if (['waiting', 'running'].includes(state.acquisitionState)) {
+    return 'Requests are reviewed automatically. Safety checks can hold a release before download or import.';
+  }
+  if (state.acquisitionState === 'disabled') {
+    return 'Automatic acquisition is off.';
+  }
+  return 'Automatic acquisition is paused while its safety checks recover.';
 }
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -52,9 +61,10 @@ function showSession(data) {
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
   state.titleChecks = data.capabilities?.titleChecks === true;
+  state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
   byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
-    ? 'Negev is in preview. Requests are saved; automatic downloads are not active. Public Plex availability can be checked, and an unconfirmed result does not mean a file is missing.'
-    : 'Negev is in preview. Requests are saved; automatic downloads and public Plex checks are not active.';
+    ? `Negev is in preview. ${acquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
+    : `Negev is in preview. ${acquisitionNotice()} Public Plex checks are not active.`;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -75,6 +85,7 @@ function clearWorkspace() {
   state.releaseSearch = false;
   state.detailLoad = false;
   state.titleChecks = false;
+  state.acquisitionState = 'disabled';
   byId('service-notice').textContent =
     'Negev is in preview. Requests are saved; automatic downloads are not active.';
   byId('request-list').replaceChildren();
@@ -539,7 +550,7 @@ async function showDetail(item, franchise = null) {
               body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
-            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. Acquisition is not active in this preview.`);
+            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${acquisitionNotice()}`);
             await loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
@@ -578,7 +589,7 @@ async function showDetail(item, franchise = null) {
           anidbId: item.anidbId, scope: 'installment', requestKey,
         }) });
         requestKeys.saved(scope);
-        message(`Request #${saved.requestId} saved. Acquisition is not active in this preview.`);
+        message(`Request #${saved.requestId} saved. ${acquisitionNotice()}`);
         await loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }
