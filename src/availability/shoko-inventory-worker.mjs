@@ -204,6 +204,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
             after: JSON.parse(change.afterJson),
             observedMs: change.observedMs });
           if (result && typeof result.then === 'function') {
+            void Promise.resolve(result).catch(() => {});
             return held('change_delivery_failed');
           }
         } catch { return held('change_delivery_failed'); }
