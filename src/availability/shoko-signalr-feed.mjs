@@ -43,7 +43,10 @@ export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
     [target, (event) => consumer.accept(target, [event])]));
   for (const [target, handler] of handlers) connection.on(target, handler);
   const join = async () => {
-    const joined = await connection.invoke('feed.join_single', 'file');
+    // Shoko 6's hub method has two SignalR arguments even though its
+    // nullable lastConnectedAt parameter has a C# default value.
+    await connection.invoke('feed.join_single', 'file', null);
+    const joined = await connection.invoke('feed.list_joined');
     if (!Array.isArray(joined) || !joined.includes('file')) {
       throw new Error('Shoko file feed unavailable');
     }

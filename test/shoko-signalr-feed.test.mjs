@@ -14,7 +14,16 @@ const fakeConnection = ({ joined = ['file'] } = {}) => {
     onreconnected(handler) { lifecycle.set('reconnected', handler); },
     onclose(handler) { lifecycle.set('close', handler); },
     async start() { calls.push(['start']); },
-    async invoke(name, feed) { calls.push(['invoke', name, feed]); return joined; },
+    async invoke(name, ...args) {
+      calls.push(['invoke', name, ...args]);
+      if (name === 'feed.join_single') {
+        assert.deepEqual(args, ['file', null]);
+        return true;
+      }
+      assert.equal(name, 'feed.list_joined');
+      assert.deepEqual(args, []);
+      return joined;
+    },
     async stop() { calls.push(['stop']); },
   };
 };
@@ -31,8 +40,9 @@ test('subscriber joins Shoko file feed and forwards exact file events', async ()
       assert.equal(accessTokenFactory(), 'synthetic-key');
       return connection;
     } });
-  assert.deepEqual(connection.calls.slice(0, 2),
-    [['start'], ['invoke', 'feed.join_single', 'file']]);
+  assert.deepEqual(connection.calls.slice(0, 3),
+    [['start'], ['invoke', 'feed.join_single', 'file', null],
+      ['invoke', 'feed.list_joined']]);
   connection.handlers.get('file:hashed')({ FileID: 42 });
   assert.deepEqual(events, [['file:hashed', [{ FileID: 42 }]]]);
   assert.deepEqual(flags, ['feed_started']);
@@ -63,7 +73,7 @@ test('reconnection and terminal close flag missing-event reconciliation', async 
   await feed.closed;
   assert.deepEqual(flags, ['feed_started', 'feed_disconnected',
     'feed_reconnected', 'feed_disconnected']);
-  assert.equal(connection.calls.filter((call) => call[0] === 'invoke').length, 2);
+  assert.equal(connection.calls.filter((call) => call[0] === 'invoke').length, 4);
   await feed.close();
 });
 
