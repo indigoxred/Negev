@@ -77,6 +77,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-security-policy'], /default-src 'none'/);
     assert.match(page.body, /Negev/);
+    assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);
     const script = await app.inject({ method: 'GET', url: '/app.js' });
     assert.equal(script.statusCode, 200);

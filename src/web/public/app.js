@@ -87,7 +87,7 @@ function clearWorkspace() {
   state.titleChecks = false;
   state.acquisitionState = 'disabled';
   byId('service-notice').textContent =
-    'Negev is in preview. Requests are saved; automatic downloads are not active.';
+    'Negev is in preview. Sign in to see acquisition status.';
   byId('request-list').replaceChildren();
   byId('review-list').replaceChildren();
   byId('more-review').hidden = true;
