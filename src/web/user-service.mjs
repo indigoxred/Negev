@@ -31,7 +31,9 @@ import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
 import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
-import { openDirectAvailabilityQueue, createDirectAvailabilityWorker } from
+import { readShokoFileCandidate } from '../availability/shoko-file-candidate.mjs';
+import { openDirectAvailabilityQueue, createDirectAvailabilityWorker,
+  createFileAvailabilityWorker } from
   '../availability/direct-availability-queue.mjs';
 import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
 import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
@@ -174,6 +176,24 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return observeCurrentPublic({ ...target, kind: detail.kind },
           undefined, true);
       } });
+    const fileWorker = createFileAvailabilityWorker({
+      queue: directAvailability, inventory, now,
+      readCandidate: ({ fileId }) => metadata.run(() =>
+        readShokoFileCandidate({ baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, fileId, fetchImpl })),
+      resolveKind: async ({ anidbId }) => {
+        const detail = await metadata.run(() => loadDetail({ anidbId, page: 1 }));
+        return detail?.state === 'details' ? detail.kind : null;
+      },
+      observeCandidate: (input) => metadata.run(() =>
+        plexObserver.observeFileCandidate(input)),
+      observeFallback: async (target) => {
+        const detail = await metadata.run(() => loadDetail({
+          anidbId: target.anidbId, page: 1 }));
+        return detail?.state === 'details' ? observeCurrentPublic({
+          ...target, kind: detail.kind }, undefined, true) : { state: 'unknown' };
+      },
+    });
     const titleWorker = titleChecks ? createTitleCheckWorker({
       ledger: titleChecks, now,
       loadDetail: (input) => metadata.run(() => loadDetail(input)),
@@ -445,6 +465,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (!plexObserver) return Promise.resolve({ state: 'held',
           reason: 'observer_not_configured' });
         return track(directWorker.runOnce());
+      },
+      tickFileAvailability: () => {
+        if (stopping) return Promise.resolve({ state: 'held',
+          reason: 'service_stopping' });
+        if (!plexObserver) return Promise.resolve({ state: 'held',
+          reason: 'observer_not_configured' });
+        return track(fileWorker.runOnce());
       },
       tickTitleCheck: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });

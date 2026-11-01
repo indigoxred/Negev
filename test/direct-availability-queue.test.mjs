@@ -41,6 +41,32 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
   });
 });
 
+test('a bounded same-file claim preserves separate episode receipts and fences', async () => {
+  await fixture(async (ctx) => {
+    const targets = [1001, 1002, 1003, 1004, 1005].map((episodeId) =>
+      ({ anidbId: 42, episodeId }));
+    for (const target of targets) ctx.queue.enqueue({ ...target, observedMs: 100 });
+    const first = ctx.queue.claimNext({ nowMs: 100 });
+    assert.equal(first.target.episodeId, 1001);
+    const extra = ctx.queue.claimAssociated({ targets: targets.slice(1),
+      nowMs: 100, limit: 3 });
+    assert.deepEqual(extra.map((receipt) => receipt.target.episodeId),
+      [1002, 1003, 1004]);
+    assert.equal(ctx.queue.claimNext({ nowMs: 100 }).target.episodeId, 1005);
+    for (const receipt of extra) {
+      assert.equal(ctx.queue.recordResult({ claim: receipt, state: 'available',
+        checkedMs: 101, proof: { fileId: 51, libraryId: 102,
+          ratingKey: receipt.target.episodeId, partId: 900 } }).state,
+      'recorded');
+      assert.equal(ctx.queue.getStatus({ ...receipt.target, nowMs: 101 }).state,
+        'available');
+    }
+    ctx.reopen();
+    assert.equal(ctx.queue.claimAssociated({ targets: targets.slice(1),
+      nowMs: 101, limit: 3 }).length, 0);
+  });
+});
+
 test('one card withdrawal invalidates every proved episode, survives restart, and leaves another card', async () => {
   await fixture(async (ctx) => {
     const index = openPlexCardIndex(ctx.dbPath);

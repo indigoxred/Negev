@@ -86,6 +86,9 @@ export function openDirectAvailabilityQueue(dbPath) {
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
     observed_ms AS observedMs,version FROM direct_availability_targets
     WHERE due_ms<=? ORDER BY priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
+  const dueTarget = db.prepare(`SELECT observed_ms AS observedMs,version
+    FROM direct_availability_targets WHERE anidb_id=? AND episode_id=?
+    AND due_ms<=?`);
   const claim = db.prepare(`UPDATE direct_availability_targets SET
     state='checking',due_ms=?,version=version+1,priority=0,verified_ms=NULL,
     proof_file_id=NULL,proof_library_id=NULL,proof_rating_key=NULL,
@@ -186,6 +189,38 @@ export function openDirectAvailabilityQueue(dbPath) {
           shokoChangeId };
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
+    // A file-centric worker may reserve a few other episodes from the same
+    // Shoko file before reading it. Each episode keeps its own version and
+    // change-event fence; unrelated queue work is not claimed here.
+    claimAssociated({ targets, nowMs, limit = 3 }) {
+      if (!validTime(nowMs) || !Array.isArray(targets) ||
+          targets.length > 100 || !Number.isSafeInteger(limit) ||
+          limit < 1 || limit > 3 || targets.some((target) =>
+            !validId(target?.anidbId) || !validId(target.episodeId)) ||
+          new Set(targets.map((target) =>
+            `${target.anidbId}:${target.episodeId}`)).size !== targets.length) {
+        throw new TypeError('Invalid associated availability targets');
+      }
+      let begun = false;
+      try {
+        db.exec('BEGIN IMMEDIATE'); begun = true;
+        const changeId = latestChange.get().id;
+        const shokoChangeId = latestShokoChange.get().id;
+        const receipts = [];
+        for (const target of targets) {
+          if (receipts.length >= limit) break;
+          const row = dueTarget.get(target.anidbId, target.episodeId, nowMs);
+          if (!row || claim.run(nowMs + leaseMs, target.anidbId,
+            target.episodeId, row.version).changes !== 1) continue;
+          receipts.push({ state: 'claimed', target: { anidbId: target.anidbId,
+            episodeId: target.episodeId }, observedMs: row.observedMs,
+            version: row.version + 1, startedMs: nowMs, changeId,
+            shokoChangeId });
+        }
+        db.exec('COMMIT'); begun = false;
+        return receipts;
+      } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
+    },
     recordResult({ claim: receipt, state, checkedMs, proof = null }) {
       if (receipt?.state !== 'claimed' || !validId(receipt.target?.anidbId) ||
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
@@ -264,6 +299,95 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
         return saved.state === 'recorded'
           ? { state: 'checked', target: receipt.target, result: state }
           : saved;
+      } finally { busy = false; }
+    },
+  };
+}
+
+// Optional file-centric tick. The normal queue claim remains the entry point;
+// up to three due episodes from one observed file are claimed before the
+// fresh Shoko file read. Each result is independently proven and recorded.
+export function createFileAvailabilityWorker({ queue, inventory,
+  resolveKind, readCandidate, observeCandidate, observeFallback,
+  now = Date.now } = {}) {
+  if (typeof queue?.claimNext !== 'function' ||
+      typeof queue?.claimAssociated !== 'function' ||
+      typeof queue?.recordResult !== 'function' ||
+      typeof inventory?.getObservedFileIds !== 'function' ||
+      typeof inventory?.getFile !== 'function' ||
+      [resolveKind, readCandidate, observeCandidate, observeFallback, now]
+        .some((fn) => typeof fn !== 'function')) {
+    throw new TypeError('Invalid file availability worker');
+  }
+  let busy = false;
+  return {
+    async runOnce() {
+      if (busy) return { state: 'held', reason: 'check_in_progress' };
+      busy = true;
+      try {
+        const first = queue.claimNext({ nowMs: now() });
+        if (first.state === 'idle') return first;
+        let fileId = null;
+        let file;
+        try {
+          const ids = inventory.getObservedFileIds(first.target);
+          if (Array.isArray(ids) && ids.length === 1 && validId(ids[0])) {
+            fileId = ids[0];
+            file = inventory.getFile(fileId);
+          }
+        } catch { /* The single-target observer remains available. */ }
+        const pairs = file?.state === 'linked' &&
+          Array.isArray(file.pairs) && file.pairs.length <= 100 &&
+          file.pairs.every((pair) => validId(pair?.anidbId) &&
+            validId(pair.episodeId)) ? file.pairs : null;
+        const matches = pairs?.some((pair) =>
+          pair.anidbId === first.target.anidbId &&
+          pair.episodeId === first.target.episodeId);
+        let receipts = [first];
+        if (matches) {
+          const associated = pairs.filter((pair) =>
+            pair.anidbId === first.target.anidbId &&
+            pair.episodeId !== first.target.episodeId);
+          try { receipts = [first, ...queue.claimAssociated({
+            targets: associated, nowMs: now(), limit: 3 })]; }
+          catch { /* Continue with only the first claimed target. */ }
+        }
+        let candidate = null;
+        let kind = null;
+        if (matches) {
+          try {
+            candidate = await readCandidate({ fileId });
+            if (candidate?.state === 'candidate') {
+              kind = await resolveKind(first.target);
+            }
+          }
+          catch { /* All claimed targets remain Unknown and due for retry. */ }
+        }
+        let firstResult;
+        for (const receipt of receipts) {
+          let outcome;
+          try {
+            if (matches) {
+              const linked = candidate?.state === 'candidate' &&
+                candidate.fileId === fileId &&
+                Array.isArray(candidate.pairs) && candidate.pairs.some((pair) =>
+                  pair?.anidbId === receipt.target.anidbId &&
+                  pair.episodeId === receipt.target.episodeId);
+              outcome = linked && ['series', 'movie'].includes(kind)
+                ? await observeCandidate({ candidate,
+                  target: { ...receipt.target, kind } }) : { state: 'unknown' };
+            } else outcome = await observeFallback(receipt.target);
+          } catch { outcome = { state: 'unknown' }; }
+          const proof = outcome?.proof;
+          const state = outcome?.state === 'available' && validProof(proof)
+            ? 'available' : 'unknown';
+          const saved = queue.recordResult({ claim: receipt, state,
+            checkedMs: now(), proof: state === 'available' ? proof : null });
+          if (receipt === first) firstResult = saved.state === 'recorded'
+            ? { state: 'checked', target: receipt.target, result: state,
+              batchSize: receipts.length } : saved;
+        }
+        return firstResult;
       } finally { busy = false; }
     },
   };
