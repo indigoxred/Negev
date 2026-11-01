@@ -13,7 +13,8 @@ const validGuid = (value) => value == null || (typeof value === 'string' &&
 const cardSignature = (kind, parts) => JSON.stringify([kind,
   [...parts].sort((a, b) => a.partId - b.partId).map((part) => [
     part.partId, part.size, part.plexPath, part.itemGuid ?? null,
-    part.showGuid ?? null, [...(part.externalGuids ?? [])].sort()])]);
+    part.showGuid ?? null, [...(part.externalGuids ?? [])].sort(),
+    part.candidateKey ?? null])]);
 
 // Positive discovery only. Stored paths are private candidates, not playback
 // proof. A target check must re-read each card and prove the physical Part.

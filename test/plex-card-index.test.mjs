@@ -302,6 +302,26 @@ test('confirmed Plex sweep omission invalidates only its proven Available badge'
   } finally { queue.close(); ledger.close(); }
 });
 
+test('a same-size physical replacement invalidates an old card proof', async () => {
+  const { path: dbPath, ledger } = await index();
+  const queue = openDirectAvailabilityQueue(dbPath);
+  try {
+    const original = card(500);
+    original.parts[0].candidateKey = '1:10:5';
+    ledger.recordCard({ ...original, observedMs: 1 });
+    queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 10 });
+    const claim = queue.claimNext({ nowMs: 10 });
+    queue.recordResult({ claim, state: 'available', checkedMs: 11,
+      proof: { fileId: 1001, libraryId: 102, ratingKey: 500,
+        partId: 600 } });
+    const replacement = card(500);
+    replacement.parts[0].candidateKey = '1:11:5';
+    ledger.recordCard({ ...replacement, observedMs: 12 });
+    assert.deepEqual(queue.getStatus({ anidbId: 42, episodeId: 1001,
+      nowMs: 12 }), { state: 'unknown' });
+  } finally { queue.close(); ledger.close(); }
+});
+
 test('two complete zero-item sweeps retire the final indexed card', async () => {
   const { ledger } = await index();
   ledger.recordCard({ ...card(500), observedMs: 1 });
