@@ -124,7 +124,11 @@ async function loadRequests(append = false) {
   const listRequest = requestResponses.invalidate();
   const userId = state.user?.id;
   const list = byId('request-list');
-  if (!append) list.replaceChildren(element('p', 'Loading requests…', 'muted'));
+  if (!append) {
+    state.nextBeforeId = null;
+    byId('more-requests').hidden = true;
+    list.replaceChildren(element('p', 'Loading requests…', 'muted'));
+  }
   const suffix = append && state.nextBeforeId ? `?beforeId=${state.nextBeforeId}` : '';
   try {
     const page = await api(`/api/requests${suffix}`);
@@ -218,6 +222,8 @@ async function loadRequests(append = false) {
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
         requestResponses.isCurrent(listRequest) && state.user?.id === userId) {
+      if (!append) list.replaceChildren(element('p',
+        'Could not load requests. Select Refresh to try again.', 'error'));
       message(error.message, true);
     }
   }
