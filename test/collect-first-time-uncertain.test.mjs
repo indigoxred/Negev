@@ -68,6 +68,21 @@ test('a file or public card arriving during the quiet window stops acquisition',
   })), { state: 'held', reason: 'public_probe_unverified' });
 });
 
+test('a scoped unresolved Shoko target remains a specific acquisition hold', async () => {
+  const request = { id: 1, status: 'held', kind: 'series',
+    ...scope };
+  const input = { request, episodeIds: scope.episodeIds,
+    publicLibraryIds: [102], now: () => 120_102,
+    firstTimePolicy: 'single_uncertain_attempt' };
+  const unresolved = { state: 'held', reason: 'target_not_proven_unimported',
+    episodeId: 1001 };
+  assert.deepEqual(await confirmMissingTargets({ ...input,
+    readEvidence: async () => unresolved }), unresolved);
+  assert.deepEqual(await confirmMissingTargets({ ...input,
+    readEvidence: async () => ({ ...unresolved, episodeId: 9999 }) }),
+  { state: 'held', reason: 'availability_evidence_stale' });
+});
+
 test('wrong scope, stale quiet result and provider failures remain held', async () => {
   for (const bad of [
     { ...quiet, anidbId: 99 },

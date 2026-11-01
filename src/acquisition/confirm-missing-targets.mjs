@@ -28,6 +28,16 @@ export async function confirmMissingTargets({ request, episodeIds,
   try { snapshot = await readEvidence({ anidbId: request.anidbId,
     kind: request.kind, episodeIds: [...episodeIds] }); }
   catch { return held('availability_unavailable'); }
+  // A provider-side hold is never permission to acquire. Retain its bounded
+  // reason for the review queue when its optional episode belongs to this
+  // request; malformed observations still fail closed below.
+  if (snapshot?.state === 'held' &&
+      typeof snapshot.reason === 'string' &&
+      /^[a-z][a-z0-9_]{0,79}$/.test(snapshot.reason) &&
+      (snapshot.episodeId === undefined ||
+        episodeIds.includes(snapshot.episodeId))) {
+    return held(snapshot.reason, snapshot.episodeId);
+  }
   const checkedAtMs = now();
   if (!Number.isSafeInteger(checkedAtMs) || checkedAtMs < 0) {
     return held('availability_clock_invalid');
