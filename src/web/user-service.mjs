@@ -365,8 +365,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       tickShokoRecentScan: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
-        return recentWorker ? track(recentWorker.scan()) :
-          Promise.resolve({ state: 'held', reason: 'recent_observer_disabled' });
+        if (!recentWorker) return Promise.resolve({ state: 'held',
+          reason: 'recent_observer_disabled' });
+        const generation = eventConsumer.getState().generation;
+        return track((async () => {
+          const result = await recentWorker.scan();
+          if (result.state === 'caught_up' &&
+              recent.getCapacity().pending === 0) {
+            eventConsumer.acknowledgeReconciliation(generation);
+          }
+          return result;
+        })());
       },
       tickShokoRecentDrain: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });

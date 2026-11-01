@@ -518,8 +518,18 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
       { state: 'unverified', pendingPaths: 0 });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42,
       episodeId: 1001 }), [11]);
+    assert.equal(service.getShokoEventState().reconciliationNeeded, true);
+    assert.deepEqual(await service.tickShokoRecentScan(),
+      { state: 'caught_up', added: 0 });
+    assert.equal(service.getShokoEventState().reconciliationNeeded, false);
+    service.flagShokoReconciliation('feed_disconnected');
+    assert.deepEqual(await service.tickShokoRecentScan(),
+      { state: 'caught_up', added: 0 });
+    assert.equal(service.getShokoEventState().reconciliationNeeded, true);
+    assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
     assert.deepEqual(reads, ['/api/v3/File', '/api/v3/File',
-      '/api/v3/File/11', '/api/v3/File/11', '/api/v3/File/11']);
+      '/api/v3/File/11', '/api/v3/File/11', '/api/v3/File/11',
+      '/api/v3/File', '/api/v3/File', '/api/v3/File', '/api/v3/File']);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

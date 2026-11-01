@@ -54,6 +54,8 @@ Source-only Task 2 increment: `collectFirstTimeAbsence` composes an exact Shoko 
 
 The folder-scoped Import activity reader can now optionally return an opaque inventory fingerprint and observation time to private callers. The existing 120-second quiet-window helper can require matching fingerprints, so a changed watched folder holds even if an event feed misses that change. This is still only an explicitly uncertain first-acquisition observation; no live feed-state adapter or complete public Plex absence reader is wired, and it cannot satisfy the strict `settled` fence above.
 
+The event consumer now tracks a generation for each file event or feed state change. A completed recent-file catch-up may clear an ordinary resolved arrival only if it began at that generation and its durable queue has no pending work. Feed gaps, invalid events, overflow, failed refreshes and deletions retain a stronger full-reconciliation flag. There is no installed caller yet that proves a complete full reconciliation or exposes this state to the acquisition quiet-window helper; these source guards must not be interpreted as live download permission.
+
 ### Task 3: Opt-in worker composition and recovery
 
 **Files:** Modify `src/web/user-server-config.mjs`, `src/web/user-service.mjs`, `src/web/user-server.mjs`; add a focused integration test.

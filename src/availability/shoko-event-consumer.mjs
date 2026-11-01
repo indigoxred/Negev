@@ -49,10 +49,16 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     }
   };
   let detectionSequence = 0;
+  let generation = 0;
   let inFlight = null;
   let pump = null;
   let reconciliationNeeded = false;
+  let fullReconciliationNeeded = false;
   let stopping = false;
+  const bumpGeneration = () => {
+    if (generation < Number.MAX_SAFE_INTEGER) generation++;
+    else reconciliationNeeded = true;
+  };
 
   const acknowledgeLinkedObservation = ({ fileId, token, result } = {}) => {
     if (!validId(fileId) || !token ||
@@ -65,7 +71,9 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   };
 
   const flagUnresolvedEvent = (fileId) => {
+    bumpGeneration();
     reconciliationNeeded = true;
+    fullReconciliationNeeded = true;
     try { onReconciliationNeeded?.(fileId); } catch { /* Keep draining. */ }
   };
 
@@ -100,10 +108,12 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     acknowledgeLinkedObservation,
     accept(target, args) {
       if (stopping) return { state: 'held', reason: 'consumer_stopping' };
+      if (target === 'file:detected' || idEvents.has(target)) bumpGeneration();
       if (target === 'file:detected') {
         reconciliationNeeded = true;
         const key = Array.isArray(args) && args.length === 1
           ? arrivalKey(args[0]) : null;
+        if (!key) fullReconciliationNeeded = true;
         if (key && (detected.has(key) || detected.size < maxArrivals)) {
           forgetPathResolutions(key);
           detected.set(key, ++detectionSequence);
@@ -114,16 +124,19 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       const fileId = Array.isArray(args) && args.length === 1 ? args[0]?.FileID : null;
       if (!validId(fileId)) {
         reconciliationNeeded = true;
+        fullReconciliationNeeded = true;
         return { state: 'reconcile', reason: 'invalid_event' };
       }
       if (target === 'file:deleted') {
         reconciliationNeeded = true;
+        fullReconciliationNeeded = true;
         try { onDeleted?.(fileId); }
         catch { flagUnresolvedEvent(fileId); }
       }
       const alreadyQueued = pending.has(fileId);
       if (!alreadyQueued && pending.size >= maxPending) {
         reconciliationNeeded = true;
+        fullReconciliationNeeded = true;
         return { state: 'reconcile', reason: 'event_overflow' };
       }
       if (target === 'file:hashed') {
@@ -143,7 +156,33 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     },
     getState() {
       return { pending: pending.size, inFlight,
-        reconciliationNeeded };
+        reconciliationNeeded, fullReconciliationNeeded, generation };
+    },
+    // Only a completed catch-up that started at this exact event generation
+    // may clear the dirty bit. Pending paths and reads still block clearance.
+    acknowledgeReconciliation(expectedGeneration) {
+      if (stopping || !Number.isSafeInteger(expectedGeneration) ||
+          expectedGeneration !== generation ||
+          generation === Number.MAX_SAFE_INTEGER || pending.size ||
+          inFlight !== null || detected.size || resolutions.size ||
+          fullReconciliationNeeded) {
+        return { state: 'held' };
+      }
+      reconciliationNeeded = false;
+      return { state: 'acknowledged' };
+    },
+    // Reserved for a complete inventory catch-up. A recent-file page alone
+    // cannot repair a feed gap or an invalid/deleted event.
+    acknowledgeFullReconciliation(expectedGeneration) {
+      if (stopping || !Number.isSafeInteger(expectedGeneration) ||
+          expectedGeneration !== generation ||
+          generation === Number.MAX_SAFE_INTEGER || pending.size ||
+          inFlight !== null || detected.size || resolutions.size) {
+        return { state: 'held' };
+      }
+      fullReconciliationNeeded = false;
+      reconciliationNeeded = false;
+      return { state: 'acknowledged' };
     },
     // Positive busy evidence only. Empty memory cannot prove that Shoko's
     // watcher, hash queue, or a disconnected event feed has settled.
@@ -151,7 +190,10 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       return { state: detected.size ? 'busy' : 'unverified',
         pendingPaths: detected.size };
     },
-    flagReconciliation() { reconciliationNeeded = true; },
+    flagReconciliation() {
+      bumpGeneration(); reconciliationNeeded = true;
+      fullReconciliationNeeded = true;
+    },
     async close() {
       stopping = true;
       if (pump) await pump;

@@ -255,3 +255,50 @@ test('failed targeted refresh wakes inventory after the asynchronous read finish
   assert.deepEqual(wakeups, [17]);
   assert.equal(consumer.getState().reconciliationNeeded, true);
 });
+
+test('a completed catch-up can clear only the same quiet event generation', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: 'linked' }) });
+  const path = { ManagedFolderID: 1, RelativePath: 'new.mkv' };
+  consumer.accept('file:detected', [path]);
+  const first = consumer.getState().generation;
+  assert.equal(consumer.getState().reconciliationNeeded, true);
+  consumer.accept('file:hashed', [{ ...path, FileID: 81 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(consumer.acknowledgeReconciliation(first),
+    { state: 'held' });
+  const current = consumer.getState().generation;
+  assert.ok(current > first);
+  assert.deepEqual(consumer.acknowledgeReconciliation(current),
+    { state: 'acknowledged' });
+  assert.equal(consumer.getState().reconciliationNeeded, false);
+  await consumer.close();
+});
+
+test('a feed gap needs a full reconciliation at the same event generation', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file' }) });
+  consumer.flagReconciliation('feed_disconnected');
+  const generation = consumer.getState().generation;
+  assert.deepEqual(consumer.acknowledgeReconciliation(generation),
+    { state: 'held' });
+  assert.deepEqual(consumer.acknowledgeFullReconciliation(generation),
+    { state: 'acknowledged' });
+  assert.equal(consumer.getState().reconciliationNeeded, false);
+  consumer.accept('file:hashed', [{ FileID: 82 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(consumer.acknowledgeFullReconciliation(generation),
+    { state: 'held' });
+  await consumer.close();
+});
+
+test('a detected but unresolved path cannot be acknowledged as settled', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file' }) });
+  consumer.accept('file:detected', [{ ManagedFolderID: 1,
+    RelativePath: 'incoming.mkv' }]);
+  assert.deepEqual(consumer.acknowledgeReconciliation(
+    consumer.getState().generation), { state: 'held' });
+  assert.equal(consumer.getState().reconciliationNeeded, true);
+  await consumer.close();
+});
