@@ -65,7 +65,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       const baseline = classifyShokoImportBaseline({ diskFiles: inventory.files,
         shokoPage: page, managedFolderId, sidecarTorrents,
         qbitImportSavePath, nowMs: now() });
-      return baseline.state === 'recognized_baseline' ? inventory : { state: 'busy' };
+      return baseline.state === 'recognized_baseline' ? inventory :
+        { state: 'busy', reason: baseline.reason };
     };
     let beforeInventory;
     if (importRoot !== undefined) {

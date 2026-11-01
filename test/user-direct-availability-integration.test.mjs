@@ -150,6 +150,7 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
         'x-negev-csrf': session.json().csrfToken }, payload: {} });
     assert.deepEqual((await importDiagnostic()).json(), {
       state: 'import_activity', activity: 'busy',
+      reason: 'unrecognized_import_video',
       acquisitionAuthorized: false });
     assert.equal((await probe()).statusCode, 200);
     assert.equal(queueCalls, 0, 'Import file is observed before reading Shoko queue');

@@ -24,6 +24,7 @@
 - Shoko returns a local file without a public Plex card: hold as awaiting Plex, not absent.
 - Shoko import queue or unrecognized files are nonzero: hold that target while later requests advance.
 - **Open design gate (1 November):** The current `readShokoImportActivity` is a global folder/queue check. A genuinely unrecognized Import file makes every first-time `collectFirstTimeUncertain` call hold, even though the request cursor itself advances. Before enabling acquisition, supply a target-scoped way to attribute unresolved imports or an explicitly reviewed uncertainty policy that lets unrelated targets proceed; do not describe the existing global hold as satisfying this requirement.
+- A Shoko AniDB release-preview HTTP 204 cannot classify a pending file as unrelated: the installed provider can return 204 while banned. A stable filename, age, or quiet queue likewise cannot establish its target. The admin-only Import diagnostic now reports a bounded reason such as `unrecognized_import_video` without a path or implied acquisition authorization, so the exact hold can be distinguished from ordinary queue activity. The target-scoped decision remains open.
 - Provider outage or stale evidence: keep the saved request and retry without sending a torrent twice.
 - Restart after an uncertain qBittorrent POST or watched-folder rename: reconcile the journal before any further action.
 

@@ -21,6 +21,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const knownTitles = new Set([1234]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
+    readImportActivity: async () => ({ state: 'busy',
+      reason: 'unrecognized_import_video' }),
     submitRequest: async (command) => requestLedger.submit({
       requesterId: command.requesterId, requestKey: command.requestKey, nowMs: 1_000,
       intent: { state: 'ready', anidbId: 1234, kind: 'series',
@@ -136,6 +138,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(unknownRelated.statusCode, 404);
     const csrf = session.json().csrfToken;
     assert.match(csrf, /^[a-f0-9]{64}$/);
+    const importActivity = await app.inject({ method: 'POST',
+      url: '/api/admin/import-activity',
+      headers: { cookie, origin, 'x-negev-csrf': csrf }, payload: {} });
+    assert.deepEqual(importActivity.json(), { state: 'import_activity',
+      activity: 'busy', reason: 'unrecognized_import_video',
+      acquisitionAuthorized: false });
     const missingCsrf = await app.inject({ method: 'POST', url: '/api/requests',
       headers: { cookie, origin }, payload: { anidbId: 1234, scope: 'installment', requestKey: 'first' } });
     assert.equal(missingCsrf.statusCode, 403);

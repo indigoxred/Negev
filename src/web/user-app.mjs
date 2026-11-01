@@ -4,6 +4,12 @@ import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 
+const safeImportReasons = new Set(['incomplete_import_baseline',
+  'invalid_sidecar_evidence', 'invalid_import_file',
+  'active_or_unknown_sidecar', 'unrecognized_import_file',
+  'unmatched_sidecar_evidence', 'unrecognized_shoko_file',
+  'missing_shoko_location', 'shoko_location_mismatch',
+  'unrecognized_import_video']);
 const allowedBody = (body, keys) => body && typeof body === 'object' &&
   !Array.isArray(body) && Object.keys(body).every((key) => keys.includes(key));
 const constantEqual = (a, b) => {
@@ -121,6 +127,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       'scheduled_unverified'].includes(observation?.state)
       ? observation.state : 'unavailable';
     return { state: 'import_activity', activity,
+      ...(activity === 'busy' && safeImportReasons.has(observation?.reason)
+        ? { reason: observation.reason } : {}),
       acquisitionAuthorized: false };
   });
   app.post('/api/register', { preHandler: requireOrigin,

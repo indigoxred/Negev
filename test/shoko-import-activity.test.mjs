@@ -118,6 +118,22 @@ test('opt-in folder-scoped baseline does not treat an already recognized Import 
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
+test('folder-scoped activity identifies an unrecognized Import video without claiming its target', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    await writeFile(path.join(importRoot, 'unrecognized.mkv'), 'video');
+    const calls = [];
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1, fetchImpl: async (url) => {
+        calls.push(new URL(url).pathname);
+        return json({ Total: 0, List: [] });
+      } });
+    assert.deepEqual(result, { state: 'busy',
+      reason: 'unrecognized_import_video' });
+    assert.deepEqual(calls, ['/api/v3/ManagedFolder/1/File']);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
 test('private folder-scoped quiet evidence returns only a fingerprint and timestamp', async () => {
   const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
   try {
@@ -155,7 +171,8 @@ test('opt-in baseline holds a file that appears during the queue read', async ()
             RelativePath: 'known.mkv', IsAccessible: true }] }] });
       },
     });
-    assert.deepEqual(result, { state: 'busy' });
+    assert.deepEqual(result, { state: 'busy',
+      reason: 'unrecognized_import_video' });
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
