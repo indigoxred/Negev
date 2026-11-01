@@ -359,6 +359,29 @@ test('a prior durable queue gains event priority without losing a pending target
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('a legacy Available row without file and card proof is due for exact recheck', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-legacy-proof-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  try {
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE direct_availability_targets (
+      anidb_id INTEGER NOT NULL, episode_id INTEGER NOT NULL,
+      observed_ms INTEGER NOT NULL, due_ms INTEGER NOT NULL,
+      version INTEGER NOT NULL, state TEXT NOT NULL, verified_ms INTEGER,
+      PRIMARY KEY(anidb_id,episode_id)) STRICT`);
+    db.prepare(`INSERT INTO direct_availability_targets VALUES
+      (42,1001,100,1800101,1,'available',101)`).run();
+    db.close();
+    const queue = openDirectAvailabilityQueue(dbPath);
+    try {
+      assert.deepEqual(queue.getStatus({ anidbId: 42,
+        episodeId: 1001, nowMs: 102 }), { state: 'unknown' });
+      assert.deepEqual(queue.claimNext({ nowMs: 102 }).target,
+        { anidbId: 42, episodeId: 1001 });
+    } finally { queue.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('a clock rollback cannot save a future availability proof', async () => {
   await fixture(async (ctx) => {
     const target = { anidbId: 42, episodeId: 1001 };

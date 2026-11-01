@@ -43,6 +43,17 @@ export function openDirectAvailabilityQueue(dbPath) {
       if (!columns.has(name)) db.exec(`ALTER TABLE direct_availability_targets
         ADD COLUMN ${name} ${declaration}`);
     }
+    // Older positive rows have no durable file/card witness. Recheck them
+    // before displaying Available under the proof-aware invalidation policy.
+    db.exec(`UPDATE direct_availability_targets SET state='pending',
+      due_ms=observed_ms,priority=1,version=version+1,verified_ms=NULL,
+      proof_file_id=NULL,proof_library_id=NULL,proof_rating_key=NULL,
+      proof_part_id=NULL
+      WHERE state='available' AND (
+        proof_file_id IS NULL OR proof_file_id<=0 OR
+        proof_library_id IS NULL OR proof_library_id<=0 OR
+        proof_rating_key IS NULL OR proof_rating_key<=0 OR
+        proof_part_id IS NULL OR proof_part_id<=0)`);
     db.exec(`CREATE TABLE IF NOT EXISTS plex_card_change_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       library_id INTEGER NOT NULL CHECK(library_id>0),
