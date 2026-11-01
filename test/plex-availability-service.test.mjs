@@ -133,6 +133,31 @@ test('a direct Shoko import becomes Available only after public Plex card discov
   service.close();
 });
 
+test('an opt-in index tick reports bounded provider and filesystem probe counts', async () => {
+  const { config } = await fixture({ detailedPage: true });
+  const service = createPlexAvailabilityService(config);
+  try {
+    const result = await service.tick({ libraryId: 102, kind: 'episode',
+      includeLoad: true });
+    assert.equal(result.state, 'page_indexed');
+    assert.deepEqual({ ...result.load, elapsedMs: null }, { sectionPages: 1,
+      exactCardReads: 0, candidateProbes: 1, elapsedMs: null });
+    assert.equal(Number.isSafeInteger(result.load.elapsedMs) &&
+      result.load.elapsedMs >= 0, true);
+  } finally { service.close(); }
+});
+
+test('index load counts exact-card fallback when a page omits media', async () => {
+  const { config } = await fixture();
+  const service = createPlexAvailabilityService(config);
+  try {
+    const result = await service.tick({ libraryId: 102, kind: 'episode',
+      includeLoad: true });
+    assert.deepEqual({ ...result.load, elapsedMs: null }, { sectionPages: 1,
+      exactCardReads: 1, candidateProbes: 1, elapsedMs: null });
+  } finally { service.close(); }
+});
+
 test('paced Plex card scan stores a scoped physical identity hint', async () => {
   const { config } = await fixture();
   const service = createPlexAvailabilityService(config);

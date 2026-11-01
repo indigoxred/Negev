@@ -48,7 +48,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     ['episode', 'movie'].includes(kind) && publicSections[kind].includes(libraryId);
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
     token: plexToken, ...input, fetchImpl });
-  const addCandidateKeys = async (card) => {
+  const addCandidateKeys = async (card, load) => {
     if (card?.state !== 'ok' || !Array.isArray(card.parts) ||
         card.parts.length > 40) return card;
     const mounts = (plexMounts ?? (plexMount ? [plexMount] : []))
@@ -62,7 +62,9 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       if (!mapping) { parts.push(part); continue; }
       const filePath = localPath(part.plexPath, mapping);
       let candidate;
-      try { candidate = await probePhysicalCandidate({ filePath,
+      try {
+        if (load) load.candidateProbes++;
+        candidate = await probePhysicalCandidate({ filePath,
         allowedRoot: mapping.localRoot, backingRoots,
         expectedSize: part.size }); }
       catch { parts.push(part); continue; }
@@ -71,18 +73,27 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     }
     return { ...card, parts };
   };
-  const readCardForIndex = async (input) =>
-    addCandidateKeys(await readCard(input));
-  const readPage = async (input) => {
+  const readCardForIndex = async (input, load) => {
+    if (load) load.exactCardReads++;
+    return addCandidateKeys(await readCard(input), load);
+  };
+  const readPage = async (input, load) => {
+    if (load) load.sectionPages++;
     const page = await readPlexSectionKeys({ baseUrl: plexBaseUrl,
       token: plexToken, ...input, includeCards: true, fetchImpl });
     if (page.state !== 'page') return page;
     const cards = [];
     for (const card of page.cards) {
-      cards.push(card === null ? null : await addCandidateKeys(card));
+      cards.push(card === null ? null : await addCandidateKeys(card, load));
     }
     return { ...page, cards };
   };
+  const indexReaders = (load) => ({
+    readPage: (input) => readPage(input, load),
+    readCard: (input) => readCardForIndex(input, load),
+  });
+  const loadSnapshot = (load, started) => ({ ...load,
+    elapsedMs: Math.max(0, Math.ceil(performance.now() - started)) });
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, purpose: 'availability', fetchImpl });
   return {
@@ -97,24 +108,35 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         }),
       });
     },
-    async tick({ libraryId, kind }) {
+    async tick({ libraryId, kind, includeLoad = false }) {
       if (!allowed({ libraryId, kind })) {
         return { state: 'held', reason: 'library_not_allowed' };
       }
+      const started = performance.now();
+      const load = { sectionPages: 0, exactCardReads: 0,
+        candidateProbes: 0 };
+      const readers = indexReaders(load);
       const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
-        readPage, readCard: readCardForIndex });
+        ...readers });
       const page = await worker.tick();
       const retry = await retryOnePlexCard({ libraryId, kind, index, now,
-        readCard: readCardForIndex });
-      return retry.state === 'no_due_retry' ? page :
+        readCard: readers.readCard });
+      const result = retry.state === 'no_due_retry' ? page :
         { ...page, retry: retry.state };
+      return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
+        result;
     },
-    scanRecent({ libraryId, kind }) {
+    async scanRecent({ libraryId, kind, includeLoad = false }) {
       if (!allowed({ libraryId, kind })) {
-        return Promise.resolve({ state: 'held', reason: 'library_not_allowed' });
+        return { state: 'held', reason: 'library_not_allowed' };
       }
-      return indexPlexCardPage({ libraryId, kind, offset: 0,
-        index, now, readPage, readCard: readCardForIndex });
+      const started = performance.now();
+      const load = { sectionPages: 0, exactCardReads: 0,
+        candidateProbes: 0 };
+      const result = await indexPlexCardPage({ libraryId, kind, offset: 0,
+        index, now, ...indexReaders(load) });
+      return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
+        result;
     },
     // observedShoko is supplied only by the internal presence probe, after its
     // own Shoko read. Never accept this value from a client request body.
