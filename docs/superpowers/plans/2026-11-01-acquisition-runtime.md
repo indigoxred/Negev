@@ -52,6 +52,8 @@ The Task 1 probe is also exposed through an authenticated, admin-only, two-per-m
 
 Source-only Task 2 increment: `collectFirstTimeAbsence` composes an exact Shoko unimported observation, an explicitly complete public Plex snapshot and two matching, target-scoped Import fence observations. It holds on a positive-only or incomplete Plex result, a wrong first fence, changed Import fingerprint, stale observation or provider outage. It has no installed provider callbacks or acquisition authority yet. The current Import activity reader intentionally returns `quiet_observed`, so it cannot satisfy this collector's `settled` requirement.
 
+The folder-scoped Import activity reader can now optionally return an opaque inventory fingerprint and observation time to private callers. The existing 120-second quiet-window helper can require matching fingerprints, so a changed watched folder holds even if an event feed misses that change. This is still only an explicitly uncertain first-acquisition observation; no live feed-state adapter or complete public Plex absence reader is wired, and it cannot satisfy the strict `settled` fence above.
+
 ### Task 3: Opt-in worker composition and recovery
 
 **Files:** Modify `src/web/user-server-config.mjs`, `src/web/user-service.mjs`, `src/web/user-server.mjs`; add a focused integration test.

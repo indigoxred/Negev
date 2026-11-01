@@ -118,6 +118,26 @@ test('opt-in folder-scoped baseline does not treat an already recognized Import 
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
+test('private folder-scoped quiet evidence returns only a fingerprint and timestamp', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1, withFingerprint: true, now: () => 123_000,
+      fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
+        ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
+        : json({ Total: 0, List: [] }),
+    });
+    assert.equal(result.state, 'quiet_observed');
+    assert.match(result.fingerprint, /^[0-9a-f]{64}$/);
+    assert.equal(result.observedAtMs, 123_000);
+    assert.deepEqual(Object.keys(result).sort(),
+      ['fingerprint', 'observedAtMs', 'state']);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+  await assert.rejects(readShokoImportActivity({ ...input,
+    withFingerprint: true }), TypeError);
+});
+
 test('opt-in baseline holds a file that appears during the queue read', async () => {
   const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
   try {

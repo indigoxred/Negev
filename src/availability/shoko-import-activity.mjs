@@ -12,7 +12,8 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 // Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
-  now = Date.now, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  withFingerprint = false, now = Date.now, fetchImpl = fetch,
+  timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||
@@ -26,6 +27,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
          managedFolderId === undefined ||
          typeof qbitImportSavePath !== 'string' ||
          !qbitImportSavePath.startsWith('/'))) ||
+      typeof withFingerprint !== 'boolean' ||
+      (withFingerprint && (importRoot === undefined ||
+        managedFolderId === undefined)) ||
       typeof now !== 'function' ||
       typeof fetchImpl !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
@@ -86,6 +90,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     if (queue.WaitingCount || queue.BlockedCount ||
         queue.CurrentlyExecuting.length ||
         queue.Pools.some((pool) => pool.ActiveWorkers > 0)) return { state: 'busy' };
+    let quietFingerprint;
     if (importRoot !== undefined) {
       if (managedFolderId !== undefined) {
         const afterInventory = await readRecognizedBaseline();
@@ -93,6 +98,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
         if (beforeInventory.fingerprint !== afterInventory.fingerprint) {
           return { state: 'busy' };
         }
+        quietFingerprint = afterInventory.fingerprint;
       } else {
         const after = await readImportRootState({ root: importRoot });
         if (after.state === 'busy') return { state: 'busy' };
@@ -103,6 +109,13 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     // Both observations of a mounted Import root were empty or fully
     // accounted for, and the queue was idle between them. This is useful
     // triage, never an absence fence.
+    if (withFingerprint) {
+      const observedAtMs = now();
+      if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0 ||
+          !/^[0-9a-f]{64}$/.test(quietFingerprint)) return unavailable();
+      return { state: 'quiet_observed', fingerprint: quietFingerprint,
+        observedAtMs };
+    }
     return { state: importRoot === undefined
       ? 'queue_idle_unverified' : 'quiet_observed' };
   } catch { return unavailable(); }

@@ -50,3 +50,21 @@ test('observer errors and bad clock observations hold', async () => {
     now: () => NaN }),
   { state: 'held', reason: 'import_quiet_window_unverified' });
 });
+
+test('required Import fingerprint catches a changed folder during the quiet window', async () => {
+  const fingerprint = 'a'.repeat(64);
+  const before = { state: 'quiet_observed', fingerprint };
+  const after = { state: 'quiet_observed', fingerprint: 'b'.repeat(64) };
+  const held = { state: 'held', reason: 'import_quiet_window_unverified' };
+  assert.deepEqual(await observeImportQuietWindow({
+    ...observers({ activities: [before, after] }), requireFingerprint: true,
+  }), held);
+  assert.deepEqual(await observeImportQuietWindow({
+    ...observers(), requireFingerprint: true,
+  }), held);
+  assert.deepEqual(await observeImportQuietWindow({
+    ...observers({ activities: [before, before] }), requireFingerprint: true,
+  }), { state: 'quiet_window_observed', anidbId: 42,
+    episodeIds: [1001], beforeObservedAtMs: 1_000_000,
+    afterObservedAtMs: 1_120_000 });
+});
