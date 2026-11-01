@@ -65,3 +65,20 @@ test('a measured faster interval is configurable but remains bounded', () => {
   TypeError);
   void scheduler.close();
 });
+
+test('shared metadata contention retries the same file at the active pace', async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  const scheduler = createFileBackfillScheduler({
+    tick: async () => {
+      calls++;
+      return calls === 1 ? { state: 'held', reason: 'metadata_busy' } :
+        { state: 'checked', checkedPairs: 1 };
+    }, intervalMs: 10_000, ...clock });
+  scheduler.start();
+  await clock.fire();
+  assert.equal(clock.timers.values().next().value.delay, 10_000);
+  await clock.fire();
+  assert.equal(calls, 2);
+  await scheduler.close();
+});

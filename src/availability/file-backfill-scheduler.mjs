@@ -31,7 +31,8 @@ export function createFileBackfillScheduler({ tick,
     timer = setTimer(async () => {
       timer = undefined;
       const result = await runOnce();
-      const nextDelay = ['checked', 'partial'].includes(result?.state)
+      const nextDelay = ['checked', 'partial'].includes(result?.state) ||
+        (result?.state === 'held' && result.reason === 'metadata_busy')
         ? intervalMs : failureDelayMs;
       schedule(nextDelay);
     }, delay);
