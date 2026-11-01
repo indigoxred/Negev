@@ -4,6 +4,7 @@ import { processRecordedStart } from './process-recorded-start.mjs';
 import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
+import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -16,6 +17,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   releaseQueries, readEvidence, publicSections, prowlarr,
   stagingHostPath, holdingRoot, importRoot, inspectMounts, realpathImpl,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
+  verifyHandoffMounts = verifyHandoffMountRoots,
   firstTimePolicy = 'strict' } = {}) {
   const episode = publicSections?.episode;
   const movie = publicSections?.movie;
@@ -23,7 +25,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
-        readEvidence, inspectMounts, realpathImpl, providerFetchImpl, now]
+        readEvidence, inspectMounts, realpathImpl, providerFetchImpl, now,
+        verifyHandoffMounts]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
@@ -46,6 +49,12 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   const lookup = ({ ed2k, size }) => previewAniDbRelease({
     baseUrl: shoko.baseUrl, providerId: shoko.providerId,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
+  const handoffMountReady = async () => {
+    try {
+      const result = await verifyHandoffMounts({ holdingRoot, importRoot });
+      return result?.state === 'mounted_handoff_roots';
+    } catch { return false; }
+  };
   return {
     processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
       ...claim } = {}) {
@@ -85,16 +94,19 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         fetchImpl, now });
     },
-    processCompletion({ attemptId, qbittorrent, fetchImpl,
+    async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl } = {}) {
+      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
         handoffs, stagingHostPath, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl,
-        readPacer, nowMs: now() });
+        readPacer, verifyHandoffMounts, nowMs: now() });
     },
-    processPublish({ attemptId } = {}) {
+    async processPublish({ attemptId } = {}) {
+      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
-        holdingRoot, importRoot, lookup, readPacer, nowMs: now() });
+        holdingRoot, importRoot, lookup, readPacer,
+        verifyHandoffMounts, nowMs: now() });
     },
   };
 }

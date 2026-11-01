@@ -88,6 +88,33 @@ test('provider outage during final identity check is a bounded retryable hold', 
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
 
+test('a lost handoff mount stops before publish intent and watched rename', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500,
+      verifyHandoffMounts: async () =>
+        ({ state: 'held', reason: 'handoff_mount_unavailable' }) });
+    assert.deepEqual(result,
+      { state: 'held', reason: 'handoff_mount_unavailable' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
+test('a mount lost during final verification stops before publish intent', async () =>
+  withBatch(async (sample) => {
+    let checks = 0;
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500,
+      verifyHandoffMounts: async () => ++checks === 1
+        ? { state: 'mounted_handoff_roots' }
+        : { state: 'held', reason: 'handoff_mount_unavailable' } });
+    assert.deepEqual(result,
+      { state: 'held', reason: 'handoff_mount_unavailable' });
+    assert.equal(checks, 2);
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
 test('an uncertain publish with the exact destination is observed without another rename', async () =>
   withBatch(async (sample) => {
     sample.ledger.beginPublish();

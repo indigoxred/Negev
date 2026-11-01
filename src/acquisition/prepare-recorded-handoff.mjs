@@ -11,6 +11,7 @@ export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
   stagingHostPath, holdingRoot, importRoot, observe, lookup,
   nowMs, verify, verifySubtitle, readPacer,
+  verifyHandoffMounts,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
@@ -29,7 +30,7 @@ export async function prepareRecordedHandoff({
   if (verified.state !== 'batch_identity_verified') return verified;
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
-    verified, readPacer });
+    verified, readPacer, verifyHandoffMounts });
   if (prepared.state !== 'handoff_prepared') return prepared;
   let saved;
   try {

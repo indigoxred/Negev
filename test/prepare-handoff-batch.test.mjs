@@ -68,6 +68,17 @@ test('insufficient or unmeasurable holding space stops before creating a copy', 
     }
   }));
 
+test('a lost handoff mount stops before creating a private copy', async () =>
+  withRoots(async (roots) => {
+    const result = await prepareHandoffBatch({ ...roots, verified,
+      verifyHandoffMounts: async () =>
+        ({ state: 'held', reason: 'handoff_mount_unavailable' }) });
+    assert.deepEqual(result,
+      { state: 'held', reason: 'handoff_mount_unavailable' });
+    assert.deepEqual(await readdir(roots.holdingRoot), []);
+    assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
+
 test('space preflight includes the copy bytes and retained free-space reserve', async () =>
   withRoots(async (roots) => {
     await mkdir(path.join(roots.stagingRoot, 'Show'));

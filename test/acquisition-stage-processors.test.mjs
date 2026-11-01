@@ -66,6 +66,20 @@ test('missing safety providers are rejected before any work', () => {
   assert.deepEqual(calls, []);
 });
 
+test('completion and publish hold before media work when the own mount is unproved', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    verifyHandoffMounts: async () => {
+      calls.push('handoff-mount');
+      return { state: 'held', reason: 'handoff_mount_unavailable' };
+    } });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'handoff_mount_unavailable' });
+  assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
+    { state: 'held', reason: 'handoff_mount_unavailable' });
+  assert.deepEqual(calls, ['handoff-mount', 'handoff-mount']);
+});
+
 test('movie request stage uses both public Plex sections before stopped submission', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-movie-stage-'));
   const dbPath = path.join(root, 'state.sqlite');

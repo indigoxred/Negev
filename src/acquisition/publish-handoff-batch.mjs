@@ -141,7 +141,7 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename,
+  renamePrepared = rename, verifyHandoffMounts,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -150,6 +150,8 @@ export async function publishPreparedHandoff({
       typeof ledger?.markPublishedObserved !== 'function' ||
       typeof lookup !== 'function' || typeof verifyVideo !== 'function' ||
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
+      (verifyHandoffMounts !== undefined &&
+        typeof verifyHandoffMounts !== 'function') ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
   }
@@ -160,6 +162,14 @@ export async function publishPreparedHandoff({
   if (evidence.state !== 'valid' || evidence.digest !== prepared.evidenceDigest) {
     return held('handoff_evidence_mismatch');
   }
+  const mountReady = async () => {
+    if (!verifyHandoffMounts) return true;
+    try {
+      const result = await verifyHandoffMounts({ holdingRoot, importRoot });
+      return result?.state === 'mounted_handoff_roots';
+    } catch { return false; }
+  };
+  if (!await mountReady()) return held('handoff_mount_unavailable');
   const row = ledger.getHandoff(attemptId);
   if (!row) return held('handoff_missing');
   if (row.evidenceDigest !== evidence.digest ||
@@ -243,6 +253,7 @@ export async function publishPreparedHandoff({
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
+  if (!await mountReady()) return held('handoff_mount_unavailable');
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');

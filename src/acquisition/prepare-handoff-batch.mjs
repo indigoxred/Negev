@@ -97,12 +97,15 @@ export async function prepareHandoffBatch({
   maxTotalBytes = DEFAULT_BUDGET, readPacer,
   readRateBytesPerSecond = 16 * 1024 ** 2,
   minFreeAfterBytes = DEFAULT_FREE_RESERVE, statfsImpl = statfs,
+  verifyHandoffMounts,
 }) {
   if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 ||
       maxTotalBytes > 1024 ** 4 ||
       !Number.isSafeInteger(minFreeAfterBytes) || minFreeAfterBytes < 0 ||
       minFreeAfterBytes > 1024 ** 4 || typeof statfsImpl !== 'function' ||
-      (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
+      (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') ||
+      (verifyHandoffMounts !== undefined &&
+        typeof verifyHandoffMounts !== 'function')) {
     throw new TypeError('Invalid handoff preparation configuration');
   }
   if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false) {
@@ -125,6 +128,14 @@ export async function prepareHandoffBatch({
     .reduce((total, file) => total + BigInt(file.size), 0n);
   if (space.bavail * space.bsize < copyBytes + BigInt(minFreeAfterBytes)) {
     return held('insufficient_handoff_space');
+  }
+  if (verifyHandoffMounts) {
+    let mount;
+    try { mount = await verifyHandoffMounts({ holdingRoot, importRoot }); }
+    catch { return held('handoff_mount_unavailable'); }
+    if (mount?.state !== 'mounted_handoff_roots') {
+      return held('handoff_mount_unavailable');
+    }
   }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   let holdingPath;

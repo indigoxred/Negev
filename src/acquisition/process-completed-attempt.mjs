@@ -11,6 +11,7 @@ export async function processCompletedAttempt({
   stagingHostPath, holdingRoot, importRoot,
   qbittorrent, shoko, fetchImpl = fetch, shokoFetchImpl = fetchImpl, nowMs,
   readPacer,
+  verifyHandoffMounts,
 }) {
   if (typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
@@ -24,6 +25,7 @@ export async function processCompletedAttempt({
   return prepareRecordedHandoff({
     requests, acquisitions, handoffs, attemptId,
     stagingHostPath, holdingRoot, importRoot, nowMs, readPacer,
+    verifyHandoffMounts,
     observe: ({ expected }) => observeTorrentCompletion({
       baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
       expected, fetchImpl,

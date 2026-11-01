@@ -10,6 +10,7 @@ Negev is a self-hosted anime request and acquisition project for series and film
 - Airing series retain a watch for future episodes. Completed titles are one-time acquisition requests. Films are requestable from the start.
 - Candidate releases are inspected before qBittorrent starts them. Unexpected executable or archive content is held.
 - Verified video bytes are prepared outside Shoko's watched Import folder and published only after exact AniDB file and episode checks.
+- The acquisition worker checks that its private holding and watched Import roots resolve under one explicit, non-overlay container mount before copying or publishing. The intended bind source and atomic rename still need an installed check.
 - Shoko identifies imported files; a readable, matching Part in an allowed public Plex library proves playback availability. An incomplete observation remains Unknown.
 - Direct Shoko imports can update availability without a Negev request. A blocked or unrecognized item must not stop unrelated work.
 - Acquisition and broad observers are separate opt-ins, disabled by default. Their live settings require measured load, rollback, and genuine arrival checks before use.
