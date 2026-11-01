@@ -39,6 +39,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
   if (groups.size > 16) return held('pending_batch_budget_exceeded');
   const excludedPaths = new Set();
   const excludedIds = new Set();
+  const unrelatedPendingKeys = [];
   let unrelatedPending = 0;
   for (const [prefix, files] of groups) {
     const [, rawId, shortDigest] = ownedPrefix.exec(prefix);
@@ -92,10 +93,14 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
           target.episodeIds.includes(id)))) return held('target_pending_import');
     for (const file of files) excludedPaths.add(file.relativePath);
     for (const id of rows.keys()) excludedIds.add(id);
+    for (const path of rows.values()) {
+      unrelatedPendingKeys.push(`${managedFolderId}:${path}`);
+    }
     unrelatedPending += evidence.manifest.videos.length;
   }
   const List = shokoPage.List.filter((row) => !excludedIds.has(row.ID));
   return { state: 'partitioned',
     diskFiles: diskFiles.filter((file) => !excludedPaths.has(file.relativePath)),
-    shokoPage: { Total: List.length, List }, unrelatedPending };
+    shokoPage: { Total: List.length, List }, unrelatedPending,
+    unrelatedPendingKeys: unrelatedPendingKeys.sort() };
 }

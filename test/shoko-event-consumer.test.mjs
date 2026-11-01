@@ -15,8 +15,34 @@ test('a detected event has no file ID and asks for paced reconciliation', async 
   assert.deepEqual(consumer.accept('file:detected', [{ ManagedFolderID: 3, RelativePath: 'new.mkv' }]),
     { state: 'reconcile', reason: 'file_detected' });
   assert.equal(consumer.getState().reconciliationNeeded, true);
+  assert.deepEqual(consumer.getPendingSnapshot(), {
+    state: 'snapshot', generation: 1, pending: 0, inFlight: null,
+    reconciliationNeeded: true, fullReconciliationNeeded: false,
+    pendingOnlyDebt: true, pendingKeys: ['3:new.mkv'],
+  });
   await consumer.close();
   assert.deepEqual(calls, []);
+});
+
+test('a resolved path or full reconciliation debt cannot be treated as pending-only', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: 'provisional' }) });
+  consumer.accept('file:detected', [{ ManagedFolderID: 3,
+    RelativePath: 'one.mkv' }]);
+  consumer.accept('file:detected', [{ ManagedFolderID: 3,
+    RelativePath: 'two.mkv' }]);
+  assert.equal(consumer.getPendingSnapshot().pendingOnlyDebt, true);
+  consumer.accept('file:hashed', [{ ManagedFolderID: 3,
+    RelativePath: 'one.mkv', FileID: 10 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  const token = consumer.snapshotPendingResolution(10);
+  assert.deepEqual(consumer.acknowledgeLinkedObservation({ fileId: 10,
+    token, result: { state: 'recorded_file', recognition: 'linked' } }),
+  { state: 'resolved' });
+  assert.equal(consumer.getPendingSnapshot().pendingOnlyDebt, false);
+  consumer.flagReconciliation();
+  assert.equal(consumer.getPendingSnapshot().fullReconciliationNeeded, true);
+  await consumer.close();
 });
 
 test('a detected path stays busy until its hashed file refresh succeeds', async () => {

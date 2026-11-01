@@ -1,7 +1,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeImportQuietWindow, importFeedState } from
+import { observeImportQuietWindow, importFeedState,
+  scopedImportFeedState } from
   '../src/acquisition/import-quiet-window.mjs';
+
+test('scoped feed accepts only exact pending-only paths and preserves earlier debt', () => {
+  const pending = { state: 'snapshot', generation: 7, pending: 0,
+    inFlight: null, reconciliationNeeded: true,
+    fullReconciliationNeeded: false, pendingOnlyDebt: true,
+    pendingKeys: ['1:negev-7-0123456789abcdef/01.mkv'] };
+  const connection = { state: 'connected' };
+  const key = pending.pendingKeys[0];
+  assert.deepEqual(scopedImportFeedState({ connection, snapshot: pending }),
+    { state: 'pending_unverified', generation: 7, pendingPaths: 1 });
+  assert.deepEqual(scopedImportFeedState({ connection, snapshot: pending,
+    allowedPendingKeys: [key] }),
+  { state: 'connected_scoped', generation: 7, pendingPaths: 1,
+    pendingEvents: 0, inFlight: false, reconciliationNeeded: true,
+    pendingOnlyDebt: true });
+  for (const changed of [
+    { snapshot: { ...pending, pendingOnlyDebt: false } },
+    { snapshot: { ...pending, fullReconciliationNeeded: true } },
+    { snapshot: { ...pending, pending: 1 } },
+    { snapshot: { ...pending, pendingKeys: [...pending.pendingKeys, '1:manual.mkv'] } },
+    { allowedPendingKeys: ['1:another.mkv'] },
+    { connection: { state: 'disconnected' } },
+  ]) assert.notEqual(scopedImportFeedState({ connection, snapshot: pending,
+    allowedPendingKeys: [key], ...changed }).state, 'connected_scoped');
+});
 
 test('live feed state is healthy only for a connected, reconciled event consumer', () => {
   const event = { generation: 7, pending: 0, inFlight: null,
@@ -101,4 +127,36 @@ test('required Import fingerprint catches a changed folder during the quiet wind
   }), { state: 'quiet_window_observed', anidbId: 42,
     episodeIds: [1001], beforeObservedAtMs: 1_000_000,
     afterObservedAtMs: 1_120_000, feedGeneration: 7 });
+});
+
+test('scoped window accepts only unchanged exact pending handoff paths', async () => {
+  const key = '1:negev-7-0123456789abcdef/01.mkv';
+  const fingerprint = 'a'.repeat(64);
+  const activity = { state: 'quiet_observed', fingerprint,
+    unrelatedPendingKeys: [key] };
+  const connection = { state: 'connected' };
+  const pending = { state: 'snapshot', generation: 7, pending: 0,
+    inFlight: null, reconciliationNeeded: true,
+    fullReconciliationNeeded: false, pendingOnlyDebt: true,
+    pendingKeys: [key] };
+  const run = (snapshots, activities = [activity, activity]) => {
+    let index = 0;
+    let activityIndex = 0;
+    return observeImportQuietWindow({ ...observers(), requireFingerprint: true,
+      readActivity: async () => activities[activityIndex++],
+      readScopedFeedState: (keys) => scopedImportFeedState({ connection,
+        snapshot: snapshots[index++], allowedPendingKeys: keys }),
+    });
+  };
+  assert.deepEqual(await run([pending, pending, pending]), {
+    state: 'quiet_window_observed', anidbId: 42, episodeIds: [1001],
+    beforeObservedAtMs: 1_000_000, afterObservedAtMs: 1_120_000,
+    feedGeneration: 7, unrelatedPendingKeys: [key] });
+  const held = { state: 'held', reason: 'import_quiet_window_unverified' };
+  assert.deepEqual(await run([pending, { ...pending, generation: 8 }]), held);
+  assert.deepEqual(await run([pending, pending,
+    { ...pending, pendingKeys: [key, '1:manual.mkv'] }]), held);
+  assert.deepEqual(await run([pending, pending, pending], [activity,
+    { ...activity, unrelatedPendingKeys: [] }]), held);
+  assert.deepEqual(await run([{ ...pending, pendingOnlyDebt: false }]), held);
 });

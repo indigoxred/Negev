@@ -160,6 +160,20 @@ test('an exact owned pending file does not block an unrelated target', async () 
     });
     assert.deepEqual(await read({ anidbId: 43, episodeIds: [2001] }),
       { state: 'quiet_observed' });
+    const scoped = await readShokoImportActivity({ ...input,
+      importRoot, managedFolderId: 1, withFingerprint: true,
+      target: { anidbId: 43, episodeIds: [2001] },
+      getHandoff: (id) => id === 7 ? handoff : null,
+      fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
+        ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
+        : json({ Total: 1, List: [{ ID: 51, Size: 5, SeriesIDs: [],
+          Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+          Locations: [{ ManagedFolderID: 1,
+            RelativePath: `${publishName}/01.mkv`, IsAccessible: true }] }] }),
+    });
+    assert.deepEqual(scoped.unrelatedPendingKeys,
+      [`1:${publishName}/01.mkv`]);
     assert.deepEqual(await read({ anidbId: 42, episodeIds: [1001] }),
       { state: 'busy', reason: 'target_pending_import' });
     await writeFile(path.join(importRoot, 'manual.mkv'), 'unknown');

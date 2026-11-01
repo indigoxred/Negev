@@ -54,10 +54,12 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   let pump = null;
   let reconciliationNeeded = false;
   let fullReconciliationNeeded = false;
+  let pendingOnlyDebt = false;
   let stopping = false;
   const bumpGeneration = () => {
     if (generation < Number.MAX_SAFE_INTEGER) generation++;
-    else reconciliationNeeded = true;
+    else { reconciliationNeeded = true; fullReconciliationNeeded = true;
+      pendingOnlyDebt = false; }
   };
 
   const acknowledgeLinkedObservation = ({ fileId, token, result } = {}) => {
@@ -67,6 +69,9 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         detected.get(token.key) !== token.sequence) return { state: 'held' };
     detected.delete(token.key);
     resolutions.delete(fileId);
+    // A resolved path still owes a later catch-up, so remaining paths alone
+    // no longer explain the dirty generation.
+    pendingOnlyDebt = false;
     return { state: 'resolved' };
   };
 
@@ -74,6 +79,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     bumpGeneration();
     reconciliationNeeded = true;
     fullReconciliationNeeded = true;
+    pendingOnlyDebt = false;
     try { onReconciliationNeeded?.(fileId); } catch { /* Keep draining. */ }
   };
 
@@ -110,10 +116,12 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       if (stopping) return { state: 'held', reason: 'consumer_stopping' };
       if (target === 'file:detected' || idEvents.has(target)) bumpGeneration();
       if (target === 'file:detected') {
+        if (!reconciliationNeeded && !fullReconciliationNeeded &&
+            detected.size === 0) pendingOnlyDebt = true;
         reconciliationNeeded = true;
         const key = Array.isArray(args) && args.length === 1
           ? arrivalKey(args[0]) : null;
-        if (!key) fullReconciliationNeeded = true;
+        if (!key) { fullReconciliationNeeded = true; pendingOnlyDebt = false; }
         if (key && (detected.has(key) || detected.size < maxArrivals)) {
           forgetPathResolutions(key);
           detected.set(key, ++detectionSequence);
@@ -121,6 +129,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
           // A dropped path may not have a FileID yet. A recent-file scan
           // cannot account for it, even after every tracked path resolves.
           fullReconciliationNeeded = true;
+          pendingOnlyDebt = false;
         }
         return { state: 'reconcile', reason: 'file_detected' };
       }
@@ -129,11 +138,13 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       if (!validId(fileId)) {
         reconciliationNeeded = true;
         fullReconciliationNeeded = true;
+        pendingOnlyDebt = false;
         return { state: 'reconcile', reason: 'invalid_event' };
       }
       if (target === 'file:deleted') {
         reconciliationNeeded = true;
         fullReconciliationNeeded = true;
+        pendingOnlyDebt = false;
         try { onDeleted?.(fileId); }
         catch { flagUnresolvedEvent(fileId); }
       }
@@ -141,6 +152,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       if (!alreadyQueued && pending.size >= maxPending) {
         reconciliationNeeded = true;
         fullReconciliationNeeded = true;
+        pendingOnlyDebt = false;
         return { state: 'reconcile', reason: 'event_overflow' };
       }
       if (target === 'file:hashed') {
@@ -162,6 +174,14 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       return { pending: pending.size, inFlight,
         reconciliationNeeded, fullReconciliationNeeded, generation };
     },
+    // Internal-only atomic snapshot. Pending keys never leave the account
+    // service and cannot by themselves authorize an acquisition.
+    getPendingSnapshot() {
+      return { state: stopping ? 'stopping' : 'snapshot', generation,
+        pending: pending.size, inFlight, reconciliationNeeded,
+        fullReconciliationNeeded, pendingOnlyDebt,
+        pendingKeys: [...detected.keys()].sort() };
+    },
     // Only a completed catch-up that started at this exact event generation
     // may clear the dirty bit. Pending paths and reads still block clearance.
     acknowledgeReconciliation(expectedGeneration) {
@@ -173,6 +193,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         return { state: 'held' };
       }
       reconciliationNeeded = false;
+      pendingOnlyDebt = false;
       return { state: 'acknowledged' };
     },
     // Reserved for a complete inventory catch-up. A recent-file page alone
@@ -186,6 +207,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       }
       fullReconciliationNeeded = false;
       reconciliationNeeded = false;
+      pendingOnlyDebt = false;
       return { state: 'acknowledged' };
     },
     // Positive busy evidence only. Empty memory cannot prove that Shoko's
@@ -197,9 +219,11 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
     flagReconciliation() {
       bumpGeneration(); reconciliationNeeded = true;
       fullReconciliationNeeded = true;
+      pendingOnlyDebt = false;
     },
     async close() {
       stopping = true;
+      pendingOnlyDebt = false;
       if (pump) await pump;
     },
   };

@@ -46,7 +46,8 @@ import { collectFirstTimeUncertain } from
   '../acquisition/collect-first-time-uncertain.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
-import { importFeedState, observeImportQuietWindow } from
+import { importFeedState, scopedImportFeedState,
+  observeImportQuietWindow } from
   '../acquisition/import-quiet-window.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
@@ -371,6 +372,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       event: eventConsumer.getState(),
       arrival: eventConsumer.getArrivalState(),
     });
+    const readScopedImportFeed = (allowedPendingKeys) =>
+      scopedImportFeedState({ connection: readShokoConnectionState(),
+        snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys });
     return { app,
       pollAiringNextPage: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
@@ -457,10 +461,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           observeImport: (target) => observeImportQuietWindow({ ...target,
             readActivity: (scope) => readImportActivity(true, scope),
             readFeedState: readImportFeed,
+            readScopedFeedState: readScopedImportFeed,
             wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
             now, requireFingerprint: true,
           }),
-          readFeedState: readImportFeed,
+          readFeedState: readScopedImportFeed,
         }));
       },
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),

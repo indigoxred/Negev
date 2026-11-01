@@ -26,7 +26,7 @@ test('exact Negev-published pending file is attributable to another target', () 
   assert.deepEqual(partitionOwnedPendingImports({ ...options,
     target: { anidbId: 43, episodeIds: [2001] } }), {
     state: 'partitioned', diskFiles: [], shokoPage: { Total: 0, List: [] },
-    unrelatedPending: 1,
+    unrelatedPending: 1, unrelatedPendingKeys: [`1:${pendingPath}`],
   });
 });
 

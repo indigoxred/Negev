@@ -55,7 +55,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     const readRecognizedBaseline = async () => {
       const inventory = await readImportRootInventory({ root: importRoot });
       if (inventory.state !== 'inventory') return unavailable();
-      if (inventory.files.length === 0) return inventory;
+      if (inventory.files.length === 0) return {
+        ...inventory, unrelatedPendingKeys: [] };
       const sidecarPaths = inventory.files.filter((file) =>
         /\.parts$/i.test(file.relativePath));
       if (sidecarPaths.length > 16) return { state: 'busy' };
@@ -81,7 +82,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
         diskFiles: attributed?.diskFiles ?? inventory.files,
         shokoPage: attributed?.shokoPage ?? page, managedFolderId, sidecarTorrents,
         qbitImportSavePath, nowMs: now() });
-      return baseline.state === 'recognized_baseline' ? inventory :
+      return baseline.state === 'recognized_baseline' ?
+        { ...inventory, unrelatedPendingKeys:
+          attributed?.unrelatedPendingKeys ?? [] } :
         { state: 'busy', reason: baseline.reason };
     };
     let beforeInventory;
@@ -112,7 +115,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       if (managedFolderId !== undefined) {
         const afterInventory = await readRecognizedBaseline();
         if (afterInventory.state !== 'inventory') return afterInventory;
-        if (beforeInventory.fingerprint !== afterInventory.fingerprint) {
+        if (beforeInventory.fingerprint !== afterInventory.fingerprint ||
+            JSON.stringify(beforeInventory.unrelatedPendingKeys) !==
+              JSON.stringify(afterInventory.unrelatedPendingKeys)) {
           return { state: 'busy' };
         }
         quietFingerprint = afterInventory.fingerprint;
@@ -131,7 +136,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       if (!Number.isSafeInteger(observedAtMs) || observedAtMs < 0 ||
           !/^[0-9a-f]{64}$/.test(quietFingerprint)) return unavailable();
       return { state: 'quiet_observed', fingerprint: quietFingerprint,
-        observedAtMs };
+        observedAtMs,
+        ...(target === undefined ? {} :
+          { unrelatedPendingKeys: beforeInventory.unrelatedPendingKeys }) };
     }
     return { state: importRoot === undefined
       ? 'queue_idle_unverified' : 'quiet_observed' };

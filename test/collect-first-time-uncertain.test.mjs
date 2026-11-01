@@ -138,3 +138,23 @@ test('a Shoko event during final Plex reads invalidates the quiet window', async
   assert.deepEqual(result, { state: 'held',
     reason: 'import_quiet_window_unverified' });
 });
+
+test('final scoped feed permits the exact unrelated path without persisting it', async () => {
+  const key = '1:negev-7-0123456789abcdef/01.mkv';
+  const observed = await collectFirstTimeUncertain(providers({
+    observeImport: async () => ({ ...quiet, unrelatedPendingKeys: [key] }),
+    readFeedState: async (keys) => {
+      assert.deepEqual(keys, [key]);
+      return { state: 'connected_scoped', generation: 5,
+        pendingPaths: 1, pendingEvents: 0, inFlight: false,
+        reconciliationNeeded: true, pendingOnlyDebt: true };
+    },
+  }));
+  assert.equal(observed.importFence.unrelatedPendingKeys, undefined);
+  assert.deepEqual(await collectFirstTimeUncertain(providers({
+    observeImport: async () => ({ ...quiet, unrelatedPendingKeys: [key] }),
+    readFeedState: async () => ({ state: 'connected_scoped', generation: 5,
+      pendingPaths: 2, pendingEvents: 0, inFlight: false,
+      reconciliationNeeded: true, pendingOnlyDebt: true }),
+  })), { state: 'held', reason: 'import_quiet_window_unverified' });
+});

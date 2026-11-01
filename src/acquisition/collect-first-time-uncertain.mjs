@@ -1,4 +1,5 @@
 import { collectUnimportedTargets } from './collect-unimported-targets.mjs';
+import { validPendingKey } from './import-quiet-window.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -66,18 +67,28 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
       fence.afterObservedAtMs - fence.beforeObservedAtMs > 330_000) {
     return held('import_quiet_window_unverified');
   }
+  const pendingKeys = fence.unrelatedPendingKeys;
+  if (pendingKeys !== undefined &&
+      (!Array.isArray(pendingKeys) || pendingKeys.length > 128 ||
+       new Set(pendingKeys).size !== pendingKeys.length ||
+       pendingKeys.some((key) => !validPendingKey(key)))) {
+    return held('import_quiet_window_unverified');
+  }
   const secondShoko = await inspectShoko();
   if (secondShoko.state !== 'unimported_targets') return secondShoko;
   const secondPublic = await inspectPublic();
   if (secondPublic.state !== 'healthy_unconfirmed') return secondPublic;
   let finalFeed;
-  try { finalFeed = await readFeedState(); }
+  try { finalFeed = await readFeedState(pendingKeys); }
   catch { return held('import_quiet_window_unverified'); }
-  if (finalFeed?.state !== 'connected' ||
+  const scoped = pendingKeys?.length > 0;
+  if (finalFeed?.state !== (scoped ? 'connected_scoped' : 'connected') ||
       finalFeed.generation !== fence.feedGeneration ||
-      finalFeed.pendingPaths !== 0 || finalFeed.pendingEvents !== 0 ||
+      finalFeed.pendingPaths !== (scoped ? pendingKeys.length : 0) ||
+      finalFeed.pendingEvents !== 0 ||
       finalFeed.inFlight !== false ||
-      finalFeed.reconciliationNeeded !== false) {
+      finalFeed.reconciliationNeeded !== scoped ||
+      (scoped && finalFeed.pendingOnlyDebt !== true)) {
     return held('import_quiet_window_unverified');
   }
   const observedAtMs = now();
