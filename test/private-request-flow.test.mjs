@@ -152,3 +152,51 @@ test('a movie request is saved as one-time held acquisition', async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a newly requested ended series still watches for a late catalogue episode', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-late-request-'));
+  let finalListed = false;
+  const fetchImpl = async (url) => {
+    const route = new URL(url).pathname;
+    if (route.endsWith('/Search')) return json({ Total: 1, List: [
+      { ID: 3456, Title: 'Late Final' }] });
+    if (route.endsWith('/Episode')) {
+      const episodes = [{ ID: 3001, AnimeID: 3456, EpisodeNumber: 1,
+        Type: 'Episode', Title: 'First', AirDate: '2026-01-01' }];
+      if (finalListed) episodes.push({ ID: 3002, AnimeID: 3456,
+        EpisodeNumber: 2, Type: 'Episode', Title: 'Final', AirDate: '2026-02-01' });
+      return json({ Total: episodes.length, List: episodes });
+    }
+    if (route.endsWith('/AniDB/3456')) return json({ ID: 3456,
+      Title: 'Late Final', Type: 'TV', AirDate: '2026-01-01',
+      EndDate: '2026-02-01', EpisodeCount: 2, Restricted: false });
+    throw Error('Unexpected provider request');
+  };
+  const service = createCatalogueTestService({
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    dbPath: path.join(dir, 'state.sqlite'), testToken: 'synthetic-private-token',
+    fetchImpl, now: () => 1_000_000_000, today: () => '2026-02-20',
+  });
+  try {
+    await service.app.inject({ method: 'GET', url: '/api/catalogue/search?q=Late', headers: auth });
+    const created = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth, payload: { anidbId: 3456, scope: 'installment',
+        requestKey: 'late-final' } });
+    assert.equal(created.statusCode, 202);
+    const requestId = created.json().requestId;
+    const before = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}`, headers: auth });
+    assert.equal(before.json().monitorFuture, true);
+    assert.deepEqual(before.json().episodeIds, [3001]);
+    finalListed = true;
+    const poll = await service.pollAiringOnce();
+    assert.deepEqual(poll.results[0].addedEpisodeIds, [3002]);
+    const after = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}`, headers: auth });
+    assert.deepEqual(after.json().episodeIds, [3001, 3002]);
+    assert.equal(after.json().watchClosed, true);
+  } finally {
+    await service.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

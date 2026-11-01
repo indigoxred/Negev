@@ -1,5 +1,6 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
+import { hasStatedRegularEpisodes } from '../catalogue/stated-episode-count.mjs';
 import { planRequest } from './plan-request.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -40,11 +41,11 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
     const currentDate = today();
     const release = inferReleaseState({ ...detail, today: currentDate });
     if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
-    // A full declared episode count is only an inferred ending. Keep a new
-    // series request watched until AniDB supplies an explicit end date, just
-    // as the Airing poll does for an existing request.
+    // An end date can precede AniDB listing the final expected episode. Keep
+    // a new series watched until both the end date and stated episodes agree.
     const releaseState = detail.kind === 'series' && release.state === 'completed' &&
-      detail.endDate == null ? 'airing' : release.state;
+      (detail.endDate == null || !hasStatedRegularEpisodes(detail))
+      ? 'airing' : release.state;
     const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;

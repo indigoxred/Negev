@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
+import { hasStatedRegularEpisodes } from '../catalogue/stated-episode-count.mjs';
 
 const REASON = 'awaiting_availability_evidence';
 const held = (reason) => ({ state: 'held', reason });
@@ -190,8 +191,7 @@ export function openRequestLedger(dbPath) {
         // An end date can arrive before AniDB lists the final episode. Keep
         // polling until the detail includes its stated regular-episode count.
         const watchClosed = releaseState === 'completed' &&
-          Number.isSafeInteger(detail.episodeCount) && detail.episodeCount > 0 &&
-          regular.length >= detail.episodeCount && selected.length === pending.length;
+          hasStatedRegularEpisodes(detail) && selected.length === pending.length;
         if (watchClosed) closeWatch.run(requestId);
         return { state: 'advanced', addedEpisodeIds: addedEpisodeIds.sort((a, b) => a - b),
           deferredEpisodeIds: pending.filter((episode) => !selected.includes(episode))
