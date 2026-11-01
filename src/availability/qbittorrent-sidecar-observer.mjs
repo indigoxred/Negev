@@ -15,6 +15,8 @@ export function createQbittorrentSidecarObserver({ baseUrl, username, password,
     throw new TypeError('Invalid qBittorrent sidecar fetch');
   }
   return { async readTorrent(hash) {
+    if (typeof hash !== 'string' ||
+        !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash)) return null;
     const session = await gate.get();
     if (session.state !== 'authenticated') return null;
     const sessionFetch = createQbittorrentSessionFetch({ baseUrl,

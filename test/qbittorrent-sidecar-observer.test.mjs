@@ -42,3 +42,16 @@ test('rejected sidecar session stays held without a login storm', async () => {
   assert.equal(logins, 1);
   assert.equal(requests, 1);
 });
+
+test('invalid sidecar hash never authenticates or contacts qBittorrent', async () => {
+  let networkCalls = 0;
+  const observer = createQbittorrentSidecarObserver({
+    baseUrl: 'http://qbit.internal:8080', username: 'observer',
+    password: 'synthetic-password',
+    login: async () => { networkCalls++; return { state: 'authenticated',
+      sessionId: 'syntheticSid' }; },
+    fetchImpl: async () => { networkCalls++; return Response.json([]); },
+  });
+  assert.equal(await observer.readTorrent('../wrong'), null);
+  assert.equal(networkCalls, 0);
+});
