@@ -215,6 +215,14 @@ export function parseUserServerConfig(env) {
        env.NEGEV_SHOKO_RECENT !== '1')) {
     throw new TypeError('Direct availability needs a Shoko observer and Plex index');
   }
+  const rawDirectDelay = env.NEGEV_DIRECT_ACTIVE_DELAY_MS;
+  if (rawDirectDelay !== undefined &&
+      (env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
+       typeof rawDirectDelay !== 'string' ||
+       !/^[1-9]\d*$/.test(rawDirectDelay) ||
+       Number(rawDirectDelay) < 10_000 || Number(rawDirectDelay) > 300_000)) {
+    throw new TypeError('Invalid direct availability active delay');
+  }
   if (env.NEGEV_TITLE_CHECK === '1' &&
       (env.NEGEV_PLEX_INDEX !== '1' ||
        env.NEGEV_PLEX_OBSERVER !== '1')) {
@@ -254,6 +262,8 @@ export function parseUserServerConfig(env) {
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
+    directActiveDelayMs: rawDirectDelay === undefined ? 60_000 :
+      Number(rawDirectDelay),
     titleCheck: env.NEGEV_TITLE_CHECK === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',

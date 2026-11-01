@@ -118,6 +118,7 @@ try {
     });
     directAvailabilityScheduler = createDirectAvailabilityScheduler({
       runOnce: cycle.runOnce,
+      activeDelayMs: config.directActiveDelayMs,
       idleDelayMs: config.titleCheck ? 60_000 : 5 * 60_000 });
     directAvailabilityScheduler.start();
   }

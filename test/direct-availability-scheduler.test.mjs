@@ -43,3 +43,25 @@ test('title progress keeps the shared scheduler paced at one minute', async () =
   assert.equal(timers[0].delay, 60_000);
   await scheduler.close();
 });
+
+test('a configured active pace advances a backlog without overlapping checks', async () => {
+  const timers = [];
+  const scheduler = createDirectAvailabilityScheduler({
+    runOnce: async () => ({ state: 'checked' }),
+    activeDelayMs: 15_000,
+    setTimer: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
+    clearTimer: () => {},
+  });
+  scheduler.start();
+  await timers.shift().fn();
+  assert.equal(timers[0].delay, 15_000);
+  await scheduler.close();
+});
+
+test('active pace cannot exceed the bounded 10-second to five-minute range', () => {
+  for (const activeDelayMs of [0, 9_999, 300_001, NaN, '15000']) {
+    assert.throws(() => createDirectAvailabilityScheduler({
+      runOnce: async () => ({ state: 'checked' }), activeDelayMs,
+    }), TypeError);
+  }
+});

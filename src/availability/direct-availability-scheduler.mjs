@@ -2,11 +2,14 @@
 // An idle queue backs off; failures retry after five minutes.
 export function createDirectAvailabilityScheduler({ runOnce,
   idleDelayMs = 5 * 60_000,
+  activeDelayMs = 60_000,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof runOnce !== 'function' || typeof setTimer !== 'function' ||
       typeof clearTimer !== 'function' ||
       !Number.isSafeInteger(idleDelayMs) || idleDelayMs < 60_000 ||
-      idleDelayMs > 5 * 60_000) {
+      idleDelayMs > 5 * 60_000 ||
+      !Number.isSafeInteger(activeDelayMs) || activeDelayMs < 10_000 ||
+      activeDelayMs > 5 * 60_000) {
     throw new TypeError('Invalid direct availability scheduler');
   }
   let timer;
@@ -27,7 +30,7 @@ export function createDirectAvailabilityScheduler({ runOnce,
       const result = await runOnce();
       if (['checked', 'page_loaded', 'target_checked'].includes(result?.state) ||
           result?.reason === 'stale_claim') {
-        delay = 60_000;
+        delay = activeDelayMs;
       }
     } catch { /* Unknown is retried by the durable queue after its lease. */ }
     schedule(delay);
