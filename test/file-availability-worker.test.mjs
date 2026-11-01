@@ -17,6 +17,7 @@ test('one Shoko file read checks several exact episode receipts without swallowi
     for (const pair of pairs) queue.enqueue({ ...pair, observedMs: 100 });
     let reads = 0;
     const observed = [];
+    let sharedBudget;
     const worker = createFileAvailabilityWorker({ queue,
       inventory: {
         getObservedFileIds: () => [51],
@@ -25,14 +26,21 @@ test('one Shoko file read checks several exact episode receipts without swallowi
       resolveKind: async () => 'series',
       readCandidate: async () => { reads++; return { state: 'candidate',
         fileId: 51, pairs }; },
-      observeCandidate: async ({ target }) => { observed.push(target.episodeId);
+      observeCandidate: async ({ target, budget }) => {
+        if (sharedBudget) assert.equal(budget, sharedBudget);
+        else sharedBudget = budget;
+        assert.equal(budget.cardReads, observed.length);
+        budget.cardReads++;
+        observed.push(target.episodeId);
         return { state: 'available', proof: { fileId: 51, libraryId: 102,
           ratingKey: target.episodeId, partId: 900 } }; },
       observeFallback: async () => { throw Error('batch path expected'); },
       now: () => 101 });
     assert.deepEqual(await worker.runOnce(), { state: 'checked',
-      target: pairs[0], result: 'available', batchSize: 4 });
+      target: pairs[0], result: 'available', batchSize: 4,
+      load: { cardReads: 4, physicalProbes: 0 } });
     assert.equal(reads, 1);
+    assert.equal(sharedBudget.cardReads, 4);
     assert.deepEqual(observed, [1001, 1002, 1003, 1004]);
     assert.equal(queue.getStatus({ ...pairs[3], nowMs: 101 }).state,
       'available');
@@ -119,7 +127,8 @@ test('a failed episode card does not prevent the next episode from being checked
       observeFallback: async () => { throw Error('batch path expected'); },
       now: () => 101 });
     assert.deepEqual(await worker.runOnce(), { state: 'checked',
-      target: pairs[0], result: 'unknown', batchSize: 2 });
+      target: pairs[0], result: 'unknown', batchSize: 2,
+      load: { cardReads: 0, physicalProbes: 0 } });
     assert.equal(queue.getStatus({ ...pairs[0], nowMs: 101 }).state,
       'unknown');
     assert.equal(queue.getStatus({ ...pairs[1], nowMs: 101 }).state,

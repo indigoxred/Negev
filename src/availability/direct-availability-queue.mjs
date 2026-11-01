@@ -364,6 +364,7 @@ export function createFileAvailabilityWorker({ queue, inventory,
           catch { /* All claimed targets remain Unknown and due for retry. */ }
         }
         let firstResult;
+        const budget = { cardReads: 0, physicalProbes: 0 };
         for (const receipt of receipts) {
           let outcome;
           try {
@@ -374,7 +375,7 @@ export function createFileAvailabilityWorker({ queue, inventory,
                   pair?.anidbId === receipt.target.anidbId &&
                   pair.episodeId === receipt.target.episodeId);
               outcome = linked && ['series', 'movie'].includes(kind)
-                ? await observeCandidate({ candidate,
+                ? await observeCandidate({ candidate, budget,
                   target: { ...receipt.target, kind } }) : { state: 'unknown' };
             } else outcome = await observeFallback(receipt.target);
           } catch { outcome = { state: 'unknown' }; }
@@ -387,7 +388,8 @@ export function createFileAvailabilityWorker({ queue, inventory,
             ? { state: 'checked', target: receipt.target, result: state,
               batchSize: receipts.length } : saved;
         }
-        return firstResult;
+        return firstResult.state === 'checked'
+          ? { ...firstResult, load: { ...budget } } : firstResult;
       } finally { busy = false; }
     },
   };

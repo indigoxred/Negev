@@ -101,13 +101,35 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     // Internal file-centric path: the caller must obtain this candidate from
     // a fresh Shoko file read. The exact Plex card and physical part are still
     // rechecked before returning proof.
-    observeFileCandidate({ candidate, target } = {}) {
+    observeFileCandidate({ candidate, target, budget } = {}) {
+      const shared = budget ?? { cardReads: 0, physicalProbes: 0 };
+      if (!Number.isSafeInteger(shared.cardReads) || shared.cardReads < 0 ||
+          shared.cardReads > 10 ||
+          !Number.isSafeInteger(shared.physicalProbes) ||
+          shared.physicalProbes < 0 || shared.physicalProbes > 64) {
+        throw new TypeError('Invalid file availability read budget');
+      }
+      if (shared.cardReads === 10 || shared.physicalProbes === 64) {
+        return { state: 'unknown', reason: 'read_budget_exhausted' };
+      }
+      const readBudgetedCard = (input) => {
+        if (shared.cardReads >= 10) throw new Error('Card read budget exhausted');
+        shared.cardReads++;
+        return readCard(input);
+      };
+      const probeBudgeted = (input) => {
+        if (shared.physicalProbes >= 64) {
+          throw new Error('Physical probe budget exhausted');
+        }
+        shared.physicalProbes++;
+        return probePhysicalCandidate(input);
+      };
       const publicLibraryIds = target?.kind === 'movie'
         ? [...publicSections.episode, ...publicSections.movie]
         : publicSections.episode;
       return observeFileCandidateTarget({ candidate, target,
-        publicLibraryIds, cardIndex: index, readPlex: readCard,
-        shokoMount, plexMount, plexMounts, now });
+        publicLibraryIds, cardIndex: index, readPlex: readBudgetedCard,
+        probeImpl: probeBudgeted, shokoMount, plexMount, plexMounts, now });
     },
     probeFirstTimeSections({ kind } = {}) {
       return probeFirstTimePublicSections({ kind, publicSections,

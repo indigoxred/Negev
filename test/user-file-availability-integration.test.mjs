@@ -68,7 +68,7 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
       kind: 'episode' })).state, 'page_indexed');
     assert.deepEqual(await service.tickFileAvailability(), { state: 'checked',
       target: { anidbId: 42, episodeId: 1001 }, result: 'available',
-      batchSize: 1 });
+      batchSize: 1, load: { cardReads: 1, physicalProbes: 1 } });
     assert.equal(service.getDirectAvailabilityStatus({ anidbId: 42,
       episodeId: 1001 }).state, 'available');
     assert.equal(calls.includes('/api/v3/Episode/AniDB/1001/Episode'), false);

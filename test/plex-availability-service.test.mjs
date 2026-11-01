@@ -152,6 +152,56 @@ test('one fresh file candidate verifies its public card without a second Shoko e
   } finally { service.close(); }
 });
 
+test('file candidates share one capped Plex card budget across a batch', async () => {
+  const { config, calls } = await fixture();
+  const service = createPlexAvailabilityService(config);
+  try {
+    await service.tick({ libraryId: 102, kind: 'episode' });
+    const candidate = { state: 'candidate', fileId: 51, size: 5,
+      anidbFileId: null, releaseEvidence: 'shoko_user_link',
+      pairs: [{ anidbId: 42, episodeId: 1001 }],
+      identities: [{ anidbId: 42, episodeId: 1001,
+        shokoSeriesId: 99, shokoEpisodeId: 555, tmdbMovieIds: [] }],
+      sourcePaths: ['/pure/Anime/one.mkv'] };
+    const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+    const budget = { cardReads: 9, physicalProbes: 0 };
+    const before = calls.filter((call) =>
+      call === 'plex/library/metadata/500').length;
+    assert.equal((await service.observeFileCandidate({ candidate, target,
+      budget })).state, 'available');
+    assert.equal(budget.cardReads, 10);
+    const probesAtLimit = budget.physicalProbes;
+    assert.equal((await service.observeFileCandidate({ candidate, target,
+      budget })).state, 'unknown');
+    assert.equal(budget.physicalProbes, probesAtLimit);
+    assert.equal(calls.filter((call) =>
+      call === 'plex/library/metadata/500').length - before, 1);
+  } finally { service.close(); }
+});
+
+test('an exhausted physical probe budget stops before another card read', async () => {
+  const { config, calls } = await fixture();
+  const service = createPlexAvailabilityService(config);
+  try {
+    await service.tick({ libraryId: 102, kind: 'episode' });
+    const candidate = { state: 'candidate', fileId: 51, size: 5,
+      anidbFileId: null, releaseEvidence: 'shoko_user_link',
+      pairs: [{ anidbId: 42, episodeId: 1001 }],
+      identities: [{ anidbId: 42, episodeId: 1001,
+        shokoSeriesId: 99, shokoEpisodeId: 555, tmdbMovieIds: [] }],
+      sourcePaths: ['/pure/Anime/one.mkv'] };
+    const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+    const budget = { cardReads: 0, physicalProbes: 63 };
+    assert.equal((await service.observeFileCandidate({ candidate, target,
+      budget })).state, 'available');
+    assert.deepEqual(budget, { cardReads: 1, physicalProbes: 64 });
+    const before = calls.length;
+    assert.equal((await service.observeFileCandidate({ candidate, target,
+      budget })).state, 'unknown');
+    assert.equal(calls.length, before);
+  } finally { service.close(); }
+});
+
 test('an opt-in index tick reports bounded provider and filesystem probe counts', async () => {
   const { config } = await fixture({ detailedPage: true });
   const service = createPlexAvailabilityService(config);
