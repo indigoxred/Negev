@@ -29,7 +29,7 @@ export function createDirectAvailabilityScheduler({ runOnce,
     try {
       const result = await runOnce();
       if (['checked', 'page_loaded', 'target_checked'].includes(result?.state) ||
-          result?.reason === 'stale_claim') {
+          ['stale_claim', 'metadata_busy'].includes(result?.reason)) {
         delay = activeDelayMs;
       }
     } catch { /* Unknown is retried by the durable queue after its lease. */ }

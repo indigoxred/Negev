@@ -221,6 +221,18 @@ export function openDirectAvailabilityQueue(dbPath) {
         return receipts;
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
+    retryBusy({ claim: receipt, nowMs }) {
+      if (receipt?.state !== 'claimed' || !validId(receipt.target?.anidbId) ||
+          !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
+          !validId(receipt.version) || !validTime(nowMs) ||
+          nowMs < receipt.observedMs) {
+        throw new TypeError('Invalid busy availability retry');
+      }
+      return releaseChanged.run(nowMs, receipt.target.anidbId,
+        receipt.target.episodeId, receipt.observedMs, receipt.version).changes === 1
+        ? { state: 'held', reason: 'metadata_busy' }
+        : { state: 'held', reason: 'stale_claim' };
+    },
     recordResult({ claim: receipt, state, checkedMs, proof = null }) {
       if (receipt?.state !== 'claimed' || !validId(receipt.target?.anidbId) ||
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
@@ -274,6 +286,7 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
   now = Date.now, requireProof = false } = {}) {
   if (typeof queue?.claimNext !== 'function' ||
       typeof queue?.recordResult !== 'function' ||
+      typeof queue?.retryBusy !== 'function' ||
       typeof observeTarget !== 'function' || typeof now !== 'function' ||
       typeof requireProof !== 'boolean') {
     throw new TypeError('Invalid direct availability worker');
@@ -289,6 +302,9 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
         let outcome;
         try { outcome = await observeTarget(receipt.target); }
         catch { outcome = { state: 'unknown' }; }
+        if (outcome?.state === 'busy') {
+          return queue.retryBusy({ claim: receipt, nowMs: now() });
+        }
         const proof = outcome?.proof;
         const state = outcome?.state === 'available' &&
           (proof == null ? !requireProof : validProof(proof))

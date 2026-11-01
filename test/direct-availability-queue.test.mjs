@@ -41,6 +41,30 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
   });
 });
 
+test('metadata contention retains a direct arrival for the next tick', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 100, priority: 'event' });
+    let clock = 101;
+    let reads = 0;
+    const worker = createDirectAvailabilityWorker({ queue: ctx.queue,
+      now: () => clock, requireProof: true,
+      observeTarget: async () => ++reads === 1 ? { state: 'busy' } :
+        { state: 'available', proof: { fileId: 51, libraryId: 102,
+          ratingKey: 500, partId: 600 } },
+    });
+    assert.deepEqual(await worker.runOnce(),
+      { state: 'held', reason: 'metadata_busy' });
+    assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: clock }),
+      { state: 'unknown' });
+    clock = 102;
+    assert.deepEqual(await worker.runOnce(),
+      { state: 'checked', target, result: 'available' });
+    assert.equal(ctx.queue.getStatus({ ...target, nowMs: clock }).state,
+      'available');
+  });
+});
+
 test('a bounded same-file claim preserves separate episode receipts and fences', async () => {
   await fixture(async (ctx) => {
     const targets = [1001, 1002, 1003, 1004, 1005].map((episodeId) =>
