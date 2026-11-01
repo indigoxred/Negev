@@ -47,8 +47,8 @@
 
 **Interfaces:** `openFileProofLedger(dbPath,{positiveLifetimeMs,now})` accepts only validated `observe({anidbId,episodeId,proof,checkedMs})` from an internal exact observer. `getCurrent({anidbId,episodeId})` distinguishes current `available`, `previously_available`, and `unknown`; no negative status is stored. Proof fields are `fileId,libraryId,ratingKey,partId`. A proof can have multiple public copies; an episode stays current if at least one is valid. The lifetime is explicit and conservative until measured withdrawal latency supports a broader setting.
 
-- [ ] Write tests for exact field validation, restart persistence, multiple playable copies, expiry and older receipts.
-- [ ] Run focused tests red; implement the ledger; run focused and full suite; commit.
+- [x] Write tests for exact field validation, restart persistence, multiple playable copies, expiry and older receipts.
+- [x] Run focused tests red; implement the ledger; run focused and full suite; commit.
 
 ### Task 3: Narrow proof withdrawal
 
