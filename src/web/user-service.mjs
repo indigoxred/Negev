@@ -66,7 +66,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   titleCheck = false,
-  shokoRecent = false, anidbTitleDump = false,
+  shokoRecent = false, shokoInventoryHints = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
   readShokoConnectionState = () => ({ state: 'disconnected' }),
@@ -92,7 +92,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
          typeof qbitSidecarObserver.readTorrent !== 'function' ||
          typeof qbitSidecarObserver.importSavePath !== 'string' ||
          !qbitSidecarObserver.importSavePath.startsWith('/'))) ||
-      typeof shokoRecent !== 'boolean' || typeof anidbTitleDump !== 'boolean' ||
+      typeof shokoRecent !== 'boolean' ||
+      typeof shokoInventoryHints !== 'boolean' ||
+      typeof anidbTitleDump !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
       typeof readShokoConnectionState !== 'function' ||
@@ -149,7 +151,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const inventoryWorker = createShokoInventoryWorker({ ledger: inventory, now,
       onChangedFile: enqueueChangedFile,
       readPage: (input) => metadata.run(() => readShokoFilePage({
-        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input,
+        includeHints: shokoInventoryHints, fetchImpl,
       })) });
     const titleRegistry = createObservedTitleRegistry({ now });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({

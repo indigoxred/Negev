@@ -236,6 +236,7 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Invalid Shoko Import folder ID');
   }
   if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
+      env.NEGEV_SHOKO_INVENTORY_HINTS,
       env.NEGEV_SHOKO_RECENT,
       env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
       env.NEGEV_DIRECT_AVAILABILITY,
@@ -247,6 +248,10 @@ export function parseUserServerConfig(env) {
   }
   if (env.NEGEV_PLEX_INDEX === '1' && env.NEGEV_PLEX_OBSERVER !== '1') {
     throw new TypeError('Plex index needs observer configuration');
+  }
+  if (env.NEGEV_SHOKO_INVENTORY_HINTS === '1' &&
+      env.NEGEV_SHOKO_INVENTORY !== '1') {
+    throw new TypeError('Shoko path hints need inventory');
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
       ((env.NEGEV_PLEX_INDEX !== '1' &&
@@ -333,6 +338,7 @@ export function parseUserServerConfig(env) {
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
+    shokoInventoryHints: env.NEGEV_SHOKO_INVENTORY_HINTS === '1',
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     directActiveDelayMs: rawDirectDelay === undefined ? 60_000 :

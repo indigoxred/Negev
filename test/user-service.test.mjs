@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
+import { openShokoInventoryLedger } from '../src/availability/shoko-inventory-worker.mjs';
 import { openShokoRecentLedger } from '../src/availability/shoko-recent-ledger.mjs';
 import { openTitleCheckLedger } from '../src/availability/title-check-ledger.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
@@ -558,6 +559,36 @@ test('account service records one Shoko direct-import page without dispatching a
       fetchImpl: async () => { throw new Error('No scan on startup'); } });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42, episodeId: 1001 }), [10]);
     assert.equal(calls, 3);
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('opt-in inventory hints stay private in the durable Shoko ledger', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-hint-inventory-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  let service;
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false,
+      shokoInventoryHints: true, fetchImpl: async (url) => {
+        assert.equal(url.pathname, '/api/v3/File');
+        assert.deepEqual(url.searchParams.getAll('include'),
+          ['XRefs,AbsolutePaths,ImportLimbo']);
+        return json({ Total: 1, List: [{ ID: 10, Size: 5,
+          Updated: '2026-10-31T00:00:00Z',
+          Locations: [{ FileID: 10, IsAccessible: true,
+            AbsolutePath: '/pure/Anime/episode.mkv' }],
+          SeriesIDs: [{ SeriesID: { AniDB: 42 },
+            EpisodeIDs: [{ AniDB: 1001 }] }] }] });
+      } });
+    assert.equal((await service.tickShokoInventory()).state, 'recorded');
+    const ledger = openShokoInventoryLedger(dbPath);
+    try {
+      assert.deepEqual(ledger.getFileHint(10), {
+        updated: '2026-10-31T00:00:00Z', size: 5,
+        sourcePaths: ['/pure/Anime/episode.mkv'], observedMs: ledger.getFile(10).observedMs });
+    } finally { ledger.close(); }
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
