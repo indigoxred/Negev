@@ -1,4 +1,5 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const MAX_TORRENT_BYTES = 2_000_000;
@@ -30,7 +31,7 @@ export async function fetchProwlarrTorrentBytes({
       !/^\/(?:[A-Za-z0-9_-]+\/)*$/.test(base.pathname) || base.search || base.hash ||
       typeof apiKey !== 'string' || !apiKey ||
       term.length < 2 || term.length > 120 ||
-      typeof candidate?.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
+      typeof candidate?.guid !== 'string' || !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
       !Number.isSafeInteger(candidate.indexerId) || candidate.indexerId < 1 ||
       typeof candidate.title !== 'string' || !candidate.title.trim() || candidate.title.length > 500 ||
       !Number.isSafeInteger(candidate.size) || candidate.size < 1 ||

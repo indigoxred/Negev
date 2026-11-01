@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
+import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 
 const safeImportReasons = new Set(['incomplete_import_baseline',
   'invalid_sidecar_evidence', 'invalid_import_file',
@@ -511,7 +512,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !Array.isArray(result.items) || result.items.length > 50 ||
         result.items.some((item) =>
           typeof item?.guid !== 'string' || item.guid.length < 1 ||
-          item.guid.length > 500 || !Number.isSafeInteger(item.indexerId) ||
+          item.guid.length > MAX_RELEASE_GUID_LENGTH || !Number.isSafeInteger(item.indexerId) ||
           item.indexerId < 1 || typeof item.title !== 'string' ||
           item.title.length < 1 || item.title.length > 500 ||
           !Number.isSafeInteger(item.size) || item.size < 1 ||
@@ -536,7 +537,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(400).send({ error: 'Invalid preflight' });
     }
     const candidate = request.body.candidate;
-    if (typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
+    if (typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
         !Number.isSafeInteger(candidate.indexerId) || candidate.indexerId < 1 ||
         typeof candidate.title !== 'string' || !candidate.title.trim() ||
         candidate.title.length > 500 || !Number.isSafeInteger(candidate.size) ||

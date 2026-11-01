@@ -63,3 +63,16 @@ test('multi-indexer aggregate may exceed the query limit without hiding valid re
   assert.equal(result.state, 'candidates');
   assert.equal(result.items.length, 25);
 });
+
+test('accepts bounded Prowlarr magnet GUIDs from SubsPlease', async () => {
+  const guid = `magnet:?xt=urn:btih:${'a'.repeat(810)}`;
+  const item = { guid, indexerId: 9, title: 'Example Anime 01', size: 12345,
+    protocol: 'torrent', seeders: 1 };
+  const result = await searchReleaseCandidates({ ...config, query: 'Example Anime',
+    fetchImpl: async () => Response.json([item]) });
+  assert.equal(result.state, 'candidates');
+  assert.equal(result.items[0].guid, guid);
+  assert.deepEqual(await searchReleaseCandidates({ ...config, query: 'Example Anime',
+    fetchImpl: async () => Response.json([{ ...item, guid: `magnet:${'a'.repeat(2100)}` }]) }),
+  { state: 'unavailable' });
+});

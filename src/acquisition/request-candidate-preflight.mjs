@@ -3,6 +3,7 @@ import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
+import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -18,7 +19,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
       typeof releaseQueries !== 'function' || typeof pause !== 'function' ||
       typeof candidate?.guid !== 'string' || !candidate.guid ||
-      candidate.guid.length > 500 || !validId(candidate.indexerId) ||
+      candidate.guid.length > MAX_RELEASE_GUID_LENGTH || !validId(candidate.indexerId) ||
       typeof candidate.title !== 'string' || !candidate.title.trim() ||
       candidate.title.length > 500 || !Number.isSafeInteger(candidate.size) ||
       candidate.size < 1) return held('invalid_preflight');

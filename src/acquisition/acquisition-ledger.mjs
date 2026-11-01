@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -196,7 +197,7 @@ export function openAcquisitionLedger(dbPath) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
-          !candidate.guid || candidate.guid.length > 500 ||
+          !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
           !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > 50 ||
           episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
@@ -312,7 +313,7 @@ export function openAcquisitionLedger(dbPath) {
     },
     bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
       if (!validId(attemptId) || !validId(candidate?.indexerId) ||
-          typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > 500 ||
+          typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
           typeof hash !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
           !validTime(nowMs)) throw new TypeError('Invalid prepared torrent');
       return transact(() => {

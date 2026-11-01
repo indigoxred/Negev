@@ -1,4 +1,5 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 
 // Prowlarr GET /api/v1/search only. A release is a search candidate, not
 // evidence that its video is registered in AniDB or safe to import.
@@ -42,7 +43,7 @@ export async function searchReleaseCandidates({
     if (response.status !== 200) return { state: 'unavailable' };
     const data = await readBoundedJson(response, 2_000_000);
     if (!Array.isArray(data) || data.length > 1_000 || data.some((item) =>
-      typeof item?.guid !== 'string' || !item.guid || item.guid.length > 500 ||
+      typeof item?.guid !== 'string' || !item.guid || item.guid.length > MAX_RELEASE_GUID_LENGTH ||
       !indexerIds.includes(item.indexerId) || typeof item.title !== 'string' ||
       !item.title.trim() || item.title.length > 500 ||
       !Number.isSafeInteger(item.size) || item.size <= 0 ||

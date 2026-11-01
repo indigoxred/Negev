@@ -1,6 +1,7 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
+import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -44,7 +45,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         !Array.isArray(found.items) || found.items.length > 50 ||
         found.items.some((candidate) => !validId(candidate?.indexerId) ||
           typeof candidate.guid !== 'string' || !candidate.guid ||
-          candidate.guid.length > 500 || candidate.evidence !== 'unverified')) {
+          candidate.guid.length > MAX_RELEASE_GUID_LENGTH || candidate.evidence !== 'unverified')) {
       return held('release_search_unavailable');
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),

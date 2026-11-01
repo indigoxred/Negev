@@ -40,6 +40,15 @@ test('accepts a Prowlarr-proxied magnetUrl when downloadUrl is absent', async ()
   assert.deepEqual(calls, ['/api/v1/search', '/3/download']);
 });
 
+test('revalidates a bounded long magnet GUID before fetching only its Prowlarr proxy', async () => {
+  const longCandidate = { ...candidate, guid: `magnet:?xt=urn:btih:${'a'.repeat(810)}` };
+  const result = await fetchProwlarrTorrentBytes({ ...config, candidate: longCandidate,
+    fetchImpl: async (url) => new URL(url).pathname === '/api/v1/search'
+      ? Response.json([{ ...longCandidate, protocol: 'torrent', magnetUrl: proxy }])
+      : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } }) });
+  assert.equal(result.state, 'torrent_bytes');
+});
+
 test('raw magnets and off-origin magnetUrl values remain held', async () => {
   for (const magnetUrl of ['magnet:?xt=urn:btih:abc',
     'https://nyaa.si/download/123.torrent']) {
