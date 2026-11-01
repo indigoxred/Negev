@@ -1,17 +1,7 @@
 // Public playback and local acquisition history are separate facts. Show both
 // when a failed attempt still needs review after a file becomes playable.
-export function progressText(progress, kind) {
+function acquisitionText(progress, kind) {
   const target = kind === 'movie' ? 'film' : 'episode';
-  if (!progress || !['unverified', 'verified_recently'].includes(progress.publicAvailability)) {
-    return 'Request status unavailable';
-  }
-  if (progress.publicAvailability === 'verified_recently') {
-    const suffix = progress.state === 'review_needed'
-      ? ' · Earlier download needs review' : '';
-    return (progress.publicVerifiedTargets === progress.targetCount
-      ? `All requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`
-      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`) + suffix;
-  }
   if (progress.state === 'review_needed') return 'Needs owner review';
   switch (progress.state) {
     case 'saved': return progress.targetCount === 0 && kind === 'series'
@@ -27,4 +17,20 @@ export function progressText(progress, kind) {
     case 'import_unverified': return 'Shoko import outcome unverified · Plex unverified';
     default: return 'Request status unavailable';
   }
+}
+
+export function progressText(progress, kind) {
+  if (!progress || !['unverified', 'verified_recently'].includes(progress.publicAvailability)) {
+    return 'Request status unavailable';
+  }
+  if (progress.publicAvailability === 'verified_recently') {
+    const complete = progress.publicVerifiedTargets === progress.targetCount;
+    const playback = complete
+      ? `All requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`
+      : `${progress.publicVerifiedTargets}/${progress.targetCount} requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`;
+    if (progress.state === 'review_needed') return `${playback} · Earlier download needs review`;
+    return !complete && progress.state !== 'saved'
+      ? `${playback} · ${acquisitionText(progress, kind)}` : playback;
+  }
+  return acquisitionText(progress, kind);
 }

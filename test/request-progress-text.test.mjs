@@ -11,6 +11,17 @@ test('public Plex proof remains visible alongside an earlier rejected download',
     '1/2 requested episodes checked playable in Plex recently · Earlier download needs review');
 });
 
+test('partial public availability also shows an active acquisition stage', () => {
+  assert.equal(progressText({ state: 'download_unverified',
+    publicAvailability: 'verified_recently', publicVerifiedTargets: 1,
+    targetCount: 12 }, 'series'),
+  '1/12 requested episodes checked playable in Plex recently · Download requested · completion unverified');
+  assert.equal(progressText({ state: 'private_copy_recorded',
+    publicAvailability: 'verified_recently', publicVerifiedTargets: 1,
+    targetCount: 2 }, 'series'),
+  '1/2 requested episodes checked playable in Plex recently · Files verified privately · Shoko import unverified');
+});
+
 test('an unverified request still shows review and singular private copy wording', () => {
   assert.equal(progressText({ state: 'review_needed', publicAvailability: 'unverified' }, 'series'),
     'Needs owner review');
