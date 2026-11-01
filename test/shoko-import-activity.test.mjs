@@ -92,3 +92,49 @@ test('a file arriving while the queue is read stays busy; empty plus idle is obs
       fetchImpl: async () => json(idleQueue) }), { state: 'unavailable' });
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
+
+test('opt-in folder-scoped baseline does not treat an already recognized Import video as new work', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    await writeFile(path.join(importRoot, 'known.mkv'), 'known');
+    const calls = [];
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1,
+      fetchImpl: async (url) => {
+        calls.push(new URL(url).pathname);
+        if (new URL(url).pathname === '/api/v3/Queue') return json({
+          WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [],
+        });
+        return json({ Total: 1, List: [{ ID: 17, Size: 5,
+          SeriesIDs: [{ ID: 42 }], Locations: [{ ManagedFolderID: 1,
+            RelativePath: 'known.mkv', IsAccessible: true }] }] });
+      },
+    });
+    assert.deepEqual(result, { state: 'quiet_observed' });
+    assert.equal(calls.filter((item) =>
+      item === '/api/v3/ManagedFolder/1/File').length, 2);
+    assert.equal(calls.filter((item) => item === '/api/v3/Queue').length, 1);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
+test('opt-in baseline holds a file that appears during the queue read', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
+  try {
+    await writeFile(path.join(importRoot, 'known.mkv'), 'known');
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1,
+      fetchImpl: async (url) => {
+        if (new URL(url).pathname === '/api/v3/Queue') {
+          await writeFile(path.join(importRoot, 'new.mkv'), 'new');
+          return json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+            TotalCount: 0, CurrentlyExecuting: [], Pools: [] });
+        }
+        return json({ Total: 1, List: [{ ID: 17, Size: 5,
+          SeriesIDs: [{ ID: 42 }], Locations: [{ ManagedFolderID: 1,
+            RelativePath: 'known.mkv', IsAccessible: true }] }] });
+      },
+    });
+    assert.deepEqual(result, { state: 'busy' });
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});

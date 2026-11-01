@@ -1,5 +1,7 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { readImportRootState } from './import-root-state.mjs';
+import { readImportRootInventory } from './import-root-inventory.mjs';
+import { classifyShokoImportBaseline } from './shoko-import-baseline.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -9,12 +11,15 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 // that imports settled or a target is absent. Avoid /api/v3/File here:
 // Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
-  importRoot, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  importRoot, managedFolderId, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||
       base.password || base.pathname !== '/' || base.search || base.hash ||
       typeof apiKey !== 'string' || !apiKey || /[\r\n]/.test(apiKey) ||
+      (managedFolderId !== undefined &&
+        (!Number.isSafeInteger(managedFolderId) || managedFolderId < 1 ||
+         importRoot === undefined)) ||
       typeof fetchImpl !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid Shoko activity configuration');
@@ -26,10 +31,29 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     return response.status === 200 ? readBoundedJson(response, maximumBytes) : null;
   };
   try {
+    const readRecognizedBaseline = async () => {
+      const inventory = await readImportRootInventory({ root: importRoot });
+      if (inventory.state !== 'inventory') return unavailable();
+      if (inventory.files.length === 0) return inventory;
+      const url = new URL(`/api/v3/ManagedFolder/${managedFolderId}/File`, base);
+      url.searchParams.set('pageSize', '256');
+      url.searchParams.set('include', 'XRefs');
+      const page = await read(url, 2_000_000);
+      if (!page) return unavailable();
+      const baseline = classifyShokoImportBaseline({ diskFiles: inventory.files,
+        shokoPage: page, managedFolderId });
+      return baseline.state === 'recognized_baseline' ? inventory : { state: 'busy' };
+    };
+    let beforeInventory;
     if (importRoot !== undefined) {
-      const before = await readImportRootState({ root: importRoot });
-      if (before.state === 'busy') return { state: 'busy' };
-      if (before.state !== 'empty_observed') return unavailable();
+      if (managedFolderId !== undefined) {
+        beforeInventory = await readRecognizedBaseline();
+        if (beforeInventory.state !== 'inventory') return beforeInventory;
+      } else {
+        const before = await readImportRootState({ root: importRoot });
+        if (before.state === 'busy') return { state: 'busy' };
+        if (before.state !== 'empty_observed') return unavailable();
+      }
     }
     const queue = await read(new URL('/api/v3/Queue', base), 100_000);
     if (!queue || ![queue.WaitingCount, queue.BlockedCount,
@@ -44,9 +68,17 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
         queue.CurrentlyExecuting.length ||
         queue.Pools.some((pool) => pool.ActiveWorkers > 0)) return { state: 'busy' };
     if (importRoot !== undefined) {
-      const after = await readImportRootState({ root: importRoot });
-      if (after.state === 'busy') return { state: 'busy' };
-      if (after.state !== 'empty_observed') return unavailable();
+      if (managedFolderId !== undefined) {
+        const afterInventory = await readRecognizedBaseline();
+        if (afterInventory.state !== 'inventory') return afterInventory;
+        if (beforeInventory.fingerprint !== afterInventory.fingerprint) {
+          return { state: 'busy' };
+        }
+      } else {
+        const after = await readImportRootState({ root: importRoot });
+        if (after.state === 'busy') return { state: 'busy' };
+        if (after.state !== 'empty_observed') return unavailable();
+      }
     }
     if (queue.ScheduledCount) return { state: 'scheduled_unverified' };
     // Both observations of a mounted Import root were empty and the queue
