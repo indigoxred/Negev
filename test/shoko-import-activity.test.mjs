@@ -147,7 +147,7 @@ test('opt-in activity brackets an inactive qBittorrent sidecar with exact hash r
     const seen = [];
     const result = await readShokoImportActivity({ ...input, importRoot,
       managedFolderId: 1, qbitImportSavePath: '/Shoko',
-      now: () => 4_700_000,
+      now: () => Date.now() + 2 * 3_600_000,
       readSidecarTorrent: async (value) => {
         seen.push(value);
         return { hash, state: 'missingFiles', category: 'Direct',

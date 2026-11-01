@@ -45,7 +45,8 @@ test('incomplete pages, repeated IDs, and inaccessible locations fail closed', (
 test('only an old, inactive, exactly owned qBittorrent parts sidecar is passive', () => {
   const hash = 'a'.repeat(40);
   const sidecarPath = `.${hash}.parts`;
-  const withSidecar = [...diskFiles, { relativePath: sidecarPath, size: 500 }];
+  const withSidecar = [...diskFiles, { relativePath: sidecarPath, size: 500,
+    modifiedAtMs: 1_000_000, changedAtMs: 1_000_000 }];
   const torrent = { hash, state: 'missingFiles', category: 'Direct',
     save_path: '/Shoko', progress: 0, dlspeed: 0, upspeed: 0,
     force_start: false, last_activity: 1_000 };
@@ -63,4 +64,7 @@ test('only an old, inactive, exactly owned qBittorrent parts sidecar is passive'
       sidecarTorrents: [{ relativePath: sidecarPath,
         torrent: { ...torrent, ...changed } }] }).state, 'held');
   }
+  assert.equal(classifyShokoImportBaseline({ ...options,
+    diskFiles: [...diskFiles, { relativePath: sidecarPath, size: 500,
+      modifiedAtMs: 4_000_000, changedAtMs: 4_000_000 }] }).state, 'held');
 });

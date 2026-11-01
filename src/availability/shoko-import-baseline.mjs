@@ -12,7 +12,8 @@ const sidecarHash = (relativePath) => {
   return match?.[1].toLowerCase() ?? null;
 };
 
-function inactiveSidecar({ relativePath, evidence, qbitImportSavePath, nowMs }) {
+function inactiveSidecar({ file, evidence, qbitImportSavePath, nowMs }) {
+  const relativePath = file.relativePath;
   const hash = sidecarHash(relativePath);
   const torrent = evidence?.torrent;
   return hash !== null && evidence.relativePath === relativePath &&
@@ -20,6 +21,10 @@ function inactiveSidecar({ relativePath, evidence, qbitImportSavePath, nowMs }) 
     qbitImportSavePath.startsWith('/') &&
     path.posix.normalize(qbitImportSavePath) === qbitImportSavePath &&
     Number.isSafeInteger(nowMs) && nowMs >= 0 &&
+    Number.isSafeInteger(file.modifiedAtMs) && file.modifiedAtMs >= 0 &&
+    Number.isSafeInteger(file.changedAtMs) && file.changedAtMs >= 0 &&
+    file.modifiedAtMs <= nowMs - 3_600_000 &&
+    file.changedAtMs <= nowMs - 3_600_000 &&
     typeof torrent === 'object' && torrent !== null &&
     typeof torrent.hash === 'string' && torrent.hash.toLowerCase() === hash &&
     torrent.state === 'missingFiles' &&
@@ -60,7 +65,7 @@ export function classifyShokoImportBaseline({ diskFiles, shokoPage,
     if (extension === '.nfo') { passiveFiles++; continue; }
     if (extension === '.parts') {
       const evidence = sidecars.get(file.relativePath);
-      if (!inactiveSidecar({ relativePath: file.relativePath, evidence,
+      if (!inactiveSidecar({ file, evidence,
         qbitImportSavePath, nowMs })) return held('active_or_unknown_sidecar');
       sidecars.delete(file.relativePath);
       passiveFiles++;

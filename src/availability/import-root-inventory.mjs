@@ -40,7 +40,9 @@ export async function readImportRootInventory({ root, maxEntries = 256,
             stat.ctimeNs, stat.mtimeNs].join('\0'));
         } else if (stat.isFile() && stat.size >= 0n &&
                    stat.size <= BigInt(Number.MAX_SAFE_INTEGER)) {
-          files.push({ relativePath, size: Number(stat.size) });
+          files.push({ relativePath, size: Number(stat.size),
+            modifiedAtMs: Number(stat.mtimeNs / 1_000_000n),
+            changedAtMs: Number(stat.ctimeNs / 1_000_000n) });
           fingerprintParts.push([relativePath, 'file', stat.dev, stat.ino,
             stat.size, stat.ctimeNs, stat.mtimeNs].join('\0'));
         } else return unavailable();
