@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { chown, chmod, lstat, realpath, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { createMountWitnessHandler } from './docker-mount-witness.mjs';
+import { prepareWitnessSocket } from './prepare-witness-socket.mjs';
 
 async function main() {
   if (process.platform === 'win32' || process.getuid?.() !== 0) {
@@ -22,12 +23,7 @@ async function main() {
       parent.gid !== clientGid || (parent.mode & 0o777) !== 0o750) {
     throw new TypeError('Private witness socket directory required');
   }
-  try {
-    await lstat(socketPath);
-    throw new TypeError('Witness socket already exists');
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
+  await prepareWitnessSocket({ socketPath, clientGid });
   const handler = createMountWitnessHandler({ names: {
     qbittorrent: process.env.NEGEV_QBITTORRENT_CONTAINER,
     shoko: process.env.NEGEV_SHOKO_CONTAINER,
