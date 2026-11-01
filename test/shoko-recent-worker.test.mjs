@@ -34,6 +34,23 @@ test('one bounded scan journals new IDs before moving the cursor', async () => {
   });
 });
 
+test('first file after an empty baseline reaches the same durable refresh queue', async () => {
+  await withLedger(async (ledger) => {
+    ledger.bootstrap({ fileId: 1, importedNs: '0' });
+    const refreshed = [];
+    const worker = createShokoRecentWorker({ ledger, now: () => 100,
+      readPage: async () => ({ state: 'page', page: 1,
+        total: 1, items: [cursor(1)] }),
+      refreshFile: async (fileId) => { refreshed.push(fileId);
+        return { state: 'recorded_file', recognition: 'linked' }; } });
+    assert.deepEqual(await worker.scan(), { state: 'caught_up', added: 1 });
+    assert.deepEqual(ledger.getCursor(), cursor(1));
+    assert.deepEqual(await worker.drainOne(), { state: 'acknowledged', fileId: 1 });
+    assert.deepEqual(refreshed, [1]);
+    assert.equal(ledger.nextDue(100), null);
+  });
+});
+
 test('a full durable queue holds before any expensive Shoko page read', async () => {
   await withLedger(async (ledger) => {
     ledger.bootstrap(cursor(10));

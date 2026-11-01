@@ -41,6 +41,20 @@ test('two stable bounded Shoko head reads save one immutable baseline', async ()
   });
 });
 
+test('two stable empty Shoko heads establish a first-import watermark', async () => {
+  await withLedger(async (ledger) => {
+    let reads = 0;
+    const result = await bootstrapShokoRecentHead({ ledger,
+      readPage: async () => { reads++; return { state: 'page', page: 1,
+        total: 0, items: [] }; } });
+    assert.deepEqual(result, { state: 'baseline_saved',
+      cursor: { fileId: 1, importedNs: '0' } });
+    assert.equal(reads, 2);
+    assert.deepEqual(ledger.getCursor(), result.cursor);
+    assert.equal(ledger.getCapacity().pending, 0);
+  });
+});
+
 test('an arrival between head reads cannot establish a cursor', async () => {
   await withLedger(async (ledger) => {
     let reads = 0;
@@ -54,10 +68,21 @@ test('an arrival between head reads cannot establish a cursor', async () => {
   });
 });
 
-test('empty, malformed and unavailable heads leave the baseline unset', async () => {
+test('the first arrival during an empty baseline forces a retry', async () => {
+  await withLedger(async (ledger) => {
+    let reads = 0;
+    assert.deepEqual(await bootstrapShokoRecentHead({ ledger,
+      readPage: async () => ++reads === 1
+        ? { state: 'page', page: 1, total: 0, items: [] }
+        : { state: 'page', page: 1, total: 1, items: [item(1)] } }),
+    { state: 'held', reason: 'recent_head_changed' });
+    assert.equal(ledger.getCursor(), null);
+  });
+});
+
+test('malformed and unavailable heads leave the baseline unset', async () => {
   await withLedger(async (ledger) => {
     for (const readPage of [
-      async () => ({ state: 'page', page: 1, total: 0, items: [] }),
       async () => ({ state: 'page', page: 1, total: 2,
         items: [item(11), item(12)] }),
       async () => { throw new Error('offline'); },

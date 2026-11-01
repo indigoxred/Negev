@@ -44,6 +44,20 @@ test('two stable pages return new file IDs oldest first and one new watermark', 
   assert.deepEqual(calls, [1, 2, 1]);
 });
 
+test('an empty watermark sees the first imported file without skipping it', async () => {
+  const empty = { fileId: 1, importedNs: '0' };
+  const readPage = async () => ({ state: 'page', page: 1, total: 1,
+    items: [cursor(1, 1)] });
+  assert.deepEqual(await scanShokoRecentSince({ since: empty, readPage }),
+    { state: 'complete', fileIds: [1], newest: cursor(1, 1) });
+  assert.deepEqual(await scanShokoRecentSince({ since: empty,
+    readPage: async () => ({ state: 'page', page: 1, total: 0,
+      items: [] }) }), { state: 'complete', fileIds: [], newest: empty });
+  assert.deepEqual(await scanShokoRecentSince({ since: cursor(1, 1),
+    readPage: async () => ({ state: 'page', page: 1, total: 0,
+      items: [] }) }), { state: 'held', reason: 'recent_head_older' });
+});
+
 test('equal import timestamps use descending file ID without dropping a file', async () => {
   const result = await scanShokoRecentSince({ since: cursor(11, 10),
     pageSize: 3, readPage: async () => ({ state: 'page', page: 1, total: 3,

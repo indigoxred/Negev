@@ -1,10 +1,12 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
+const emptyCursor = { fileId: 1, importedNs: '0' };
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validCursor = (value) => validId(value?.fileId) &&
   typeof value.importedNs === 'string' && /^[0-9]{1,22}$/.test(value.importedNs) &&
-  BigInt(value.importedNs) > 0n;
+  (BigInt(value.importedNs) > 0n ||
+    (value.fileId === emptyCursor.fileId && value.importedNs === '0'));
 const compare = (left, right) => {
   const a = BigInt(left.importedNs);
   const b = BigInt(right.importedNs);
@@ -96,7 +98,7 @@ export async function scanShokoRecentSince({ readPage, since,
   for (let page = 1; page <= maxPages; page++) {
     const result = await pageFrom(page);
     if (result?.state !== 'page' || result.page !== page ||
-        !Number.isSafeInteger(result.total) || result.total < 1 ||
+        !Number.isSafeInteger(result.total) || result.total < 0 ||
         !Array.isArray(result.items) || result.items.length !==
           Math.max(0, Math.min(pageSize, result.total - (page - 1) * pageSize)) ||
         (total !== undefined && result.total !== total)) {
@@ -104,6 +106,12 @@ export async function scanShokoRecentSince({ readPage, since,
     }
     total = result.total;
     if (page === 1) firstHead = result.items.map((item) => ({ ...item }));
+    if (total === 0) {
+      if (!await verifyHead()) return held('recent_head_changed');
+      return since.importedNs === '0'
+        ? { state: 'complete', fileIds: [], newest: { ...emptyCursor } }
+        : held('recent_head_older');
+    }
     for (const item of result.items) {
       if (!validCursor(item) || seen.has(item.fileId) ||
           (previous && compare(item, previous) >= 0)) {

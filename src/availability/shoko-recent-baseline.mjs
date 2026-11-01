@@ -1,7 +1,12 @@
 const held = (reason) => ({ state: 'held', reason });
+// File ID stays positive so existing SQLite cursor tables need no migration.
+// Imported=0 is older than every real Shoko import timestamp.
+const emptyCursor = { fileId: 1, importedNs: '0' };
 const validCursor = (value) => Number.isSafeInteger(value?.fileId) &&
   value.fileId > 0 && typeof value.importedNs === 'string' &&
-  /^[0-9]{1,22}$/.test(value.importedNs) && BigInt(value.importedNs) > 0n;
+  /^[0-9]{1,22}$/.test(value.importedNs) &&
+  (BigInt(value.importedNs) > 0n ||
+    (value.fileId === emptyCursor.fileId && value.importedNs === '0'));
 const compare = (left, right) => {
   const a = BigInt(left.importedNs);
   const b = BigInt(right.importedNs);
@@ -10,7 +15,7 @@ const compare = (left, right) => {
 };
 const validHead = (page) => {
   if (page?.state !== 'page' || page.page !== 1 ||
-      !Number.isSafeInteger(page.total) || page.total < 1 ||
+      !Number.isSafeInteger(page.total) || page.total < 0 ||
       !Array.isArray(page.items) ||
       page.items.length !== Math.min(100, page.total)) return false;
   const ids = new Set();
@@ -49,7 +54,7 @@ export async function bootstrapShokoRecentHead({ ledger, readPage } = {}) {
         compare(item, second.items[index]) !== 0)) {
     return held('recent_head_changed');
   }
-  const cursor = { ...first.items[0] };
+  const cursor = first.items.length ? { ...first.items[0] } : { ...emptyCursor };
   const saved = ledger.bootstrap(cursor,
     first.items.map((item) => item.fileId).reverse());
   return saved.state === 'baseline_saved' ? { ...saved, cursor } : saved;

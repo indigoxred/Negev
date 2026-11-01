@@ -1,10 +1,12 @@
 import { DatabaseSync } from 'node:sqlite';
 
 const held = (reason) => ({ state: 'held', reason });
+const emptyCursor = { fileId: 1, importedNs: '0' };
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validCursor = (value) => validId(value?.fileId) &&
   typeof value.importedNs === 'string' && /^[0-9]{1,22}$/.test(value.importedNs) &&
-  BigInt(value.importedNs) > 0n;
+  (BigInt(value.importedNs) > 0n ||
+    (value.fileId === emptyCursor.fileId && value.importedNs === '0'));
 const compare = (left, right) => {
   const a = BigInt(left.importedNs);
   const b = BigInt(right.importedNs);

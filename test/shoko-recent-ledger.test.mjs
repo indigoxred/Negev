@@ -41,6 +41,19 @@ test('exact baseline is one-time and a batch survives restart with IDs oldest fi
   });
 });
 
+test('empty baseline persists and journals the first file before advancing', async () => {
+  await withLedger(({ ledger, reopen }) => {
+    const empty = { fileId: 1, importedNs: '0' };
+    assert.deepEqual(ledger.bootstrap(empty), { state: 'baseline_saved' });
+    ledger = reopen();
+    assert.deepEqual(ledger.getCursor(), empty);
+    assert.deepEqual(ledger.recordBatch({ state: 'complete', fileIds: [1],
+      newest: cursor(1) }), { state: 'recorded', added: 1 });
+    assert.deepEqual(ledger.getCursor(), cursor(1));
+    assert.deepEqual(ledger.nextDue(0), { fileId: 1 });
+  });
+});
+
 test('a failed file waits while a later file proceeds, then retries', async () => {
   await withLedger(({ ledger }) => {
     ledger.bootstrap(cursor(10));
