@@ -31,7 +31,17 @@ export function inferReleaseState({ today, kind, airDate, endDate = null, episod
       (!parsePartialDate(episode.airDate) ||
         parsePartialDate(episode.airDate).first > end.last))) return unknown;
   if (end && end.last <= current.last) return inferred('completed');
-  if (start.last > current.last) return inferred('upcoming');
+  // An exact episode date inside a partial start interval is stronger
+  // evidence than the interval's latest possible day.
+  if (start.last > current.last) {
+    const airedWithinStart = episodes.some((episode) => {
+      if (episode?.type !== 'Episode') return false;
+      const date = parsePartialDate(episode.airDate, true);
+      return date && date.first >= start.first &&
+        date.last <= start.last && date.last <= current.last;
+    });
+    if (!airedWithinStart) return inferred('upcoming');
+  }
   if (end) return inferred(end.last <= current.last ? 'completed' : 'airing');
   if (kind === 'movie') return inferred('completed');
   const normal = episodes.filter((episode) => episode?.type === 'Episode');

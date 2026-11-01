@@ -17,14 +17,24 @@ test('ongoing series is inferred airing and a passed end date completes it', () 
     { state: 'airing', confidence: 'inferred' });
 });
 
-test('partial dates use their last possible day and future starts remain upcoming', () => {
+test('partial starts remain upcoming unless an episode date proves release', () => {
   assert.equal(inferReleaseState({ ...base, airDate: '2026-10' }).state, 'airing');
   assert.equal(inferReleaseState({ ...base, airDate: '2026-11' }).state, 'upcoming');
-  assert.equal(inferReleaseState({ ...base, airDate: '2026' }).state, 'upcoming');
+  assert.equal(inferReleaseState({ ...base, airDate: '2026' }).state, 'airing');
   assert.equal(inferReleaseState({ ...base, airDate: '2025' }).state, 'airing');
   assert.equal(inferReleaseState({ ...base, airDate: '2026',
     endDate: '2026-06', episodes: [{ type: 'Episode', airDate: '2026-05-01' }] }).state,
   'completed');
+});
+
+test('an exact aired episode resolves a partial-year start for series and movies', () => {
+  const episodes = [{ type: 'Episode', airDate: '2026-10-01' }];
+  assert.equal(inferReleaseState({ ...base, airDate: '2026', episodes }).state,
+    'airing');
+  assert.equal(inferReleaseState({ ...base, kind: 'movie', airDate: '2026',
+    episodes }).state, 'completed');
+  assert.equal(inferReleaseState({ ...base, airDate: '2026',
+    episodes: [{ type: 'Episode', airDate: '2027-01-01' }] }).state, 'upcoming');
 });
 
 test('a started movie or all expected regular episodes aired is completed', () => {
