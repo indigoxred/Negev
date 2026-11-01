@@ -50,6 +50,8 @@
 
 The Task 1 probe is also exposed through an authenticated, admin-only, two-per-minute diagnostic for at most ten saved request targets. It returns only state and reason; no file paths, IDs or credentials. This read-only route is not a missing-target gate and has not been run against installed services.
 
+Source-only Task 2 increment: `collectFirstTimeAbsence` composes an exact Shoko unimported observation, an explicitly complete public Plex snapshot and two matching, target-scoped Import fence observations. It holds on a positive-only or incomplete Plex result, a wrong first fence, changed Import fingerprint, stale observation or provider outage. It has no installed provider callbacks or acquisition authority yet. The current Import activity reader intentionally returns `quiet_observed`, so it cannot satisfy this collector's `settled` requirement.
+
 ### Task 3: Opt-in worker composition and recovery
 
 **Files:** Modify `src/web/user-server-config.mjs`, `src/web/user-service.mjs`, `src/web/user-server.mjs`; add a focused integration test.
