@@ -9,6 +9,7 @@ const within = (parent, child) => child === parent ||
   child.startsWith(parent === '/' ? '/' : `${parent}/`);
 const decode = (value) => value.replace(/\\([0-7]{3})/g,
   (_, digits) => String.fromCharCode(Number.parseInt(digits, 8)));
+const nonMediaTypes = new Set(['overlay', 'tmpfs', 'ramfs']);
 
 // st_dev alone is insufficient: distinct bind mounts on one device cannot
 // provide the same atomic rename, and a lost bind may expose Docker overlay.
@@ -40,7 +41,7 @@ export function evaluateHandoffMountInfo({ mountInfo, holdingRoot,
   const holding = covering(holdingRoot);
   const imported = covering(importRoot);
   return holding && imported && holding.id === imported.id &&
-    holding.mountPoint !== '/' && holding.type !== 'overlay'
+    holding.mountPoint !== '/' && !nonMediaTypes.has(holding.type)
     ? { state: 'mounted_handoff_roots' } : held();
 }
 

@@ -46,6 +46,14 @@ test('an explicit overlay mount and unavailable mountinfo both hold', async () =
   { state: 'held', reason: 'handoff_mount_unavailable' });
 });
 
+test('a temporary memory mount cannot stand in for the media bind', () => {
+  for (const type of ['tmpfs', 'ramfs']) {
+    const memory = mounts.replace('fuse.shfs shfs', `${type} ${type}`);
+    assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: memory, ...roots }),
+      { state: 'held', reason: 'handoff_mount_unavailable' });
+  }
+});
+
 test('malformed mount evidence cannot authorize a handoff', () => {
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: 'bad', ...roots }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
