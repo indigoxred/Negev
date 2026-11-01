@@ -117,6 +117,10 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         if (key && (detected.has(key) || detected.size < maxArrivals)) {
           forgetPathResolutions(key);
           detected.set(key, ++detectionSequence);
+        } else if (key) {
+          // A dropped path may not have a FileID yet. A recent-file scan
+          // cannot account for it, even after every tracked path resolves.
+          fullReconciliationNeeded = true;
         }
         return { state: 'reconcile', reason: 'file_detected' };
       }

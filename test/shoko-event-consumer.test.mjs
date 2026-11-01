@@ -302,3 +302,26 @@ test('a detected but unresolved path cannot be acknowledged as settled', async (
   assert.equal(consumer.getState().reconciliationNeeded, true);
   await consumer.close();
 });
+
+test('an arrival beyond the path limit requires full reconciliation after tracked files resolve', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: 'linked' }) });
+  const arrival = (id) => ({ ManagedFolderID: 1,
+    RelativePath: `incoming/${id}.mkv` });
+  for (let id = 1; id <= 129; id++) {
+    consumer.accept('file:detected', [arrival(id)]);
+  }
+  // Pace the hash events so the separate file-ID queue never overflows.
+  for (let id = 1; id <= 128; id++) {
+    consumer.accept('file:hashed', [{ ...arrival(id), FileID: id }]);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const state = consumer.getState();
+  assert.equal(state.pending, 0);
+  assert.equal(consumer.getArrivalState().pendingPaths, 0);
+  assert.equal(state.fullReconciliationNeeded, true);
+  assert.deepEqual(consumer.acknowledgeReconciliation(state.generation),
+    { state: 'held' });
+  assert.equal(consumer.getState().reconciliationNeeded, true);
+  await consumer.close();
+});
