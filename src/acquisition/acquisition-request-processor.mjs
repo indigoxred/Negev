@@ -47,7 +47,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         return held('availability_unverified');
       }
       if (coverage.verifiedTargets === request.episodeIds.length) {
-        return { ...held('target_already_available'), nextCandidateOffset: 0 };
+        return { ...held('request_fully_available'), nextCandidateOffset: 0 };
       }
     }
     let found;

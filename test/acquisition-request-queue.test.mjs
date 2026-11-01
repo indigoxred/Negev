@@ -126,6 +126,38 @@ test('held and failed requests are recorded while later requests continue', asyn
     } finally { queue.close(); }
   }));
 
+test('full public proof ends Completed acquisition but not Airing monitoring', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-one-time-queue-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'completed',
+    intent, nowMs: 1 });
+  requests.submit({ requesterId: 1, requestKey: 'airing',
+    intent: { ...intent, anidbId: 43, monitorFuture: true }, nowMs: 2 });
+  requests.submit({ requesterId: 1, requestKey: 'partially-available',
+    intent: { ...intent, anidbId: 44 }, nowMs: 3 });
+  let queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    assert.equal(queue.claimNext({ nowMs: 100 }).requestId, 1);
+    assert.equal(queue.claimNext({ nowMs: 100 }).requestId, 2);
+    assert.equal(queue.claimNext({ nowMs: 100 }).requestId, 3);
+    assert.equal(queue.claimNext({ nowMs: 100 }).state, 'pass_complete');
+    for (const requestId of [1, 2]) {
+      assert.deepEqual(queue.recordResult({ requestId, pass: 1,
+        state: 'held', reason: 'request_fully_available', checkedMs: 100 }),
+      { state: 'recorded' });
+    }
+    queue.recordResult({ requestId: 3, pass: 1, state: 'held',
+      reason: 'target_already_available', checkedMs: 100 });
+    queue.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    assert.equal(queue.claimNext({ nowMs: 1_800_101 }).requestId, 2);
+    assert.equal(queue.claimNext({ nowMs: 1_800_101 }).requestId, 3);
+    assert.equal(queue.claimNext({ nowMs: 1_800_101 }).state, 'pass_complete');
+  } finally { queue.close(); requests.close();
+    await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a new request added during a pass is claimed before wrap', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

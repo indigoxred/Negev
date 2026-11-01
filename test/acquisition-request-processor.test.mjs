@@ -200,7 +200,7 @@ test('fully verified public coverage skips repeat indexer searches', async () =>
     submitCandidate: async () => { throw Error('torrent was submitted'); },
   });
   assert.deepEqual(await process({ requestId: 4, candidateOffset: 3 }),
-    { state: 'held', reason: 'target_already_available',
+    { state: 'held', reason: 'request_fully_available',
       nextCandidateOffset: 0 });
   assert.deepEqual(calls, ['coverage']);
 });

@@ -46,13 +46,16 @@ export function openAcquisitionRequestQueue(dbPath) {
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
-  // An unfinished claim remains excluded after a crash. Later request IDs
-  // and later passes continue; reconciliation must close the uncertain claim.
+  // An unfinished claim remains excluded after a crash. A one-time request
+  // stops acquiring after exact public proof; its saved history remains.
+  // Active Airing watches continue so later episodes can be added.
   const next = db.prepare(`SELECT r.id,COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     WHERE r.id>? AND r.status='held' AND
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
+      (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
+        c.state='held' AND c.reason='request_fully_available')) AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
     ORDER BY r.id LIMIT 1`);
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');

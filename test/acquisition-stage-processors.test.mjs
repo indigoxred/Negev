@@ -77,7 +77,7 @@ test('recent exact public coverage avoids the indexer in the wired request stage
     qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
     fetchImpl: async () => { throw Error('qBittorrent called'); },
     providerFetchImpl: async () => { throw Error('Prowlarr called'); } });
-  assert.deepEqual(result, { state: 'held', reason: 'target_already_available',
+  assert.deepEqual(result, { state: 'held', reason: 'request_fully_available',
     nextCandidateOffset: 0 });
   assert.deepEqual(calls, ['request:1']);
 });
