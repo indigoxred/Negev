@@ -76,7 +76,8 @@ export async function confirmMissingTargets({ request, episodeIds,
   const noObservedPublicPart = Array.isArray(snapshot.plex?.parts) &&
     snapshot.plex.parts.length === 0;
   const strictFirstTime = unimportedScope && scopedPlex && noObservedPublicPart &&
-    snapshot.plex.state === 'ok' && snapshot.plex.complete === true;
+    snapshot.plex.state === 'ok' && snapshot.plex.complete === true &&
+    snapshot.plex.sourceVerified === true;
   // The owner explicitly prefers one first acquisition over indefinitely
   // holding a possible legacy Plex-only duplicate. An outage, known Part or
   // unverified Shoko target is never this narrow policy's uncertainty.
@@ -93,6 +94,13 @@ export async function confirmMissingTargets({ request, episodeIds,
       target: { anidbId: request.anidbId, episodeId },
       shoko: snapshot.shoko, plex: snapshot.plex, publicLibraryIds });
     if (result.state === 'available') return held('target_already_available', episodeId);
+    // An empty result is meaningful only when the observer proved it covered
+    // every configured public source. A positive part can still block a grab
+    // without this proof, but absence cannot authorize one.
+    if (result.state === 'absent' &&
+        (!scopedPlex || snapshot.plex.sourceVerified !== true)) {
+      return held('target_not_proven_missing', episodeId);
+    }
     if (result.state !== 'absent') return held('target_not_proven_missing', episodeId);
   }
   // Empty indexed views can precede Shoko's hashing/recognition of a manual

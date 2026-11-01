@@ -31,7 +31,8 @@ function evidence(overrides = {}) {
     importFence: { state: 'settled', anidbId: 42, episodeIds,
       beforeObservedAtMs: 99, afterObservedAtMs: 100 },
     shoko: { state: 'ok', complete: true, files: [] },
-    plex: { state: 'ok', complete: true, parts: [] }, ...overrides };
+    plex: { state: 'ok', complete: true, sourceVerified: true,
+      libraryIds: [102], parts: [] }, ...overrides };
 }
 
 test('reserves only when all selected episodes are absent in one fresh complete observation', async () =>
@@ -50,6 +51,18 @@ test('an empty Shoko and Plex snapshot without a settled import fence cannot res
         importFence: null }),
       publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
     assert.deepEqual(result, { state: 'held', reason: 'import_activity_unverified' });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
+
+test('a regular target with no complete public source proof cannot reserve', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001], readEvidence: async () => evidence({
+        episodeIds: [1001], plex: { state: 'ok', complete: true,
+          libraryIds: [102], parts: [] } }),
+      publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held',
+      reason: 'target_not_proven_missing', episodeId: 1001 });
     assert.equal(acquisitions.getAttempt(1), null);
   }));
 
@@ -123,7 +136,8 @@ test('exact catalogue-verified first-time targets can reserve only with complete
         shoko: await collectUnimportedTargets({ anidbId: 42,
           episodeIds: [1001, 1002], readEpisode: async (target) =>
             ({ state: 'not_imported', ...target }) }),
-        plex: { state: 'ok', complete: true, libraryIds: [102], parts: [] },
+        plex: { state: 'ok', complete: true, sourceVerified: true,
+          libraryIds: [102], parts: [] },
       }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
     assert.equal(result.state, 'reserved');
     assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds,
@@ -160,12 +174,26 @@ test('an AniDB movie target uses the same first-time gate', async () =>
       episodeIds: [1001], readEvidence: async () => evidence({
         episodeIds: [1001], shoko: { state: 'unimported_targets',
           anidbId: 42, episodeIds: [1001] },
-        plex: { state: 'ok', complete: true,
+        plex: { state: 'ok', complete: true, sourceVerified: true,
           libraryIds: [102, 123], parts: [] },
       }), publicLibraryIds: [102, 123], ledger: acquisitions,
       now: () => 101 });
     assert.equal(result.state, 'reserved');
   }, 'movie'));
+
+test('a complete-looking first-time Plex snapshot without source verification cannot reserve', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001], readEvidence: async () => evidence({
+        episodeIds: [1001], shoko: { state: 'unimported_targets',
+          anidbId: 42, episodeIds: [1001] },
+        plex: { state: 'ok', complete: true,
+          libraryIds: [102], parts: [] },
+      }), publicLibraryIds: [102], ledger: acquisitions, now: () => 101 });
+    assert.deepEqual(result, { state: 'held',
+      reason: 'target_not_proven_missing', episodeId: 1001 });
+    assert.equal(acquisitions.getAttempt(1), null);
+  }));
 
 test('explicit first-time uncertainty policy permits one bounded target attempt with healthy but non-exhaustive Plex', async () =>
   withLedgers(async ({ request, acquisitions }) => {

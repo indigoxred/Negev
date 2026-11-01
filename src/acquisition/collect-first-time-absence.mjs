@@ -44,6 +44,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
     libraryIds: [...publicLibraryIds] }); }
   catch { return held('public_absence_unverified'); }
   if (plex?.state !== 'ok' || plex.complete !== true ||
+      plex.sourceVerified !== true ||
       !Array.isArray(plex.libraryIds) ||
       plex.libraryIds.length !== publicLibraryIds.length ||
       new Set(plex.libraryIds).size !== publicLibraryIds.length ||
@@ -64,7 +65,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
     return held('import_activity_unverified');
   }
   return { ...scope, observedAtMs, shoko,
-    plex: { state: 'ok', complete: true,
+    plex: { state: 'ok', complete: true, sourceVerified: true,
       libraryIds: [...publicLibraryIds], parts: [] },
     importFence: { state: 'settled', ...scope,
       beforeObservedAtMs: before.observedAtMs,

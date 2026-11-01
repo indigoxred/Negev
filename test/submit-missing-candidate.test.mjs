@@ -86,7 +86,8 @@ function absent() {
     importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
       beforeObservedAtMs: 199, afterObservedAtMs: 200 },
     shoko: { state: 'ok', complete: true, files: [] },
-    plex: { state: 'ok', complete: true, parts: [] } };
+    plex: { state: 'ok', complete: true, sourceVerified: true,
+      libraryIds: [102], parts: [] } };
 }
 
 function prowlarrFetch() {

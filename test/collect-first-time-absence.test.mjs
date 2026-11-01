@@ -12,7 +12,7 @@ const providers = (overrides = {}) => ({ ...targets, publicLibraryIds: [102],
   readEpisode: async ({ anidbId, episodeId }) => ({
     state: 'not_imported', anidbId, episodeId }),
   readPublic: async () => ({ state: 'ok', complete: true,
-    libraryIds: [102], parts: [] }),
+    sourceVerified: true, libraryIds: [102], parts: [] }),
   readImport: async () => importState(), now: () => 110,
   ...overrides });
 
@@ -24,13 +24,15 @@ test('collects one exact fresh first-time snapshot without any provider write', 
       order.push('episode'); return { state: 'not_imported', ...target };
     },
     readPublic: async () => { order.push('plex');
-      return { state: 'ok', complete: true, libraryIds: [102], parts: [] }; },
+      return { state: 'ok', complete: true, sourceVerified: true,
+        libraryIds: [102], parts: [] }; },
   }));
   assert.deepEqual(order, ['import', 'episode', 'plex', 'import']);
   assert.deepEqual(result, { anidbId: 42, episodeIds: [1001],
     observedAtMs: 110,
     shoko: { state: 'unimported_targets', ...targets },
-    plex: { state: 'ok', complete: true, libraryIds: [102], parts: [] },
+    plex: { state: 'ok', complete: true, sourceVerified: true,
+      libraryIds: [102], parts: [] },
     importFence: { state: 'settled', ...targets,
       beforeObservedAtMs: 100, afterObservedAtMs: 100 } });
 });
@@ -54,6 +56,9 @@ test('hashing, wrong title, and provider outage cannot claim absence', async () 
 
 test('Plex-only part, partial page, wrong section or failed read holds', async () => {
   for (const publicResult of [
+    { state: 'ok', complete: true, libraryIds: [102], parts: [] },
+    { state: 'ok', complete: true, sourceVerified: false,
+      libraryIds: [102], parts: [] },
     { state: 'ok', complete: true, libraryIds: [102],
       parts: [{ storageKey: 'other', libraryId: 102, readable: true }] },
     { state: 'ok', complete: false, libraryIds: [102], parts: [] },

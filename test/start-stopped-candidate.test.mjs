@@ -46,7 +46,8 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
     observedAtMs: 204, shoko: { state: 'ok', complete: true, files: [] },
     importFence: { state: 'settled', anidbId: 42, episodeIds: [1001],
       beforeObservedAtMs: 203, afterObservedAtMs: 204 },
-    plex: { state: 'ok', complete: true, parts: [] } }) };
+    plex: { state: 'ok', complete: true, sourceVerified: true,
+      libraryIds: [102], parts: [] } }) };
 
 test('a saved first-time uncertainty policy is rechecked before a stopped torrent starts', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
