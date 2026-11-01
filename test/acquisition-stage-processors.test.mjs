@@ -148,6 +148,21 @@ test('movie request stage uses both public Plex sections before stopped submissi
     assert.equal(qbCalls.filter((call) => call.endsWith('/add')).length, 1);
     assert.deepEqual(searchedQueries, ['Example', 'Example']);
     assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds, [1001]);
+    observedLibraries = [102];
+    const start = await processors.processStart({ attemptId: result.attemptId,
+      qbittorrent: claim.qbittorrent, fetchImpl: qbFetch });
+    assert.equal(start.state, 'held');
+    assert.equal(start.reason, 'target_not_proven_missing');
+    assert.equal(qbCalls.filter((call) => call.endsWith('/start')).length, 0);
+    observedLibraries = [102, 123];
+    const started = await processors.processStart({ attemptId: result.attemptId,
+      qbittorrent: claim.qbittorrent, fetchImpl: qbFetch });
+    assert.equal(started.state, 'start_unknown');
+    assert.equal(started.sendNow, true);
+    assert.equal(qbCalls.filter((call) => call.endsWith('/start')).length, 1);
+    assert.equal((await processors.processStart({ attemptId: result.attemptId,
+      qbittorrent: claim.qbittorrent, fetchImpl: qbFetch })).sendNow, false);
+    assert.equal(qbCalls.filter((call) => call.endsWith('/start')).length, 1);
   } finally {
     handoffs.close(); acquisitions.close(); requests.close();
     await rm(root, { recursive: true, force: true });
