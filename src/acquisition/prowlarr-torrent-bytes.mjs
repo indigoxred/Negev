@@ -68,6 +68,11 @@ export async function fetchProwlarrTorrentBytes({
 
     const response = await fetchImpl(proxyUrl, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
+    if ([301, 302, 303, 307, 308].includes(response.status)) {
+      let location;
+      try { location = new URL(response.headers.get('location')); } catch {}
+      if (location?.protocol === 'magnet:') return held('magnet_only');
+    }
     if (response.status !== 200 ||
         !/^application\/x-bittorrent(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') ||
         !response.body) return held('torrent_unavailable');

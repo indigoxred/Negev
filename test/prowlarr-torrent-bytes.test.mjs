@@ -64,6 +64,23 @@ test('raw magnets and off-origin magnetUrl values remain held', async () => {
   }
 });
 
+test('a Prowlarr magnet redirect is identified without following or submitting it', async () => {
+  const calls = [];
+  const result = await fetchProwlarrTorrentBytes({ ...config,
+    fetchImpl: async (url, init) => {
+      calls.push({ path: new URL(url).pathname, redirect: init.redirect });
+      return calls.length === 1
+        ? Response.json([{ ...candidate, protocol: 'torrent', magnetUrl: proxy }])
+        : new Response(null, { status: 301,
+          headers: { location: 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567' } });
+    } });
+  assert.deepEqual(result, { state: 'held', reason: 'magnet_only' });
+  assert.deepEqual(calls, [
+    { path: '/api/v1/search', redirect: 'manual' },
+    { path: '/3/download', redirect: 'manual' },
+  ]);
+});
+
 test('a missing, duplicate, or changed candidate never retrieves bytes', async () => {
   for (const items of [[], [{ ...release, guid: 'other' }], [release, release],
     [{ ...release, protocol: 'usenet' }], [{ ...release, title: 'Other 01' }],
