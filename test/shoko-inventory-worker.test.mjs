@@ -14,6 +14,23 @@ const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
 const linked = { ...provisional, updated: '2026-10-31T01:00:00Z', state: 'linked',
   pairs: [{ anidbId: 42, episodeId: 1001 }] };
 
+test('an excessive omission is identified separately from a transient bad page', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-cap-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  try {
+    for (let fileId = 1; fileId <= 101; fileId++) {
+      ledger.recordFileObservation({ item: { ...linked, fileId }, observedMs: 1 });
+    }
+    const empty = { state: 'page', page: 1, total: 0, items: [] };
+    assert.equal(ledger.recordPage({ expected: ledger.getCursor(),
+      result: empty, observedMs: 100 }).state, 'recorded');
+    assert.deepEqual(ledger.recordPage({ expected: ledger.getCursor(),
+      result: empty, observedMs: 200 }),
+    { state: 'held', reason: 'omission_budget_exceeded' });
+    assert.deepEqual(ledger.getCursor(), { page: 1, pass: 3, pageSize: 100 });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('inventory change receipts omit optional source path hints', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-receipt-'));
   const dbPath = path.join(dir, 'inventory.sqlite');

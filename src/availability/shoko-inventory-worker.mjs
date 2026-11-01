@@ -406,7 +406,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         advance.run(nextPage, nextPass, current.page, current.pass);
         if (last || abandonPass) prunePasses.run(current.pass - 1);
         db.exec('COMMIT'); begun = false;
-        if (abandonPass) return held('invalid_file_pass');
+        if (abandonPass) return held(retirementHeld ?? 'invalid_file_pass');
         return { state: 'recorded', page: current.page, pass: current.pass,
           nextPage, ...(retired.length ? { retired } : {}),
           ...(retirementHeld ? { retirementHeld } : {}) };

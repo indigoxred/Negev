@@ -37,6 +37,10 @@ export function createShokoInventoryScheduler({ tick,
           result?.reason === 'change_delivery_backlog') {
         delay = pageDelay;
         lastState = 'change_replay';
+      } else if (result?.reason === 'omission_budget_exceeded') {
+        // The safety cap needs review, not an intensive automatic rescan.
+        delay = passDelay;
+        lastState = 'review_needed';
       } else lastState = 'retry_wait';
     } catch { lastState = 'retry_wait'; }
     if (requestedDuringPage) {
