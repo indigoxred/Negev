@@ -76,3 +76,13 @@ test('accepts bounded Prowlarr magnet GUIDs from SubsPlease', async () => {
     fetchImpl: async () => Response.json([{ ...item, guid: `magnet:${'a'.repeat(2100)}` }]) }),
   { state: 'unavailable' });
 });
+
+test('a large first indexer response does not hide candidates from a later indexer', async () => {
+  const data = [7, 9].flatMap((indexerId) => Array.from({ length: 30 }, (_, n) => ({
+    guid: `${indexerId}-${n}`, indexerId, title: `Release ${n}`, size: 100 + n,
+    protocol: 'torrent' })));
+  const result = await searchReleaseCandidates({ ...config, query: 'Example', limit: 5,
+    fetchImpl: async () => Response.json(data) });
+  assert.deepEqual(result.items.map((item) => item.indexerId), [7, 9, 7, 9, 7]);
+  assert.deepEqual(result.items.map((item) => item.guid), ['7-0', '9-0', '7-1', '9-1', '7-2']);
+});

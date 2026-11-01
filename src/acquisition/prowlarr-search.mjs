@@ -51,9 +51,27 @@ export async function searchReleaseCandidates({
       (item.seeders != null && (!Number.isSafeInteger(item.seeders) || item.seeders < 0)))) {
       return { state: 'unavailable' };
     }
+    // Prowlarr's limit is applied per indexer. Its aggregate can contain a
+    // full page from one indexer before any row from the next one.
+    const byIndexer = new Map(indexerIds.map((id) => [id, []]));
+    for (const item of data) {
+      if (item.protocol === 'torrent') byIndexer.get(item.indexerId).push(item);
+    }
+    const selected = [];
+    for (let offset = 0; selected.length < limit; offset++) {
+      let added = false;
+      for (const id of indexerIds) {
+        const item = byIndexer.get(id)[offset];
+        if (!item) continue;
+        selected.push(item);
+        added = true;
+        if (selected.length === limit) break;
+      }
+      if (!added) break;
+    }
     return {
       state: 'candidates',
-      items: data.filter((item) => item.protocol === 'torrent').slice(0, limit).map((item) => ({
+      items: selected.map((item) => ({
         guid: item.guid, indexerId: item.indexerId, title: item.title,
         size: item.size, protocol: item.protocol,
         seeders: item.seeders ?? null, evidence: 'unverified',
