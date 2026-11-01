@@ -52,6 +52,13 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
             failedReceipt = receipt;
             readFailures = 0;
           }
+          // The cursor survives restart while this retry counter does not.
+          // Age the saved claim out so repeated restarts cannot pin the pass.
+          const claimAgeMs = now() - claim.claimedMs;
+          if (Number.isSafeInteger(claimAgeMs) &&
+              claimAgeMs >= 15 * 60_000) {
+            return finish({ state: 'unknown' }, 0, 0);
+          }
           if (++readFailures === 1) {
             return { state: 'held', reason: 'source_read_unavailable' };
           }

@@ -141,6 +141,31 @@ for (const unavailableAt of ['first_file', 'kind', 'card', 'final_file']) {
   });
 }
 
+test('a failed saved claim eventually advances after a worker restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-restart-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  let clock = 300;
+  const inventory = { listFileHintIds: ({ afterFileId }) =>
+    [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+  getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+    observedMs: 100 }) };
+  const makeWorker = () => createFileBackfillWorker({ cursor, inventory,
+    readCandidate: async ({ fileId }) => fileId === 7
+      ? { state: 'unavailable' } : { ...candidate(1), fileId },
+    resolveKind: async () => 'series',
+    observeCandidate: async () => ({ state: 'unknown' }),
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => clock });
+  try {
+    assert.deepEqual(await makeWorker().runOnce(), {
+      state: 'held', reason: 'source_read_unavailable' });
+    clock += 15 * 60_000;
+    const restarted = makeWorker();
+    assert.equal((await restarted.runOnce()).state, 'checked');
+    assert.equal((await restarted.runOnce()).state, 'checked');
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a 12-episode file advances in two bounded ticks and saves guarded positives', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-worker-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
