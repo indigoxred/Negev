@@ -44,6 +44,7 @@ import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidat
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
 import { collectFirstTimeUncertain } from
   '../acquisition/collect-first-time-uncertain.mjs';
+import { openAcquisitionRuntime } from '../acquisition/acquisition-runtime.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 import { importFeedState, scopedImportFeedState,
@@ -375,6 +376,34 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const readScopedImportFeed = (allowedPendingKeys) =>
       scopedImportFeedState({ connection: readShokoConnectionState(),
         snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys });
+    let acquisitionRuntime;
+    const observeFirstTimeUncertain = (input) => {
+      if (stopping) return Promise.resolve({ state: 'held',
+        reason: 'service_stopping' });
+      if (!plexObserver || !readImportActivity) {
+        return Promise.resolve({ state: 'held',
+          reason: 'first_time_observer_unconfigured' });
+      }
+      const publicLibraryIds = input?.kind === 'movie'
+        ? [...plex.publicSections.episode, ...plex.publicSections.movie]
+        : [...plex.publicSections.episode];
+      return track(collectFirstTimeUncertain({ ...input,
+        publicLibraryIds, now,
+        readEpisode: (target) => metadata.run(() =>
+          readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
+            apiKey: shokoApiKey, ...target, fetchImpl })),
+        probePublic: (target) => metadata.run(() =>
+          plexObserver.probeFirstTimeSections(target)),
+        observeImport: (target) => observeImportQuietWindow({ ...target,
+          readActivity: (scope) => readImportActivity(true, scope),
+          readFeedState: readImportFeed,
+          readScopedFeedState: readScopedImportFeed,
+          wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
+          now, requireFingerprint: true,
+        }),
+        readFeedState: readScopedImportFeed,
+      }));
+    };
     return { app,
       pollAiringNextPage: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
@@ -441,32 +470,36 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       getShokoEventState: () => eventConsumer.getState(),
       getShokoArrivalState: () => eventConsumer.getArrivalState(),
       getImportFeedState: readImportFeed,
-      observeFirstTimeUncertain: (input) => {
-        if (stopping) return Promise.resolve({ state: 'held',
-          reason: 'service_stopping' });
-        if (!plexObserver || !readImportActivity) {
-          return Promise.resolve({ state: 'held',
-            reason: 'first_time_observer_unconfigured' });
+      observeFirstTimeUncertain,
+      openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
+        holdingRoot, importRoot, inspectMounts, realpathImpl,
+        shokoProviderId, readPacer } = {}) {
+        if (stopping || acquisitionRuntime) {
+          throw new Error('Acquisition workers unavailable');
         }
-        const publicLibraryIds = input?.kind === 'movie'
-          ? [...plex.publicSections.episode, ...plex.publicSections.movie]
-          : [...plex.publicSections.episode];
-        return track(collectFirstTimeUncertain({ ...input,
-          publicLibraryIds, now,
-          readEpisode: (target) => metadata.run(() =>
-            readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
-              apiKey: shokoApiKey, ...target, fetchImpl })),
-          probePublic: (target) => metadata.run(() =>
-            plexObserver.probeFirstTimeSections(target)),
-          observeImport: (target) => observeImportQuietWindow({ ...target,
-            readActivity: (scope) => readImportActivity(true, scope),
-            readFeedState: readImportFeed,
-            readScopedFeedState: readScopedImportFeed,
-            wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
-            now, requireFingerprint: true,
-          }),
-          readFeedState: readScopedImportFeed,
-        }));
+        if (!prowlarr || !plexObserver || !readImportActivity ||
+            !Array.isArray(plex?.sourcePolicy) ||
+            !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
+              .test(shokoProviderId)) {
+          throw new TypeError('Acquisition provider evidence unconfigured');
+        }
+        acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
+          dbPath, requests, acquisitions, handoffs, qbBaseUrl, sessionGate,
+          stagingHostPath, holdingRoot, importRoot, inspectMounts,
+          realpathImpl, readPacer, fetchImpl, now,
+          shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
+            providerId: shokoProviderId },
+          publicSections: plex.publicSections, prowlarr,
+          firstTimePolicy: 'single_uncertain_attempt',
+          discoverCandidates, previewCandidate, releaseQueries,
+          loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
+            loadPage: async ({ page }) => {
+              if (page > 1) await sleep(250);
+              return metadata.run(() => loadDetail({ anidbId, page }));
+            } }),
+          readEvidence: observeFirstTimeUncertain,
+        });
+        return acquisitionRuntime;
       },
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
@@ -476,6 +509,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stopPromise = (async () => {
             try { await app.close(); }
             finally {
+              await acquisitionRuntime?.stop();
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
               plexObserver?.close();

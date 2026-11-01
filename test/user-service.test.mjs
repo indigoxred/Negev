@@ -36,6 +36,8 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
         roots: ['/anime-native/Relay'] }],
       shokoMount: { appRoot: '/pure', localRoot: dir },
       plexMount: { appRoot: '/source-pure', localRoot: dir } },
+    prowlarr: { baseUrl: 'http://prowlarr.internal:9696/',
+      apiKey: 'synthetic', indexerIds: [1] },
     fetchImpl: async (url, init) => {
       reads.push(url.pathname);
       assert.equal(init.method, 'GET');
@@ -88,6 +90,21 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     { state: 'held', reason: 'import_quiet_window_unverified' });
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length,
       queueReads);
+    const runtime = service.openAcquisitionWorkers({
+      qbBaseUrl: 'http://qb.internal:8080/',
+      sessionGate: { get: async () => { throw Error('no login'); },
+        invalidate: () => {} },
+      stagingHostPath: path.join(dir, 'staging'),
+      holdingRoot: path.join(dir, 'holding'), importRoot,
+      inspectMounts: async () => { throw Error('no mount read'); },
+      realpathImpl: async () => { throw Error('no path read'); },
+      shokoProviderId: '11111111-2222-4333-8444-555555555555',
+    });
+    assert.equal((await runtime.start()).state, 'reconciled');
+    assert.equal(runtime.getStatus().state, 'waiting');
+    assert.equal(reads.filter((path) => /torrent|download|prowlarr/i.test(path)).length, 0);
+    await service.close();
+    assert.equal(runtime.getStatus().state, 'stopped');
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
