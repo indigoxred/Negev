@@ -739,6 +739,39 @@ test('recent import without an operator baseline cannot read Shoko or advance', 
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a feed gap clears only after two connected, generation-stable full inventories', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-feed-catchup-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath);
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let connected = false;
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    readShokoConnectionState: () => ({ state: connected ? 'connected' : 'disconnected' }),
+    fetchImpl: async (url, init) => {
+      assert.equal(url.pathname, '/api/v3/File');
+      assert.equal(init.method, 'GET');
+      return json({ Total: 0, List: [] });
+    } });
+  try {
+    service.flagShokoReconciliation('feed_disconnected');
+    await service.tickShokoInventory();
+    await service.tickShokoInventory();
+    assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
+    connected = true;
+    await service.tickShokoInventory();
+    assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
+    service.flagShokoReconciliation('feed_reconnected');
+    await service.tickShokoInventory();
+    assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
+    await service.tickShokoInventory();
+    assert.equal(service.getShokoEventState().fullReconciliationNeeded, false);
+    assert.equal(service.getImportFeedState().state, 'connected');
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('service shutdown drains an in-flight inventory page before closing SQLite', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-inventory-drain-'));
   const dbPath = path.join(dir, 'negev.sqlite');

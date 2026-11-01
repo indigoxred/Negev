@@ -31,6 +31,8 @@ import { createShokoRecentWorker } from '../availability/shoko-recent-worker.mjs
 import { createShokoEventConsumer } from '../availability/shoko-event-consumer.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../availability/shoko-inventory-worker.mjs';
+import { createShokoFullReconciliation } from
+  '../availability/shoko-full-reconciliation.mjs';
 import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
 import { readShokoFileCandidate } from '../availability/shoko-file-candidate.mjs';
@@ -446,6 +448,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (before?.pairs.length) enqueueChangedFile({ before, after: null,
           observedMs: now(), priority: 'event' });
       } });
+    const fullReconciliation = createShokoFullReconciliation({ ledger: inventory,
+      consumer: eventConsumer, readConnectionState: readShokoConnectionState,
+      tickPage: () => inventoryWorker.tick() });
     const readImportFeed = () => importFeedState({
       connection: readShokoConnectionState(),
       event: eventConsumer.getState(),
@@ -488,7 +493,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
-        return track(inventoryWorker.tick());
+        return track(fullReconciliation.tick());
       },
       tickShokoRecentScan: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });

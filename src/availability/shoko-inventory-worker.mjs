@@ -269,6 +269,12 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       return { state: 'delivered', count };
     },
     getCursor() { return { ...cursor.get() }; },
+    getCompletedPass(passNumber) {
+      if (!validId(passNumber)) throw new TypeError('Invalid Shoko inventory pass');
+      const pass = findPass.get(passNumber);
+      return pass?.status === 'complete' ? { pass: passNumber,
+        total: pass.total, digest: pass.digest } : null;
+    },
     getFile(fileId) {
       if (!validId(fileId)) throw new TypeError('Invalid Shoko file ID');
       const row = find.get(fileId);
