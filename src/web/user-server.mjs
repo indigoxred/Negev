@@ -54,6 +54,8 @@ try {
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
     shokoApiKey, sessionKey, qbitSidecarObserver,
+    readShokoConnectionState: () => shokoFeedSupervisor?.getState() ??
+      { state: 'disconnected' },
     onShokoReconciliationNeeded: () => {
       shokoInventory?.requestSoon();
       shokoRecent?.requestSoon();

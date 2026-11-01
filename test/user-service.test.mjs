@@ -480,6 +480,7 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
       shokoBaseUrl: 'http://shoko.internal:8111',
       shokoApiKey: 'synthetic-key', sessionKey: randomBytes(32),
       publicOrigin: origin, secureCookies: false, shokoRecent: true,
+      readShokoConnectionState: () => ({ state: 'connected' }),
       now: () => nowMs,
       fetchImpl: async (url, init) => {
         reads.push(url.pathname);
@@ -506,6 +507,7 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
       episodeId: 1001 }), []);
     const pendingPath = { ManagedFolderID: 1, RelativePath: 'new/11.mkv' };
     service.acceptShokoEvent('file:detected', [pendingPath]);
+    assert.equal(service.getImportFeedState().state, 'unverified');
     service.acceptShokoEvent('file:hashed', [{ ...pendingPath, FileID: 11 }]);
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(service.getShokoArrivalState(),
@@ -522,11 +524,13 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
     assert.deepEqual(await service.tickShokoRecentScan(),
       { state: 'caught_up', added: 0 });
     assert.equal(service.getShokoEventState().reconciliationNeeded, false);
+    assert.equal(service.getImportFeedState().state, 'connected');
     service.flagShokoReconciliation('feed_disconnected');
     assert.deepEqual(await service.tickShokoRecentScan(),
       { state: 'caught_up', added: 0 });
     assert.equal(service.getShokoEventState().reconciliationNeeded, true);
     assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
+    assert.equal(service.getImportFeedState().state, 'unverified');
     assert.deepEqual(reads, ['/api/v3/File', '/api/v3/File',
       '/api/v3/File/11', '/api/v3/File/11', '/api/v3/File/11',
       '/api/v3/File', '/api/v3/File', '/api/v3/File', '/api/v3/File']);

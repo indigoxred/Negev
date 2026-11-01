@@ -57,9 +57,9 @@ test('mount witness rejects stopped, malformed, and oversized Docker data',
     const socketPath = path.join(directory, 'mount.sock');
     let bad = 'stopped';
     const server = createServer(createMountWitnessHandler({ names,
-      inspect: async (name) => bad === 'stopped' && name === 'shoko'
+      inspect: async (name) => bad === 'stopped' && name === names.shoko
         ? { ...inspectResult(name), State: { Running: false } } :
-        bad === 'oversized' && name === 'shoko'
+        bad === 'oversized' && name === names.shoko
           ? { ...inspectResult(name), Mounts: Array(101).fill(
             inspectResult(name).Mounts[0]) } : inspectResult(name),
       now: () => 1000, minIntervalMs: 0 }));

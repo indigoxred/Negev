@@ -1,6 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { observeImportQuietWindow } from '../src/acquisition/import-quiet-window.mjs';
+import { observeImportQuietWindow, importFeedState } from
+  '../src/acquisition/import-quiet-window.mjs';
+
+test('live feed state is healthy only for a connected, reconciled event consumer', () => {
+  const event = { generation: 7, pending: 0, inFlight: null,
+    reconciliationNeeded: false, fullReconciliationNeeded: false };
+  const arrival = { state: 'unverified', pendingPaths: 0 };
+  assert.deepEqual(importFeedState({ connection: { state: 'connected' },
+    event, arrival }), { state: 'connected', generation: 7,
+    pendingPaths: 0, pendingEvents: 0, inFlight: false,
+    reconciliationNeeded: false });
+  for (const changed of [
+    { connection: { state: 'disconnected' } },
+    { event: { ...event, fullReconciliationNeeded: true } },
+    { event: { ...event, inFlight: 20 } },
+    { arrival: { state: 'busy', pendingPaths: 1 } },
+  ]) {
+    const result = importFeedState({ connection: { state: 'connected' },
+      event, arrival, ...changed });
+    assert.notEqual(result.state, 'connected');
+  }
+});
 
 function observers({ before = { state: 'connected', generation: 7, pendingPaths: 0,
   pendingEvents: 0, inFlight: false, reconciliationNeeded: false },

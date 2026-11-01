@@ -5,6 +5,22 @@ const healthyFeed = (value) => value?.state === 'connected' &&
   value.pendingPaths === 0 && value.pendingEvents === 0 &&
   value.inFlight === false && value.reconciliationNeeded === false;
 
+// Bind the actual SignalR connection to the consumer's generation and
+// unresolved paths. Any gap or full-reconciliation debt remains unverified.
+export function importFeedState({ connection, event, arrival } = {}) {
+  if (connection?.state !== 'connected') return { state: 'disconnected' };
+  if (!Number.isSafeInteger(event?.generation) || event.generation < 0 ||
+      event.pending !== 0 ||
+      event.inFlight !== null || event.reconciliationNeeded !== false ||
+      event.fullReconciliationNeeded !== false ||
+      arrival?.state !== 'unverified' ||
+      !Number.isSafeInteger(arrival.pendingPaths) ||
+      arrival.pendingPaths !== 0) return { state: 'unverified' };
+  return { state: 'connected', generation: event.generation,
+    pendingPaths: 0, pendingEvents: 0, inFlight: false,
+    reconciliationNeeded: false };
+}
+
 // This is a bounded observation for the explicit one-attempt first-acquisition
 // policy, not proof that Shoko has settled or that a file is absent. A live
 // adapter must derive connected/generation from the installed file feed and

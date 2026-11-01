@@ -48,6 +48,7 @@ export function createShokoFeedSupervisor({ connect, onGap,
     }
   };
   return {
+    getState() { return { state: feed && !stopping ? 'connected' : 'disconnected' }; },
     start() {
       if (started || stopping) return;
       started = true;

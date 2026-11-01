@@ -43,6 +43,7 @@ import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidat
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
+import { importFeedState } from '../acquisition/import-quiet-window.mjs';
 
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
@@ -54,6 +55,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   shokoRecent = false, anidbTitleDump = false,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
+  readShokoConnectionState = () => ({ state: 'disconnected' }),
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
@@ -78,6 +80,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof shokoRecent !== 'boolean' || typeof anidbTitleDump !== 'boolean' ||
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
+      typeof readShokoConnectionState !== 'function' ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
         typeof prowlarr.apiKey !== 'string' || !prowlarr.apiKey ||
         !Array.isArray(prowlarr.indexerIds) ||
@@ -419,6 +422,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       flagShokoReconciliation: (reason) => eventConsumer.flagReconciliation(reason),
       getShokoEventState: () => eventConsumer.getState(),
       getShokoArrivalState: () => eventConsumer.getArrivalState(),
+      getImportFeedState: () => importFeedState({
+        connection: readShokoConnectionState(),
+        event: eventConsumer.getState(),
+        arrival: eventConsumer.getArrivalState(),
+      }),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {

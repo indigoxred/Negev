@@ -13,11 +13,13 @@ test('initial Shoko feed outage does not stop the host and retries later', async
     setTimer: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
     clearTimer: () => {},
   });
+  assert.deepEqual(supervisor.getState(), { state: 'disconnected' });
   supervisor.start();
   assert.equal(calls, 0);
   const first = timers.shift();
   assert.equal(first.delay, 0);
   await first.fn();
+  assert.deepEqual(supervisor.getState(), { state: 'disconnected' });
   assert.equal(calls, 1);
   assert.deepEqual(gaps, ['feed_disconnected']);
   assert.equal(timers[0].delay, 5 * 60_000);
@@ -45,8 +47,10 @@ test('terminal feed close schedules reconnect and shutdown closes current feed',
   supervisor.start();
   await timers.shift().fn();
   assert.equal(connections, 1);
+  assert.deepEqual(supervisor.getState(), { state: 'connected' });
   disconnect();
   await Promise.resolve();
+  assert.deepEqual(supervisor.getState(), { state: 'disconnected' });
   assert.deepEqual(gaps, ['feed_disconnected']);
   assert.equal(timers[0].delay, 5 * 60_000);
   await timers.shift().fn();
