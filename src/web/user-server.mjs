@@ -65,8 +65,8 @@ try {
     shokoApiKey, sessionKey, qbitSidecarObserver,
     readShokoConnectionState: () => shokoFeedSupervisor?.getState() ??
       { state: 'disconnected' },
-    onShokoReconciliationNeeded: () => {
-      shokoInventory?.requestSoon();
+    onShokoReconciliationNeeded: (_fileId, fullDebtStarted) => {
+      if (fullDebtStarted) shokoInventory?.requestSoon();
       shokoRecent?.requestSoon();
     },
     today: () => dateInZone(config.timeZone) });
@@ -85,9 +85,10 @@ try {
         apiKey: shokoApiKey, consumer: {
           accept: (target, args) => {
             return forwardShokoEvent({
-              consumer: { accept: service.acceptShokoEvent },
-              requestReconciliation: () => {
-                shokoInventory?.requestSoon();
+              consumer: { accept: service.acceptShokoEvent,
+                getState: service.getShokoEventState },
+              requestReconciliation: (_result, fullDebtStarted) => {
+                if (fullDebtStarted) shokoInventory?.requestSoon();
                 shokoRecent?.requestSoon();
               },
               target, args,

@@ -17,11 +17,14 @@ const arrivalKey = (event) => {
 export function forwardShokoEvent({ consumer, requestReconciliation,
   target, args } = {}) {
   if (typeof consumer?.accept !== 'function' ||
+      typeof consumer?.getState !== 'function' ||
       typeof requestReconciliation !== 'function') {
     throw new TypeError('Invalid Shoko event forwarding');
   }
+  const fullBefore = consumer.getState().fullReconciliationNeeded === true;
   const result = consumer.accept(target, args);
-  if (result.state === 'reconcile') requestReconciliation();
+  if (result.state === 'reconcile') requestReconciliation(result,
+    !fullBefore && consumer.getState().fullReconciliationNeeded === true);
   return result;
 }
 
@@ -76,11 +79,13 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   };
 
   const flagUnresolvedEvent = (fileId) => {
+    const fullBefore = fullReconciliationNeeded;
     bumpGeneration();
     reconciliationNeeded = true;
     fullReconciliationNeeded = true;
     pendingOnlyDebt = false;
-    try { onReconciliationNeeded?.(fileId); } catch { /* Keep draining. */ }
+    try { onReconciliationNeeded?.(fileId, !fullBefore); }
+    catch { /* Keep draining. */ }
   };
 
   const drain = () => {

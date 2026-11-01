@@ -267,6 +267,46 @@ test('normal file events use targeted refresh without waking the full inventory 
   assert.deepEqual(wakeups, ['file:detected', 'file:hashed']);
 });
 
+test('only a new full-debt transition requests an event-driven inventory wake', async () => {
+  const wakeups = [];
+  const consumer = createShokoEventConsumer({ maxArrivals: 1,
+    refreshFile: async () => ({ state: 'recorded_file' }) });
+  const detected = (name) => forwardShokoEvent({ consumer,
+    requestReconciliation: (result, fullDebtStarted) =>
+      wakeups.push({ reason: result.reason, fullDebtStarted }),
+    target: 'file:detected',
+    args: [{ ManagedFolderID: 1, RelativePath: name }] });
+  try {
+    detected('first.mkv');
+    detected('overflow.mkv');
+    detected('another.mkv');
+    assert.deepEqual(wakeups, [
+      { reason: 'file_detected', fullDebtStarted: false },
+      { reason: 'file_detected', fullDebtStarted: true },
+      { reason: 'file_detected', fullDebtStarted: false },
+    ]);
+  } finally { await consumer.close(); }
+});
+
+test('failed targeted refresh reports whether it newly created full debt', async () => {
+  const wakeups = [];
+  const consumer = createShokoEventConsumer({
+    refreshFile: async () => ({ state: 'held' }),
+    onReconciliationNeeded: (fileId, fullDebtStarted) =>
+      wakeups.push({ fileId, fullDebtStarted }),
+  });
+  try {
+    consumer.accept('file:hashed', [{ FileID: 17 }]);
+    await new Promise((resolve) => setImmediate(resolve));
+    consumer.accept('file:hashed', [{ FileID: 18 }]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(wakeups, [
+      { fileId: 17, fullDebtStarted: true },
+      { fileId: 18, fullDebtStarted: false },
+    ]);
+  } finally { await consumer.close(); }
+});
+
 test('failed targeted refresh wakes inventory after the asynchronous read finishes', async () => {
   const gate = deferred();
   const wakeups = [];
