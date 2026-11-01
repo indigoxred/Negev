@@ -14,7 +14,7 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
   { recursive: true, force: true }))));
 const digest = 'A'.repeat(32);
 
-async function fixture({ detailedPage = false } = {}) {
+async function fixture({ detailedPage = false, guidPresent = true } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));
   cleanup.push(root);
   await mkdir(path.join(root, 'Anime'), { recursive: true });
@@ -29,9 +29,10 @@ async function fixture({ detailedPage = false } = {}) {
     if (url.hostname === 'plex' && url.pathname === '/library/sections/102/all') {
       if (url.searchParams.has('guid')) {
         return Response.json({ MediaContainer: { librarySectionID: 102,
-          offset: 0, totalSize: 1, size: 1,
-          Metadata: [{ ratingKey: '500', type: 'episode',
-            librarySectionID: 102, guid: url.searchParams.get('guid') }] } });
+          offset: 0, totalSize: guidPresent ? 1 : 0,
+          size: guidPresent ? 1 : 0,
+          ...(guidPresent ? { Metadata: [{ ratingKey: '500', type: 'episode',
+            librarySectionID: 102, guid: url.searchParams.get('guid') }] } : {}) } });
       }
       return Response.json({ MediaContainer: { librarySectionID: 102, offset: 0,
         totalSize: 1, size: 1, Metadata: [{ ratingKey: '500', type: 'episode',
@@ -75,6 +76,20 @@ async function fixture({ detailedPage = false } = {}) {
     fetchImpl, now: () => 100 };
   return { config, calls };
 }
+
+test('first-time probe holds a matching public card and never calls an empty GUID result complete absence', async () => {
+  const present = await fixture();
+  const service = createPlexAvailabilityService(present.config);
+  assert.deepEqual(await service.probeFirstTimeCards({ kind: 'series',
+    episodeIds: [1001] }), { state: 'held', reason: 'public_card_observed' });
+  service.close();
+  const empty = await fixture({ guidPresent: false });
+  const emptyService = createPlexAvailabilityService(empty.config);
+  assert.deepEqual(await emptyService.probeFirstTimeCards({ kind: 'series',
+    episodeIds: [1001] }), { state: 'healthy_unconfirmed',
+    libraryIds: [102], parts: [], complete: false });
+  emptyService.close();
+});
 
 test('a direct Shoko import becomes Available only after public Plex card discovery', async () => {
   const { config, calls } = await fixture();

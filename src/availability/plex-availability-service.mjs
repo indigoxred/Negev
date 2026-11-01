@@ -7,6 +7,7 @@ import { createPlexCardPageWorker, indexPlexCardPage,
 import { observeIndexedTarget } from './observe-indexed-target.mjs';
 import { observePublicTarget } from './observe-public-target.mjs';
 import { readPlexGuidCards } from './plex-guid-cards.mjs';
+import { probeFirstTimePublicCards } from './probe-first-time-public-cards.mjs';
 import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
 
@@ -78,6 +79,12 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, fetchImpl });
   return {
+    probeFirstTimeCards({ kind, episodeIds, tmdbMovieIds } = {}) {
+      return probeFirstTimePublicCards({ kind, episodeIds, tmdbMovieIds,
+        publicSections, readGuidCards: (input) => readPlexGuidCards({
+          baseUrl: plexBaseUrl, token: plexToken, ...input, fetchImpl }),
+      });
+    },
     async tick({ libraryId, kind }) {
       if (!allowed({ libraryId, kind })) {
         return { state: 'held', reason: 'library_not_allowed' };
