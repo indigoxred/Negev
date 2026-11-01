@@ -28,7 +28,7 @@
 - Old proof beyond its configured lifetime: label previously verified, not currently Available. Task 2 test.
 - Incomplete public-card index, provider outage, or candidate budget: retain Unknown and advance the paced cursor. Task 5 test.
 - A file linked to more episodes than one exact-check budget: persist an episode offset and eventually visit every pair. Task 4 test.
-- Shoko changes after a file read but before proof insertion: reject the stale positive even if the event was already delivered. Task 5 test.
+- Shoko or Plex identity changes after the exact read but before proof insertion: reject the stale positive even if the change event was already delivered. Task 5 test.
 
 ---
 
@@ -76,9 +76,9 @@
 
 **Interfaces:** An opt-in worker claims at most ten IDs, re-reads each Shoko file, calls existing exact `observeFileCandidate` for each linked episode within a shared card/probe budget, records valid proofs and Unknown outcomes, then advances the cursor. A single timer runs only after both independent inventories are enabled, with no overlapping tick. The catalogue status reader combines fresh direct checks with fresh file proofs; unverified items remain unlabelled. Request-time acquisition still performs an independent live presence check.
 
-The worker must resolve the AniDB title's actual `series`/`movie` kind, reread the Shoko candidate after each bounded group, and atomically reject proof insertion if the inventory's file generation changed since that read. Proof insertion and source-change invalidation must share the same SQLite ordering; a post-event late insert cannot escape withdrawal merely by carrying a later timestamp.
+The worker must resolve the AniDB title's actual `series`/`movie` kind, reread the Shoko candidate after each bounded group, and atomically reject proof insertion if either the Shoko file or Plex card/Part generation changed since its exact read. Proof insertion and source-change invalidation must share the same SQLite ordering; a post-event late insert cannot escape withdrawal merely by carrying a later timestamp.
 
-- [ ] Write tests for direct-Shoko-import positive, incomplete index Unknown, shared budget, multi-episode continuation, concurrent Shoko change before proof commit, retry after restart, expiry, acquisition isolation and opt-in parsing.
+- [ ] Write tests for direct-Shoko-import positive, incomplete index Unknown, shared budget, multi-episode continuation, concurrent Shoko/Plex change before proof commit, retry after restart, expiry, acquisition isolation and opt-in parsing.
 - [ ] Run red; implement worker and wiring in small commits; run focused and full suite plus Linux CI.
 - [ ] Rehearse one isolated NAS tick with acquisition off, resource limits and private temporary SQLite; record timings, counts, index coverage and service load without printing paths or tokens.
 - [ ] Do not enable an installed broad scheduler until the load and rollback gates pass. A synthetic green suite is not operational proof.
