@@ -18,6 +18,7 @@ test('only the admin can probe saved targets; response contains no provider file
   await accounts.registerInvite({ code: invite.code, username: 'Friend',
     password: 'long-member-passphrase' });
   const calls = [];
+  let activityReads = 0;
   const origin = 'http://localhost:3000';
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
     publicOrigin: origin, secureCookies: false,
@@ -30,6 +31,10 @@ test('only the admin can probe saved targets; response contains no provider file
         targets: episodeIds.map((episodeId) => ({ episodeId,
           state: 'unknown', reason: 'locally_missing_unconfirmed',
           privatePath: '/secret/media.mkv' })) };
+    },
+    readImportActivity: async () => {
+      activityReads++;
+      return { state: 'quiet_observed', privatePath: '/secret/Import' };
     },
   });
   try {
@@ -59,6 +64,17 @@ test('only the admin can probe saved targets; response contains no provider file
       targets: [{ episodeId: 1002, state: 'unknown',
         reason: 'locally_missing_unconfirmed' }] });
     assert.deepEqual(calls, [{ id: 1, episodeIds: [1002] }]);
+    const diagnostic = { method: 'POST', url: '/api/admin/import-activity',
+      headers, payload: {} };
+    assert.equal((await app.inject({ ...diagnostic, headers: {
+      cookie: friendCookie, origin,
+      'x-negev-csrf': friendSession.json().csrfToken } })).statusCode, 403);
+    assert.equal(activityReads, 0);
+    const activity = await app.inject(diagnostic);
+    assert.equal(activity.statusCode, 200, activity.body);
+    assert.deepEqual(activity.json(), { state: 'import_activity',
+      activity: 'quiet_observed', acquisitionAuthorized: false });
+    assert.equal(activityReads, 1);
   } finally {
     await app.close(); accounts.close();
     await rm(dir, { recursive: true, force: true });

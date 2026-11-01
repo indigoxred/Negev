@@ -144,12 +144,22 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
       headers: { cookie, origin: 'http://localhost:3000',
         'x-negev-csrf': session.json().csrfToken },
       payload: { episodeIds: [1001] } });
+    const importDiagnostic = () => service.app.inject({ method: 'POST',
+      url: '/api/admin/import-activity',
+      headers: { cookie, origin: 'http://localhost:3000',
+        'x-negev-csrf': session.json().csrfToken }, payload: {} });
+    assert.deepEqual((await importDiagnostic()).json(), {
+      state: 'import_activity', activity: 'busy',
+      acquisitionAuthorized: false });
     assert.equal((await probe()).statusCode, 200);
     assert.equal(queueCalls, 0, 'Import file is observed before reading Shoko queue');
     await rm(pending);
     assert.equal((await probe()).statusCode, 200);
     assert.equal(queueCalls, 2,
       'recognized Import files permit two bounded queue checks');
+    assert.deepEqual((await importDiagnostic()).json(), {
+      state: 'import_activity', activity: 'quiet_observed',
+      acquisitionAuthorized: false });
     const history = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.equal(history.json().items[0].progress.publicAvailability,

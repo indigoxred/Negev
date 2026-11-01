@@ -20,6 +20,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
   discoverCandidates, previewCandidate, probeRequestTargets,
+  readImportActivity,
   listOperationalReview,
   publicAvailabilityConfigured = false } = {}) {
   let origin;
@@ -99,6 +100,29 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   const writeGuards = [requireOrigin, requireUser, requireCsrf];
   const authRate = { max: 5, timeWindow: '1 minute' };
   app.get('/health/live', async () => ({ status: 'ok' }));
+  // Read-only operator diagnostic. A quiet observation is never a download
+  // permission and no file, path, torrent, or provider details leave the API.
+  app.post('/api/admin/import-activity', { preHandler: writeGuards,
+    config: { rateLimit: { max: 2, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Admin required' });
+    }
+    if (Object.keys(request.query).length ||
+        !allowedBody(request.body, []) ||
+        typeof readImportActivity !== 'function') {
+      return reply.code(503).send({ error: 'Import activity unavailable' });
+    }
+    let observation;
+    try { observation = await readImportActivity(); }
+    catch { observation = { state: 'unavailable' }; }
+    const activity = ['quiet_observed', 'busy',
+      'scheduled_unverified'].includes(observation?.state)
+      ? observation.state : 'unavailable';
+    return { state: 'import_activity', activity,
+      acquisitionAuthorized: false };
+  });
   app.post('/api/register', { preHandler: requireOrigin,
     config: { rateLimit: authRate } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

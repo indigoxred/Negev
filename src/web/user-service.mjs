@@ -204,7 +204,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }),
       }),
     });
+    const readImportActivity = shokoImportRoot !== null &&
+      shokoImportFolderId !== null ? () => metadata.run(() =>
+        readShokoImportActivity({ baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
+          managedFolderId: shokoImportFolderId,
+          ...(qbitSidecarObserver === null ? {} : {
+            readSidecarTorrent: qbitSidecarObserver.readTorrent,
+            qbitImportSavePath: qbitSidecarObserver.importSavePath }) })) : null;
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
+      readImportActivity,
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
       readRequest: (id) => requests.getRequest(id),
@@ -274,15 +283,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       probeRequestTargets: plexObserver ? ({ request, episodeIds }) =>
         probeTargetPresence({ anidbId: request.anidbId,
           kind: request.kind, episodeIds, now,
-          readImportActivity: () => metadata.run(() =>
+          readImportActivity: readImportActivity ?? (() => metadata.run(() =>
             readShokoImportActivity({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, fetchImpl,
-              ...(shokoImportRoot === null ? {} : { importRoot: shokoImportRoot }),
-              ...(shokoImportFolderId === null ? {} :
-                { managedFolderId: shokoImportFolderId }),
-              ...(qbitSidecarObserver === null ? {} : {
-                readSidecarTorrent: qbitSidecarObserver.readTorrent,
-                qbitImportSavePath: qbitSidecarObserver.importSavePath }) })),
+              ...(shokoImportRoot === null ? {} :
+                { importRoot: shokoImportRoot }) }))),
           readShokoEpisode: (target) => metadata.run(() =>
             readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
               apiKey: shokoApiKey, ...target, fetchImpl })),
