@@ -26,7 +26,8 @@ export function forwardShokoEvent({ consumer, requestReconciliation,
 }
 
 // Accepts decoded SignalR hub method calls, not untrusted raw WebSocket frames.
-// The installed feed subscription and authentication still need live proof.
+// The installed feed can join; delivery of a genuine file event still needs
+// a controlled live proof.
 export function createShokoEventConsumer({ refreshFile, onDeleted,
   onReconciliationNeeded,
   maxPending = 64, maxArrivals = 128 } = {}) {
@@ -53,6 +54,16 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   let reconciliationNeeded = false;
   let stopping = false;
 
+  const acknowledgeLinkedObservation = ({ fileId, token, result } = {}) => {
+    if (!validId(fileId) || !token ||
+        result?.state !== 'recorded_file' || result.recognition !== 'linked' ||
+        resolutions.get(fileId) !== token ||
+        detected.get(token.key) !== token.sequence) return { state: 'held' };
+    detected.delete(token.key);
+    resolutions.delete(fileId);
+    return { state: 'resolved' };
+  };
+
   const flagUnresolvedEvent = (fileId) => {
     reconciliationNeeded = true;
     try { onReconciliationNeeded?.(fileId); } catch { /* Keep draining. */ }
@@ -69,13 +80,8 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         try {
           const result = await refreshFile(fileId);
           if (result?.state !== 'recorded_file') flagUnresolvedEvent(fileId);
-          else if (resolution && result.recognition === 'linked' &&
-              resolutions.get(fileId) === resolution) {
-            if (detected.get(resolution.key) === resolution.sequence) {
-              detected.delete(resolution.key);
-            }
-            resolutions.delete(fileId);
-          }
+          else if (resolution) acknowledgeLinkedObservation({
+            fileId, token: resolution, result });
         } catch { flagUnresolvedEvent(fileId); }
         inFlight = null;
       }
@@ -86,6 +92,12 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
   };
 
   return {
+    // Capture before a separate Shoko GET. A newer detection or hash changes
+    // the token, so its stale response cannot clear the pending path.
+    snapshotPendingResolution(fileId) {
+      return validId(fileId) && !stopping ? resolutions.get(fileId) ?? null : null;
+    },
+    acknowledgeLinkedObservation,
     accept(target, args) {
       if (stopping) return { state: 'held', reason: 'consumer_stopping' };
       if (target === 'file:detected') {

@@ -70,14 +70,15 @@ test('failed hash refresh and malformed detection cannot declare imports quiet',
   await malformed.close();
 });
 
-test('an unrecognized hash stays busy until a later update links the same file', async () => {
+test('a provisional hash stays busy until a synthetic later update links it', async () => {
   const observed = ['provisional', 'linked'];
   const consumer = createShokoEventConsumer({ refreshFile: async () =>
     ({ state: 'recorded_file', recognition: observed.shift() }) });
   const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
   consumer.accept('file:detected', [path]);
   consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
-  // Drain the first targeted refresh before delivering Shoko's later update.
+  // The installed Shoko file feed does not emit this update; its real path
+  // uses a later exact file read, covered below.
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(consumer.getArrivalState(),
     { state: 'busy', pendingPaths: 1 });
@@ -85,6 +86,44 @@ test('an unrecognized hash stays busy until a later update links the same file',
   await consumer.close();
   assert.deepEqual(consumer.getArrivalState(),
     { state: 'unverified', pendingPaths: 0 });
+});
+
+test('a later exact file read resolves a provisional hash without a second event', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: 'provisional' }) });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  const token = consumer.snapshotPendingResolution(10);
+  assert.ok(token);
+  assert.deepEqual(consumer.acknowledgeLinkedObservation({ fileId: 10, token,
+    result: { state: 'recorded_file', recognition: 'linked' } }),
+  { state: 'resolved' });
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'unverified', pendingPaths: 0 });
+  await consumer.close();
+});
+
+test('a stale file read cannot clear a newer detection or hash', async () => {
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file', recognition: 'provisional' }) });
+  const path = { ManagedFolderID: 3, RelativePath: 'new/01.mkv' };
+  consumer.accept('file:detected', [path]);
+  consumer.accept('file:hashed', [{ ...path, FileID: 10 }]);
+  await new Promise((resolve) => setImmediate(resolve));
+  const token = consumer.snapshotPendingResolution(10);
+  consumer.accept('file:detected', [path]);
+  assert.deepEqual(consumer.acknowledgeLinkedObservation({ fileId: 10, token,
+    result: { state: 'recorded_file', recognition: 'linked' } }),
+  { state: 'held' });
+  consumer.accept('file:hashed', [{ ...path, FileID: 11 }]);
+  assert.deepEqual(consumer.acknowledgeLinkedObservation({ fileId: 10, token,
+    result: { state: 'recorded_file', recognition: 'linked' } }),
+  { state: 'held' });
+  assert.deepEqual(consumer.getArrivalState(),
+    { state: 'busy', pendingPaths: 1 });
+  await consumer.close();
 });
 
 test('an older file ID cannot clear a path now associated with a newer hash', async () => {

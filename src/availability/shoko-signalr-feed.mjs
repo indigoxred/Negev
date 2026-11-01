@@ -11,8 +11,8 @@ function defaultConnection({ url, accessTokenFactory }) {
     .build();
 }
 
-// Opt-in transport. A live installed-server subscription still needs a
-// controlled proof; the module never starts merely because it was imported.
+// Opt-in transport. Installed-server joining is proved; genuine file-event
+// delivery still needs a controlled proof. Importing the module starts nothing.
 export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
   createConnection = defaultConnection } = {}) {
   let base;

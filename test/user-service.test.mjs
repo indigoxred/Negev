@@ -504,14 +504,22 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
       { state: 'retry_scheduled', fileId: 11 });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42,
       episodeId: 1001 }), []);
+    const pendingPath = { ManagedFolderID: 1, RelativePath: 'new/11.mkv' };
+    service.acceptShokoEvent('file:detected', [pendingPath]);
+    service.acceptShokoEvent('file:hashed', [{ ...pendingPath, FileID: 11 }]);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(service.getShokoArrivalState(),
+      { state: 'busy', pendingPaths: 1 });
     nowMs = 300_100;
     linked = true;
     assert.deepEqual(await service.tickShokoRecentDrain(),
       { state: 'acknowledged', fileId: 11 });
+    assert.deepEqual(service.getShokoArrivalState(),
+      { state: 'unverified', pendingPaths: 0 });
     assert.deepEqual(service.getObservedShokoFileIds({ anidbId: 42,
       episodeId: 1001 }), [11]);
     assert.deepEqual(reads, ['/api/v3/File', '/api/v3/File',
-      '/api/v3/File/11', '/api/v3/File/11']);
+      '/api/v3/File/11', '/api/v3/File/11', '/api/v3/File/11']);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

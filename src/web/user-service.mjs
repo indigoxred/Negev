@@ -330,10 +330,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
+    let eventConsumer;
     const refreshRecognizedShokoFile = async (fileId) => {
+      const token = eventConsumer?.snapshotPendingResolution(fileId);
       const result = await refreshShokoFile(fileId);
-      return result?.state === 'recorded_file' ? { ...result,
+      const recognized = result?.state === 'recorded_file' ? { ...result,
         recognition: inventory.getFile(fileId)?.state } : result;
+      if (token) eventConsumer.acknowledgeLinkedObservation({
+        fileId, token, result: recognized });
+      return recognized;
     };
     const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
       readPage: (input) => metadata.run(() => readShokoRecentPage({
@@ -341,7 +346,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })),
       refreshFile: refreshRecognizedShokoFile,
     }) : null;
-    const eventConsumer = createShokoEventConsumer({
+    eventConsumer = createShokoEventConsumer({
       refreshFile: refreshRecognizedShokoFile,
       onReconciliationNeeded: onShokoReconciliationNeeded,
       onDeleted: (fileId) => {
@@ -404,6 +409,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       acceptShokoEvent: (target, args) => eventConsumer.accept(target, args),
       flagShokoReconciliation: (reason) => eventConsumer.flagReconciliation(reason),
       getShokoEventState: () => eventConsumer.getState(),
+      getShokoArrivalState: () => eventConsumer.getArrivalState(),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {
