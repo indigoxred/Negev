@@ -39,6 +39,22 @@ test('preflight returns only provisional file and target evidence', async () => 
   assert.equal(JSON.stringify(result).includes('form'), false);
 });
 
+test('an unnumbered one-episode series remains provisional before exact AniDB admission', async () => {
+  const single = { ...detail, total: 1,
+    episodes: [detail.episodes[0]] };
+  const result = await previewRequestCandidate({ requestId: 4, candidate,
+    readRequest: () => ({ ...request, episodeIds: [1001] }),
+    loadDetail: async () => single,
+    prepare: async () => ({ ...prepared,
+      files: [{ name: '[Group] Example (2005).mkv', size: 1_000 }] }),
+  });
+  assert.equal(result.state, 'preflight');
+  assert.deepEqual(result.episodeIds, [1001]);
+  assert.deepEqual(result.files[0].episodeIds, [1001]);
+  assert.equal(result.registeredInAniDb, false);
+  assert.equal(result.downloadStarted, false);
+});
+
 test('an alias-only hit is revalidated through a trusted same-anime title', async () => {
   const queries = [];
   const result = await previewRequestCandidate({ requestId: 4, candidate,
