@@ -46,6 +46,12 @@ test('numbered episodes and films still require a trusted release title', () => 
   assert.equal(planTorrentTargets({ request, detail, prepared: pack,
     releaseTitle: '[Group] Re:ZERO - 01-02', trustedTitle: 'Re Zero' }).state,
   'planned_targets');
+  assert.equal(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] ReZero - 01-02', trustedTitle: 'Re Zero' }).state,
+  'planned_targets');
+  assert.deepEqual(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] Archive 1986 - 01-02', trustedTitle: '86' }),
+  { state: 'held', reason: 'release_title_mismatch' });
 });
 
 test('plans a four-digit regular episode without accepting a range as one target', () => {

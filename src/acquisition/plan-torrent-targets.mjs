@@ -4,16 +4,21 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
-const titleKey = (value) => typeof value === 'string'
+const titleTokens = (value) => typeof value === 'string'
   ? value.normalize('NFKC').toLocaleLowerCase('en')
-    .replace(/[^\p{L}\p{N}]/gu, '') : '';
+    .replace(/&/g, ' and ').replace(/×/g, ' x ')
+    .match(/[\p{L}\p{N}]+/gu) ?? [] : [];
 // A search hit may be unrelated despite matching episode numbers. This is
 // provisional title evidence; completed bytes still need exact AniDB proof.
 export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
-  const release = titleKey(releaseTitle);
+  const release = titleTokens(releaseTitle);
   return titles.some((title) => {
-    const key = titleKey(title);
-    return key.length >= 2 && release.includes(key);
+    const key = titleTokens(title);
+    const compact = key.join('');
+    if (compact.length < 2) return false;
+    if (release.includes(compact)) return true;
+    return release.some((_, index) => key.every((word, offset) =>
+      release[index + offset] === word));
   });
 };
 
