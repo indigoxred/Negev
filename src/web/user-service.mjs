@@ -215,6 +215,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           apiKey: shokoApiKey, fileId, fetchImpl })),
       resolveKind: async ({ anidbId }) => {
         const detail = await metadata.run(() => loadDetail({ anidbId, page: 1 }));
+        if (detail?.state === 'busy') return detail;
         return detail?.state === 'details' ? detail.kind : null;
       },
       observeCandidate: (input) => metadata.run(() =>
