@@ -54,14 +54,17 @@ export async function submitStoppedCandidate({
   }
   const metainfo = await exactPreparedTorrent(prepared);
   if (!metainfo) return held('prepared_torrent_mismatch');
-  let mounts, realPath;
-  try {
-    mounts = await inspectMounts();
-    realPath = await realpathImpl(hostPath);
-  } catch { return held('mount_evidence_unavailable'); }
-  const isolation = evaluateStagingMountIsolation(mounts, { hostPath });
-  if (isolation.state !== 'isolated_mount') return isolation;
-  if (realPath !== hostPath) return held('staging_path_not_canonical');
+  const checkMounts = async () => {
+    let mounts, realPath;
+    try {
+      mounts = await inspectMounts();
+      realPath = await realpathImpl(hostPath);
+    } catch { return held('mount_evidence_unavailable'); }
+    const isolation = evaluateStagingMountIsolation(mounts, { hostPath });
+    if (isolation.state !== 'isolated_mount') return isolation;
+    return realPath === hostPath ? isolation :
+      held('staging_path_not_canonical');
+  };
 
   const expected = prepared.expected;
   const bound = ledger.bindPreparedTorrent({ attemptId, candidate,
@@ -95,6 +98,8 @@ export async function submitStoppedCandidate({
     } catch { return held('provider_unavailable'); }
     if (!Array.isArray(existing)) return held('provider_unavailable');
     if (existing.length !== 0) return held('torrent_hash_in_use');
+    const isolation = await checkMounts();
+    if (isolation.state !== 'isolated_mount') return isolation;
     const intent = ledger.beginDispatch({ attemptId, nowMs });
     if (intent.state === 'held') return intent;
     if (intent.sendNow) {
@@ -105,6 +110,11 @@ export async function submitStoppedCandidate({
         });
       } catch { /* Response is uncertain; observe by exact hash below. */ }
     }
+  }
+
+  if (bound.state !== 'prepared') {
+    const isolation = await checkMounts();
+    if (isolation.state !== 'isolated_mount') return isolation;
   }
 
   let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,

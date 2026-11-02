@@ -244,16 +244,16 @@ test('a present target or unavailable Prowlarr cannot send a torrent', async () 
     assert.equal(ledger.getAttempt(1), null);
   }));
 
-test('an unsafe mount holds before qBittorrent and keeps the attempt inspectable', async () =>
+test('an unsafe mount holds before qBittorrent add and keeps the attempt inspectable', async () =>
   withLedgers(async ({ request, ledger }) => {
-    let qbCalls = 0;
+    const qbCalls = [];
     const result = await submitMissingCandidate(options({ request, ledger,
       readEvidence: async () => absent(), prowlarrFetch: prowlarrFetch(),
-      qbittorrentFetch: async () => { qbCalls++; throw Error('unexpected downloader call'); },
+      qbittorrentFetch: qbittorrentFetch(qbCalls),
       inspectMounts: async () => ({ ...mounts,
         qbittorrent: [...mounts.qbittorrent, mount('/srv/library', '/Downloads/negev/Show')] }) }));
     assert.deepEqual(result, { state: 'held', reason: 'staging_destination_shadowed' });
-    assert.equal(qbCalls, 0);
+    assert.deepEqual(qbCalls.map(({ method }) => method), ['GET', 'GET']);
     assert.equal(ledger.getAttempt(1).status, 'reserved');
   }));
 
