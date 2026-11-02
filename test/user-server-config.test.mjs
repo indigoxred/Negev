@@ -262,6 +262,16 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parseUserServerConfig({ ...plex,
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' }).plexIndex, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1' })
+    .plexIndexIntervalMs, 60_000);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
+    NEGEV_PLEX_INDEX_INTERVAL_MS: '15000' }).plexIndexIntervalMs, 15_000);
+  for (const interval of ['0', '14999', '300001', '15000.5', 'abc']) {
+    assert.throws(() => parseUserServerConfig({ ...plex,
+      NEGEV_PLEX_INDEX: '1', NEGEV_PLEX_INDEX_INTERVAL_MS: interval }), TypeError);
+  }
+  assert.throws(() => parseUserServerConfig({ ...plex,
+    NEGEV_PLEX_INDEX_INTERVAL_MS: '15000' }), TypeError);
   const backfill = { ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_SHOKO_INVENTORY: '1', NEGEV_SHOKO_INVENTORY_HINTS: '1',
     NEGEV_FILE_BACKFILL: '1', NEGEV_FILE_BACKFILL_INTERVAL_MS: '10000',

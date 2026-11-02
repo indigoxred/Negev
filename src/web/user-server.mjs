@@ -121,6 +121,7 @@ try {
       sections: config.plex.publicSections,
       tickPage: service.tickPublicPlexPage,
       tickRecent: service.tickPublicPlexRecent,
+      intervalMs: config.plexIndexIntervalMs,
     });
     plexScheduler.start();
   }
