@@ -44,7 +44,11 @@ async function api(url, options = {}) {
   }
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.reason || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function showSession(data) {
@@ -115,8 +119,12 @@ async function refreshSession() {
     showSession(data);
     await loadRequests();
     if (data.user.role === 'admin') await loadOperationalReview();
-  } catch {
-    if (sessionResponses.isCurrent(started)) clearWorkspace();
+    return true;
+  } catch (error) {
+    if (!sessionResponses.isCurrent(started)) return false;
+    if ([401, 403].includes(error?.status)) clearWorkspace();
+    else message('Could not check your session. Reload to try again.', true);
+    return false;
   }
 }
 async function loadRequests(append = false) {
@@ -286,8 +294,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       username: fields.get('username'), password: fields.get('password'),
     }) });
     event.currentTarget.reset();
-    await refreshSession();
-    message('Signed in. Search for a show or film.');
+    if (await refreshSession()) message('Signed in. Search for a show or film.');
   } catch (error) { message(error.message, true); }
 });
 byId('register-form').addEventListener('submit', async (event) => {
