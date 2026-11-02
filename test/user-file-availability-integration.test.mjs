@@ -7,8 +7,54 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
+import { openFileBackfillCursor } from
+  '../src/availability/file-backfill-cursor.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
+
+test('service restart invalidates prior broad proof and rewinds its scan', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-backfill-restart-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 5, 9].filter((id) => id > afterFileId).slice(0, limit) };
+  let cursor = openFileBackfillCursor(dbPath);
+  let proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
+  let service;
+  try {
+    const prior = cursor.claim({ inventory, nowMs: 100, limit: 2 });
+    assert.equal(cursor.record({ claim: prior,
+      outcomes: [{ fileId: 2, state: 'available' },
+        { fileId: 5, state: 'unknown' }], nowMs: 101 }).state, 'recorded');
+    assert.equal(proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 2, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 }).state, 'recorded');
+    cursor.close(); proofs.close();
+    cursor = null; proofs = null;
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
+      sessionKey: randomBytes(32), publicOrigin: 'http://localhost:3000',
+      secureCookies: false, now: () => 1_000,
+      shokoInventoryHints: true, fileBackfill: true,
+      fileProofLifetimeMs: 30 * 60_000,
+      plex: { plexBaseUrl: 'http://plex:32400/', plexToken: 'synthetic',
+        publicSections: { episode: [102], movie: [] },
+        shokoMount: { appRoot: '/pure', localRoot: root },
+        plexMount: { appRoot: '/source-pure', localRoot: root } },
+    });
+    proofs = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
+    cursor = openFileBackfillCursor(dbPath);
+    assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'unknown');
+    const firstAgain = cursor.claim({ inventory, nowMs: 110, limit: 2 });
+    assert.deepEqual(firstAgain.fileIds, [2, 5]);
+    assert.equal(firstAgain.pass, prior.pass + 1);
+  } finally {
+    proofs?.close(); cursor?.close(); await service?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('opt-in file tick joins a Shoko import to its exact public Plex part', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-user-file-proof-'));
