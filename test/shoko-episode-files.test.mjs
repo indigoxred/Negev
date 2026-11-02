@@ -108,6 +108,15 @@ test('Shoko paths with control characters or backslashes are rejected before ava
   }
 });
 
+test('an overlong Shoko path is held before physical availability checks', async () => {
+  const changed = { ...episode, Files: [{ ...episode.Files[0],
+    Locations: [{ ...episode.Files[0].Locations[0],
+      AbsolutePath: `/pure/Anime/${'a'.repeat(4096)}/01.mkv` }] }] };
+  const result = await readShokoEpisodeFiles({ ...base,
+    fetchImpl: async () => json(changed) });
+  assert.deepEqual(result, { state: 'unavailable' });
+});
+
 test('one unregistered sibling does not hide a registered playable file', async () => {
   const unregistered = { ...episode.Files[0], ID: 52, Release: {
     ...release, ProviderName: 'User' } };

@@ -5,6 +5,7 @@ import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' &&
+  value.length <= 4096 &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
   !value.includes('\0') && !value.includes('\r') && !value.includes('\n') &&
   !value.includes('\\');
