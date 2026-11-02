@@ -87,6 +87,32 @@ test('a stale keyed card does not hide a second exact playable copy indexed by s
   assert.deepEqual(checked, [500, 501]);
 });
 
+test('a deleted keyed card does not hide a second exact playable copy indexed by size', async () => {
+  const checked = [];
+  const goodPart = (await base.readPlex()).parts[0];
+  const forgotten = [];
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    readPlex: async ({ ratingKey }) => {
+      checked.push(ratingKey);
+      return ratingKey === 500 ? { state: 'not_found' } :
+        { state: 'ok', complete: true, parts: [goodPart] };
+    },
+    cardIndex: {
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      lookupCards: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 },
+        { libraryId: 102, ratingKey: 501 }] }),
+      forgetCard: (input) => forgotten.push(input),
+    },
+  });
+  assert.deepEqual(result, { state: 'available', fileId: 51 });
+  assert.deepEqual(checked, [500, 501]);
+  assert.equal(forgotten.length, 1);
+});
+
 test('size fallback never exceeds the ten-card fresh-read budget', async () => {
   const keyedCards = Array.from({ length: 9 }, (_, index) => ({
     libraryId: 102, ratingKey: 500 + index }));
@@ -119,6 +145,25 @@ test('a keyed Plex outage does not trigger a second wave of card reads', async (
         { libraryId: 102, ratingKey: 500 }] }),
       lookupCards: () => { fallbackLookups++; return { state: 'candidates',
         cards: [{ libraryId: 102, ratingKey: 501 }] }; },
+    },
+  });
+  assert.deepEqual(result, { state: 'unknown', reason: 'observer_incomplete' });
+  assert.equal(fallbackLookups, 0);
+});
+
+test('a deleted keyed card alongside a Plex outage does not trigger fallback reads', async () => {
+  let fallbackLookups = 0;
+  const result = await observeIndexedTarget({ ...base,
+    readShoko: async () => shoko,
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '1:2:5' }),
+    readPlex: async ({ ratingKey }) => ratingKey === 500
+      ? { state: 'not_found' } : { state: 'unavailable' },
+    cardIndex: {
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 },
+        { libraryId: 102, ratingKey: 501 }] }),
+      lookupCards: () => { fallbackLookups++; return { state: 'candidates',
+        cards: [{ libraryId: 102, ratingKey: 502 }] }; },
     },
   });
   assert.deepEqual(result, { state: 'unknown', reason: 'observer_incomplete' });
