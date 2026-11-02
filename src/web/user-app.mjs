@@ -63,7 +63,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   const pages = await Promise.all(['index.html', 'app.js', 'style.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
-    'franchise-explorer.mjs'].map((name) =>
+    'franchise-explorer.mjs', 'acquisition-notice.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -78,6 +78,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[6]],
     ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[7]],
     ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[8]],
+    ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[9]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
@@ -176,9 +177,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     reply.header('Cache-Control', 'no-store');
     const { id, username, role } = request.negevUser;
     const reportedState = getAcquisitionStatus()?.state;
-    const acquisitionState = ['waiting', 'running', 'reconciling',
-      'reconciliation_held', 'reconciliation_failed', 'stopping', 'stopped']
-      .includes(reportedState) ? reportedState : 'disabled';
+    const acquisitionState = ['disabled', 'waiting', 'waiting_with_review',
+      'running', 'reconciling', 'reconciliation_held',
+      'reconciliation_failed', 'stopping', 'stopped']
+      .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',

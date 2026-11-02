@@ -12,7 +12,7 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   kind, publicLibraryIds, readEpisode, probePublic,
   observeImport, readFeedState, now = Date.now } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
-      episodeIds.length < 1 || episodeIds.length > 20 ||
+      episodeIds.length < 1 || episodeIds.length > 50 ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       !['series', 'movie'].includes(kind) ||

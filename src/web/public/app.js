@@ -4,6 +4,7 @@ import { createSearchPager } from './search-pages.mjs';
 import { progressText } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
+import { acquisitionNotice } from './acquisition-notice.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -21,15 +22,7 @@ function message(text, error = false) {
   node.textContent = text;
   node.classList.toggle('error', error);
 }
-function acquisitionNotice() {
-  if (['waiting', 'running'].includes(state.acquisitionState)) {
-    return 'Requests are reviewed automatically. Safety checks can hold a release before download or import.';
-  }
-  if (state.acquisitionState === 'disabled') {
-    return 'Automatic acquisition is off.';
-  }
-  return 'Automatic acquisition is paused while its safety checks recover.';
-}
+const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState);
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -72,8 +65,8 @@ function showSession(data) {
   state.titleChecks = data.capabilities?.titleChecks === true;
   state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
   byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
-    ? `Negev is in preview. ${acquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
-    : `Negev is in preview. ${acquisitionNotice()} Public Plex checks are not active.`;
+    ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
+    : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -583,7 +576,7 @@ async function showDetail(item, franchise = null) {
               body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
-            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${acquisitionNotice()}`);
+            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${currentAcquisitionNotice()}`);
             await loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
@@ -623,7 +616,7 @@ async function showDetail(item, franchise = null) {
           anidbId: item.anidbId, scope: 'installment', requestKey,
         }) });
         requestKeys.saved(scope);
-        message(`Request #${saved.requestId} saved. ${acquisitionNotice()}`);
+        message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
         await loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }

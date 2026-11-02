@@ -171,6 +171,16 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const activeSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie } });
     assert.equal(activeSession.json().capabilities.acquisitionState, 'waiting');
+    acquisitionState = 'waiting_with_review';
+    const reviewSession = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    assert.equal(reviewSession.json().capabilities.acquisitionState,
+      'waiting_with_review');
+    acquisitionState = 'unexpected';
+    const unknownSession = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    assert.equal(unknownSession.json().capabilities.acquisitionState,
+      'unknown');
     acquisitionState = 'reconciliation_held';
     const heldSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie } });
