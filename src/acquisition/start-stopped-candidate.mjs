@@ -108,6 +108,13 @@ export async function startStoppedCandidate({
       JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
     return held('manifest_changed_before_start');
   }
+  try {
+    mounts = await inspectMounts();
+    realPath = await realpathImpl(hostPath);
+  } catch { return held('mount_evidence_unavailable'); }
+  const finalIsolation = evaluateStagingMountIsolation(mounts, { hostPath });
+  if (finalIsolation.state !== 'isolated_mount') return finalIsolation;
+  if (realPath !== hostPath) return held('staging_path_not_canonical');
   const manifestDigest = createHash('sha256').update(JSON.stringify({
     videos: manifest.videos, subtitles: manifest.subtitles,
     savePath: paths.save_path, downloadPath: paths.download_path,

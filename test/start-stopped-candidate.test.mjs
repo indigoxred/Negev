@@ -170,6 +170,29 @@ test('a file priority changed during the availability probe blocks start', async
     assert.equal(posts, 0);
   }));
 
+test('a mount exposed to Shoko during the availability probe blocks start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      inspectMounts: async () => availabilityRead
+        ? { ...mounts, shoko: [bind('/srv', '/pure')] } : mounts,
+      readEvidence: async () => {
+        availabilityRead = true;
+        return options.readEvidence();
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'staging_visible_to_shoko' });
+    assert.equal(posts, 0);
+  }));
+
 test('a changed video filename or size cannot start against the saved plan', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     for (const altered of [{ ...files[0], name: 'Other.mkv' }, { ...files[0], size: 999 }]) {
