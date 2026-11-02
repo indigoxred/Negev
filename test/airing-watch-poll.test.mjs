@@ -30,6 +30,22 @@ test('one unavailable show holds while the next airing show advances', async () 
   assert.equal(result.nextAfterId, null);
 });
 
+test('one failed watch write holds while the next watch advances', async () => {
+  const advanced = [];
+  const result = await pollAiringWatches({ today: '2026-01-20',
+    intervalMs: 0, ledger: { listActiveAirings: () => [
+      { requestId: 1, anidbId: 41 }, { requestId: 2, anidbId: 42 }],
+    advanceAiring: ({ requestId }) => {
+      if (requestId === 1) throw new Error('one watch write failed');
+      advanced.push(requestId);
+      return { state: 'advanced' };
+    } },
+    loadDetail: async ({ anidbId }) => details(anidbId) });
+  assert.deepEqual(advanced, [2]);
+  assert.deepEqual(result.results.map((item) => [item.state, item.reason]),
+    [['held', 'watch_write_unavailable'], ['advanced', undefined]]);
+});
+
 test('a newly restricted title holds without blocking the next watch', async () => {
   const advanced = [];
   const result = await pollAiringWatches({ today: '2026-02-20', intervalMs: 0,
