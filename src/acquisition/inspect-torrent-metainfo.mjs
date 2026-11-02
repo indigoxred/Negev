@@ -85,6 +85,7 @@ function addFile(files, name, size) {
 function v1Files(info) {
   const single = field(info, 'length');
   const list = field(info, 'files');
+  if (field(info, 'attr') !== undefined) throw new TypeError('Unsupported file attributes');
   if (!!single === !!list) throw new TypeError('Invalid v1 file view');
   const name = safeSegment(field(info, 'name'));
   const files = [];
@@ -105,11 +106,12 @@ function v1Files(info) {
           !Number.isSafeInteger(size) || size < 1) throw new TypeError('Invalid v1 file');
       pieceBytes += size;
       const fileName = path.value.map(safeSegment).join('/');
-      const attr = asBytes(field(entry, 'attr'));
-      if (attr && attr.includes(112)) {
-        if (attr.toString('ascii') !== 'p' || !/^\.pad\/[1-9][0-9]*$/.test(fileName) ||
+      const attribute = field(entry, 'attr');
+      if (attribute !== undefined) {
+        const attr = asBytes(attribute);
+        if (attr?.toString('ascii') !== 'p' || !/^\.pad\/[1-9][0-9]*$/.test(fileName) ||
             Number(fileName.slice(5)) !== size) {
-          throw new TypeError('Invalid padding file');
+          throw new TypeError('Unsupported file attributes');
         }
         continue;
       }
@@ -131,6 +133,7 @@ function v2Files(info) {
       if (prefix.length === 0 || node.value.size !== 1 || leaf.kind !== 'dict') {
         throw new TypeError('Invalid v2 leaf');
       }
+      if (field(leaf, 'attr') !== undefined) throw new TypeError('Unsupported file attributes');
       const size = asInt(field(leaf, 'length'));
       const root = asBytes(field(leaf, 'pieces root'));
       if (!root || root.length !== 32) throw new TypeError('Invalid v2 piece root');

@@ -36,6 +36,20 @@ test('omits genuine pad entries from the qBittorrent-visible file list', () => {
   ] })).state, 'held');
 });
 
+test('holds torrents that mark a selected media path with file attributes', () => {
+  const single = { ...v1Info, attr: 'x' };
+  const multi = { name: 'Show', 'piece length': 16384,
+    pieces: Buffer.alloc(20, 7), files: [{ attr: 'x', length: 1000,
+      path: ['01.mkv'] }] };
+  const v2 = { 'file tree': { '01.mkv': { '': { attr: 'x',
+    length: 1000, 'pieces root': Buffer.alloc(32, 2) } } },
+    'meta version': 2, name: 'Show', 'piece length': 16384 };
+  for (const bytes of [torrent(single), torrent(multi),
+    torrent(v2, { 'piece layers': {} })]) {
+    assert.deepEqual(inspect(bytes), { state: 'held', reason: 'invalid_metainfo' });
+  }
+});
+
 test('derives qBittorrent truncated SHA-256 ID for a v2 torrent', () => {
   const info = { 'file tree': { 'Example.mkv': { '': { length: 1000, 'pieces root': Buffer.alloc(32, 2) } } },
     'meta version': 2, name: 'Example', 'piece length': 16384 };
