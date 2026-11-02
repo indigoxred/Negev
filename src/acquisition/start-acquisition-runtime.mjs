@@ -21,7 +21,9 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
   });
   try {
     const result = await runtime.start();
-    if (result?.state !== 'reconciled') {
+    // A held scheduler keeps acquisition idle and retries reconciliation.
+    // The request site can still serve catalogue and existing request history.
+    if (!['reconciled', 'held'].includes(result?.state)) {
       throw new Error('Acquisition journal reconciliation incomplete');
     }
   } catch (error) {
