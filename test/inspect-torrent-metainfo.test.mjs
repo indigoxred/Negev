@@ -34,6 +34,10 @@ test('omits genuine pad entries from the qBittorrent-visible file list', () => {
   assert.equal(inspect(torrent({ ...info, files: [
     info.files[0], { attr: 'p', length: 100, path: ['.pad', '101'] },
   ] })).state, 'held');
+  assert.deepEqual(inspect(torrent({ ...info, files: [
+    info.files[0], { attr: Buffer.from([0xf0]), length: 100,
+      path: ['.pad', '100'] },
+  ] })), { state: 'held', reason: 'invalid_metainfo' });
 });
 
 test('holds torrents that mark a selected media path with file attributes', () => {
