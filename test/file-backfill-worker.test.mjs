@@ -117,6 +117,142 @@ for (const busyAt of ['first_file', 'kind', 'card', 'final_file']) {
   });
 }
 
+for (const busyAt of ['first_file', 'kind', 'card', 'final_file']) {
+  test(`persistent ${busyAt} contention defers one file and reaches the next`, async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-age-'));
+    const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+    let clock = 300;
+    let activeFile = 0;
+    let fileReads = 0;
+    let proofWrites = 0;
+    const worker = createFileBackfillWorker({ cursor,
+      inventory: { listFileHintIds: ({ afterFileId }) =>
+        [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+      getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+        observedMs: 100 }) },
+      readCandidate: async ({ fileId }) => {
+        activeFile = fileId;
+        fileReads++;
+        return fileId === 7 && (busyAt === 'first_file' ||
+          busyAt === 'final_file' && fileReads % 2 === 0)
+          ? { state: 'busy' } : { ...candidate(1), fileId };
+      },
+      resolveKind: async () => activeFile === 7 && busyAt === 'kind'
+        ? { state: 'busy' } : 'series',
+      observeCandidate: async () => activeFile === 7 && busyAt === 'card'
+        ? { state: 'busy' } : { state: 'unknown' },
+      proofs: { observeGuarded: () => { proofWrites++; return { state: 'recorded' }; } },
+      now: () => clock });
+    try {
+      assert.deepEqual(await worker.runOnce(), {
+        state: 'held', reason: 'metadata_busy' });
+      clock += 15 * 60_000 - 1;
+      assert.deepEqual(await worker.runOnce(), {
+        state: 'held', reason: 'metadata_busy' });
+      clock++;
+      assert.deepEqual(await worker.runOnce(), {
+        state: 'checked', reason: 'metadata_busy_deferred',
+        checkedPairs: 0, available: 0,
+        load: { cardReads: 0, physicalProbes: 0 } });
+      assert.equal((await worker.runOnce()).state, 'checked');
+      assert.equal(activeFile, 8);
+      assert.equal(proofWrites, 0);
+    } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+  });
+}
+
+test('a multi-file tick reports expired contention as deferred work', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-batch-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  let clock = 300;
+  const worker = createFileBackfillWorker({ cursor, maxFilesPerTick: 2,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => fileId === 7
+      ? { state: 'busy' } : { ...candidate(1), fileId },
+    resolveKind: async () => 'series',
+    observeCandidate: async () => ({ state: 'unknown' }),
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => clock });
+  try {
+    assert.deepEqual(await worker.runOnce(), {
+      state: 'held', reason: 'metadata_busy' });
+    clock += 15 * 60_000;
+    assert.deepEqual(await worker.runOnce(), {
+      state: 'checked', checkedFiles: 1, deferredFiles: 1,
+      checkedPairs: 1, available: 0,
+      load: { cardReads: 0, physicalProbes: 0 } });
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a busy partial file survives restart and is revisited on the next pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-partial-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  let cursor = openFileBackfillCursor(dbPath);
+  let clock = 300;
+  let ledger = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 7 * 24 * 60 * 60_000, now: () => clock });
+  let holdRemainingPair = true;
+  const checked = [];
+  const savedProofs = [];
+  const makeWorker = () => createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(12).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({
+      ...candidate(fileId === 7 ? 12 : 1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file, target }) => {
+      checked.push([file.fileId, target.episodeId]);
+      if (file.fileId === 7 && target.episodeId === 1011 &&
+          holdRemainingPair) return { state: 'busy' };
+      return file.fileId === 7 && target.episodeId === 1001
+        ? { state: 'available', fileId: 7,
+          proof: { fileId: 7, libraryId: 102, ratingKey: 500,
+            partId: 600 },
+          cardRevision: { observedMs: 100 } }
+        : { state: 'unknown' };
+    },
+    proofs: { observeGuarded: ({ anidbId, episodeId, proof,
+      checkedMs }) => {
+      savedProofs.push(episodeId);
+      return ledger.observe({ anidbId, episodeId, proof, checkedMs });
+    } },
+    now: () => clock });
+  try {
+    assert.equal((await makeWorker().runOnce()).state, 'partial');
+    assert.deepEqual(savedProofs, [1001]);
+    assert.equal(ledger.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'available');
+    cursor.close();
+    ledger.close();
+    cursor = openFileBackfillCursor(dbPath);
+    ledger = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 7 * 24 * 60 * 60_000, now: () => clock });
+    const restarted = makeWorker();
+    assert.deepEqual(await restarted.runOnce(), {
+      state: 'held', reason: 'metadata_busy' });
+    clock += 15 * 60_000;
+    assert.equal((await restarted.runOnce()).reason, 'metadata_busy_deferred');
+    assert.deepEqual(savedProofs, [1001]);
+    assert.equal(ledger.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'available');
+    assert.equal((await restarted.runOnce()).state, 'checked');
+    assert.deepEqual(checked.at(-1), [8, 1001]);
+    holdRemainingPair = false;
+    assert.equal((await restarted.runOnce()).state, 'partial');
+    assert.deepEqual(savedProofs, [1001, 1001]);
+    assert.equal((await restarted.runOnce()).state, 'checked');
+    assert.deepEqual(checked.slice(-2), [[7, 1011], [7, 1012]]);
+  } finally {
+    ledger.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 for (const failAt of ['first_file', 'kind', 'card', 'final_file']) {
   test(`a thrown ${failAt} read retries once, then advances past the failed file`, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-error-'));

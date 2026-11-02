@@ -46,6 +46,13 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         ...(reason ? { reason } : {}),
         checkedPairs, available, load: { ...budget } };
     };
+    const claimExpired = () => {
+      const ageMs = now() - claim.claimedMs;
+      return Number.isSafeInteger(ageMs) && ageMs >= 15 * 60_000;
+    };
+    const metadataBusy = () => claimExpired()
+      ? finish({ state: 'held' }, 0, 0, 'metadata_busy_deferred')
+      : { state: 'held', reason: 'metadata_busy' };
     const sourceReadFailed = () => {
       const receipt = `${claim.pass}:${claim.receipt}`;
       if (failedReceipt !== receipt) {
@@ -54,9 +61,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
       }
       // The cursor survives restart while this retry counter does not.
       // Age the saved claim out so repeated restarts cannot pin the pass.
-      const claimAgeMs = now() - claim.claimedMs;
-      if (Number.isSafeInteger(claimAgeMs) &&
-          claimAgeMs >= 15 * 60_000) {
+      if (claimExpired()) {
         return finish({ state: 'unknown' }, 0, 0);
       }
       if (++readFailures === 1) {
@@ -70,7 +75,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
       candidate = await readCandidate({ fileId });
     } catch { return sourceReadFailed(); }
     if (candidate?.state === 'busy') {
-      return { state: 'held', reason: 'metadata_busy' };
+      return metadataBusy();
     }
     if (candidate?.state === 'unavailable') return sourceReadFailed();
     if (source?.state !== 'linked' || !validTime(source.observedMs) ||
@@ -100,7 +105,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         try { kind = await resolveKind({ anidbId: pair.anidbId }); }
         catch { return sourceReadFailed(); }
         if (kind?.state === 'busy') {
-          return { state: 'held', reason: 'metadata_busy' };
+          return metadataBusy();
         }
         if (kind?.state === 'unavailable') return sourceReadFailed();
         kinds.set(pair.anidbId, kind);
@@ -112,7 +117,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
         target: { ...pair, kind }, budget }); }
       catch { return sourceReadFailed(); }
       if (outcome?.state === 'busy') {
-        return { state: 'held', reason: 'metadata_busy' };
+        return metadataBusy();
       }
       if (outcome?.reason === 'observer_incomplete') {
         return sourceReadFailed();
@@ -140,7 +145,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
     try { confirmed = await readCandidate({ fileId }); }
     catch { return sourceReadFailed(); }
     if (confirmed?.state === 'busy') {
-      return { state: 'held', reason: 'metadata_busy' };
+      return metadataBusy();
     }
     if (confirmed?.state === 'unavailable') return sourceReadFailed();
     if (confirmed?.state !== 'candidate' ||
@@ -185,7 +190,8 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
           const result = await processOne(budget, seen);
           if (maxFilesPerTick === 1) return result;
           if (result.state === 'checked') {
-            if (result.reason === 'read_budget_exhausted') deferredFiles++;
+            if (['read_budget_exhausted', 'metadata_busy_deferred']
+              .includes(result.reason)) deferredFiles++;
             else checkedFiles++;
             checkedPairs += result.checkedPairs;
             available += result.available;
