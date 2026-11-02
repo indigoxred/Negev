@@ -35,6 +35,16 @@ export function openRequestProgress(dbPath) {
   const hasAcquisitionChecks = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_request_checks'`);
   let oneTimeCompletion;
+  let interruptedRequest;
+  const interrupted = (requestId) => {
+    if (!interruptedRequest) {
+      if (!hasAcquisitionChecks.get()) return false;
+      interruptedRequest = db.prepare(`SELECT 1 FROM acquisition_request_checks
+        WHERE request_id=? AND state='held'
+          AND reason='interrupted_attempt_present'`);
+    }
+    return Boolean(interruptedRequest.get(requestId));
+  };
   const completedOnce = (requestId) => {
     // Acquisition is opt-in and its queue may open after this reader.
     if (!oneTimeCompletion) {
@@ -60,9 +70,12 @@ export function openRequestProgress(dbPath) {
         !row.rejected_id);
       const privateVerifiedTargets = active.reduce((sum, row) =>
         sum + (row.handoff_status ? row.claimed_count : 0), 0);
-      const reviewRequired = rows.some((row) => row.rejected_id && !row.retired_id);
+      const interruptedCheck = interrupted(requestId);
+      const rejectedNeedsReview = rows.some((row) => row.rejected_id && !row.retired_id);
+      const reviewRequired = interruptedCheck || rejectedNeedsReview;
       let state = 'saved';
-      if (reviewRequired) state = 'review_needed';
+      if (rejectedNeedsReview) state = 'review_needed';
+      else if (interruptedCheck) state = 'request_interrupted';
       else if (privateVerifiedTargets > 0) {
         state = privateVerifiedTargets >= item.target_count &&
           active.some((row) => row.handoff_status !== 'prepared')
