@@ -13,6 +13,13 @@ const validHint = (hint) => validId(hint?.size) &&
   hint.sourcePaths.length <= 20 &&
   hint.sourcePaths.every(validHintPath) &&
   new Set(hint.sourcePaths).size === hint.sourcePaths.length;
+const canonicalStoredPaths = (pathsJson, size) => {
+  try {
+    const sourcePaths = JSON.parse(pathsJson);
+    return validHint({ size, sourcePaths })
+      ? JSON.stringify([...sourcePaths].sort()) : null;
+  } catch { return null; }
+};
 const validItem = (item) => {
   if (!validId(item?.fileId) || typeof item.updated !== 'string' ||
       !Number.isFinite(Date.parse(item.updated)) ||
@@ -206,23 +213,33 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     if (previous && (previous.observedMs > observedMs ||
         (previous.observedMs === observedMs &&
           previous.seenPass === 0 && seenPass > 0))) return;
-    const pairsJson = JSON.stringify(item.pairs);
+    // Shoko links and locations are unordered. Their response order must not
+    // invalidate a file proof or enqueue a false identity change.
+    const sortPairs = (pairs) => [...pairs].sort((a, b) =>
+      a.anidbId - b.anidbId || a.episodeId - b.episodeId);
+    const pairs = sortPairs(item.pairs);
+    const pairsJson = JSON.stringify(pairs);
+    const previousPairs = previous ? sortPairs(JSON.parse(previous.pairsJson)) : null;
     const oldHint = findHint.get(item.fileId);
     const hintProvided = Object.hasOwn(item, 'hint');
+    const hintValid = hintProvided && validHint(item.hint);
+    const pathsJson = hintValid
+      ? JSON.stringify([...item.hint.sourcePaths].sort()) : null;
     const hintChanged = oldHint && hintProvided &&
-      (!validHint(item.hint) || oldHint.size !== item.hint.size ||
-        oldHint.pathsJson !== JSON.stringify(item.hint.sourcePaths));
+      (!hintValid || oldHint.size !== item.hint.size ||
+        canonicalStoredPaths(oldHint.pathsJson, oldHint.size) !== pathsJson);
     const identityChanged = !previous || previous.updated !== item.updated ||
-      previous.state !== item.state || previous.pairsJson !== pairsJson;
+      previous.state !== item.state ||
+      JSON.stringify(previousPairs) !== pairsJson;
     if (identityChanged || hintChanged) {
       const before = previous ? { fileId: item.fileId,
         updated: previous.updated, state: previous.state,
-        pairs: JSON.parse(previous.pairsJson), seenPass: previous.seenPass,
+        pairs: previousPairs, seenPass: previous.seenPass,
         observedMs: previous.observedMs } : null;
       // Change receipts carry identity, never optional source paths or other
       // page-only hints from a Shoko response.
       const after = { fileId: item.fileId, updated: item.updated,
-        state: item.state, pairs: item.pairs, seenPass, observedMs };
+        state: item.state, pairs, seenPass, observedMs };
       saveChange.run(item.fileId, observedMs,
         JSON.stringify(before), JSON.stringify(after));
     }
@@ -234,13 +251,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     if (item.state !== 'linked' ||
         (previous && previous.updated !== item.updated) ||
         hintProvided) {
-      if (item.state === 'linked' && validHint(item.hint)) {
+      if (item.state === 'linked' && hintValid) {
         saveHint.run(item.fileId, item.updated, item.hint.size,
-          JSON.stringify(item.hint.sourcePaths), observedMs);
+          pathsJson, observedMs);
       } else removeHint.run(item.fileId);
     }
     removePairs.run(item.fileId);
-    for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
+    for (const pair of pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
   }
   return {
     invalidateFileEvent({ fileId, observedMs }) {

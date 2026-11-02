@@ -26,6 +26,34 @@ test('plans an exact subset from unambiguous AniDB regular episode numbers', () 
   });
 });
 
+test('numbered episodes and films still require a trusted release title', () => {
+  const wrongSeries = planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] Different Anime - 01-02', trustedTitle: 'Example' });
+  assert.deepEqual(wrongSeries,
+    { state: 'held', reason: 'release_title_mismatch' });
+  const filmRequest = { ...request, kind: 'movie', episodeIds: [5001] };
+  const filmDetail = { ...detail, kind: 'movie', total: 1,
+    episodes: [{ id: 5001, number: 1, type: 'Episode' }] };
+  const wrongFilm = planTorrentTargets({ request: filmRequest,
+    detail: filmDetail, prepared: { state: 'prepared_stopped',
+      files: [{ name: '01.mkv', size: 1200 }] },
+    releaseTitle: 'Different Film', trustedTitle: 'Example' });
+  assert.deepEqual(wrongFilm,
+    { state: 'held', reason: 'release_title_mismatch' });
+  assert.equal(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] EXAMPLE - 01-02', trustedTitle: 'Example' }).state,
+  'planned_targets');
+  assert.equal(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] Re:ZERO - 01-02', trustedTitle: 'Re Zero' }).state,
+  'planned_targets');
+  assert.equal(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] ReZero - 01-02', trustedTitle: 'Re Zero' }).state,
+  'planned_targets');
+  assert.deepEqual(planTorrentTargets({ request, detail, prepared: pack,
+    releaseTitle: '[Group] Archive 1986 - 01-02', trustedTitle: '86' }),
+  { state: 'held', reason: 'release_title_mismatch' });
+});
+
 test('plans a four-digit regular episode without accepting a range as one target', () => {
   const longRequest = { ...request, episodeIds: [9001] };
   const longDetail = { ...detail, total: 1,

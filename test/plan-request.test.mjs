@@ -24,6 +24,19 @@ test('airing whole installment stores current regular IDs and future monitoring'
     { state: 'held', reason: 'invalid_current_date' });
 });
 
+test('a complete empty airing series can watch for its first listed episode', () => {
+  const empty = { ...detail, total: 0, episodes: [],
+    airDate: '2026-10-01', episodeCount: 12 };
+  assert.deepEqual(planRequest({ detail: empty, releaseState: 'airing',
+    scope: 'installment', today: '2026-10-31' }), {
+    state: 'ready', anidbId: 1234, kind: 'series',
+    episodeIds: [], monitorFuture: true,
+  });
+  assert.deepEqual(planRequest({ detail: { ...empty, kind: 'movie' },
+    releaseState: 'completed', scope: 'installment' }),
+  { state: 'held', reason: 'detail_incomplete' });
+});
+
 test('completed installment and movie are one-time exact acquisitions', () => {
   assert.equal(planRequest({ detail, releaseState: 'completed', scope: 'installment' }).monitorFuture, false);
   const movie = { ...detail, kind: 'movie', total: 1, episodes: [detail.episodes[0]] };

@@ -10,6 +10,7 @@ import { openShokoInventoryLedger } from '../src/availability/shoko-inventory-wo
 import { openShokoRecentLedger } from '../src/availability/shoko-recent-ledger.mjs';
 import { openTitleCheckLedger } from '../src/availability/title-check-ledger.mjs';
 import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
+import { openDirectAvailabilityQueue } from '../src/availability/direct-availability-queue.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
@@ -221,6 +222,31 @@ test('a first-load AniDB dump failure falls back to bounded Shoko search', async
     assert.equal(search.json().catalogueSource, 'shoko_cache');
     assert.deepEqual(paths, ['/api/anime-titles.dat.gz',
       '/api/v3/Series/AniDB/Search']);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('catalogue search reports when its restart cache cannot be saved', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-cache-warning-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  const service = await createUserService({ dbPath,
+    dataDir: path.join(dir, 'missing-cache-directory'),
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    anidbTitleDump: true, now: () => 1_000,
+    fetchImpl: async () => new Response(dump) });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const search = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    assert.equal(search.statusCode, 200, search.body);
+    assert.equal(search.json().items[0].anidbId, 4158);
+    assert.equal(search.json().catalogueCacheWriteFailed, true);
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
@@ -610,6 +636,51 @@ test('a busy account metadata slot keeps a new direct-import target due', async 
     assert.deepEqual(service.getDirectAvailabilityStatus({ anidbId: 42,
       episodeId: 1001 }), { state: 'unknown' });
     const retry = await service.tickDirectAvailability();
+    assert.equal(retry.state, 'checked');
+    assert.deepEqual(retry.target, { anidbId: 42, episodeId: 1001 });
+  } finally {
+    unblock();
+    await service?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a busy detail lookup keeps a file-fallback target due', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-file-fallback-busy-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  let unblock;
+  let entered;
+  const blocked = new Promise((resolve) => { unblock = resolve; });
+  const started = new Promise((resolve) => { entered = resolve; });
+  let service;
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+      sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+      now: () => 100,
+      plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+        publicSections: { episode: [102], movie: [] },
+        shokoMount: { appRoot: '/pure', localRoot: dir },
+        plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+      fetchImpl: async (url) => {
+        if (url.hostname === 'plex.internal') {
+          entered();
+          await blocked;
+          return new Response(null, { status: 503 });
+        }
+        throw new Error(`Unexpected metadata read: ${url.pathname}`);
+      },
+    });
+    const queue = openDirectAvailabilityQueue(dbPath);
+    try { queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 100 }); }
+    finally { queue.close(); }
+    const plexRead = service.tickPublicPlexPage({ libraryId: 102, kind: 'episode' });
+    await started;
+    assert.deepEqual(await service.tickFileAvailability(),
+      { state: 'held', reason: 'metadata_busy' });
+    unblock();
+    await plexRead;
+    const retry = await service.tickFileAvailability();
     assert.equal(retry.state, 'checked');
     assert.deepEqual(retry.target, { anidbId: 42, episodeId: 1001 });
   } finally {

@@ -113,6 +113,42 @@ test('starts only the exact safe stopped manifest once after durable intent', as
     assert.equal(posts, 1);
   }));
 
+test('a slow final mount check cannot start from stale absence evidence', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let clock = 204;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest, now: () => clock,
+      inspectMounts: async () => { clock = 30_205; return mounts; },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'availability_evidence_stale' });
+    assert.equal(posts, 0);
+  }));
+
+test('the final start uses the original absence observation age', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let clock = 30_203;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest, now: () => clock,
+      inspectMounts: async () => { clock = 30_205; return mounts; },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'availability_evidence_stale' });
+    assert.equal(posts, 0);
+  }));
+
 test('unsafe manifest and visible staging hold before the start call', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let posts = 0;
@@ -151,6 +187,30 @@ test('a stopped torrent whose incomplete path escapes staging cannot start', asy
     };
     const result = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest, fetchImpl });
     assert.deepEqual(result, { state: 'held', reason: 'incomplete_path_outside_staging' });
+    assert.equal(posts, 0);
+  }));
+
+test('a download path changed during the availability probe blocks start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => {
+        availabilityRead = true;
+        return options.readEvidence();
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath,
+          download_path: availabilityRead ? '/Shoko' : '',
+        });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result,
+      { state: 'held', reason: 'manifest_changed_before_start' });
     assert.equal(posts, 0);
   }));
 

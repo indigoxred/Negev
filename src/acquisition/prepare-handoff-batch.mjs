@@ -1,7 +1,7 @@
 import { constants } from 'node:fs';
 import { lstat, mkdir, mkdtemp, open, realpath, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
-import { ed2kFile } from '../identity/ed2k.mjs';
+import { ED2K_CHUNK_SIZE, ed2kFile } from '../identity/ed2k.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
@@ -33,7 +33,8 @@ async function inspectRoots(stagingRoot, holdingRoot, importRoot) {
   } catch { return null; }
 }
 
-async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer }) {
+async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer,
+  ed2kMode }) {
   const parts = file.name.split('/');
   let cursor = stagingRoot;
   for (const [index, part] of parts.entries()) {
@@ -83,7 +84,7 @@ async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer })
   }
   const copiedHash = kind === 'subtitle'
     ? await verifyStagedSubtitle({ root: holdingPath, relativePath: file.name, readPacer: pacer })
-    : await ed2kFile(destinationPath, { pacer });
+    : await ed2kFile(destinationPath, { pacer, mode: ed2kMode ?? 'edonkey' });
   if (copiedHash.size !== file.size ||
       (kind === 'subtitle' ? copiedHash.sha256 !== file.sha256 : copiedHash.ed2k !== file.ed2k)) {
     throw new Error('source_changed');
@@ -97,13 +98,14 @@ export async function prepareHandoffBatch({
   maxTotalBytes = DEFAULT_BUDGET, readPacer,
   readRateBytesPerSecond = 16 * 1024 ** 2,
   minFreeAfterBytes = DEFAULT_FREE_RESERVE, statfsImpl = statfs,
-  verifyHandoffMounts,
+  verifyHandoffMounts, ed2kMode,
 }) {
   if (!Number.isSafeInteger(maxTotalBytes) || maxTotalBytes < 1 ||
       maxTotalBytes > 1024 ** 4 ||
       !Number.isSafeInteger(minFreeAfterBytes) || minFreeAfterBytes < 0 ||
       minFreeAfterBytes > 1024 ** 4 || typeof statfsImpl !== 'function' ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') ||
+      (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function')) {
     throw new TypeError('Invalid handoff preparation configuration');
@@ -113,6 +115,8 @@ export async function prepareHandoffBatch({
   }
   const evidence = evaluateHandoffEvidence(verified, { maxVideoBytes: maxTotalBytes });
   if (evidence.state !== 'valid') return held('invalid_verified_batch');
+  if (ed2kMode === undefined && evidence.manifest.videos.some((file) =>
+    file.size % ED2K_CHUNK_SIZE === 0)) return held('ed2k_boundary_mode_unverified');
   const roots = await inspectRoots(stagingRoot, holdingRoot, importRoot);
   if (!roots) return held('unsafe_handoff_roots');
   // Holding and Import were proven to share a filesystem. Check its
@@ -142,7 +146,8 @@ export async function prepareHandoffBatch({
   try {
     holdingPath = await mkdtemp(path.join(holdingRoot, '.negev-prep-'));
     for (const file of verified.files) {
-      await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'video', pacer });
+      await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file,
+        kind: 'video', pacer, ed2kMode });
     }
     for (const file of verified.subtitles) {
       await copyVerifiedFile({ stagingRoot: roots[0], holdingPath, file, kind: 'subtitle', pacer });

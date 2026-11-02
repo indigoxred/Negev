@@ -55,6 +55,26 @@ test('inventory change receipts omit optional source path hints', async () => {
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('reordered Shoko pairs and locations do not announce a file change', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-order-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  const pairs = [{ anidbId: 42, episodeId: 1001 },
+    { anidbId: 42, episodeId: 1002 }];
+  const sourcePaths = ['/pure/Anime/one.mkv', '/pure/Import/one.mkv'];
+  const item = { ...linked, pairs,
+    hint: { size: 5, sourcePaths } };
+  try {
+    ledger.recordFileObservation({ item, observedMs: 100 });
+    assert.equal(ledger.deliverPendingChanges({ handle: () => {} }).count, 1);
+    ledger.recordFileObservation({ item: { ...item,
+      pairs: [...pairs].reverse(),
+      hint: { ...item.hint, sourcePaths: [...sourcePaths].reverse() } },
+    observedMs: 200 });
+    assert.equal(ledger.deliverPendingChanges({ handle: () => {} }).count, 0);
+    assert.deepEqual(ledger.getFile(10).pairs, pairs);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('source hints survive restart but are withdrawn when Shoko identity changes', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-hint-state-'));
   const dbPath = path.join(dir, 'inventory.sqlite');
@@ -86,6 +106,15 @@ test('source hints survive restart but are withdrawn when Shoko identity changes
         WHERE file_id=?`).run('["/pure/../escape.mkv"]', linked.fileId);
     } finally { db.close(); }
     assert.equal(ledger.getFileHint(linked.fileId), null);
+    const damaged = new DatabaseSync(dbPath);
+    try { damaged.prepare(`UPDATE shoko_inventory_file_hints SET paths_json=?
+      WHERE file_id=?`).run('not-json', linked.fileId); }
+    finally { damaged.close(); }
+    assert.equal(ledger.recordFileObservation({ item: { ...linked,
+      updated: '2026-10-31T02:00:00Z', hint }, observedMs: 500 }).state,
+    'recorded_file');
+    assert.deepEqual(ledger.getFileHint(linked.fileId), { ...hint,
+      updated: '2026-10-31T02:00:00Z', observedMs: 500 });
   } finally { ledger?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -44,7 +44,11 @@ async function api(url, options = {}) {
   }
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.reason || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function showSession(data) {
@@ -115,8 +119,12 @@ async function refreshSession() {
     showSession(data);
     await loadRequests();
     if (data.user.role === 'admin') await loadOperationalReview();
-  } catch {
-    if (sessionResponses.isCurrent(started)) clearWorkspace();
+    return true;
+  } catch (error) {
+    if (!sessionResponses.isCurrent(started)) return false;
+    if ([401, 403].includes(error?.status)) clearWorkspace();
+    else message('Could not check your session. Reload to try again.', true);
+    return false;
   }
 }
 async function loadRequests(append = false) {
@@ -286,8 +294,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       username: fields.get('username'), password: fields.get('password'),
     }) });
     event.currentTarget.reset();
-    await refreshSession();
-    message('Signed in. Search for a show or film.');
+    if (await refreshSession()) message('Signed in. Search for a show or film.');
   } catch (error) { message(error.message, true); }
 });
 byId('register-form').addEventListener('submit', async (event) => {
@@ -341,6 +348,8 @@ byId('search-form').addEventListener('submit', async (event) => {
     results.replaceChildren();
     if (data.catalogueStale) results.append(element('p',
       'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
+    if (data.catalogueCacheWriteFailed) results.append(element('p',
+      'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
     if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
     appendItems(data.items);
     const addMore = () => {
@@ -408,6 +417,11 @@ async function showDetail(item, franchise = null) {
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager?.episodes.length === 0) panel.append(element('p',
+      data.kind === 'movie'
+        ? 'AniDB has no film target listed yet, so this film cannot be requested.'
+        : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
+      'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise');
@@ -596,6 +610,7 @@ async function showDetail(item, franchise = null) {
       panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));
       return;
     }
+    if (data.kind === 'movie' && pager.episodes.length === 0) return;
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
