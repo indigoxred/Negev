@@ -145,6 +145,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     let user;
     try { user = await accounts.registerInvite(body); }
     catch (error) { if (error instanceof TypeError) return reply.code(400).send({ error: 'Invalid registration' }); throw error; }
+    if (user.state === 'held' && user.reason === 'authentication_busy') {
+      return reply.header('Retry-After', '1').code(503)
+        .send({ error: 'Authentication busy; retry shortly' });
+    }
     if (user.state === 'held') return reply.code(409).send({ error: 'Invitation unavailable' });
     return reply.code(201).send({ user: { id: user.id, username: user.username, role: user.role } });
   });
@@ -157,6 +161,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(400).send({ error: 'Invalid login' });
     }
     const user = await accounts.authenticate(body);
+    if (user?.state === 'busy') {
+      return reply.header('Retry-After', '1').code(503)
+        .send({ error: 'Authentication busy; retry shortly' });
+    }
     if (!user) return reply.code(401).send({ error: 'Invalid login' });
     request.session.regenerate();
     request.session.set('userId', user.id);
