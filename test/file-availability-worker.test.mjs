@@ -135,3 +135,59 @@ test('a failed episode card does not prevent the next episode from being checked
       'available');
   } finally { queue.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+test('a busy Shoko file read releases every claimed episode for immediate retry', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-file-busy-'));
+  const queue = openDirectAvailabilityQueue(path.join(root, 'state.sqlite'));
+  try {
+    const pairs = [{ anidbId: 42, episodeId: 1001 },
+      { anidbId: 42, episodeId: 1002 }];
+    for (const pair of pairs) queue.enqueue({ ...pair, observedMs: 100 });
+    let busy = true;
+    const worker = createFileAvailabilityWorker({ queue,
+      inventory: { getObservedFileIds: () => [51],
+        getFile: () => ({ fileId: 51, state: 'linked', pairs }) },
+      resolveKind: async () => 'series',
+      readCandidate: async () => busy ? { state: 'busy' } :
+        { state: 'candidate', fileId: 51, pairs },
+      observeCandidate: async () => ({ state: 'unknown' }),
+      observeFallback: async () => { throw Error('batch path expected'); },
+      now: () => 101 });
+    assert.deepEqual(await worker.runOnce(),
+      { state: 'held', reason: 'metadata_busy' });
+    busy = false;
+    const retried = await worker.runOnce();
+    assert.deepEqual(retried, { state: 'checked', target: pairs[0],
+      result: 'unknown', batchSize: 2,
+      load: { cardReads: 0, physicalProbes: 0 } });
+  } finally { queue.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('a busy Plex metadata slot retries its episode without delaying a sibling', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-file-card-busy-'));
+  const queue = openDirectAvailabilityQueue(path.join(root, 'state.sqlite'));
+  try {
+    const pairs = [{ anidbId: 42, episodeId: 1001 },
+      { anidbId: 42, episodeId: 1002 }];
+    for (const pair of pairs) queue.enqueue({ ...pair, observedMs: 100 });
+    let busy = true;
+    let siblingChecks = 0;
+    const worker = createFileAvailabilityWorker({ queue,
+      inventory: { getObservedFileIds: () => [51],
+        getFile: () => ({ fileId: 51, state: 'linked', pairs }) },
+      resolveKind: async () => 'series',
+      readCandidate: async () => ({ state: 'candidate', fileId: 51, pairs }),
+      observeCandidate: async ({ target }) => {
+        if (target.episodeId === 1002) siblingChecks++;
+        return busy && target.episodeId === 1001
+          ? { state: 'busy' } : { state: 'unknown' };
+      },
+      observeFallback: async () => { throw Error('batch path expected'); },
+      now: () => 101 });
+    assert.deepEqual(await worker.runOnce(),
+      { state: 'held', reason: 'metadata_busy' });
+    assert.equal(siblingChecks, 1);
+    busy = false;
+    assert.equal((await worker.runOnce()).result, 'unknown');
+  } finally { queue.close(); await rm(root, { recursive: true, force: true }); }
+});

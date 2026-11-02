@@ -329,6 +329,7 @@ export function createFileAvailabilityWorker({ queue, inventory,
   if (typeof queue?.claimNext !== 'function' ||
       typeof queue?.claimAssociated !== 'function' ||
       typeof queue?.recordResult !== 'function' ||
+      typeof queue?.retryBusy !== 'function' ||
       typeof inventory?.getObservedFileIds !== 'function' ||
       typeof inventory?.getFile !== 'function' ||
       [resolveKind, readCandidate, observeCandidate, observeFallback, now]
@@ -379,6 +380,14 @@ export function createFileAvailabilityWorker({ queue, inventory,
           }
           catch { /* All claimed targets remain Unknown and due for retry. */ }
         }
+        if (candidate?.state === 'busy' || kind?.state === 'busy') {
+          let firstResult;
+          for (const receipt of receipts) {
+            const result = queue.retryBusy({ claim: receipt, nowMs: now() });
+            if (receipt === first) firstResult = result;
+          }
+          return firstResult;
+        }
         let firstResult;
         const budget = { cardReads: 0, physicalProbes: 0 };
         for (const receipt of receipts) {
@@ -395,6 +404,11 @@ export function createFileAvailabilityWorker({ queue, inventory,
                   target: { ...receipt.target, kind } }) : { state: 'unknown' };
             } else outcome = await observeFallback(receipt.target);
           } catch { outcome = { state: 'unknown' }; }
+          if (outcome?.state === 'busy') {
+            const saved = queue.retryBusy({ claim: receipt, nowMs: now() });
+            if (receipt === first) firstResult = saved;
+            continue;
+          }
           const proof = outcome?.proof;
           const state = outcome?.state === 'available' && validProof(proof)
             ? 'available' : 'unknown';
