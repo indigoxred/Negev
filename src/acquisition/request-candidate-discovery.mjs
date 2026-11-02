@@ -31,11 +31,11 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (detail.restricted !== false) return held('restricted_or_unverified');
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
-    if (detail.title.length > 120) return held('query_too_long');
     let aliases;
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
     const queries = trustedReleaseQueries(detail.title, aliases);
+    if (queries.length === 0) return held('query_too_long');
     const items = [];
     const seenCandidates = new Set();
     let successful = 0;

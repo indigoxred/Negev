@@ -75,6 +75,40 @@ test('an alias-only hit is revalidated through a trusted same-anime title', asyn
   assert.equal(result.searchQuery, 'English Alias');
 });
 
+test('a long canonical title preflights only its verified short alias', async () => {
+  const queries = [];
+  const aliasCandidate = { ...candidate,
+    title: 'Short Alias - 01' };
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: aliasCandidate, readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: 'L'.repeat(121) }),
+    releaseQueries: async ({ anidbId }) => {
+      assert.equal(anidbId, 42);
+      return ['Short Alias'];
+    },
+    prepare: async ({ query }) => {
+      queries.push(query);
+      return { ...prepared, files: [{ name: 'Short Alias - 01.mkv', size: 1_000 }] };
+    },
+  });
+  assert.deepEqual(queries, ['Short Alias']);
+  assert.equal(result.state, 'preflight');
+  assert.equal(result.searchQuery, 'Short Alias');
+  assert.deepEqual(result.episodeIds, [1001]);
+});
+
+test('a long canonical title without a verified short alias cannot fetch a torrent', async () => {
+  let providerCalls = 0;
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate, readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: 'L'.repeat(121) }),
+    releaseQueries: async () => ['X', 'Y'.repeat(121)],
+    prepare: async () => { providerCalls++; return prepared; },
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'detail_unavailable' });
+  assert.equal(providerCalls, 0);
+});
+
 test('preflight labels passive extras as exclusions, not episode evidence', async () => {
   const result = await previewRequestCandidate({ requestId: 4, candidate,
     readRequest: () => request, loadDetail: async () => detail,
