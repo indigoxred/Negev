@@ -107,12 +107,20 @@ export async function startStoppedCandidate({
   const finalIsolation = evaluateStagingMountIsolation(mounts, { hostPath });
   if (finalIsolation.state !== 'isolated_mount') return finalIsolation;
   if (realPath !== hostPath) return held('staging_path_not_canonical');
+  let startMs;
+  try { startMs = now(); }
+  catch { return held('availability_evidence_stale'); }
+  if (!Number.isSafeInteger(startMs) || startMs < checked.checkedAtMs ||
+      !Number.isSafeInteger(checked.observedAtMs) ||
+      startMs - checked.observedAtMs > 30_000) {
+    return held('availability_evidence_stale');
+  }
   const manifestDigest = createHash('sha256').update(JSON.stringify({
     videos: manifest.videos, subtitles: manifest.subtitles,
     savePath: paths.save_path, downloadPath: paths.download_path,
   })).digest('hex');
   const intent = ledger.beginStart({ attemptId, hash: expected.hash,
-    manifestDigest, nowMs: checked.checkedAtMs });
+    manifestDigest, nowMs: startMs });
   if (intent.state === 'held' || !intent.sendNow) return intent;
 
   const body = new URLSearchParams({ hashes: expected.hash });

@@ -139,6 +139,7 @@ export async function confirmMissingTargets({ request, episodeIds,
     return held('import_activity_unverified');
   }
   return { state: 'missing_confirmed', checkedAtMs,
+    observedAtMs: snapshot.observedAtMs,
     ...(permissiveFirstTime ?
       { evidencePolicy: 'first_time_permissive' } : {}) };
 }

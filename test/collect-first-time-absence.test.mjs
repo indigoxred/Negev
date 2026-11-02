@@ -119,5 +119,6 @@ test('the complete synthetic snapshot satisfies the existing strict decision gat
     id: 1, anidbId: 42, episodeIds: [1001], status: 'held' },
   episodeIds: [1001], publicLibraryIds: [102], now: () => 111,
   readEvidence: async () => snapshot });
-  assert.deepEqual(result, { state: 'missing_confirmed', checkedAtMs: 111 });
+  assert.deepEqual(result, { state: 'missing_confirmed', checkedAtMs: 111,
+    observedAtMs: 110 });
 });

@@ -43,6 +43,7 @@ test('brackets the quiet window with fresh Shoko and scoped Plex checks', async 
     readEvidence: async () => snapshot, now: () => 120_102,
     firstTimePolicy: 'single_uncertain_attempt' }),
   { state: 'missing_confirmed', checkedAtMs: 120_102,
+    observedAtMs: 120_101,
     evidencePolicy: 'first_time_permissive' });
   const withoutSource = await confirmMissingTargets({ request,
     episodeIds: scope.episodeIds, publicLibraryIds: [102],
