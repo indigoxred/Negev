@@ -68,7 +68,8 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
-  const plan = planTorrentTargets({ request, detail, prepared });
+  const plan = planTorrentTargets({ request, detail, prepared,
+    releaseTitle: candidate.title, trustedTitle: searchQuery });
   if (plan.state !== 'planned_targets') return plan;
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(prepared.expected?.hash) ||
       !Number.isSafeInteger(prepared.totalBytes) || prepared.totalBytes < 1 ||

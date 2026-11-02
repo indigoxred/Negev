@@ -82,7 +82,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   let selectedEpisodeIds = episodeIds;
   let selectedFiles = plannedFiles;
   if (episodeIds === undefined && plannedFiles === undefined) {
-    const plan = planTorrentTargets({ request, detail, prepared });
+    const plan = planTorrentTargets({ request, detail, prepared,
+      releaseTitle: candidate.title, trustedTitle: selectedQuery });
     if (plan.state !== 'planned_targets') return plan;
     selectedEpisodeIds = plan.episodeIds;
     selectedFiles = plan.plannedFiles;

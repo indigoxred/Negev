@@ -23,6 +23,12 @@ function episodeNumbers(name) {
   for (const match of stem.matchAll(/(?:^|\s)-\s+[Ss](0*[1-9]\d*)(?=\s|$)/g)) {
     matches.push({ type: 'Special', digits: match[1] });
   }
+  if (matches.length === 0) {
+    // A title-only one-off can be planned provisionally, but an explicit
+    // episode coordinate in a format we do not parse must stay ambiguous.
+    return /(?:^|[ ._-])(?:[Ss]\d{1,3}[Ee]\d{1,4}|[Ee]\d{1,4})(?=$|[ ._-])/i.test(stem)
+      ? null : { type: 'Unnumbered', numbers: [] };
+  }
   if (matches.length !== 1 || !Number.isSafeInteger(Number(matches[0].digits))) return null;
   const match = matches[0];
   const start = Number(match.digits);
@@ -34,7 +40,8 @@ function episodeNumbers(name) {
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
 // only a stopped candidate reservation; it never proves registered video bytes.
-export function planTorrentTargets({ request, detail, prepared } = {}) {
+export function planTorrentTargets({ request, detail, prepared,
+  releaseTitle, trustedTitle } = {}) {
   if (!Number.isSafeInteger(request?.id) || request.id < 1 ||
       request.status !== 'held' ||
       !['series', 'movie'].includes(request.kind) ||
@@ -92,10 +99,23 @@ export function planTorrentTargets({ request, detail, prepared } = {}) {
   }
   const plannedFiles = [];
   const targets = new Set();
+  const trustedUnnumberedTitle = typeof trustedTitle === 'string' &&
+    trustedTitle.trim().length >= 2 && trustedTitle.length <= 120 &&
+    typeof releaseTitle === 'string' && releaseTitle.length <= 500 &&
+    releaseTitle.toLocaleLowerCase('en').includes(
+      trustedTitle.trim().toLocaleLowerCase('en'));
+  const soleUnnumberedTarget = videos.length === 1 &&
+    request.episodeIds.length === 1 && regular.length === 1 &&
+    regular[0].id === request.episodeIds[0] && trustedUnnumberedTitle
+    ? regular[0].id : null;
   for (const file of videos) {
     const episode = episodeNumbers(file.name);
-    const ids = episode?.numbers.map((number) => byNumber.get(`${episode.type}:${number}`));
-    if (!ids || ids.some((id) => !id || !requested.has(id) || targets.has(id))) {
+    const ids = episode?.type === 'Unnumbered' && soleUnnumberedTarget
+      ? [soleUnnumberedTarget]
+      : episode?.type === 'Unnumbered' ? null
+        : episode?.numbers.map((number) => byNumber.get(`${episode.type}:${number}`));
+    if (!ids || ids.length === 0 || ids.some((id) =>
+      !id || !requested.has(id) || targets.has(id))) {
       return held('ambiguous_or_unrequested_video');
     }
     for (const id of ids) targets.add(id);

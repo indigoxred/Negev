@@ -123,7 +123,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
       return held('target_missing');
     }
     const freshPlan = planTorrentTargets({ request, detail,
-      prepared: { state: 'prepared_stopped', files: selected.preview.files } });
+      prepared: { state: 'prepared_stopped', files: selected.preview.files },
+      releaseTitle: selected.candidate.title,
+      trustedTitle: selected.preview.searchQuery ?? detail.title });
     if (freshPlan.state !== 'planned_targets' ||
         JSON.stringify(freshPlan.episodeIds) !==
           JSON.stringify(selected.preview.episodeIds) ||

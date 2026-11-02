@@ -102,6 +102,35 @@ test('a one-video movie uses its one requested AniDB episode identity', () => {
   });
 });
 
+test('a one-episode series can provisionally plan an unnumbered single video', () => {
+  const oneRequest = { ...request, episodeIds: [1001] };
+  const oneDetail = { ...detail, total: 1,
+    episodes: [{ id: 1001, number: 1, type: 'Episode' }] };
+  const video = { name: '[Group] Pale Cocoon (2005) [1080p].mkv', size: 1200 };
+  assert.deepEqual(planTorrentTargets({ request: oneRequest, detail: oneDetail,
+    releaseTitle: '[Group] Pale Cocoon (2005)', trustedTitle: 'Pale Cocoon',
+    prepared: { state: 'prepared_stopped', files: [video] } }), {
+    state: 'planned_targets', episodeIds: [1001],
+    plannedFiles: [{ ...video, episodeIds: [1001] }],
+  });
+  for (const changed of [
+    { detail, files: [video] },
+    { detail: oneDetail, files: [video], releaseTitle: 'Unrelated release' },
+    { detail: oneDetail, files: [video, { ...video, name: 'extra.mkv' }] },
+    { detail: oneDetail, files: [{ ...video, name: 'Show S01E02.mkv' }] },
+    { detail: oneDetail, files: [{ ...video, name: 'Show - 02.mkv' }] },
+    { detail: oneDetail, files: [{ ...video, name: 'Show - 01-03.mkv' }] },
+  ]) {
+    assert.equal(planTorrentTargets({ request: oneRequest,
+      releaseTitle: changed.releaseTitle ?? '[Group] Pale Cocoon (2005)',
+      trustedTitle: 'Pale Cocoon',
+      detail: changed.detail, prepared: { state: 'prepared_stopped',
+        files: changed.files } }).state, 'held');
+  }
+  assert.equal(planTorrentTargets({ request: oneRequest, detail: oneDetail,
+    prepared: { state: 'prepared_stopped', files: [video] } }).state, 'held');
+});
+
 test('passive artwork and notes cannot claim an AniDB episode', () => {
   const prepared = { ...pack, files: [...pack.files,
     { name: 'Show/readme.nfo', size: 200 },
