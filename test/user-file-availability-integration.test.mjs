@@ -36,6 +36,7 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
         CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
           PercentageStart: 0, PercentageEnd: 100 }] } };
     const calls = [];
+    let shokoFileAvailable = true;
     service = await createUserService({
       dbPath,
       shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
@@ -52,7 +53,8 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
         calls.push(url.pathname);
         if (url.pathname === '/api/v3/File') return Response.json({
           Total: 1, List: [file] });
-        if (url.pathname === '/api/v3/File/51') return Response.json(file);
+        if (url.pathname === '/api/v3/File/51') return shokoFileAvailable ?
+          Response.json(file) : new Response(null, { status: 404 });
         if (url.pathname === '/api/v3/Series/AniDB/42') return Response.json({
           ID: 42, Title: 'Example', Type: 'TV' });
         if (url.pathname === '/api/v3/Series/AniDB/42/Episode') return Response.json({
@@ -126,6 +128,14 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
           storageKey: part.storageKey },
         revision: { source, card }, checkedMs: 100 }),
       { state: 'held', reason: 'source_generation_changed' });
+      shokoFileAvailable = false;
+      assert.deepEqual(await service.refreshShokoFile(51),
+        { state: 'held', reason: 'file_unavailable' });
+      assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+        'unknown');
+      assert.equal(await coverage(), undefined);
+      assert.equal((await catalogue()).episodes?.[0]?.availability, 'unknown');
+      shokoFileAvailable = true;
       assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
       const reopened = new DatabaseSync(dbPath);
       try {
