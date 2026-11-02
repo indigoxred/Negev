@@ -77,6 +77,12 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
           const starts = startQueue.reconcileUnresolved({ nowMs: now() });
           const completions = completionQueue.reconcileUnresolved({ nowMs: now() });
           const publishes = publishQueue.reconcileUnresolved({ nowMs: now() });
+          // A provider read can fail without throwing during request recovery.
+          // Never declare the pipeline ready while any crash claim is unresolved.
+          if ([requests, starts, completions, publishes]
+            .some((result) => result.held.length > 0)) {
+            return held('reconciliation_incomplete');
+          }
           recovery = { state: 'reconciled', requests, starts,
             completions, publishes };
           return recovery;
