@@ -42,7 +42,8 @@ import { openDirectAvailabilityQueue, createDirectAvailabilityWorker,
 import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
 import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
 import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs';
-import { openFileBackfillCursor } from '../availability/file-backfill-cursor.mjs';
+import { openFileBackfillCursor, resetFileBackfillEvidence } from
+  '../availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
 import { createFileBackfillWorker } from '../availability/file-backfill-worker.mjs';
 import { createRequestCandidateDiscovery } from
@@ -157,8 +158,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     if (fileBackfill) {
       fileCursor = openFileBackfillCursor(dbPath);
       fileProofs = openFileProofLedger(dbPath, {
-        positiveLifetimeMs: fileProofLifetimeMs, now,
-        discardPriorProofs: true });
+        positiveLifetimeMs: fileProofLifetimeMs, now });
+      resetFileBackfillEvidence(dbPath);
     }
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {

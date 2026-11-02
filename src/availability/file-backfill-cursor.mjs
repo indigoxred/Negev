@@ -4,6 +4,33 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 
+// No source events are observed while the service is stopped. Withdraw old
+// positives and rewind their scan cursor in one transaction so a restart can
+// recheck every previously scanned file instead of waiting for a later pass.
+export function resetFileBackfillEvidence(dbPath) {
+  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
+    throw new TypeError('Invalid file backfill database');
+  }
+  const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  try {
+    db.exec('BEGIN IMMEDIATE');
+    const tables = db.prepare(`SELECT COUNT(*) AS count FROM sqlite_master
+      WHERE type='table' AND name IN ('file_backfill_cursor',
+        'file_availability_proofs')`).get();
+    if (tables.count !== 2) throw new Error('File backfill evidence unavailable');
+    db.exec('DELETE FROM file_availability_proofs');
+    const reset = db.prepare(`UPDATE file_backfill_cursor SET
+      after_file_id=0, pass=pass+1, receipt=receipt+1,
+      pending_json=NULL, claimed_ms=NULL, pair_offset=0,
+      fingerprint=NULL WHERE id=1`).run();
+    if (reset.changes !== 1) throw new Error('File backfill cursor unavailable');
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  } finally { db.close(); }
+}
+
 // This cursor stores scheduling state only. It does not turn an indexed hint
 // into availability or infer absence from an incomplete inventory.
 export function openFileBackfillCursor(dbPath) {

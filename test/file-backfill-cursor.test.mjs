@@ -3,8 +3,44 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { openFileBackfillCursor } from
+import { openFileBackfillCursor, resetFileBackfillEvidence } from
   '../src/availability/file-backfill-cursor.mjs';
+import { openFileProofLedger } from
+  '../src/availability/file-proof-ledger.mjs';
+
+test('new observer session withdraws old proofs and revisits the first hint', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-backfill-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 5, 9].filter((id) => id > afterFileId).slice(0, limit) };
+  const cursor = openFileBackfillCursor(dbPath);
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 1_000 });
+  try {
+    const first = cursor.claim({ inventory, nowMs: 100, limit: 2 });
+    assert.deepEqual(first.fileIds, [2, 5]);
+    assert.equal(cursor.record({ claim: first,
+      outcomes: [{ fileId: 2, state: 'available' },
+        { fileId: 5, state: 'unknown' }], nowMs: 101 }).state, 'recorded');
+    assert.equal(proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 2, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 }).state, 'recorded');
+    const pending = cursor.claim({ inventory, nowMs: 102, limit: 2 });
+    assert.deepEqual(pending.fileIds, [9]);
+    resetFileBackfillEvidence(dbPath);
+    assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'unknown');
+    assert.equal(cursor.record({ claim: pending,
+      outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 103 }).state,
+      'held');
+    const restarted = cursor.claim({ inventory, nowMs: 104, limit: 2 });
+    assert.deepEqual(restarted.fileIds, [2, 5]);
+    assert.equal(restarted.pass, first.pass + 1);
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('file backfill retries a pending claim after restart and wraps after a complete pass', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-backfill-'));
