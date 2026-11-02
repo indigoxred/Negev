@@ -91,13 +91,16 @@ test('restart reconciliation precedes worker ticks and later requests advance', 
   }
 });
 
-test('unverified interrupted request does not report reconciliation complete', async () => {
+test('unverified interrupted request holds its claim while a later request advances', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-unverified-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
   requests.submit({ requesterId: 1, requestKey: 'unverified', nowMs: 1,
     intent: { state: 'ready', anidbId: 42, kind: 'movie',
       episodeIds: [1001], monitorFuture: false } });
+  requests.submit({ requesterId: 1, requestKey: 'independent', nowMs: 2,
+    intent: { state: 'ready', anidbId: 43, kind: 'movie',
+      episodeIds: [1002], monitorFuture: false } });
   const acquisitions = openAcquisitionLedger(dbPath);
   const handoffs = openHandoffLedger(dbPath);
   const oldQueue = openAcquisitionRequestQueue(dbPath);
@@ -105,22 +108,25 @@ test('unverified interrupted request does not report reconciliation complete', a
   oldQueue.close();
   const inspectRequest = acquisitions.inspectRequestAttempts.bind(acquisitions);
   let available = false;
+  const processed = [];
   acquisitions.inspectRequestAttempts = (...args) => {
     if (!available) throw new Error('ledger unavailable');
     return inspectRequest(...args);
   };
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
     qbBaseUrl, sessionGate: authorizedSession,
-    processRequest: async () => { throw new Error('must not dispatch'); },
+    processRequest: async ({ requestId }) => { processed.push(requestId);
+      return { state: 'held', reason: 'not_ready' }; },
     processStart: async () => { throw new Error('must not start'); },
     processCompletion: async () => { throw new Error('must not complete'); },
     processPublish: async () => { throw new Error('must not publish'); },
     now: () => 200 });
   try {
-    assert.deepEqual(await pipeline.initialize(),
-      { state: 'held', reason: 'reconciliation_incomplete' });
-    assert.deepEqual(await pipeline.tickRequests(),
-      { state: 'held', reason: 'reconciliation_required' });
+    const first = await pipeline.initialize();
+    assert.equal(first.state, 'reconciled');
+    assert.deepEqual(first.requests.held, [1]);
+    assert.deepEqual((await pipeline.tickRequests()).results.map((item) => item.requestId), [2]);
+    assert.deepEqual(processed, [2]);
     available = true;
     const recovered = await pipeline.initialize();
     assert.equal(recovered.state, 'reconciled');

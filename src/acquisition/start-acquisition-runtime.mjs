@@ -2,8 +2,9 @@ import { realpath } from 'node:fs/promises';
 import { createMountInspector } from './docker-mount-witness.mjs';
 
 // Account-server startup boundary. Configuration parsing rejects incomplete
-// opt-ins; this function still refuses to schedule a worker until its durable
-// journals reconcile. Disabled startup never constructs a witness client.
+// opt-ins; this function reviews durable journals before scheduling workers.
+// Unresolved claims stay excluded while independent work can continue.
+// Disabled startup never constructs a witness client.
 export async function startAcquisitionRuntime({ config, service, sessionGate,
   makeInspector = createMountInspector, realpathImpl = realpath } = {}) {
   if (config?.acquisitionRuntime !== true) return null;
