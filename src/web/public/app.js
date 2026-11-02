@@ -280,25 +280,27 @@ byId('login-tab').addEventListener('click', () => authTab(false));
 byId('register-tab').addEventListener('click', () => authTab(true));
 byId('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const fields = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const fields = new FormData(form);
   try {
     await api('/api/login', { method: 'POST', body: JSON.stringify({
       username: fields.get('username'), password: fields.get('password'),
     }) });
-    event.currentTarget.reset();
+    form.reset();
     await refreshSession();
     message('Signed in. Search for a show or film.');
   } catch (error) { message(error.message, true); }
 });
 byId('register-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const fields = new FormData(event.currentTarget);
+  const form = event.currentTarget;
+  const fields = new FormData(form);
   try {
     await api('/api/register', { method: 'POST', body: JSON.stringify({
       code: fields.get('code'), username: fields.get('username'),
       password: fields.get('password'),
     }) });
-    event.currentTarget.reset();
+    form.reset();
     authTab(false);
     message('Account created. Sign in to continue.');
   } catch (error) { message(error.message, true); }
