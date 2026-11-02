@@ -128,6 +128,40 @@ test('availability can observe a full Shoko User link without claiming AniDB fil
     sourcePaths: ['/pure/Anime/Example/01.mkv'] }]);
 });
 
+test('an omitted anime ID on a single Shoko User link needs exact AniDB episode metadata', async () => {
+  const user = { ...episode.Files[0], Release: { ID: null,
+    ProviderName: 'User', IsCorrupted: false,
+    CrossReferences: [{ AnidbAnimeID: null, AnidbEpisodeID: 1001,
+      PercentageStart: 0, PercentageEnd: 100 }] } };
+  const paths = [];
+  const read = (animeId) => readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl: async (url) => {
+      paths.push(url.pathname);
+      return url.pathname.endsWith('/Episode')
+        ? json({ ...episode, Files: [user] })
+        : json({ ID: 1001, AnimeID: animeId });
+    } });
+  const accepted = await read(42);
+  assert.equal(accepted.state, 'ok');
+  assert.equal(accepted.files[0].releaseEvidence, 'shoko_user_link');
+  assert.equal(accepted.files[0].anidbFileId, null);
+  assert.deepEqual(paths, ['/api/v3/Episode/AniDB/1001/Episode',
+    '/api/v3/Episode/AniDB/1001']);
+  assert.deepEqual(await read(99), { state: 'unavailable' });
+  const unavailableMetadata = await readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl: async (url) =>
+      url.pathname.endsWith('/Episode')
+        ? json({ ...episode, Files: [user] })
+        : new Response('', { status: 503 }) });
+  assert.deepEqual(unavailableMetadata, { state: 'unavailable' });
+  const registeredOnly = await readShokoEpisodeFiles({ ...base,
+    fetchImpl: async (url) => {
+      assert.ok(url.pathname.endsWith('/Episode'));
+      return json({ ...episode, Files: [user] });
+    } });
+  assert.deepEqual(registeredOnly, { state: 'unavailable' });
+});
+
 test('availability User-link mode rejects malformed or cross-anime coverage', async () => {
   const userRelease = { ID: null, ProviderName: 'User', IsCorrupted: false,
     CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
