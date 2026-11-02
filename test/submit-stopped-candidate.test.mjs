@@ -133,22 +133,60 @@ test('one stopped add is durably recorded before POST and exact manifest is reco
     assert.equal(again.state, 'stopped_observed');
   }));
 
-test('mount exposure or altered torrent bytes hold before any downloader call', async () =>
+test('mount exposure or altered torrent bytes hold before any downloader write', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     let calls = 0;
-    const fetchImpl = async () => { calls++; throw Error('unexpected call'); };
+    let writes = 0;
+    const fetchImpl = async (url, init) => {
+      calls++;
+      if (init.method !== 'GET') writes++;
+      const endpoint = new URL(url).pathname;
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+      if (endpoint === '/api/v2/torrents/info') return Response.json([]);
+      throw Error('unexpected downloader call');
+    };
     assert.deepEqual(await submitStoppedCandidate({ ...options, ledger, attemptId,
       inspectMounts: async () => ({ ...mounts, plex: [mount('/srv', '/source', false)] }), fetchImpl }),
       { state: 'held', reason: 'staging_visible_to_plex' });
-    assert.equal(calls, 0);
+    assert.equal(writes, 0);
     assert.deepEqual(await submitStoppedCandidate({ ...options, ledger, attemptId,
       realpathImpl: async () => '/srv/other', fetchImpl }),
       { state: 'held', reason: 'staging_path_not_canonical' });
-    assert.equal(calls, 0);
+    assert.equal(writes, 0);
+    const reads = calls;
     const altered = { ...prepared, expected: { ...prepared.expected, hash: 'b'.repeat(40) } };
     assert.deepEqual(await submitStoppedCandidate({ ...options, ledger, attemptId,
       prepared: altered, fetchImpl }), { state: 'held', reason: 'prepared_torrent_mismatch' });
-    assert.equal(calls, 0);
+    assert.equal(calls, reads);
+    assert.equal(writes, 0);
+  }));
+
+test('mount exposure during qBittorrent preflight holds before stopped add', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let exposed = false;
+    let inspections = 0;
+    let posts = 0;
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      inspectMounts: async () => {
+        inspections++;
+        return exposed ? { ...mounts,
+          plex: [mount('/srv', '/source', false)] } : mounts;
+      },
+      fetchImpl: async (url, init) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+        if (endpoint === '/api/v2/torrents/info') {
+          exposed = true;
+          return Response.json([]);
+        }
+        if (init.method === 'POST') posts++;
+        throw Error('unexpected downloader call');
+      },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'staging_visible_to_plex' });
+    assert.equal(inspections, 1);
+    assert.equal(posts, 0);
+    assert.equal(ledger.getAttempt(attemptId).status, 'reserved');
   }));
 
 test('uncertain POST response never triggers a second add', async () =>
