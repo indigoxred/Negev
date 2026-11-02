@@ -34,6 +34,28 @@ test('omits genuine pad entries from the qBittorrent-visible file list', () => {
   assert.equal(inspect(torrent({ ...info, files: [
     info.files[0], { attr: 'p', length: 100, path: ['.pad', '101'] },
   ] })).state, 'held');
+  assert.deepEqual(inspect(torrent({ ...info, files: [
+    info.files[0], { attr: Buffer.from([0xf0]), length: 100,
+      path: ['.pad', '100'] },
+  ] })), { state: 'held', reason: 'invalid_metainfo' });
+});
+
+test('holds torrents that mark a selected media path with file attributes', () => {
+  const single = { ...v1Info, attr: 'x' };
+  const multi = { name: 'Show', 'piece length': 16384,
+    pieces: Buffer.alloc(20, 7), files: [{ attr: 'x', length: 1000,
+      path: ['01.mkv'] }] };
+  const v2 = { 'file tree': { '01.mkv': { '': { attr: 'x',
+    length: 1000, 'pieces root': Buffer.alloc(32, 2) } } },
+    'meta version': 2, name: 'Show', 'piece length': 16384 };
+  const topLevelV2Attribute = { ...v2, attr: 'x',
+    'file tree': { '01.mkv': { '': { length: 1000,
+      'pieces root': Buffer.alloc(32, 2) } } } };
+  for (const bytes of [torrent(single), torrent(multi),
+    torrent(v2, { 'piece layers': {} }),
+    torrent(topLevelV2Attribute, { 'piece layers': {} })]) {
+    assert.deepEqual(inspect(bytes), { state: 'held', reason: 'invalid_metainfo' });
+  }
 });
 
 test('derives qBittorrent truncated SHA-256 ID for a v2 torrent', () => {
