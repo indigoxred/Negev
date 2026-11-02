@@ -194,13 +194,14 @@ test('an exact owned pending file does not block an unrelated target', async () 
       ed2k: 'A'.repeat(32), anidbFileId: 801, episodeIds: [1001] }],
     subtitles: [] });
   const publishName = `negev-7-${evidence.digest.slice(0, 16)}`;
+  const publishedPath = `Negev/${publishName}/01.mkv`;
   const handoff = { status: 'published_observed', publishName,
     evidenceDigest: evidence.digest, manifest: evidence.manifest };
   try {
-    await mkdir(path.join(importRoot, publishName));
-    await writeFile(path.join(importRoot, publishName, '01.mkv'), 'video');
+    await mkdir(path.join(importRoot, 'Negev', publishName), { recursive: true });
+    await writeFile(path.join(importRoot, publishedPath), 'video');
     const read = async (target) => readShokoImportActivity({ ...input,
-      importRoot, managedFolderId: 1, target,
+      importRoot, managedFolderId: 1, ownedSubtree: 'Negev', target,
       getHandoff: (id) => id === 7 ? handoff : null,
       fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
         ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
@@ -208,12 +209,12 @@ test('an exact owned pending file does not block an unrelated target', async () 
         : json({ Total: 1, List: [{ ID: 51, Size: 5, SeriesIDs: [],
           Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
           Locations: [{ ManagedFolderID: 1,
-            RelativePath: `${publishName}/01.mkv`, IsAccessible: true }] }] }),
+            RelativePath: publishedPath, IsAccessible: true }] }] }),
     });
     assert.deepEqual(await read({ anidbId: 43, episodeIds: [2001] }),
       { state: 'quiet_observed' });
     const scoped = await readShokoImportActivity({ ...input,
-      importRoot, managedFolderId: 1, withFingerprint: true,
+      importRoot, managedFolderId: 1, ownedSubtree: 'Negev', withFingerprint: true,
       target: { anidbId: 43, episodeIds: [2001] },
       getHandoff: (id) => id === 7 ? handoff : null,
       fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
@@ -222,10 +223,10 @@ test('an exact owned pending file does not block an unrelated target', async () 
         : json({ Total: 1, List: [{ ID: 51, Size: 5, SeriesIDs: [],
           Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
           Locations: [{ ManagedFolderID: 1,
-            RelativePath: `${publishName}/01.mkv`, IsAccessible: true }] }] }),
+            RelativePath: publishedPath, IsAccessible: true }] }] }),
     });
     assert.deepEqual(scoped.unrelatedPendingKeys,
-      [`1:${publishName}/01.mkv`]);
+      [`1:${publishedPath}`]);
     assert.deepEqual(await read({ anidbId: 42, episodeIds: [1001] }),
       { state: 'busy', reason: 'target_pending_import' });
     await writeFile(path.join(importRoot, 'manual.mkv'), 'unknown');

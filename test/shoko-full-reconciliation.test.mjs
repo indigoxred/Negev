@@ -9,6 +9,55 @@ import { createShokoFullReconciliation } from
   '../src/availability/shoko-full-reconciliation.mjs';
 import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../src/availability/shoko-inventory-worker.mjs';
+import { createShokoInventoryScheduler } from
+  '../src/availability/shoko-inventory-scheduler.mjs';
+import { observeImportQuietWindow, scopedImportFeedState } from
+  '../src/acquisition/import-quiet-window.mjs';
+
+test('startup sweep remains daily while an uncertain request gets bounded Import readiness', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-startup-ready-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  const consumer = createShokoEventConsumer({ refreshFile: async () =>
+    ({ state: 'recorded_file' }) });
+  consumer.flagReconciliation('feed_started');
+  let nowMs = 100;
+  const worker = createShokoInventoryWorker({ ledger, now: () => nowMs++,
+    readPage: async () => ({ state: 'page', page: 1, total: 0, items: [] }) });
+  const coordinator = createShokoFullReconciliation({ ledger, consumer,
+    readConnectionState: () => ({ state: 'connected' }),
+    tickPage: () => worker.tick() });
+  const timers = new Map();
+  let nextTimer = 0;
+  const scheduler = createShokoInventoryScheduler({ tick: () => coordinator.tick(),
+    setTimer: (callback, delay) => { const id = ++nextTimer;
+      timers.set(id, { callback, delay }); return id; },
+    clearTimer: (id) => timers.delete(id) });
+  try {
+    scheduler.start();
+    const first = timers.entries().next().value;
+    timers.delete(first[0]);
+    await first[1].callback();
+    assert.equal(scheduler.getState().state, 'catchup_wait');
+    assert.equal(timers.values().next().value.delay, 86_400_000);
+    assert.equal(consumer.getState().fullReconciliationNeeded, true);
+    let clock = 1_000_000;
+    const readFeed = (allowedPendingKeys) => scopedImportFeedState({
+      connection: { state: 'connected' },
+      snapshot: consumer.getPendingSnapshot(), allowedPendingKeys,
+      allowUnreconciledFirstAttempt: true });
+    const request = await observeImportQuietWindow({ anidbId: 42,
+      episodeIds: [1001], readActivity: async () => ({
+        state: 'quiet_observed', fingerprint: 'a'.repeat(64),
+        unrelatedPendingKeys: [] }),
+      readFeedState: readFeed, readScopedFeedState: readFeed,
+      wait: async () => { clock += 120_000; }, now: () => clock,
+      requireFingerprint: true });
+    assert.equal(request.state, 'quiet_window_observed');
+    assert.equal(consumer.getState().fullReconciliationNeeded, true);
+    assert.equal(timers.values().next().value.delay, 86_400_000);
+  } finally { await scheduler.close(); await consumer.close(); ledger.close();
+    await rm(dir, { recursive: true, force: true }); }
+});
 
 test('an event during a full page invalidates that pass as gap proof', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-full-gap-event-'));

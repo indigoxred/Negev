@@ -5,7 +5,12 @@ const healthyFeed = (value) => value?.state === 'connected' &&
   value.pendingPaths === 0 && value.pendingEvents === 0 &&
   value.inFlight === false && value.reconciliationNeeded === false;
 const healthyScopedFeed = (value, keys) => keys.length === 0 ?
-  healthyFeed(value) : value?.state === 'connected_scoped' &&
+  (healthyFeed(value) || (value?.state === 'connected_uncertain' &&
+    Number.isSafeInteger(value.generation) && value.generation >= 0 &&
+    value.pendingPaths === 0 && value.pendingEvents === 0 &&
+    value.inFlight === false && value.reconciliationNeeded === true &&
+    value.fullReconciliationNeeded === true)) :
+  value?.state === 'connected_scoped' &&
   Number.isSafeInteger(value.generation) && value.generation >= 0 &&
   value.pendingPaths === keys.length && value.pendingEvents === 0 &&
   value.inFlight === false && value.reconciliationNeeded === true &&
@@ -15,7 +20,7 @@ const validActivityKeys = (value) => Array.isArray(value) &&
   new Set(value).size === value.length;
 
 // Bind the actual SignalR connection to the consumer's generation and
-// unresolved paths. Any gap or full-reconciliation debt remains unverified.
+// unresolved paths. This strict state still requires full reconciliation.
 export function importFeedState({ connection, event, arrival } = {}) {
   if (connection?.state !== 'connected') return { state: 'disconnected' };
   if (!Number.isSafeInteger(event?.generation) || event.generation < 0 ||
@@ -42,14 +47,17 @@ export const validPendingKey = (value) => {
 
 // This returns no paths. A pending-only event snapshot becomes scoped only
 // when every actual key exactly equals a caller-supplied, separately proven
-// Negev handoff path. Earlier reconciliation debt and gaps remain unverified.
+// Negev handoff path. Only the explicit uncertain-first-attempt policy may
+// observe full debt; it never clears that debt or treats the media as absent.
 export function scopedImportFeedState({ connection, snapshot,
-  allowedPendingKeys } = {}) {
+  allowedPendingKeys, allowUnreconciledFirstAttempt = false } = {}) {
   if (connection?.state !== 'connected') return { state: 'disconnected' };
   if (snapshot?.state !== 'snapshot' ||
       !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 0 ||
       snapshot.pending !== 0 || snapshot.inFlight !== null ||
-      snapshot.fullReconciliationNeeded !== false ||
+      (snapshot.fullReconciliationNeeded !== false &&
+        !(allowUnreconciledFirstAttempt === true &&
+          snapshot.fullReconciliationNeeded === true)) ||
       !Array.isArray(snapshot.pendingKeys) ||
       snapshot.pendingKeys.length > 128 ||
       snapshot.pendingKeys.some((key) => !validPendingKey(key)) ||
@@ -63,6 +71,18 @@ export function scopedImportFeedState({ connection, snapshot,
   }
   const count = snapshot.pendingKeys.length;
   if (count === 0) {
+    if (allowUnreconciledFirstAttempt === true &&
+        snapshot.fullReconciliationNeeded === true &&
+        snapshot.reconciliationNeeded === true &&
+        snapshot.pendingOnlyDebt === false &&
+        !allowedPendingKeys?.length) {
+      // The accepted one-attempt policy can use two exact, fingerprinted
+      // Import/queue observations across a stable feed generation. This
+      // never clears full-inventory debt or attests that media is absent.
+      return { state: 'connected_uncertain', generation: snapshot.generation,
+        pendingPaths: 0, pendingEvents: 0, inFlight: false,
+        reconciliationNeeded: true, fullReconciliationNeeded: true };
+    }
     if (snapshot.reconciliationNeeded !== false ||
         snapshot.pendingOnlyDebt !== false ||
         allowedPendingKeys?.length) return { state: 'unverified' };
@@ -107,7 +127,8 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
     const initialFeed = await (readScopedFeedState ?
       readScopedFeedState() : readFeedState());
     if (readScopedFeedState ?
-      !['connected', 'pending_unverified'].includes(initialFeed?.state) :
+      !['connected', 'connected_uncertain', 'pending_unverified']
+        .includes(initialFeed?.state) :
       !healthyFeed(initialFeed)) return held();
     const beforeActivity = await readActivity({ anidbId,
       episodeIds: [...episodeIds] });

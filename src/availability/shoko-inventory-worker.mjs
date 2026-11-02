@@ -138,6 +138,8 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       pairs_json=excluded.pairs_json,seen_pass=excluded.seen_pass,
       observed_ms=excluded.observed_ms`);
   const removePairs = db.prepare('DELETE FROM shoko_inventory_pairs WHERE file_id=?');
+  const markEventUnverified = db.prepare(`UPDATE shoko_inventory_files SET
+    state='unverified',pairs_json='[]',observed_ms=? WHERE file_id=?`);
   const addPair = db.prepare(`INSERT INTO shoko_inventory_pairs(file_id,anidb_id,episode_id)
     VALUES (?,?,?)`);
   const findPairs = db.prepare(`SELECT file_id FROM shoko_inventory_pairs
@@ -241,6 +243,28 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     for (const pair of item.pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
   }
   return {
+    invalidateFileEvent({ fileId, observedMs }) {
+      if (!validId(fileId) || !Number.isSafeInteger(observedMs) ||
+          observedMs < 0) return held('invalid_file_event');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const previous = find.get(fileId);
+        const fencedMs = Math.max(observedMs,
+          (previous?.observedMs ?? -1) + 1);
+        if (!Number.isSafeInteger(fencedMs)) {
+          db.exec('ROLLBACK');
+          return held('invalid_file_event');
+        }
+        invalidateProvenFile(fileId, fencedMs);
+        if (previous) {
+          markEventUnverified.run(fencedMs, fileId);
+          removePairs.run(fileId);
+          removeHint.run(fileId);
+        }
+        db.exec('COMMIT');
+        return { state: 'invalidated', fileId };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    },
     deliverPendingChanges({ handle, limit = 100 } = {}) {
       if (typeof handle !== 'function' || !Number.isSafeInteger(limit) ||
           limit < 1 || limit > 100) throw new TypeError('Invalid change delivery');

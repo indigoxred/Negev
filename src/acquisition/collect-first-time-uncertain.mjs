@@ -82,12 +82,16 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   try { finalFeed = await readFeedState(pendingKeys); }
   catch { return held('import_quiet_window_unverified'); }
   const scoped = pendingKeys?.length > 0;
-  if (finalFeed?.state !== (scoped ? 'connected_scoped' : 'connected') ||
+  if (!(scoped ? finalFeed?.state === 'connected_scoped' :
+      ['connected', 'connected_uncertain'].includes(finalFeed?.state)) ||
       finalFeed.generation !== fence.feedGeneration ||
       finalFeed.pendingPaths !== (scoped ? pendingKeys.length : 0) ||
       finalFeed.pendingEvents !== 0 ||
       finalFeed.inFlight !== false ||
-      finalFeed.reconciliationNeeded !== scoped ||
+      finalFeed.reconciliationNeeded !==
+        (scoped || finalFeed.state === 'connected_uncertain') ||
+      (finalFeed.state === 'connected_uncertain' &&
+        finalFeed.fullReconciliationNeeded !== true) ||
       (scoped && finalFeed.pendingOnlyDebt !== true)) {
     return held('import_quiet_window_unverified');
   }

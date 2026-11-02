@@ -31,7 +31,7 @@ export function forwardShokoEvent({ consumer, requestReconciliation,
 // Accepts decoded SignalR hub method calls, not untrusted raw WebSocket frames.
 // The installed feed can join; delivery of a genuine file event still needs
 // a controlled live proof.
-export function createShokoEventConsumer({ refreshFile, onDeleted,
+export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
   onReconciliationNeeded,
   maxPending = 64, maxArrivals = 128 } = {}) {
   if (typeof refreshFile !== 'function' || !Number.isSafeInteger(maxPending) ||
@@ -39,6 +39,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
       !Number.isSafeInteger(maxArrivals) || maxArrivals < 1 ||
       maxArrivals > 1024 ||
       (onDeleted !== undefined && typeof onDeleted !== 'function') ||
+      (onFileEvent !== undefined && typeof onFileEvent !== 'function') ||
       (onReconciliationNeeded !== undefined &&
         typeof onReconciliationNeeded !== 'function')) {
     throw new TypeError('Invalid Shoko event consumer');
@@ -151,6 +152,9 @@ export function createShokoEventConsumer({ refreshFile, onDeleted,
         fullReconciliationNeeded = true;
         pendingOnlyDebt = false;
         try { onDeleted?.(fileId); }
+        catch { flagUnresolvedEvent(fileId); }
+      } else {
+        try { onFileEvent?.(fileId); }
         catch { flagUnresolvedEvent(fileId); }
       }
       const alreadyQueued = pending.has(fileId);

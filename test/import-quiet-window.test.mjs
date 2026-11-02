@@ -29,6 +29,35 @@ test('scoped feed accepts only exact pending-only paths and preserves earlier de
     allowedPendingKeys: [key], ...changed }).state, 'connected_scoped');
 });
 
+test('an explicitly uncertain first attempt can observe stable full debt without clearing it', async () => {
+  const connection = { state: 'connected' };
+  const snapshot = { state: 'snapshot', generation: 9, pending: 0,
+    inFlight: null, reconciliationNeeded: true,
+    fullReconciliationNeeded: true, pendingOnlyDebt: false,
+    pendingKeys: [] };
+  const read = () => scopedImportFeedState({ connection, snapshot,
+    allowedPendingKeys: [], allowUnreconciledFirstAttempt: true });
+  let clock = 1_000_000;
+  const result = await observeImportQuietWindow({ anidbId: 42,
+    episodeIds: [1001], readActivity: async () => ({ state: 'quiet_observed',
+      fingerprint: 'a'.repeat(64), unrelatedPendingKeys: [] }),
+    readFeedState: read, readScopedFeedState: read,
+    wait: async () => { clock += 120_000; }, now: () => clock,
+    requireFingerprint: true });
+  assert.equal(result.state, 'quiet_window_observed');
+  assert.equal(snapshot.fullReconciliationNeeded, true);
+  assert.notEqual(scopedImportFeedState({ connection, snapshot,
+    allowedPendingKeys: [] }).state, 'connected_uncertain');
+  snapshot.generation++;
+  assert.notEqual((await observeImportQuietWindow({ anidbId: 42,
+    episodeIds: [1001], readActivity: async () => ({ state: 'quiet_observed',
+      fingerprint: 'a'.repeat(64), unrelatedPendingKeys: [] }),
+    readFeedState: read, readScopedFeedState: read,
+    wait: async () => { snapshot.generation++; clock += 120_000; },
+    now: () => clock, requireFingerprint: true })).state,
+  'quiet_window_observed');
+});
+
 test('live feed state is healthy only for a connected, reconciled event consumer', () => {
   const event = { generation: 7, pending: 0, inFlight: null,
     reconciliationNeeded: false, fullReconciliationNeeded: false };

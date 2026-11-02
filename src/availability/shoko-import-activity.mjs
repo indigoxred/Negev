@@ -14,7 +14,7 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 // Shoko filters its full file collection before paging.
 export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
-  target, getHandoff,
+  target, getHandoff, ownedSubtree = '',
   withFingerprint = false, now = Date.now, fetchImpl = fetch,
   timeoutMs = 10_000, maxBaselineEntries = 256 } = {}) {
   let base;
@@ -31,6 +31,8 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
          typeof qbitImportSavePath !== 'string' ||
          !qbitImportSavePath.startsWith('/'))) ||
       typeof withFingerprint !== 'boolean' ||
+      (ownedSubtree !== '' && (typeof ownedSubtree !== 'string' ||
+        !/^[A-Za-z0-9_-]{1,64}$/.test(ownedSubtree))) ||
       !Number.isSafeInteger(maxBaselineEntries) ||
       maxBaselineEntries < 1 || maxBaselineEntries > 1_000 ||
       (withFingerprint && (importRoot === undefined ||
@@ -96,7 +98,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
       const page = { Total: total, List: items };
       const attributed = target === undefined ? null :
         partitionOwnedPendingImports({ diskFiles: inventory.files,
-          shokoPage: page, managedFolderId, getHandoff, target,
+          shokoPage: page, managedFolderId, getHandoff, target, ownedSubtree,
           maxEntries: maxBaselineEntries });
       if (attributed?.state === 'held') return { state: 'busy',
         reason: attributed.reason };

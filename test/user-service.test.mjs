@@ -23,12 +23,13 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
   const importRoot = path.join(dir, 'Import');
   await mkdir(importRoot);
   let clock = 100;
+  let connectionState = 'connected';
   const reads = [];
   const service = await createUserService({ dbPath,
     shokoBaseUrl: 'http://shoko.internal:8111/', shokoApiKey: 'synthetic',
     shokoImportRoot: importRoot, shokoImportFolderId: 1,
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
-    readShokoConnectionState: () => ({ state: 'connected' }),
+    readShokoConnectionState: () => ({ state: connectionState }),
     waitForImportQuiet: async (ms) => { clock += ms; },
     now: () => clock,
     plex: { plexBaseUrl: 'http://plex.internal:32400/',
@@ -86,12 +87,18 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);
     assert.equal(reads.some((path) => /torrent|download|prowlarr/i.test(path)), false);
     service.flagShokoReconciliation('feed_disconnected');
+    connectionState = 'disconnected';
     const queueReads = reads.filter((path) => path === '/api/v3/Queue').length;
     assert.deepEqual(await service.observeFirstTimeUncertain({
       anidbId: 42, episodeIds: [1001], kind: 'series' }),
     { state: 'held', reason: 'import_quiet_window_unverified' });
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length,
       queueReads);
+    connectionState = 'connected';
+    service.flagShokoReconciliation('feed_reconnected');
+    const afterReconnect = await service.observeFirstTimeUncertain({
+      anidbId: 42, episodeIds: [1001], kind: 'series' });
+    assert.equal(afterReconnect?.importFence?.state, 'quiet_window_observed');
     const workerOptions = {
       qbBaseUrl: 'http://qb.internal:8080/',
       sessionGate: { get: async () => { throw Error('no login'); },

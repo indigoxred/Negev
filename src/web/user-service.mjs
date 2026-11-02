@@ -294,6 +294,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
           managedFolderId: shokoImportFolderId, withFingerprint,
           ...(target === null ? {} : { target,
+            ownedSubtree: 'Negev',
             getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
           ...(qbitSidecarObserver === null ? {} : {
             readSidecarTorrent: qbitSidecarObserver.readTorrent,
@@ -410,11 +411,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
       }
       return track((async () => {
+        const startingRevision = inventory.getFile(fileId)?.observedMs;
+        const startingGeneration = startingRevision === undefined ?
+          eventConsumer?.getState().generation : null;
         const result = await metadata.run(() => readShokoOneFile({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
         }));
+        if (inventory.getFile(fileId)?.observedMs !== startingRevision ||
+            (startingRevision === undefined &&
+              eventConsumer?.getState().generation !== startingGeneration)) {
+          return { state: 'held', reason: 'file_event_during_read' };
+        }
         if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
-        const observedMs = now();
+        const observedMs = Math.max(now(), (startingRevision ?? -1) + 1);
         const saved = inventory.recordFileObservation({ item: result.item, observedMs });
         if (saved.state !== 'recorded_file') return saved;
         const delivery = inventory.deliverPendingChanges({
@@ -443,10 +452,21 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     eventConsumer = createShokoEventConsumer({
       refreshFile: refreshRecognizedShokoFile,
       onReconciliationNeeded: onShokoReconciliationNeeded,
+      onFileEvent: (fileId) => {
+        const before = inventory.getFile(fileId);
+        const observedMs = now();
+        const result = inventory.invalidateFileEvent({ fileId, observedMs });
+        if (result.state !== 'invalidated') throw Error('File event invalidation failed');
+        if (before?.pairs.length) enqueueChangedFile({ before, after: null,
+          observedMs, priority: 'event' });
+      },
       onDeleted: (fileId) => {
         const before = inventory.getFile(fileId);
+        const observedMs = now();
+        const result = inventory.invalidateFileEvent({ fileId, observedMs });
+        if (result.state !== 'invalidated') throw Error('File deletion invalidation failed');
         if (before?.pairs.length) enqueueChangedFile({ before, after: null,
-          observedMs: now(), priority: 'event' });
+          observedMs, priority: 'event' });
       } });
     const fullReconciliation = createShokoFullReconciliation({ ledger: inventory,
       consumer: eventConsumer, readConnectionState: readShokoConnectionState,
@@ -458,7 +478,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const readScopedImportFeed = (allowedPendingKeys) =>
       scopedImportFeedState({ connection: readShokoConnectionState(),
-        snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys });
+        snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys,
+        allowUnreconciledFirstAttempt: true });
     const observeFirstTimeUncertain = (input) => {
       if (stopping) return Promise.resolve({ state: 'held',
         reason: 'service_stopping' });

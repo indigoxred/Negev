@@ -17,23 +17,28 @@ const folderRelative = (value) => typeof value === 'string' &&
 // Manual, partially published or ambiguous files stay in the baseline and
 // continue to hold. This is attribution, not proof of Shoko import or Plex.
 export function partitionOwnedPendingImports({ diskFiles, shokoPage,
-  managedFolderId, getHandoff, target, maxEntries = 256 } = {}) {
+  managedFolderId, getHandoff, target, ownedSubtree = '',
+  maxEntries = 256 } = {}) {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 ||
       maxEntries > 1_000 || !Array.isArray(diskFiles) ||
       diskFiles.length > maxEntries ||
       !Array.isArray(shokoPage?.List) || shokoPage.List.length > maxEntries ||
       shokoPage.Total !== shokoPage.List.length ||
       !validId(managedFolderId) || typeof getHandoff !== 'function' ||
+      (ownedSubtree !== '' && (!relative(ownedSubtree) ||
+        ownedSubtree.includes('/'))) ||
       !validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||
       target.episodeIds.length < 1 || target.episodeIds.length > 50 ||
       target.episodeIds.some((id) => !validId(id))) {
     throw new TypeError('Invalid pending Import attribution');
   }
   const groups = new Map();
+  const subtreePrefix = ownedSubtree ? `${ownedSubtree}/` : '';
   for (const file of diskFiles) {
     if (!relative(file?.relativePath) || !Number.isSafeInteger(file.size) ||
         file.size < 0) return held('import_inventory_unverified');
-    const prefix = file.relativePath.split('/')[0];
+    if (!file.relativePath.startsWith(subtreePrefix)) continue;
+    const prefix = file.relativePath.slice(subtreePrefix.length).split('/')[0];
     if (!ownedPrefix.test(prefix)) continue;
     if (!groups.has(prefix)) groups.set(prefix, []);
     groups.get(prefix).push(file);
@@ -63,11 +68,11 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
       ...evidence.manifest.subtitles];
     const actual = new Map(files.map((file) => [file.relativePath, file]));
     if (actual.size !== expected.length || files.length !== expected.length ||
-        expected.some((file) => actual.get(`${prefix}/${file.name}`)?.size !==
+        expected.some((file) => actual.get(`${subtreePrefix}${prefix}/${file.name}`)?.size !==
           file.size)) return held('pending_handoff_tree_changed');
     const rows = new Map();
     for (const file of evidence.manifest.videos) {
-      const expectedPath = `${prefix}/${file.name}`;
+      const expectedPath = `${subtreePrefix}${prefix}/${file.name}`;
       const matches = shokoPage.List.filter((row) =>
         row?.Locations?.some((location) =>
           location?.ManagedFolderID === managedFolderId &&
@@ -90,7 +95,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
     if (shokoPage.List.some((row) => row?.Locations?.some((location) =>
       location?.ManagedFolderID === managedFolderId &&
       typeof location.RelativePath === 'string' &&
-      folderRelative(location.RelativePath).startsWith(`${prefix}/`) &&
+      folderRelative(location.RelativePath).startsWith(`${subtreePrefix}${prefix}/`) &&
       !rows.has(row.ID)))) return held('pending_shoko_identity_unverified');
     if (manifest.anidbId === target.anidbId &&
         manifest.videos.some((file) => file.episodeIds.some((id) =>
