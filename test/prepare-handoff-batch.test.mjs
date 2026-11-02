@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ed2kBuffer, ed2kFile } from '../src/identity/ed2k.mjs';
+import { ED2K_CHUNK_SIZE, ed2kBuffer, ed2kFile } from '../src/identity/ed2k.mjs';
 import { createHash } from 'node:crypto';
 import { prepareHandoffBatch } from '../src/acquisition/prepare-handoff-batch.mjs';
 
@@ -23,6 +23,25 @@ const file = { name: 'Show/01.mkv', episodeIds: [1001], anidbFileId: 51,
 const verified = { state: 'batch_identity_verified', torrentHash: 'a'.repeat(40), anidbId: 42,
   files: [file], subtitles: [],
   handoffReady: false };
+
+test('boundary copy needs the selected mode and rehashes with it', async () =>
+  withRoots(async (roots) => {
+    const boundary = Buffer.alloc(ED2K_CHUNK_SIZE);
+    const boundaryFile = { ...file, size: boundary.length,
+      ed2k: ed2kBuffer(boundary, { mode: 'emule' }) };
+    const batch = { ...verified, files: [boundaryFile] };
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), boundary);
+    assert.deepEqual(await prepareHandoffBatch({ ...roots, verified: batch }),
+      { state: 'held', reason: 'ed2k_boundary_mode_unverified' });
+    assert.deepEqual(await readdir(roots.holdingRoot), []);
+    const result = await prepareHandoffBatch({ ...roots, verified: batch,
+      ed2kMode: 'emule', readPacer: { afterBytes: async () => {} } });
+    assert.equal(result.state, 'handoff_prepared');
+    assert.deepEqual(await ed2kFile(path.join(result.holdingPath, file.name),
+      { mode: 'emule' }), { ed2k: boundaryFile.ed2k, size: boundary.length });
+    assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
 
 test('copies verified bytes into private holding and leaves Shoko Import empty', async () =>
   withRoots(async (roots) => {

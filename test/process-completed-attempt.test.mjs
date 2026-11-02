@@ -6,7 +6,7 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
-import { ed2kFile } from '../src/identity/ed2k.mjs';
+import { ED2K_CHUNK_SIZE, ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../src/identity/shoko-preview.mjs';
@@ -17,7 +17,8 @@ import { createCompletionWorker, openCompletionQueue } from '../src/acquisition/
 const torrentHash = 'a'.repeat(40);
 const providerId = '11111111-2222-4333-8444-555555555555';
 
-async function fixture(run) {
+async function fixture(run, { videoBytes = Buffer.from('registered exact file'),
+  ed2kMode } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-completed-'));
   const dbPath = path.join(root, 'state.sqlite');
   const stagingHostPath = path.join(root, 'staging');
@@ -26,8 +27,8 @@ async function fixture(run) {
   await Promise.all([path.join(stagingHostPath, torrentHash), holdingRoot, importRoot]
     .map((dir) => mkdir(dir, { recursive: true })));
   const filePath = path.join(stagingHostPath, torrentHash, '01.mkv');
-  await writeFile(filePath, Buffer.from('registered exact file'));
-  const identity = await ed2kFile(filePath);
+  await writeFile(filePath, videoBytes);
+  const identity = await ed2kFile(filePath, { mode: ed2kMode ?? 'edonkey' });
   const requests = openRequestLedger(dbPath);
   const saved = requests.submit({ requesterId: 1, requestKey: 'completed', nowMs: 100,
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false,
@@ -93,6 +94,18 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
     assert.deepEqual(again, { state: 'held', reason: 'handoff_already_recorded' });
     assert.equal(calls.filter((call) => call.path.endsWith('/Preview/By-Release')).length, 1);
   });
+});
+
+test('native boundary mode survives completion through verified private copy', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, attemptId, config, ...stores } = context;
+    const result = await processCompletedAttempt({ ...stores, handoffs, attemptId,
+      importRoot, ...config, ed2kMode: 'emule' });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    assert.equal(result.files[0].ed2k,
+      'FC21D9AF828F92A8DF64BEAC3357425D');
+    assert.deepEqual(await readdir(importRoot), []);
+  }, { videoBytes: Buffer.alloc(ED2K_CHUNK_SIZE), ed2kMode: 'emule' });
 });
 
 test('completion keeps qBittorrent and Shoko reads on their supplied transports', async () => {

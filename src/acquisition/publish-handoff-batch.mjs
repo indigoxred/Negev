@@ -66,7 +66,7 @@ async function destinationAbsent(destination) {
 
 async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
   importRoot, lookup, ledger, nowMs, readPacer, readRateBytesPerSecond,
-  verifyVideo, verifySubtitle }) {
+  verifyVideo, verifySubtitle, ed2kMode }) {
   if (typeof ledger.markPublishedObserved !== 'function' ||
       typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
       typeof importRoot !== 'string' || !path.isAbsolute(importRoot)) {
@@ -101,7 +101,7 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
     let result;
     try { result = await verifyVideo({ root: destination, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer }); }
+      lookup, readPacer: pacer, ed2kMode }); }
     catch { return held('publish_outcome_unknown'); }
     if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
         result.ed2k !== file.ed2k || result.size !== file.size || !admitted(result, file)) {
@@ -141,7 +141,7 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename, verifyHandoffMounts,
+  renamePrepared = rename, verifyHandoffMounts, ed2kMode,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -152,6 +152,7 @@ export async function publishPreparedHandoff({
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
+      (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
   }
@@ -181,7 +182,7 @@ export async function publishPreparedHandoff({
   }
   if (row.status === 'publish_unknown') return reconcileUnknownPublish({ attemptId,
     row, evidence, holdingRoot, importRoot, lookup, ledger, nowMs, readPacer,
-    readRateBytesPerSecond, verifyVideo, verifySubtitle });
+    readRateBytesPerSecond, verifyVideo, verifySubtitle, ed2kMode });
   if (row.status === 'published_observed') return { state: 'published_observed' };
   if (row.status !== 'prepared') return held('publish_outcome_unknown');
   if (typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
@@ -224,7 +225,7 @@ export async function publishPreparedHandoff({
     let result;
     try { result = await verifyVideo({ root: holdingPath, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer }); }
+      lookup, readPacer: pacer, ed2kMode }); }
     catch { return held('identity_unavailable'); }
     if (result?.state === 'held' &&
         ['provider_unavailable', 'lookup_inconclusive'].includes(result.reason)) {

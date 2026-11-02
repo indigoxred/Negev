@@ -1,6 +1,6 @@
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { ed2kFile } from './ed2k.mjs';
+import { ED2K_CHUNK_SIZE, ed2kFile } from './ed2k.mjs';
 import { evaluatePreview } from './evaluate-preview.mjs';
 import { makeBytePacer } from './read-pacer.mjs';
 
@@ -12,12 +12,16 @@ const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts'
 export async function verifyStagedFile({
   root, relativePath, expected, lookup, maxFileBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
+  ed2kMode,
 }) {
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 1024 ** 4) {
     throw new TypeError('Invalid staged file byte budget');
   }
   if (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') {
     throw new TypeError('Invalid staged file read pacer');
+  }
+  if (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) {
+    throw new TypeError('Invalid Shoko ED2K mode');
   }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
@@ -65,8 +69,17 @@ export async function verifyStagedFile({
     return held('file_unavailable');
   }
 
+  // Shoko's native RHash path and its C# fallback produce different ED2K
+  // digests for exact chunk multiples. Without a proven deterministic mode,
+  // neither a release preview nor our local digest proves which
+  // hash Shoko is expected to use after handoff.
+  if (before.size % BigInt(ED2K_CHUNK_SIZE) === 0n && ed2kMode === undefined) {
+    return held('ed2k_boundary_mode_unverified');
+  }
+
   let hash;
-  try { hash = await ed2kFile(fullPath, { pacer, expectedStat: before }); }
+  try { hash = await ed2kFile(fullPath, { pacer, expectedStat: before,
+    mode: ed2kMode ?? 'edonkey' }); }
   catch { return held('file_changed_or_unavailable'); }
 
   let preview;

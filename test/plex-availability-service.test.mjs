@@ -14,7 +14,8 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
   { recursive: true, force: true }))));
 const digest = 'A'.repeat(32);
 
-async function fixture({ detailedPage = false, userRelease = false } = {}) {
+async function fixture({ detailedPage = false, densePage = false,
+  userRelease = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));
   cleanup.push(root);
   await mkdir(path.join(root, 'Anime'), { recursive: true });
@@ -39,6 +40,19 @@ async function fixture({ detailedPage = false, userRelease = false } = {}) {
           offset: 0, totalSize: 1, size: 1,
           Metadata: [{ ratingKey: '500', type: 'episode',
             librarySectionID: 102, guid: url.searchParams.get('guid') }] } });
+      }
+      if (densePage) {
+        const metadata = Array.from({ length: 5 }, (_, card) => ({
+          ratingKey: String(500 + card), type: 'episode', librarySectionID: 102,
+          guid: `tv.plex.agents.custom.shoko://episode/e${555 + card}`,
+          grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+          Media: [{ Part: Array.from({ length: 20 }, (_, part) => ({
+            id: 900 + card * 20 + part, size: 5,
+            file: '/source-pure/Anime/one.mkv',
+          })) }],
+        }));
+        return Response.json({ MediaContainer: { librarySectionID: 102,
+          offset: 0, totalSize: 5, size: 5, Metadata: metadata } });
       }
       return Response.json({ MediaContainer: { librarySectionID: 102, offset: 0,
         totalSize: 1, size: 1, Metadata: [{ ratingKey: '500', type: 'episode',
@@ -225,6 +239,25 @@ test('an opt-in index tick reports bounded provider and filesystem probe counts'
       exactCardReads: 0, candidateProbes: 1, elapsedMs: null });
     assert.equal(Number.isSafeInteger(result.load.elapsedMs) &&
       result.load.elapsedMs >= 0, true);
+  } finally { service.close(); }
+});
+
+test('one dense Plex index tick covers every part in its bounded page', async () => {
+  const { config } = await fixture({ densePage: true });
+  const service = createPlexAvailabilityService(config);
+  try {
+    const result = await service.tick({ libraryId: 102, kind: 'episode',
+      includeLoad: true });
+    assert.equal(result.state, 'page_indexed');
+    assert.equal(result.processed, 5);
+    assert.equal(result.load.candidateProbes, 100);
+    const db = new DatabaseSync(config.dbPath);
+    try {
+      const rows = db.prepare(`SELECT candidate_key AS candidateKey
+        FROM plex_part_candidates WHERE library_id=102`).all();
+      assert.equal(rows.length, 100);
+      assert.equal(rows.filter((row) => row.candidateKey !== null).length, 100);
+    } finally { db.close(); }
   } finally { service.close(); }
 });
 

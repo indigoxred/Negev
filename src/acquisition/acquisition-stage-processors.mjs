@@ -5,6 +5,8 @@ import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
+import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
+import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -18,6 +20,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   stagingHostPath, holdingRoot, importRoot, inspectMounts, realpathImpl,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
+  readEd2kMode = readShokoEd2kMode,
   firstTimePolicy = 'strict' } = {}) {
   const episode = publicSections?.episode;
   const movie = publicSections?.movie;
@@ -26,7 +29,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         readEvidence, readPublicCoverage, inspectMounts, realpathImpl, providerFetchImpl, now,
-        verifyHandoffMounts]
+        verifyHandoffMounts, readEd2kMode]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
@@ -54,6 +57,17 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const result = await verifyHandoffMounts({ holdingRoot, importRoot });
       return result?.state === 'mounted_handoff_roots';
     } catch { return false; }
+  };
+  const selectedEd2kMode = async (files) => {
+    if (!Array.isArray(files) || !files.some((file) =>
+      Number.isSafeInteger(file?.size) && file.size > 0 &&
+      file.size % ED2K_CHUNK_SIZE === 0)) return undefined;
+    try {
+      const result = await readEd2kMode({ baseUrl: shoko.baseUrl,
+        apiKey: shoko.apiKey, fetchImpl: providerFetchImpl });
+      return result?.state === 'mode' && result.mode === 'edonkey' &&
+        result.basis === 'forced_sharp' ? result.mode : null;
+    } catch { return null; }
   };
   return {
     processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
@@ -98,15 +112,30 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
+      let planned;
+      try { planned = acquisitions.getFilePlan?.(attemptId); }
+      catch { return held('file_plan_unavailable'); }
+      const ed2kMode = await selectedEd2kMode(planned);
+      if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
         handoffs, stagingHostPath, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl,
-        readPacer, verifyHandoffMounts, nowMs: now() });
+        readPacer, verifyHandoffMounts, nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
+      let handoff;
+      try { handoff = handoffs.getHandoff(attemptId); }
+      catch { return held('handoff_unavailable'); }
+      if (handoff?.status === 'published_observed') {
+        return processRecordedHandoff({ attemptId, ledger: handoffs,
+          holdingRoot, importRoot, lookup, readPacer,
+          verifyHandoffMounts, nowMs: now() });
+      }
+      const ed2kMode = await selectedEd2kMode(handoff?.manifest?.videos);
+      if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
-        holdingRoot, importRoot, lookup, readPacer,
+        holdingRoot, importRoot, lookup, readPacer, ed2kMode,
         verifyHandoffMounts, nowMs: now() });
     },
   };
