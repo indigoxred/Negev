@@ -77,17 +77,27 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
   catch { return unknown('card_discovery_incomplete'); }
   if (cards.length === 0) return unknown('card_discovery_incomplete');
   try {
+    let missingCard = false;
+    let uncertainCard = false;
     const readKnownCard = async (input) => {
-      const result = await readPlex(input);
-      if (['not_found', 'no_parts'].includes(result?.state) &&
-          typeof cardIndex.forgetCard === 'function') {
-        try {
-          const observedMs = now();
-          if (Number.isSafeInteger(observedMs) && observedMs >= 0) {
-            cardIndex.forgetCard({ libraryId: input.libraryId,
-              ratingKey: input.ratingKey, observedMs });
-          }
-        } catch { /* A stale index cannot become absence evidence. */ }
+      let result;
+      try { result = await readPlex(input); }
+      catch (error) { uncertainCard = true; throw error; }
+      if (['not_found', 'no_parts'].includes(result?.state)) {
+        missingCard = true;
+        if (typeof cardIndex.forgetCard === 'function') {
+          try {
+            const observedMs = now();
+            if (Number.isSafeInteger(observedMs) && observedMs >= 0) {
+              cardIndex.forgetCard({ libraryId: input.libraryId,
+                ratingKey: input.ratingKey, observedMs });
+            }
+          } catch { /* A stale index cannot become absence evidence. */ }
+        }
+      } else if (result?.state !== 'ok' || result.complete !== true ||
+          !Array.isArray(result.parts) || result.parts.length > 40 ||
+          result.parts.some((part) => part?.libraryId !== input.libraryId)) {
+        uncertainCard = true;
       }
       return result;
     };
@@ -114,7 +124,8 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
     };
     let result = await checkCards(cards);
     if (keyedCardsUsed && cards.length < 10 &&
-        ['card_identity_unverified', 'card_discovery_incomplete'].includes(result.reason)) {
+        (['card_identity_unverified', 'card_discovery_incomplete'].includes(result.reason) ||
+          (result.reason === 'observer_incomplete' && missingCard && !uncertainCard))) {
       // A keyed hit can be a stale or differently identified card while a
       // second playable copy has only a size hint. Try only new size hits,
       // within the same ten-card budget and with the same exact proof gate.
