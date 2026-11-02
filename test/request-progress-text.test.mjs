@@ -35,3 +35,12 @@ test('a future-only Airing watch explains why no download is recorded', () => {
     publicAvailability: 'unverified' }, 'series'),
   'Watching for the first aired episode');
 });
+
+test('one-time completion remains historical when current Plex proof expires', () => {
+  assert.equal(progressText({ state: 'saved', targetCount: 12,
+    publicAvailability: 'unverified', oneTimeAcquisitionComplete: true }, 'series'),
+  'One-time request finished after all episodes were checked playable in Plex · Current playback not checked recently');
+  assert.equal(progressText({ state: 'review_needed', targetCount: 1,
+    publicAvailability: 'unverified', oneTimeAcquisitionComplete: true }, 'movie'),
+  'One-time request finished after all film targets were checked playable in Plex · Current playback not checked recently · Earlier download needs review');
+});

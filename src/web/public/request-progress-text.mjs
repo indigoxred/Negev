@@ -32,5 +32,11 @@ export function progressText(progress, kind) {
     return !complete && progress.state !== 'saved'
       ? `${playback} · ${acquisitionText(progress, kind)}` : playback;
   }
+  if (progress.oneTimeAcquisitionComplete === true) {
+    const target = kind === 'movie' ? 'film targets' : 'episodes';
+    const history = `One-time request finished after all ${target} were checked playable in Plex · Current playback not checked recently`;
+    return progress.state === 'review_needed'
+      ? `${history} · Earlier download needs review` : history;
+  }
   return acquisitionText(progress, kind);
 }

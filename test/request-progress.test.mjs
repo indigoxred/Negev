@@ -6,6 +6,7 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
+import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { openRequestProgress } from '../src/requests/request-progress.mjs';
 
@@ -71,4 +72,39 @@ test('a future-only Airing watch has readable zero-target progress', async () =>
       reviewRequired: false, publicAvailability: 'unverified' });
   } finally { progress.close(); handoffs.close(); acquisitions.close();
     requests.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test('one-time completion remains visible after its recent Plex proof expires', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-completed-progress-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'complete', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: false, episodeIds: [1001] } });
+  const airing = requests.submit({ requesterId: 1, requestKey: 'airing', nowMs: 101,
+    intent: { state: 'ready', anidbId: 43, kind: 'series',
+      monitorFuture: true, episodeIds: [2001] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  // The account service opens progress before the opt-in acquisition queue.
+  const progress = openRequestProgress(dbPath);
+  const queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    const claim = queue.claimNext({ nowMs: 200 });
+    assert.equal(claim.requestId, saved.requestId);
+    queue.recordResult({ requestId: saved.requestId, pass: claim.pass,
+      state: 'held', reason: 'request_fully_available', checkedMs: 201 });
+    const airingClaim = queue.claimNext({ nowMs: 202 });
+    queue.recordResult({ requestId: airing.requestId, pass: airingClaim.pass,
+      state: 'held', reason: 'request_fully_available', checkedMs: 203 });
+    assert.deepEqual(progress.read(saved.requestId), { state: 'saved',
+      targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
+      reviewRequired: false, publicAvailability: 'unverified',
+      oneTimeAcquisitionComplete: true });
+    assert.deepEqual(progress.read(airing.requestId), { state: 'saved',
+      targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
+      reviewRequired: false, publicAvailability: 'unverified' });
+  } finally { queue.close(); progress.close(); handoffs.close();
+    acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true }); }
 });

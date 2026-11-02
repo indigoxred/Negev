@@ -32,6 +32,20 @@ export function openRequestProgress(dbPath) {
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
     WHERE a.request_id=? ORDER BY a.id LIMIT 101`);
+  const hasAcquisitionChecks = db.prepare(`SELECT 1 FROM sqlite_master
+    WHERE type='table' AND name='acquisition_request_checks'`);
+  let oneTimeCompletion;
+  const completedOnce = (requestId) => {
+    // Acquisition is opt-in and its queue may open after this reader.
+    if (!oneTimeCompletion) {
+      if (!hasAcquisitionChecks.get()) return false;
+      oneTimeCompletion = db.prepare(`SELECT 1 FROM requests r
+        JOIN acquisition_request_checks c ON c.request_id=r.id
+        WHERE r.id=? AND (r.monitor_future=0 OR r.watch_closed=1)
+          AND c.state='held' AND c.reason='request_fully_available'`);
+    }
+    return Boolean(oneTimeCompletion.get(requestId));
+  };
   return {
     read(requestId) {
       if (!Number.isSafeInteger(requestId) || requestId < 1) {
@@ -63,7 +77,8 @@ export function openRequestProgress(dbPath) {
       } else if (active.length > 0) state = 'release_preparing';
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
-        reviewRequired, publicAvailability: 'unverified' };
+        reviewRequired, publicAvailability: 'unverified',
+        ...(completedOnce(requestId) ? { oneTimeAcquisitionComplete: true } : {}) };
     },
     close() { db.close(); },
   };
