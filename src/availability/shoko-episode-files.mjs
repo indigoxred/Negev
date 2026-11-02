@@ -5,8 +5,10 @@ import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' &&
+  value.length <= 4096 &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
-  !value.includes('\0') && !value.includes('\r') && !value.includes('\n');
+  !value.includes('\0') && !value.includes('\r') && !value.includes('\n') &&
+  !value.includes('\\');
 const userCoverage = (refs) => {
   const seen = new Set();
   const coverage = [];
@@ -74,6 +76,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       episode.Files.length > 50) return unavailable();
   const files = [];
   let incomplete = false;
+  let unscopedUserEpisodeVerified;
   for (const file of episode.Files) {
     if (!validId(file?.ID) || !Number.isSafeInteger(file.Size) || file.Size <= 0 ||
         file.IsIgnored !== false || !Array.isArray(file.Hashes) ||
@@ -84,10 +87,32 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     if (file.Release.IsCorrupted !== false) { incomplete = true; continue; }
     const ed2k = file.Hashes.find((hash) => hash?.Type === 'ED2K')?.Value;
     const refs = file.Release.CrossReferences;
+    const unscopedUserRef = purpose === 'availability' &&
+      file.Release.ProviderName === 'User' && file.Release.ID == null &&
+      refs.length === 1 && refs[0]?.AnidbAnimeID === null &&
+      refs[0].AnidbEpisodeID === episodeId;
     if (!/^[0-9A-F]{32}$/.test(ed2k) || refs.length === 0 ||
-        refs.some((ref) => ref?.AnidbAnimeID !== anidbId || !validId(ref.AnidbEpisodeID)) ||
+        refs.some((ref) => (ref?.AnidbAnimeID !== anidbId &&
+          !(unscopedUserRef && ref.AnidbAnimeID === null)) ||
+          !validId(ref.AnidbEpisodeID)) ||
         !refs.some((ref) => ref.AnidbEpisodeID === episodeId)) {
       incomplete = true; continue;
+    }
+    if (unscopedUserRef) {
+      if (unscopedUserEpisodeVerified === undefined) {
+        try {
+          const metadataUrl = new URL(`/api/v3/Episode/AniDB/${episodeId}`, base);
+          const response = await fetchImpl(metadataUrl, { method: 'GET',
+            redirect: 'manual', headers: { Authorization: `Bearer ${apiKey}`,
+              Accept: 'application/json' },
+            signal: AbortSignal.timeout(timeoutMs) });
+          const metadata = response.status === 200
+            ? await readBoundedJson(response, 100_000) : null;
+          unscopedUserEpisodeVerified = metadata?.ID === episodeId &&
+            metadata.AnimeID === anidbId;
+        } catch { unscopedUserEpisodeVerified = false; }
+      }
+      if (!unscopedUserEpisodeVerified) { incomplete = true; continue; }
     }
     const episodeIds = refs.map((ref) => ref.AnidbEpisodeID);
     let identity = evaluatePreview({ status: 200, release: file.Release },
