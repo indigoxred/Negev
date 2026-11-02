@@ -228,6 +228,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       observeFallback: async (target) => {
         const detail = await metadata.run(() => loadDetail({
           anidbId: target.anidbId, page: 1 }));
+        if (detail?.state === 'busy') return detail;
         return detail?.state === 'details' ? observeCurrentPublic({
           ...target, kind: detail.kind }, undefined, true) : { state: 'unknown' };
       },
