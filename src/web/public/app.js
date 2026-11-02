@@ -410,6 +410,11 @@ async function showDetail(item, franchise = null) {
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager?.episodes.length === 0) panel.append(element('p',
+      data.kind === 'movie'
+        ? 'AniDB has no film target listed yet, so this film cannot be requested.'
+        : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
+      'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise');
@@ -598,6 +603,7 @@ async function showDetail(item, franchise = null) {
       panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));
       return;
     }
+    if (data.kind === 'movie' && pager.episodes.length === 0) return;
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;

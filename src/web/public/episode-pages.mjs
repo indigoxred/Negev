@@ -9,8 +9,9 @@ export function createEpisodePager(first) {
   if (first?.state !== 'details' || first.page !== 1 ||
       !validId(first.anidbId) || typeof first.title !== 'string' ||
       !['series', 'movie'].includes(first.kind) ||
-      !Number.isSafeInteger(first.total) || first.total < 1 ||
-      !Array.isArray(first.episodes) || first.episodes.length < 1 ||
+      !Number.isSafeInteger(first.total) || first.total < 0 ||
+      !Array.isArray(first.episodes) ||
+      (first.episodes.length === 0 && first.total !== 0) ||
       first.episodes.length > first.total ||
       first.episodes.some((episode) => !validEpisode(episode)) ||
       new Set(first.episodes.map((episode) => episode.id)).size !== first.episodes.length ||
