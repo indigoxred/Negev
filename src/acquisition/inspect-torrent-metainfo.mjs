@@ -85,7 +85,6 @@ function addFile(files, name, size) {
 function v1Files(info) {
   const single = field(info, 'length');
   const list = field(info, 'files');
-  if (field(info, 'attr') !== undefined) throw new TypeError('Unsupported file attributes');
   if (!!single === !!list) throw new TypeError('Invalid v1 file view');
   const name = safeSegment(field(info, 'name'));
   const files = [];
@@ -160,6 +159,7 @@ export function inspectTorrentMetainfo({ bytes }) {
     const root = parseBencode(bytes);
     const info = field(root, 'info');
     if (info?.kind !== 'dict') return held('invalid_metainfo');
+    if (field(info, 'attr') !== undefined) return held('invalid_metainfo');
     const versionNode = field(info, 'meta version');
     const isV2 = versionNode !== undefined;
     if (isV2 && asInt(versionNode) !== 2) return held('unsupported_torrent_version');

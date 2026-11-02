@@ -44,8 +44,12 @@ test('holds torrents that mark a selected media path with file attributes', () =
   const v2 = { 'file tree': { '01.mkv': { '': { attr: 'x',
     length: 1000, 'pieces root': Buffer.alloc(32, 2) } } },
     'meta version': 2, name: 'Show', 'piece length': 16384 };
+  const topLevelV2Attribute = { ...v2, attr: 'x',
+    'file tree': { '01.mkv': { '': { length: 1000,
+      'pieces root': Buffer.alloc(32, 2) } } } };
   for (const bytes of [torrent(single), torrent(multi),
-    torrent(v2, { 'piece layers': {} })]) {
+    torrent(v2, { 'piece layers': {} }),
+    torrent(topLevelV2Attribute, { 'piece layers': {} })]) {
     assert.deepEqual(inspect(bytes), { state: 'held', reason: 'invalid_metainfo' });
   }
 });
