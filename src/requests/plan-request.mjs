@@ -11,7 +11,9 @@ const fullDate = (value) => typeof value === 'string' &&
 // function never guesses Airing/Completed from a title or current date.
 export function planRequest({ detail, releaseState, scope, episodeIds, today } = {}) {
   const anidbId = detail?.anidbId;
-  if (!isCompleteAniDbDetail(detail, anidbId) ||
+  if (!isCompleteAniDbDetail(detail, anidbId, {
+    allowEmptySeries: releaseState === 'airing' && scope === 'installment',
+  }) ||
       !['series', 'movie'].includes(detail.kind)) return held('detail_incomplete');
   if (!['airing', 'completed'].includes(releaseState) ||
       (detail.kind === 'movie' && releaseState !== 'completed')) return held('release_state_unknown');
