@@ -12,7 +12,8 @@ export function createPlexIndexScheduler({ sections, tickPage, tickRecent,
     new Set(sections[kind]).size === sections[kind].length) ||
       sections.episode.length + sections.movie.length === 0 ||
       typeof tickPage !== 'function' || typeof tickRecent !== 'function' ||
-      !Number.isSafeInteger(intervalMs) || intervalMs < 60_000 ||
+      !Number.isSafeInteger(intervalMs) || intervalMs < 15_000 ||
+      intervalMs > 300_000 ||
       !Number.isSafeInteger(recentEvery) || recentEvery < 2 || recentEvery > 100) {
     throw new TypeError('Invalid Plex index scheduler');
   }

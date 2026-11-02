@@ -45,4 +45,8 @@ test('invalid section list and too-fast interval are rejected', () => {
     sections: { episode: [102, 102], movie: [] } }), TypeError);
   assert.throws(() => createPlexIndexScheduler({ ...base,
     intervalMs: 1000 }), TypeError);
+  assert.doesNotThrow(() => createPlexIndexScheduler({ ...base,
+    intervalMs: 15_000 }));
+  assert.throws(() => createPlexIndexScheduler({ ...base,
+    intervalMs: 14_999 }), TypeError);
 });

@@ -250,6 +250,16 @@ export function parseUserServerConfig(env) {
   if (env.NEGEV_PLEX_INDEX === '1' && env.NEGEV_PLEX_OBSERVER !== '1') {
     throw new TypeError('Plex index needs observer configuration');
   }
+  const rawPlexIndexInterval = env.NEGEV_PLEX_INDEX_INTERVAL_MS;
+  if (rawPlexIndexInterval !== undefined &&
+      (env.NEGEV_PLEX_INDEX !== '1' ||
+       typeof rawPlexIndexInterval !== 'string' ||
+       !/^[1-9]\d*$/.test(rawPlexIndexInterval) ||
+       !Number.isSafeInteger(Number(rawPlexIndexInterval)) ||
+       Number(rawPlexIndexInterval) < 15_000 ||
+       Number(rawPlexIndexInterval) > 300_000)) {
+    throw new TypeError('Invalid Plex index interval');
+  }
   if (env.NEGEV_SHOKO_INVENTORY_HINTS === '1' &&
       env.NEGEV_SHOKO_INVENTORY !== '1') {
     throw new TypeError('Shoko path hints need inventory');
@@ -374,6 +384,7 @@ export function parseUserServerConfig(env) {
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
     airingWatch, timeZone, plex,
     prowlarr, qbitSidecar,
-    plexIndex: env.NEGEV_PLEX_INDEX === '1', publicOrigin,
+    plexIndex: env.NEGEV_PLEX_INDEX === '1',
+    plexIndexIntervalMs: Number(rawPlexIndexInterval ?? 60_000), publicOrigin,
     secureCookies: exposed, host, port };
 }
