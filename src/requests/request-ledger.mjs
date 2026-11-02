@@ -168,7 +168,8 @@ export function openRequestLedger(dbPath) {
         if (!watch) return held('request_missing');
         if (watch.monitor_future !== 1 || watch.kind !== 'series') return held('not_airing_request');
         if (watch.watch_closed === 1) return held('watch_closed');
-        if (!isCompleteAniDbDetail(detail, watch.anidb_id) || detail.kind !== 'series' ||
+        if (!isCompleteAniDbDetail(detail, watch.anidb_id,
+          { allowEmptySeries: true }) || detail.kind !== 'series' ||
             detail.episodes.length > 2_000) {
           return held('detail_incomplete');
         }

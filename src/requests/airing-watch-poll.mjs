@@ -37,7 +37,8 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       catch { detail = { state: 'unavailable' }; }
       detailCache.set(watch.anidbId, detail);
     }
-    if (!isCompleteAniDbDetail(detail, watch.anidbId) || detail.kind !== 'series' ||
+    if (!isCompleteAniDbDetail(detail, watch.anidbId, { allowEmptySeries: true }) ||
+        detail.kind !== 'series' ||
         detail.episodes.length > 2_000) {
       results.push({ ...watch, ...held('detail_incomplete') });
       continue;
