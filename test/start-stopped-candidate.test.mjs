@@ -190,6 +190,30 @@ test('a stopped torrent whose incomplete path escapes staging cannot start', asy
     assert.equal(posts, 0);
   }));
 
+test('a download path changed during the availability probe blocks start', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => {
+        availabilityRead = true;
+        return options.readEvidence();
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath,
+          download_path: availabilityRead ? '/Shoko' : '',
+        });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result,
+      { state: 'held', reason: 'manifest_changed_before_start' });
+    assert.equal(posts, 0);
+  }));
+
 test('a file priority changed during the availability probe blocks start', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;
