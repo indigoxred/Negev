@@ -11,6 +11,8 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openAcquisitionPipeline } from '../src/acquisition/acquisition-pipeline.mjs';
 import { openAcquisitionRuntime } from '../src/acquisition/acquisition-runtime.mjs';
+import { ED2K_CHUNK_SIZE } from '../src/identity/ed2k.mjs';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
 const info = Buffer.from('d6:lengthi1000e4:name6:01.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const torrentBytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
@@ -94,6 +96,46 @@ test('completion and publish hold before media work when the own mount is unprov
   assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(calls, ['handoff-mount', 'handoff-mount']);
+});
+
+test('exact-boundary work holds on Shoko native preference', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    acquisitions: { getAttempt: () => null,
+      getFilePlan: () => [{ name: '01.mkv', size: ED2K_CHUNK_SIZE }] },
+    handoffs: { getHandoff: () => ({ manifest: {
+      videos: [{ name: '01.mkv', size: ED2K_CHUNK_SIZE }] } }) },
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    readEd2kMode: async () => { calls.push('hash-mode');
+      return { state: 'mode', mode: 'emule',
+        basis: 'configured_native_preference' }; } });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'ed2k_boundary_mode_unverified' });
+  assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
+    { state: 'held', reason: 'ed2k_boundary_mode_unverified' });
+  assert.deepEqual(calls, ['hash-mode', 'hash-mode']);
+});
+
+test('an already observed boundary handoff needs no fresh Shoko hash-mode read', async () => {
+  const evidence = evaluateHandoffEvidence({ anidbId: 42,
+    torrentHash: 'a'.repeat(40), files: [{ name: '01.mkv',
+      size: ED2K_CHUNK_SIZE, ed2k: 'A'.repeat(32),
+      anidbFileId: 51, episodeIds: [1001] }], subtitles: [] });
+  const row = { status: 'published_observed',
+    holdingPath: '/srv/negev/holding/.negev-prep-example',
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-1-${evidence.digest.slice(0, 16)}` };
+  let modeReads = 0;
+  const stages = createAcquisitionStageProcessors({ ...options([]),
+    handoffs: { getHandoff: () => row, beginPublish: () => {
+      throw Error('already published'); }, markPublishedObserved: () => {
+      throw Error('already published'); } },
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    readEd2kMode: async () => { modeReads++; return { state: 'unavailable' }; } });
+  assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
+    { state: 'published_observed' });
+  assert.equal(modeReads, 0);
 });
 
 test('movie request stage uses both public Plex sections before stopped submission', async () => {

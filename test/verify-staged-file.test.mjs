@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { verifyStagedFile } from '../src/identity/verify-staged-file.mjs';
+import { ED2K_CHUNK_SIZE } from '../src/identity/ed2k.mjs';
 
 const expected = {
   animeId: 42,
@@ -11,13 +12,13 @@ const expected = {
 };
 const ed2k = 'A448017AAF21D8525FC10AE87AA6729D'; // published MD4 “abc” vector
 
-function matchingPreview({ size }) {
+function matchingPreview({ size, digest = ed2k }) {
   return { status: 200, release: {
-    id: `anidb://${ed2k}+${size}`,
+    id: `anidb://${digest}+${size}`,
     providerName: 'AniDB',
     releaseURI: 'https://anidb.net/file/123456',
     fileSize: size,
-    hashes: [{ type: 'ED2K', value: ed2k }],
+    hashes: [{ type: 'ED2K', value: digest }],
     crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
       percentageStart: null, percentageEnd: null }],
   } };
@@ -40,6 +41,31 @@ test('verifies an exact file inside staging without importing or moving it', asy
     assert.deepEqual(result, { state: 'identity_verified', fileId: 123456,
       coverage: [{ episodeId: 1001, start: 0, end: 100 }], ed2k, size: 3 });
     assert.deepEqual(paced, [3]);
+  });
+});
+
+test('holds an exact ED2K chunk boundary until Shoko hash mode is proven', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'boundary.mkv'), Buffer.alloc(ED2K_CHUNK_SIZE));
+    let lookups = 0;
+    const result = await verifyStagedFile({ root, relativePath: 'boundary.mkv', expected,
+      lookup: async () => { lookups++; return matchingPreview({ size: ED2K_CHUNK_SIZE }); } });
+    assert.deepEqual(result, { state: 'held', reason: 'ed2k_boundary_mode_unverified' });
+    assert.equal(lookups, 0);
+  });
+});
+
+test('verifies the native RHash boundary only when its mode is supplied', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'boundary.mkv'), Buffer.alloc(ED2K_CHUNK_SIZE));
+    const digest = 'FC21D9AF828F92A8DF64BEAC3357425D';
+    const result = await verifyStagedFile({ root, relativePath: 'boundary.mkv',
+      expected, ed2kMode: 'emule', lookup: async (hash) => {
+        assert.deepEqual(hash, { ed2k: digest, size: ED2K_CHUNK_SIZE });
+        return matchingPreview({ size: hash.size, digest });
+      } });
+    assert.equal(result.state, 'identity_verified');
+    assert.equal(result.ed2k, digest);
   });
 });
 

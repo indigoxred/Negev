@@ -10,7 +10,7 @@ const held = (reason) => ({ state: 'held', reason });
 export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
   stagingHostPath, holdingRoot, importRoot, observe, lookup,
-  nowMs, verify, verifySubtitle, readPacer,
+  nowMs, verify, verifySubtitle, readPacer, ed2kMode,
   verifyHandoffMounts,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
@@ -21,7 +21,8 @@ export async function prepareRecordedHandoff({
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
-    stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer });
+    stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer,
+    ed2kMode });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);
     return acquisitions.recordTerminalRejection({ attemptId,
@@ -30,7 +31,7 @@ export async function prepareRecordedHandoff({
   if (verified.state !== 'batch_identity_verified') return verified;
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
-    verified, readPacer, verifyHandoffMounts });
+    verified, readPacer, verifyHandoffMounts, ed2kMode });
   if (prepared.state !== 'handoff_prepared') return prepared;
   let saved;
   try {

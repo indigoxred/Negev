@@ -7,7 +7,8 @@ const held = (reason) => ({ state: 'held', reason });
 // Recover the exact saved request, attempt, and provisional filename plan
 // before hashing. A caller may supply observers, but cannot replace that plan.
 export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
-  stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer }) {
+  stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer,
+  ed2kMode }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       typeof stagingHostPath !== 'string' || !path.isAbsolute(stagingHostPath) ||
       path.resolve(stagingHostPath) !== stagingHostPath ||
@@ -31,5 +32,6 @@ export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
   return verifyStagedBatch({ root, request, attempt,
     expectedTorrent: { hash: attempt.torrentHash, category: 'negev',
       savePath: stagingSavePath(attempt.torrentHash) },
-    plannedFiles, observe, lookup, verify, verifySubtitle, readPacer });
+    plannedFiles, observe, lookup, verify, verifySubtitle, readPacer,
+    ed2kMode });
 }
