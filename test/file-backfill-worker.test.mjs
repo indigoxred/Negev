@@ -187,6 +187,72 @@ test('a multi-file tick reports expired contention as deferred work', async () =
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a busy partial file survives restart and is revisited on the next pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-partial-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  let cursor = openFileBackfillCursor(dbPath);
+  let clock = 300;
+  let ledger = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 7 * 24 * 60 * 60_000, now: () => clock });
+  let holdRemainingPair = true;
+  const checked = [];
+  const savedProofs = [];
+  const makeWorker = () => createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(12).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => ({
+      ...candidate(fileId === 7 ? 12 : 1), fileId }),
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file, target }) => {
+      checked.push([file.fileId, target.episodeId]);
+      if (file.fileId === 7 && target.episodeId === 1011 &&
+          holdRemainingPair) return { state: 'busy' };
+      return file.fileId === 7 && target.episodeId === 1001
+        ? { state: 'available', fileId: 7,
+          proof: { fileId: 7, libraryId: 102, ratingKey: 500,
+            partId: 600 },
+          cardRevision: { observedMs: 100 } }
+        : { state: 'unknown' };
+    },
+    proofs: { observeGuarded: ({ anidbId, episodeId, proof,
+      checkedMs }) => {
+      savedProofs.push(episodeId);
+      return ledger.observe({ anidbId, episodeId, proof, checkedMs });
+    } },
+    now: () => clock });
+  try {
+    assert.equal((await makeWorker().runOnce()).state, 'partial');
+    assert.deepEqual(savedProofs, [1001]);
+    assert.equal(ledger.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'available');
+    cursor.close();
+    ledger.close();
+    cursor = openFileBackfillCursor(dbPath);
+    ledger = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 7 * 24 * 60 * 60_000, now: () => clock });
+    const restarted = makeWorker();
+    assert.deepEqual(await restarted.runOnce(), {
+      state: 'held', reason: 'metadata_busy' });
+    clock += 15 * 60_000;
+    assert.equal((await restarted.runOnce()).reason, 'metadata_busy_deferred');
+    assert.deepEqual(savedProofs, [1001]);
+    assert.equal(ledger.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'available');
+    assert.equal((await restarted.runOnce()).state, 'checked');
+    assert.deepEqual(checked.at(-1), [8, 1001]);
+    holdRemainingPair = false;
+    assert.equal((await restarted.runOnce()).state, 'partial');
+    assert.deepEqual(savedProofs, [1001, 1001]);
+    assert.equal((await restarted.runOnce()).state, 'checked');
+    assert.deepEqual(checked.slice(-2), [[7, 1011], [7, 1012]]);
+  } finally {
+    ledger.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 for (const failAt of ['first_file', 'kind', 'card', 'final_file']) {
   test(`a thrown ${failAt} read retries once, then advances past the failed file`, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-error-'));
