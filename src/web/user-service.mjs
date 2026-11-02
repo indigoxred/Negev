@@ -70,6 +70,7 @@ const withinRoot = (root, candidate) => {
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
+  dataDir = null,
   shokoImportRoot = null, shokoImportFolderId = null,
   qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
@@ -84,6 +85,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
+      (dataDir !== null && (typeof dataDir !== 'string' ||
+        !path.isAbsolute(dataDir) || path.normalize(dataDir) !== dataDir)) ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
       typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
@@ -152,7 +155,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     directAvailability = openDirectAvailabilityQueue(dbPath);
     if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
     const metadata = createMetadataLimiter();
-    const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now }) : null;
+    const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
+      ...(dataDir === null ? {} : {
+        cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
     if (fileBackfill) {
@@ -340,8 +345,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (sourceStatus?.state === 'ready' || sourceStatus?.state === 'stale') {
           const result = titleSource.search({ query, page });
           return sourceStatus.state === 'stale'
-            ? { ...result, catalogueSource: 'anidb_dump', catalogueStale: true }
-            : { ...result, catalogueSource: 'anidb_dump' };
+            ? { ...result, catalogueSource: 'anidb_dump', catalogueStale: true,
+              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) }
+            : { ...result, catalogueSource: 'anidb_dump',
+              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) };
         }
         const result = await metadata.run(() => searchAniDbTitles({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,

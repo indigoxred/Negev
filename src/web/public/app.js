@@ -341,6 +341,8 @@ byId('search-form').addEventListener('submit', async (event) => {
     results.replaceChildren();
     if (data.catalogueStale) results.append(element('p',
       'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
+    if (data.catalogueCacheWriteFailed) results.append(element('p',
+      'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
     if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
     appendItems(data.items);
     const addMore = () => {
