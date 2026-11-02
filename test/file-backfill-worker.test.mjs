@@ -56,6 +56,29 @@ test('a rejected source-generation proof keeps its file due for a fresh check', 
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a stale guarded proof is not counted as available', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-stale-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7].filter((id) => id > afterFileId),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async () => candidate(1),
+    resolveKind: async () => 'series',
+    observeCandidate: async () => ({ state: 'available', fileId: 7,
+      proof: { fileId: 7, libraryId: 102, ratingKey: 500,
+        partId: 600, storageKey: '1:2:5' },
+      cardRevision: { observedMs: 200, identitySignature: 'stale-card' } }),
+    proofs: { observeGuarded: () => ({ state: 'stale' }) },
+    now: () => 300 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedPairs: 1, available: 0,
+      load: { cardReads: 0, physicalProbes: 0 } });
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 for (const busyAt of ['first_file', 'kind', 'card', 'final_file']) {
   test(`metadata contention at ${busyAt} retries the same file`, async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-busy-'));
