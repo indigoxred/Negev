@@ -4,6 +4,18 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
+const titleKey = (value) => typeof value === 'string'
+  ? value.normalize('NFKC').toLocaleLowerCase('en')
+    .replace(/[^\p{L}\p{N}]/gu, '') : '';
+// A search hit may be unrelated despite matching episode numbers. This is
+// provisional title evidence; completed bytes still need exact AniDB proof.
+export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
+  const release = titleKey(releaseTitle);
+  return titles.some((title) => {
+    const key = titleKey(title);
+    return key.length >= 2 && release.includes(key);
+  });
+};
 
 function episodeNumbers(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
@@ -56,6 +68,12 @@ export function planTorrentTargets({ request, detail, prepared,
       !Array.isArray(prepared.files) || prepared.files.length < 1 ||
       prepared.files.length > 500) return held('invalid_planning_evidence');
   const requested = new Set(request.episodeIds);
+  const titleMatched = matchesTrustedReleaseTitle(releaseTitle,
+    trustedTitle, detail.title);
+  if ((trustedTitle !== undefined || releaseTitle !== undefined) &&
+      !titleMatched) {
+    return held('release_title_mismatch');
+  }
   const regular = detail.episodes.filter((episode) => episode.type === 'Episode');
   const detailIds = new Set(detail.episodes.map((episode) => episode.id));
   if (request.episodeIds.some((id) => !detailIds.has(id))) return held('target_missing');
@@ -100,10 +118,8 @@ export function planTorrentTargets({ request, detail, prepared,
   const plannedFiles = [];
   const targets = new Set();
   const trustedUnnumberedTitle = typeof trustedTitle === 'string' &&
-    trustedTitle.trim().length >= 2 && trustedTitle.length <= 120 &&
-    typeof releaseTitle === 'string' && releaseTitle.length <= 500 &&
-    releaseTitle.toLocaleLowerCase('en').includes(
-      trustedTitle.trim().toLocaleLowerCase('en'));
+    trustedTitle.length <= 120 && releaseTitle?.length <= 500 &&
+    titleMatched;
   const soleUnnumberedTarget = videos.length === 1 &&
     request.episodeIds.length === 1 && regular.length === 1 &&
     regular[0].id === request.episodeIds[0] && trustedUnnumberedTitle

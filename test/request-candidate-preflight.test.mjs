@@ -39,6 +39,15 @@ test('preflight returns only provisional file and target evidence', async () => 
   assert.equal(JSON.stringify(result).includes('form'), false);
 });
 
+test('a numbered release for an unrelated title cannot become a preflight', async () => {
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, title: 'Different Anime - 01' },
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => prepared });
+  assert.deepEqual(result,
+    { state: 'held', reason: 'release_title_mismatch' });
+});
+
 test('an unnumbered one-episode series remains provisional before exact AniDB admission', async () => {
   const single = { ...detail, total: 1,
     episodes: [detail.episodes[0]] };
