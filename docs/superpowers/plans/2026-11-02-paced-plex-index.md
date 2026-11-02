@@ -14,7 +14,7 @@
 
 - Default 60,000 ms; accepted explicit range 15,000–300,000 ms.
 - Reject the option unless Plex indexing is enabled.
-- One page of at most five cards per tick; no parallel ticks or acquisition change.
+- One page of at most five cards plus at most one due retry per tick; no parallel ticks or acquisition change.
 - Do not change the installed NAS container in this plan.
 
 ## Review Focus
