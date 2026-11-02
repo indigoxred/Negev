@@ -160,7 +160,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
       if (!['recorded', 'stale'].includes(saved?.state)) {
         return sourceReadFailed();
       }
-      available++;
+      if (saved.state === 'recorded') available++;
     }
     if (end < candidate.pairs.length) {
       return finish({ state: 'partial', nextPairOffset: end,
