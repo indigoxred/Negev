@@ -3,6 +3,7 @@ import { open } from 'node:fs/promises';
 import { setImmediate } from 'node:timers/promises';
 
 export const ED2K_CHUNK_SIZE = 9_728_000;
+const validMode = (mode) => mode === 'edonkey' || mode === 'emule';
 
 const rotate = (value, bits) => ((value << bits) | (value >>> (32 - bits))) >>> 0;
 const f = (b, c, d) => (b & c) | (~b & d);
@@ -65,23 +66,29 @@ async function md4Cooperative(input, yieldCpu) {
   return result.value;
 }
 
-function ed2kFromChunkDigests(digests) {
+function ed2kFromChunkDigests(digests, { mode = 'edonkey', exactBoundary = false } = {}) {
   if (digests.length === 0) throw new Error('Cannot identify an empty video file');
-  const digest = digests.length === 1 ? digests[0] : md4(Buffer.concat(digests));
+  if (!validMode(mode)) throw new TypeError('Invalid ED2K mode');
+  const parts = mode === 'emule' && exactBoundary ? [...digests, md4(Buffer.alloc(0))] : digests;
+  const digest = parts.length === 1 ? parts[0] : md4(Buffer.concat(parts));
   return digest.toString('hex').toUpperCase();
 }
 
-export function ed2kBuffer(bytes) {
+export function ed2kBuffer(bytes, { mode = 'edonkey' } = {}) {
+  if (!validMode(mode)) throw new TypeError('Invalid ED2K mode');
   if (bytes.length === 0) throw new Error('Cannot identify an empty video file');
   const digests = [];
   for (let offset = 0; offset < bytes.length; offset += ED2K_CHUNK_SIZE) {
     digests.push(md4(bytes.subarray(offset, offset + ED2K_CHUNK_SIZE)));
   }
-  return ed2kFromChunkDigests(digests);
+  return ed2kFromChunkDigests(digests, {
+    mode, exactBoundary: bytes.length % ED2K_CHUNK_SIZE === 0,
+  });
 }
 
 export async function ed2kFile(path, { pacer, expectedStat,
-  yieldCpu = () => setImmediate() } = {}) {
+  yieldCpu = () => setImmediate(), mode = 'edonkey' } = {}) {
+  if (!validMode(mode)) throw new TypeError('Invalid ED2K mode');
   if (pacer !== undefined && typeof pacer?.afterBytes !== 'function') {
     throw new TypeError('Invalid ED2K read pacer');
   }
@@ -120,7 +127,9 @@ export async function ed2kFile(path, { pacer, expectedStat,
         after.ctimeNs !== before.ctimeNs) {
       throw new Error('File changed during hashing');
     }
-    return { ed2k: ed2kFromChunkDigests(digests), size: Number(before.size) };
+    return { ed2k: ed2kFromChunkDigests(digests, {
+      mode, exactBoundary: before.size % BigInt(ED2K_CHUNK_SIZE) === 0n,
+    }), size: Number(before.size) };
   } finally {
     await file.close();
   }

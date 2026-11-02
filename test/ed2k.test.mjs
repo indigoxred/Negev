@@ -18,6 +18,31 @@ test('exactly one ED2K chunk uses its MD4 digest', () => {
   );
 });
 
+test('native RHash eMule mode includes an empty final chunk at an exact boundary', () => {
+  assert.equal(ed2kBuffer(Buffer.alloc(CHUNK_SIZE), { mode: 'emule' }),
+    'FC21D9AF828F92A8DF64BEAC3357425D');
+  assert.equal(ed2kBuffer(Buffer.alloc(CHUNK_SIZE * 2), { mode: 'emule' }),
+    '114B21C63A74B6CA922291A11177DD5C');
+  assert.equal(ed2kBuffer(Buffer.alloc(CHUNK_SIZE + 1), { mode: 'emule' }),
+    '06329E9DBA1373512C06386FE29E3C65');
+});
+
+test('streamed eMule mode returns the native RHash boundary digest', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-ed2k-emule-'));
+  const file = path.join(dir, 'boundary.bin');
+  try {
+    await writeFile(file, Buffer.alloc(CHUNK_SIZE));
+    assert.deepEqual(await ed2kFile(file, { mode: 'emule' }), {
+      ed2k: 'FC21D9AF828F92A8DF64BEAC3357425D', size: CHUNK_SIZE,
+    });
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('invalid hash mode is rejected before opening a file', async () => {
+  assert.throws(() => ed2kBuffer(Buffer.from('abc'), { mode: 'unknown' }), TypeError);
+  await assert.rejects(() => ed2kFile('missing-file', { mode: 'unknown' }), TypeError);
+});
+
 test('a partial second chunk hashes the concatenated chunk digests', () => {
   assert.equal(
     ed2kBuffer(Buffer.alloc(CHUNK_SIZE + 1)),

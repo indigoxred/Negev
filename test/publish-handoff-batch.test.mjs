@@ -3,32 +3,36 @@ import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { ed2kBuffer } from '../src/identity/ed2k.mjs';
+import { ED2K_CHUNK_SIZE, ed2kBuffer } from '../src/identity/ed2k.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { prepareHandoffBatch } from '../src/acquisition/prepare-handoff-batch.mjs';
 import { publishPreparedHandoff } from '../src/acquisition/publish-handoff-batch.mjs';
 import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-handoff.mjs';
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
-async function withBatch(run) {
+async function withBatch(run, { videoBytes = Buffer.from('abc'),
+  ed2kMode } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
   const stagingRoot = path.join(root, 'staging');
   const holdingRoot = path.join(root, 'holding');
   const importRoot = path.join(root, 'import');
   try {
     await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) => mkdir(dir)));
-    const video = Buffer.from('abc');
+    const video = videoBytes;
     const subtitle = Buffer.from('hello');
     await writeFile(path.join(stagingRoot, '01.mkv'), video);
     await writeFile(path.join(stagingRoot, '01.en.srt'), subtitle);
     const verified = { state: 'batch_identity_verified', handoffReady: false,
       torrentHash: 'a'.repeat(40), anidbId: 42,
-      files: [{ name: '01.mkv', size: video.length, ed2k: ed2kBuffer(video),
+      files: [{ name: '01.mkv', size: video.length,
+        ed2k: ed2kBuffer(video, { mode: ed2kMode ?? 'edonkey' }),
         anidbFileId: 51, episodeIds: [1001] }],
       subtitles: [{ index: 1, name: '01.en.srt', size: subtitle.length,
         sha256: (await import('node:crypto')).createHash('sha256').update(subtitle)
           .digest('hex').toUpperCase() }] };
-    const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot, verified });
+    const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot,
+      importRoot, verified, ed2kMode,
+      readPacer: { afterBytes: async () => {} } });
     assert.equal(prepared.state, 'handoff_prepared');
     const manifest = evaluateHandoffEvidence(prepared).manifest;
     const publishName = `negev-1-${prepared.evidenceDigest.slice(0, 16)}`;
@@ -87,6 +91,45 @@ test('provider outage during final identity check is a bounded retryable hold', 
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
+
+test('final pre-import file check receives the selected Shoko hash mode', async () =>
+  withBatch(async (sample) => {
+    let observedMode;
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500, ed2kMode: 'emule',
+      verifyVideo: async (input) => {
+        observedMode = input.ed2kMode;
+        return { state: 'held', reason: 'provider_unavailable' };
+      } });
+    assert.equal(observedMode, 'emule');
+    assert.equal(result.state, 'held');
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
+test('a Shoko hash-mode change after preparation holds before watched Import', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500, ed2kMode: 'edonkey',
+      readPacer: { afterBytes: async () => {} } });
+    assert.deepEqual(result, { state: 'held', reason: 'identity_changed' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { videoBytes: Buffer.alloc(ED2K_CHUNK_SIZE), ed2kMode: 'emule' }));
+
+test('the same native mode permits exact boundary proof before watched rename', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500, ed2kMode: 'emule',
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(result.state, 'published_observed', JSON.stringify(result));
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+  }, { videoBytes: Buffer.alloc(ED2K_CHUNK_SIZE), ed2kMode: 'emule' }));
 
 test('a lost handoff mount stops before publish intent and watched rename', async () =>
   withBatch(async (sample) => {
