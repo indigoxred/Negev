@@ -3,6 +3,22 @@ import { createHash } from 'node:crypto';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const load = () => ({ cardReads: 0, physicalProbes: 0 });
+const compareText = (left, right) => left < right ? -1 : left > right ? 1 : 0;
+// Shoko link and location arrays are sets. Keep both the saved pair offset
+// and the before/after identity check stable if their response order changes.
+const canonicalCandidate = (candidate) => candidate?.state !== 'candidate'
+  ? candidate : { ...candidate,
+    pairs: Array.isArray(candidate.pairs) ? [...candidate.pairs].sort((a, b) =>
+      a.anidbId - b.anidbId || a.episodeId - b.episodeId) : candidate.pairs,
+    identities: Array.isArray(candidate.identities)
+      ? candidate.identities.map((identity) => ({ ...identity,
+        tmdbMovieIds: Array.isArray(identity.tmdbMovieIds)
+          ? [...identity.tmdbMovieIds].sort((a, b) => a - b)
+          : identity.tmdbMovieIds })).sort((a, b) =>
+        compareText(JSON.stringify(a), JSON.stringify(b)))
+      : candidate.identities,
+    sourcePaths: Array.isArray(candidate.sourcePaths)
+      ? [...candidate.sourcePaths].sort() : candidate.sourcePaths };
 const fingerprint = (candidate) => createHash('sha256').update(JSON.stringify([
   candidate.fileId, candidate.updated, candidate.size,
   candidate.anidbFileId, candidate.releaseEvidence,
@@ -72,7 +88,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
     let source, candidate;
     try {
       source = inventory.getFile(fileId);
-      candidate = await readCandidate({ fileId });
+      candidate = canonicalCandidate(await readCandidate({ fileId }));
     } catch { return sourceReadFailed(); }
     if (candidate?.state === 'busy') {
       return metadataBusy();
@@ -142,7 +158,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
       return { state: 'held', reason: 'file_backfill_budget_exceeded' };
     }
     let confirmed;
-    try { confirmed = await readCandidate({ fileId }); }
+    try { confirmed = canonicalCandidate(await readCandidate({ fileId })); }
     catch { return sourceReadFailed(); }
     if (confirmed?.state === 'busy') {
       return metadataBusy();
