@@ -127,8 +127,15 @@ test('unsafe manifest and visible staging hold before the start call', async () 
     assert.equal(posts, 0);
     const visible = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest,
       inspectMounts: async () => ({ ...mounts, shoko: [bind('/srv', '/pure')] }),
-      fetchImpl: async () => { throw Error('unexpected call'); } });
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; throw Error('unexpected start'); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
     assert.deepEqual(visible, { state: 'held', reason: 'staging_visible_to_shoko' });
+    assert.equal(posts, 0);
   }));
 
 test('a stopped torrent whose incomplete path escapes staging cannot start', async () =>
@@ -173,11 +180,15 @@ test('a file priority changed during the availability probe blocks start', async
 test('a mount exposed to Shoko during the availability probe blocks start', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;
+    let mountReads = 0;
     let posts = 0;
     const result = await startStoppedCandidate({ ...options, ledger, attemptId,
       readRequest,
-      inspectMounts: async () => availabilityRead
-        ? { ...mounts, shoko: [bind('/srv', '/pure')] } : mounts,
+      inspectMounts: async () => {
+        mountReads++;
+        return availabilityRead
+          ? { ...mounts, shoko: [bind('/srv', '/pure')] } : mounts;
+      },
       readEvidence: async () => {
         availabilityRead = true;
         return options.readEvidence();
@@ -190,7 +201,31 @@ test('a mount exposed to Shoko during the availability probe blocks start', asyn
         return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
       } });
     assert.deepEqual(result, { state: 'held', reason: 'staging_visible_to_shoko' });
+    assert.equal(mountReads, 1);
     assert.equal(posts, 0);
+  }));
+
+test('a paced mount witness is read only once per start attempt', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let mountReads = 0;
+    let posts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      inspectMounts: async () => {
+        mountReads++;
+        if (mountReads > 1) throw Error('witness rate limited');
+        return mounts;
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { posts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result, { state: 'start_unknown', sendNow: true });
+    assert.equal(mountReads, 1);
+    assert.equal(posts, 1);
   }));
 
 test('a changed video filename or size cannot start against the saved plan', async () =>

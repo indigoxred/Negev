@@ -51,15 +51,6 @@ export async function startStoppedCandidate({
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
-  let mounts, realPath;
-  try {
-    mounts = await inspectMounts();
-    realPath = await realpathImpl(hostPath);
-  } catch { return held('mount_evidence_unavailable'); }
-  const isolation = evaluateStagingMountIsolation(mounts, { hostPath });
-  if (isolation.state !== 'isolated_mount') return isolation;
-  if (realPath !== hostPath) return held('staging_path_not_canonical');
-
   const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs });
   if (manifest.state !== 'manifest_safe') return manifest;
@@ -108,6 +99,7 @@ export async function startStoppedCandidate({
       JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
     return held('manifest_changed_before_start');
   }
+  let mounts, realPath;
   try {
     mounts = await inspectMounts();
     realPath = await realpathImpl(hostPath);
