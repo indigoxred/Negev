@@ -78,7 +78,9 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
           row.Size !== file.size || !Array.isArray(row.SeriesIDs) ||
           row.SeriesIDs.length !== 0 || !Array.isArray(row.Hashes) ||
           !row.Hashes.some((hash) => hash?.Type === 'ED2K' &&
-            hash.Value === file.ed2k) ||
+            typeof hash.Value === 'string' &&
+            /^[0-9a-f]{32}$/i.test(hash.Value) &&
+            hash.Value.toUpperCase() === file.ed2k) ||
           !Array.isArray(row.Locations) || row.Locations.length !== 1 ||
           row.Locations[0].IsAccessible !== true) {
         return held('pending_shoko_identity_unverified');

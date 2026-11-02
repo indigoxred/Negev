@@ -30,6 +30,17 @@ test('exact Negev-published pending file is attributable to another target', () 
   });
 });
 
+test('Shoko ED2K letter case does not change exact pending attribution', () => {
+  const lowerHash = { ...file, Hashes: [{ Type: 'ED2K', Value: ed2k.toLowerCase() }] };
+  assert.equal(partitionOwnedPendingImports({ ...options,
+    shokoPage: { Total: 1, List: [lowerHash] },
+    target: { anidbId: 43, episodeIds: [2001] } }).state, 'partitioned');
+  assert.equal(partitionOwnedPendingImports({ ...options,
+    shokoPage: { Total: 1, List: [{ ...lowerHash,
+      Hashes: [{ Type: 'ED2K', Value: 'B'.repeat(32) }] }] },
+    target: { anidbId: 43, episodeIds: [2001] } }).state, 'held');
+});
+
 test('a pending file for the requested target remains held', () => {
   assert.deepEqual(partitionOwnedPendingImports({ ...options,
     target: { anidbId: 42, episodeIds: [1001] } }),
