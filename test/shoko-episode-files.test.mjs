@@ -97,6 +97,17 @@ test('one accessible location remains usable when an old location is inaccessibl
   assert.deepEqual(result.files[0].sourcePaths, ['/pure/Anime/Example/01.mkv']);
 });
 
+test('Shoko paths with control characters or backslashes are rejected before availability', async () => {
+  for (const suffix of ['\0', '\r', '\n', '\\']) {
+    const changed = { ...episode, Files: [{ ...episode.Files[0],
+      Locations: [{ ...episode.Files[0].Locations[0],
+        AbsolutePath: `/pure/Anime/Example/01${suffix}.mkv` }] }] };
+    const result = await readShokoEpisodeFiles({ ...base,
+      fetchImpl: async () => json(changed) });
+    assert.deepEqual(result, { state: 'unavailable' });
+  }
+});
+
 test('one unregistered sibling does not hide a registered playable file', async () => {
   const unregistered = { ...episode.Files[0], ID: 52, Release: {
     ...release, ProviderName: 'User' } };

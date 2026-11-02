@@ -6,7 +6,8 @@ const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validPath = (value) => typeof value === 'string' &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
-  !value.includes('\0') && !value.includes('\r') && !value.includes('\n');
+  !value.includes('\0') && !value.includes('\r') && !value.includes('\n') &&
+  !value.includes('\\');
 const userCoverage = (refs) => {
   const seen = new Set();
   const coverage = [];
