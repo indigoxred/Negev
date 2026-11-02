@@ -30,3 +30,12 @@ test('changed identity or duplicate episodes hold a page without corrupting sele
     assert.deepEqual(pager.episodes.map((episode) => episode.id), [1001, 1002]);
   }
 });
+
+test('a title with no listed episodes remains a valid empty detail page', () => {
+  const pager = createEpisodePager({ ...first, total: 0,
+    episodes: [], nextPage: null });
+  assert.deepEqual(pager.episodes, []);
+  assert.equal(pager.nextPage, null);
+  assert.throws(() => createEpisodePager({ ...first, total: 0,
+    episodes: [], nextPage: 2 }), TypeError);
+});
