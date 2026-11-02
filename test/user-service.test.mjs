@@ -224,6 +224,31 @@ test('a first-load AniDB dump failure falls back to bounded Shoko search', async
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('catalogue search reports when its restart cache cannot be saved', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-cache-warning-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  const service = await createUserService({ dbPath,
+    dataDir: path.join(dir, 'missing-cache-directory'),
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    anidbTitleDump: true, now: () => 1_000,
+    fetchImpl: async () => new Response(dump) });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const search = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    assert.equal(search.statusCode, 200, search.body);
+    assert.equal(search.json().items[0].anidbId, 4158);
+    assert.equal(search.json().catalogueCacheWriteFailed, true);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a slow AniDB title refresh does not occupy the Shoko metadata slot', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-load-'));
   const dbPath = path.join(dir, 'negev.sqlite');
