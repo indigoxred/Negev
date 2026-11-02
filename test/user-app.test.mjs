@@ -10,6 +10,30 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('busy password verification is retryable for sign-in and invited registration', async () => {
+  const accounts = {
+    authenticate: async () => ({ state: 'busy' }),
+    registerInvite: async () => ({ state: 'held', reason: 'authentication_busy' }),
+    getSessionUser: () => null,
+    createInvite: () => null,
+    revokeSessions: () => false,
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    assert.equal(login.statusCode, 503);
+    assert.equal(login.headers['retry-after'], '1');
+    const register = await app.inject({ method: 'POST', url: '/api/register',
+      headers: { origin }, payload: { code: 'a'.repeat(64),
+        username: 'Friend', password: 'long-member-passphrase' } });
+    assert.equal(register.statusCode, 503);
+    assert.equal(register.headers['retry-after'], '1');
+  } finally { await app.close(); }
+});
+
 test('invited users have private request ownership and CSRF guarded sessions', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-user-app-'));
   const accounts = openAccountLedger(path.join(dir, 'accounts.sqlite'), { now: () => 1_000 });

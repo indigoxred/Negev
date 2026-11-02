@@ -71,3 +71,30 @@ test('session version revokes old sessions without deleting requests or users', 
         password: 'long-owner-passphrase' })).sessionVersion, user.sessionVersion + 1);
     } finally { ledger.close(); }
   }));
+
+test('password checks have a shared concurrency bound and recover after a busy response', async () =>
+  withAccounts(async (dbPath) => {
+    const ledger = openAccountLedger(dbPath, { now: () => 1_000 });
+    try {
+      const owner = await ledger.bootstrapAdmin({ username: 'Owner',
+        password: 'long-owner-passphrase' });
+      const invite = ledger.createInvite({ adminUserId: owner.id,
+        expiresMs: 100_000 });
+      const first = ledger.authenticate({ username: 'Owner',
+        password: 'long-owner-passphrase' });
+      const second = ledger.authenticate({ username: 'Owner',
+        password: 'long-owner-passphrase' });
+      assert.deepEqual(await ledger.authenticate({ username: 'Owner',
+        password: 'long-owner-passphrase' }), { state: 'busy' });
+      assert.deepEqual(await ledger.registerInvite({ code: invite.code,
+        username: 'Friend', password: 'long-member-passphrase' }),
+      { state: 'held', reason: 'authentication_busy' });
+      assert.equal((await first).id, owner.id);
+      assert.equal((await second).id, owner.id);
+      assert.equal((await ledger.authenticate({ username: 'Owner',
+        password: 'long-owner-passphrase' })).id, owner.id);
+      assert.equal((await ledger.registerInvite({ code: invite.code,
+        username: 'Friend', password: 'long-member-passphrase' })).role,
+      'member');
+    } finally { ledger.close(); }
+  }));
