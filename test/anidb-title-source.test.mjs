@@ -23,6 +23,8 @@ test('a validated title dump survives restart and an AniDB outage', async () => 
     fetchImpl: async () => response(null, 503) });
   assert.deepEqual(await restarted.refresh(), { state: 'stale', titles: 1 });
   assert.equal(restarted.search({ query: 'English Name' }).items[0].anidbId, 17);
+  assert.equal(restarted.getTitle(17), 'Main Name');
+  assert.equal(restarted.getTitle(18), null);
 });
 
 test('a failed refresh preserves the saved catalogue until a newer valid dump replaces it', async () => {

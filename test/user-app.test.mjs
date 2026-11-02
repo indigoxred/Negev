@@ -75,6 +75,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         return true;
       },
     },
+    // A validated catalogue ID survives the in-memory search window.
+    confirmKnownTitle: async ({ anidbId }) =>
+      knownTitles.has(anidbId) || anidbId === 1234,
     loadDetail: async ({ anidbId, page }) => ({ state: 'details',
       anidbId, page, kind: 'series', episodes: [
         { id: 1001, number: 1, type: 'Episode', title: 'One' },
@@ -236,6 +239,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(available.statusCode, 200);
     assert.deepEqual(available.json(), { state: 'available' });
     assert.deepEqual(observed, [{ anidbId: 1234, episodeId: 1001, kind: 'series' }]);
+    knownTitles.delete(1234);
     const direct = await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/episodes/1001/availability?kind=series',
       headers: { cookie } });

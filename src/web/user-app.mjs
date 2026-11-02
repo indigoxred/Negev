@@ -24,6 +24,7 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
+  confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
   discoverCandidates, previewCandidate, probeRequestTargets,
@@ -48,6 +49,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       (secureCookies && origin.protocol !== 'https:') ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
       typeof readRequest !== 'function' ||
+      typeof confirmKnownTitle !== 'function' ||
       typeof getAcquisitionStatus !== 'function' ||
       typeof publicAvailabilityConfigured !== 'boolean') {
     throw new TypeError('Invalid user app configuration');
@@ -283,9 +285,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         Object.keys(request.query).length !== 0) {
       return reply.code(400).send({ error: 'Invalid AniDB ID' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        typeof titleRegistry.observe !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (typeof titleRegistry?.observe !== 'function' ||
+        !(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof loadRelatedTitles !== 'function') {
@@ -320,8 +321,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !allowedBody(request.body, []) || Object.keys(request.body).length !== 0) {
       return reply.code(400).send({ error: 'Invalid title check' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof startTitleCheck !== 'function') {
@@ -346,8 +346,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         Object.keys(request.query).length !== 0) {
       return reply.code(400).send({ error: 'Invalid title check' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof getTitleCheck !== 'function') {
@@ -389,8 +388,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !Number.isSafeInteger(offset) || offset < 0 || offset >= 100) {
       return reply.code(400).send({ error: 'Invalid availability page' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof loadDetail !== 'function') {
@@ -428,8 +426,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !['series', 'movie'].includes(request.query.kind)) {
       return reply.code(400).send({ error: 'Invalid availability target' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     return publicAvailability({ anidbId: id, episodeId,
@@ -438,7 +435,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   app.post('/api/catalogue/:id/load-detail', { preHandler: writeGuards,
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (typeof hydrateTitle !== 'function' || typeof titleRegistry?.isKnownTitle !== 'function') {
+    if (typeof hydrateTitle !== 'function') {
       return reply.code(503).send({ error: 'Catalogue hydration unavailable' });
     }
     const id = Number(request.params.id);
@@ -446,7 +443,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length > 0) {
       return reply.code(400).send({ error: 'Invalid AniDB ID' });
     }
-    if (!titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(409).send({ state: 'held', reason: 'unknown_title' });
     }
     const result = await hydrateTitle({ anidbId: id });

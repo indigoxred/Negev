@@ -150,6 +150,10 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
       return index ? searchAniDbTitleIndex(index, input) :
         { state: 'unavailable' };
     },
+    getTitle(anidbId) {
+      return Number.isSafeInteger(anidbId) && anidbId > 0
+        ? index?.get(anidbId)?.title ?? null : null;
+    },
     releaseQueries(anidbId) {
       return Number.isSafeInteger(anidbId) && anidbId > 0
         ? [...(index?.get(anidbId)?.releaseQueries ?? [])] : [];

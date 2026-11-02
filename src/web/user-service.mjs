@@ -14,6 +14,7 @@ import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
+import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
@@ -188,6 +189,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         includeHints: shokoInventoryHints, fetchImpl,
       })) });
     const titleRegistry = createObservedTitleRegistry({ now });
+    const confirmKnownTitle = createKnownTitleResolver({
+      registry: titleRegistry, source: titleSource });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
@@ -253,14 +256,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       observeTarget: (target) => observeCurrentPublic(target),
     }) : null;
     const hydrator = createCatalogueHydrator({
-      isKnownTitle: (input) => titleRegistry.isKnownTitle(input),
+      isKnownTitle: confirmKnownTitle,
       loadDetail, ledger: hydration, now,
       requestHydration: ({ anidbId }) => requestAniDbHydration({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
       }),
     });
     const submitRequest = createHeldRequestSubmitter({
-      titleRegistry, loadDetail, ledger: requests, now, today,
+      titleRegistry, confirmKnownTitle, loadDetail, ledger: requests, now, today,
     });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
@@ -360,7 +363,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
         readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           anidbId, fetchImpl })),
-      titleRegistry, loadDetail: async (input) => {
+      titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await metadata.run(() => loadDetail(input));
         if (!plexObserver || detail?.state !== 'details' ||
             !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
