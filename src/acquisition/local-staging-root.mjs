@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { opendir, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 const held = () => ({ state: 'held', reason: 'staging_root_unverified' });
@@ -15,11 +15,13 @@ const decode = (value) => value.replace(/\\([0-7]{3})/g,
 // qBittorrent's save path is checked separately through its Web API; Docker
 // socket access is neither needed nor granted to this service.
 export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
-  holdingRoot, resolve = realpath, read = readFile } = {}) {
+  holdingRoot, resolve = realpath, read = readFile,
+  openDir = opendir } = {}) {
   if ([stagingRoot, importRoot, holdingRoot].some((value) => !canonical(value)) ||
       overlap(stagingRoot, importRoot) || overlap(stagingRoot, holdingRoot) ||
       overlap(importRoot, holdingRoot) ||
-      typeof resolve !== 'function' || typeof read !== 'function') return held();
+      typeof resolve !== 'function' || typeof read !== 'function' ||
+      typeof openDir !== 'function') return held();
   try {
     const [staging, imported, holding, info] = await Promise.all([
       resolve(stagingRoot), resolve(importRoot), resolve(holdingRoot),
@@ -45,8 +47,13 @@ export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
     const covering = mounts.filter(({ point }) =>
       point === '/' || within(point, stagingRoot)).sort((a, b) =>
       b.point.length - a.point.length)[0];
-    return covering?.point !== '/' && covering?.writable === false &&
-      !['overlay', 'tmpfs', 'ramfs'].includes(covering.type)
-      ? { state: 'verified_staging_root' } : held();
+    if (covering?.point === '/' || covering?.writable !== false ||
+        ['overlay', 'tmpfs', 'ramfs'].includes(covering?.type)) return held();
+    // realpath can succeed on a bind whose directory entries are inaccessible
+    // to Negev's UID/GIDs. Confirm the process can open the directory without
+    // enumerating media before permitting a torrent to start.
+    const directory = await openDir(stagingRoot);
+    await directory.close();
+    return { state: 'verified_staging_root' };
   } catch { return held(); }
 }
