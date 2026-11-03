@@ -1,16 +1,19 @@
 import { realpath } from 'node:fs/promises';
 import { verifyLocalStagingRoot } from './local-staging-root.mjs';
+import { ensureImportChild } from './ensure-import-child.mjs';
 
 // Account-server startup boundary. Configuration parsing rejects incomplete
 // opt-ins; this function reviews durable journals before scheduling workers.
 // Unresolved claims stay excluded while independent work can continue.
 // Disabled startup never touches the acquisition filesystem.
 export async function startAcquisitionRuntime({ config, service, sessionGate,
-  verifyRoot = verifyLocalStagingRoot, realpathImpl = realpath } = {}) {
+  verifyRoot = verifyLocalStagingRoot, ensureChild = ensureImportChild,
+  realpathImpl = realpath } = {}) {
   if (config?.acquisitionRuntime !== true) return null;
   const a = config.acquisition;
   if (!a || typeof service?.openAcquisitionWorkers !== 'function' ||
-      typeof verifyRoot !== 'function' || typeof realpathImpl !== 'function') {
+      typeof verifyRoot !== 'function' || typeof ensureChild !== 'function' ||
+      typeof realpathImpl !== 'function') {
     throw new TypeError('Acquisition startup unavailable');
   }
   const runtime = service.openAcquisitionWorkers({
@@ -18,8 +21,14 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
     stagingHostPath: a.stagingHostPath, qbitStagingRoot: a.qbitStagingRoot,
     holdingRoot: a.holdingRoot,
     importRoot: a.importRoot,
-    verifyStagingRoot: () => verifyRoot({ stagingRoot: a.stagingHostPath,
-      holdingRoot: a.holdingRoot, importRoot: a.importRoot }),
+    verifyStagingRoot: async () => {
+      const ready = await ensureChild({ holdingRoot: a.holdingRoot,
+        importRoot: a.importRoot });
+      return ready?.state === 'import_child_ready'
+        ? verifyRoot({ stagingRoot: a.stagingHostPath,
+          holdingRoot: a.holdingRoot, importRoot: a.importRoot })
+        : { state: 'held', reason: 'import_child_unavailable' };
+    },
     realpathImpl, shokoProviderId: a.shokoProviderId,
   });
   try {

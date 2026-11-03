@@ -39,6 +39,7 @@ const options = (calls) => ({
   stagingHostPath: '/srv/negev/staging',
   holdingRoot: '/srv/negev/holding', importRoot: '/srv/shoko/import',
   inspectMounts: async () => { throw Error('no mount read'); },
+  ensureImportRoot: async () => ({ state: 'import_child_ready' }),
   realpathImpl: async () => { throw Error('no realpath'); },
   shoko: { baseUrl: 'http://shoko:8111/', apiKey: 'synthetic',
     providerId: '11111111-2222-4333-8444-555555555555' },
@@ -87,6 +88,10 @@ test('recent exact public coverage avoids the indexer in the wired request stage
 test('completion and publish hold before media work when the own mount is unproved', async () => {
   const calls = [];
   const stages = createAcquisitionStageProcessors({ ...options(calls),
+    ensureImportRoot: async () => {
+      calls.push('ensure-child');
+      return { state: 'import_child_ready' };
+    },
     verifyHandoffMounts: async () => {
       calls.push('handoff-mount');
       return { state: 'held', reason: 'handoff_mount_unavailable' };
@@ -95,7 +100,8 @@ test('completion and publish hold before media work when the own mount is unprov
     { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
-  assert.deepEqual(calls, ['handoff-mount', 'handoff-mount']);
+  assert.deepEqual(calls, ['ensure-child', 'handoff-mount',
+    'ensure-child', 'handoff-mount']);
 });
 
 test('exact-boundary work holds on Shoko native preference', async () => {

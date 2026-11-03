@@ -23,6 +23,7 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
   } };
   const sessionGate = { run: async () => {} };
   const realpathImpl = async (value) => value;
+  let childReady = false;
   const result = await startAcquisitionRuntime({
     config: { acquisitionRuntime: true, acquisition,
       qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
@@ -31,7 +32,14 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
       return runtime;
     } },
     sessionGate,
+    ensureChild: async (input) => {
+      assert.deepEqual(input, { holdingRoot: '/holding',
+        importRoot: '/import/Negev' });
+      childReady = true;
+      return { state: 'import_child_ready' };
+    },
     verifyRoot: async (input) => {
+      assert.equal(childReady, true);
       assert.deepEqual(input, { stagingRoot: '/staging',
         holdingRoot: '/holding', importRoot: '/import/Negev' });
       return { state: 'verified_staging_root' };
@@ -47,6 +55,25 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
     holdingRoot: acquisition.holdingRoot, importRoot: acquisition.importRoot,
     realpathImpl,
     shokoProviderId: acquisition.shokoProviderId }, 'reconcile']);
+});
+
+test('a missing Import child holds the staging gate before any root approval', async () => {
+  let checked = 0;
+  let gate;
+  await startAcquisitionRuntime({
+    config: { acquisitionRuntime: true, acquisition,
+      qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
+    service: { openAcquisitionWorkers: ({ verifyStagingRoot }) => {
+      gate = verifyStagingRoot;
+      return { start: async () => ({ state: 'held' }) };
+    } },
+    sessionGate: {},
+    ensureChild: async () => ({ state: 'held' }),
+    verifyRoot: async () => { checked++; return { state: 'verified_staging_root' }; },
+  });
+  assert.deepEqual(await gate(), { state: 'held',
+    reason: 'import_child_unavailable' });
+  assert.equal(checked, 0);
 });
 
 test('held acquisition recovery leaves the request site able to start while retrying', async () => {

@@ -5,6 +5,7 @@ import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
+import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
 
@@ -21,6 +22,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyStagingRoot, realpathImpl,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
+  ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
   firstTimePolicy = 'strict' } = {}) {
   const episode = publicSections?.episode;
@@ -30,7 +32,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
-        verifyHandoffMounts, readEd2kMode]
+        verifyHandoffMounts, ensureImportRoot, readEd2kMode]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
@@ -56,6 +58,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
   const handoffMountReady = async () => {
     try {
+      const child = await ensureImportRoot({ holdingRoot, importRoot,
+        verifyHandoffMounts });
+      if (child?.state !== 'import_child_ready') return false;
       const result = await verifyHandoffMounts({ holdingRoot, importRoot });
       return result?.state === 'mounted_handoff_roots';
     } catch { return false; }
