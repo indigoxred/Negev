@@ -27,6 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Validate socket-free Docker preview
+        run: |
+          NEGEV_HOST_DATA=/tmp/negev-preview \
+          NEGEV_SHOKO_URL=http://127.0.0.1:8111 \
+            docker compose -f compose.example.yaml config --quiet
       - run: docker build --tag negev-user-test:ci .
       - run: |
           docker run --detach --name negev-user-ci --network none \

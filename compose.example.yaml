@@ -1,0 +1,28 @@
+# Linux host-network preview. The app listens only on the host loopback.
+# This starts catalogue and request handling with acquisition disabled.
+services:
+  negev:
+    image: ghcr.io/indigoxred/negev:v0.0.35
+    network_mode: host
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 512m
+    restart: unless-stopped
+    environment:
+      NEGEV_USER_SERVER: "1"
+      NEGEV_DATA_DIR: /data
+      NEGEV_PORT: "3000"
+      NEGEV_PUBLIC_ORIGIN: http://localhost:3000
+      NEGEV_SHOKO_URL: ${NEGEV_SHOKO_URL:?Set the local Shoko API URL}
+      NEGEV_SHOKO_API_KEY_FILE: /data/secrets/shoko.token
+      NEGEV_ANIDB_TITLE_DUMP: "1"
+      NEGEV_ACQUISITION_RUNTIME: "0"
+    volumes:
+      - type: bind
+        source: ${NEGEV_HOST_DATA:?Set a private host data directory outside the repository}
+        target: /data
