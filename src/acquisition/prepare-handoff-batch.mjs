@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, mkdir, mkdtemp, open, realpath, rm, statfs } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, realpath, rm, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { ED2K_CHUNK_SIZE, ed2kFile } from '../identity/ed2k.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
@@ -89,6 +89,9 @@ async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer,
       (kind === 'subtitle' ? copiedHash.sha256 !== file.sha256 : copiedHash.ed2k !== file.ed2k)) {
     throw new Error('source_changed');
   }
+  // Holding stays private behind its 0700 parent. Shoko moves these bytes into
+  // the media library, where Plex must be able to read the resulting file.
+  await chmod(destinationPath, 0o644);
 }
 
 // Copies exact AniDB-verified videos and bounded hashed subtitles to private holding.

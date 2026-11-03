@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cp, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -239,6 +239,10 @@ test('one final exact check exposes a complete directory and records it before r
       sample.video);
     assert.deepEqual(await readFile(path.join(sample.importRoot, sample.publishName, '01.en.srt')),
       sample.subtitle);
+    assert.equal((await stat(path.join(sample.importRoot, sample.publishName,
+      '01.mkv'))).mode & 0o777, 0o644);
+    assert.equal((await stat(path.join(sample.importRoot, sample.publishName,
+      '01.en.srt'))).mode & 0o777, 0o644);
     assert.deepEqual(await readdir(sample.holdingRoot), []);
     assert.equal(sample.getObservations(), 1);
     assert.deepEqual(await processRecordedHandoff({ ...sample,
