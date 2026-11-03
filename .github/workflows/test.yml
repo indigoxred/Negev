@@ -21,7 +21,10 @@ jobs:
           node-version: '24'
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level high
-      - run: node --test
+      # Chrome can starve under the parallel suite and time out before the
+      # auth fixture runs. Keep the real browser check, but give it its own run.
+      - run: node --test --test-skip-pattern='browser completes successful login and registration submit transitions'
+      - run: node --test test/browser-auth-submit.test.mjs
 
   private-image:
     runs-on: ubuntu-latest
