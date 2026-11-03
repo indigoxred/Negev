@@ -18,6 +18,10 @@ test('dedicated Shoko source must match its exact watched folder ID and path', a
   assert.deepEqual(await verifyShokoSourceFolder({ ...input, fetchImpl }),
     { state: 'verified_shoko_source' });
   assert.deepEqual(urls, ['/api/v3/ManagedFolder/2']);
+  assert.deepEqual(await verifyShokoSourceFolder({ ...input,
+    fetchImpl: async () => Response.json({ ...folder,
+      Path: '/negev/source/' }) }),
+  { state: 'verified_shoko_source' });
   for (const change of [{ ID: 1 }, { Path: '/other' },
     { DropFolderType: 'Destination' }, { WatchForNewFiles: false }]) {
     assert.deepEqual(await verifyShokoSourceFolder({ ...input,
