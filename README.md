@@ -2,7 +2,7 @@
 
 Negev is a self-hosted anime request and acquisition project for series and films. It aims to combine a searchable anime catalogue, user requests, airing episode monitoring, guarded torrent acquisition, Shoko import, and public Plex availability in one Docker-hosted service.
 
-**Status:** Early prototype. The source has synthetic tests, but broad availability, real download-to-import arrival, load, and end-user acceptance are not yet proved. Do not treat a successful unit test or healthy container as a production cutover.
+**Status:** Early preview. Isolated real series and film arrivals have completed the download, exact AniDB check, Shoko import, and public Plex availability path. Continuous Airing watches, broad load, end-user acceptance, and production cutover remain unproved. Do not treat a successful pilot or healthy container as a production cutover.
 
 ## Design
 
@@ -26,7 +26,7 @@ Negev is a self-hosted anime request and acquisition project for series and film
 - A file-backfill service restart withdraws prior positive proofs, rechecks formerly proven files first within the same read limits, then scans the full Shoko inventory. Availability returns only after fresh exact Shoko/Plex checks; a large library can still take time to rebuild.
 - The Plex index defaults to one page of at most five cards, plus at most one due retry card, every 60 seconds. `NEGEV_PLEX_INDEX_INTERVAL_MS` can set 15,000–300,000 ms only when the index is enabled; each tick remains single-flight and the interval begins after that tick finishes. Measure NAS load before shortening it.
 
-The current source includes guarded components for these flows, but the full operational chain remains unvalidated. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
+The current source includes guarded components for these flows, and the isolated request-to-playback chain has been exercised for a series and a film. The full production chain remains unvalidated. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
 
 ## Docker preview
 
@@ -44,7 +44,7 @@ docker compose -f compose.example.yaml up -d
 
 Keep the Shoko key and the data directory private. Do not paste the password or API key into Compose, `.env`, an issue, or a shell command argument.
 
-Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Keep the `v0.0.35` image pin until a later version has passed genuine arrival and rollback checks.
+Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
 
 ## Development
 
