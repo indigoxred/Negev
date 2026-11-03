@@ -66,24 +66,31 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),
       nextCandidateOffset: 0 };
+    // Prefer a release with peers, while retaining provider order for ties.
+    // The exact AniDB and file checks below still decide whether it is safe.
+    const candidates = [...found.items].sort((a, b) => {
+      const peers = (item) => Number.isSafeInteger(item.seeders) &&
+        item.seeders >= 0 ? item.seeders : -1;
+      return peers(b) - peers(a);
+    });
     // A watch can gain a newly aired target without the indexer's result
     // order changing. Its old cursor must not skip an earlier release that
     // could now cover that target.
     const fingerprint = createHash('sha256').update(JSON.stringify({
       episodeIds: [...request.episodeIds].sort((a, b) => a - b),
-      candidates: found.items.map((item) => [item.indexerId, item.guid]),
+      candidates: candidates.map((item) => [item.indexerId, item.guid]),
     })).digest('hex');
     const seen = new Set();
     let selected;
     // Search ranking can change between passes. An index from another result
     // set could skip a newly arrived candidate, so restart at the first one.
     const start = candidateFingerprint === fingerprint &&
-      candidateOffset < found.items.length ? candidateOffset : 0;
+      candidateOffset < candidates.length ? candidateOffset : 0;
     let nextIndex = start;
-    for (let index = start; index < found.items.length; index++) {
+    for (let index = start; index < candidates.length; index++) {
       if (seen.size >= maxPreflights) break;
       nextIndex = index + 1;
-      const candidate = found.items[index];
+      const candidate = candidates[index];
       const key = `${candidate.indexerId}:${candidate.guid}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -109,7 +116,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       break;
     }
     if (!selected) return { ...held('no_safe_release'),
-      nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0,
+      nextCandidateOffset: nextIndex < candidates.length ? nextIndex : 0,
       nextCandidateFingerprint: fingerprint };
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
@@ -155,7 +162,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),
-        nextCandidateOffset: nextIndex < found.items.length ? nextIndex : 0,
+        nextCandidateOffset: nextIndex < candidates.length ? nextIndex : 0,
         nextCandidateFingerprint: fingerprint };
     }
     return held(validReason(outcome?.reason) ? outcome.reason :
