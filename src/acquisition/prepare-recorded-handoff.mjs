@@ -12,6 +12,7 @@ export async function prepareRecordedHandoff({
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, observe, lookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
   verifyHandoffMounts,
+  verifyStagingRoot,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
@@ -29,6 +30,14 @@ export async function prepareRecordedHandoff({
       hash: attempt.torrentHash, reason: verified.reason, nowMs });
   }
   if (verified.state !== 'batch_identity_verified') return verified;
+  if (verifyStagingRoot) {
+    try {
+      const result = await verifyStagingRoot();
+      if (result !== true && result?.state !== 'verified_staging_root') {
+        return held('staging_root_unverified');
+      }
+    } catch { return held('staging_root_unverified'); }
+  }
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
     verified, readPacer, verifyHandoffMounts, ed2kMode });

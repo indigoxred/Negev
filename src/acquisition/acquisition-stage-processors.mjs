@@ -70,6 +70,11 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       return result?.state === 'mounted_handoff_roots';
     } catch { return false; }
   };
+  const stagingMountReady = async () => {
+    try {
+      return (await verifyStagingRoot?.())?.state === 'verified_staging_root';
+    } catch { return false; }
+  };
   const selectedEd2kMode = async (files) => {
     if (!Array.isArray(files) || !files.some((file) =>
       Number.isSafeInteger(file?.size) && file.size > 0 &&
@@ -125,6 +130,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl } = {}) {
+      if (!await stagingMountReady()) return held('staging_root_unverified');
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       let planned;
       try { planned = acquisitions.getFilePlan?.(attemptId); }
@@ -134,7 +140,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       return processCompletedAttempt({ attemptId, requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl,
-        readPacer, verifyHandoffMounts, nowMs: now(), ed2kMode });
+        readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
+        nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');

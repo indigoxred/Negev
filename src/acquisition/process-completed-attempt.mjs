@@ -13,6 +13,7 @@ export async function processCompletedAttempt({
   readPacer,
   ed2kMode,
   verifyHandoffMounts,
+  verifyStagingRoot,
 }) {
   if (typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
@@ -28,6 +29,7 @@ export async function processCompletedAttempt({
     stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, nowMs, readPacer,
     ed2kMode,
     verifyHandoffMounts,
+    verifyStagingRoot,
     observe: ({ expected }) => observeTorrentCompletion({
       baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
       expected, fetchImpl,

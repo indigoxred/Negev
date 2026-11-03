@@ -39,6 +39,7 @@ const options = (calls) => ({
   stagingHostPath: '/srv/negev/staging',
   holdingRoot: '/srv/negev/holding', importRoot: '/srv/shoko/import',
   inspectMounts: async () => { throw Error('no mount read'); },
+  verifyStagingRoot: async () => ({ state: 'verified_staging_root' }),
   ensureImportRoot: async () => ({ state: 'import_child_ready' }),
   verifyShokoSource: async () => ({ state: 'verified_shoko_source' }),
   realpathImpl: async () => { throw Error('no realpath'); },
@@ -103,6 +104,23 @@ test('completion and publish hold before media work when the own mount is unprov
     { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(calls, ['ensure-child', 'handoff-mount',
     'ensure-child', 'handoff-mount']);
+});
+
+test('completion holds when the staging mount changed after torrent start', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    verifyStagingRoot: async () => ({ state: 'held',
+      reason: 'staging_root_unverified' }),
+    verifyHandoffMounts: async () => {
+      calls.push('handoff-mount');
+      return { state: 'mounted_handoff_roots' };
+    },
+    acquisitions: { getAttempt: () => { throw Error('must not read attempt'); },
+      getFilePlan: () => { throw Error('must not read file plan'); } },
+  });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'staging_root_unverified' });
+  assert.deepEqual(calls, []);
 });
 
 test('completion and publish hold if Shoko no longer watches the dedicated Source', async () => {
