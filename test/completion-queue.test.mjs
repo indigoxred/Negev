@@ -70,6 +70,18 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
   });
 });
 
+test('a retirement intent excludes completion while unrelated attempts advance', async () => {
+  await fixture(async (ctx) => {
+    assert.deepEqual(ctx.acquisitions.requestStalledRetirement({
+      attemptId: ctx.attemptIds[0], hash: ctx.hashes[0], nowMs: 300 }),
+    { state: 'retirement_requested' });
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId,
+      ctx.attemptIds[1]);
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId,
+      ctx.attemptIds[2]);
+  });
+});
+
 test('unfinished claim survives restart and does not stall a later attempt', async () => {
   await fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });

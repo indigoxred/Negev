@@ -27,6 +27,28 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('an existing reasonless retirement table gains the legacy reason', async () =>
+  withLedger(async ({ dbPath }) => {
+    const old = new DatabaseSync(dbPath);
+    try {
+      old.exec(`CREATE TABLE acquisition_retirements (
+        attempt_id INTEGER PRIMARY KEY,
+        torrent_hash TEXT NOT NULL,
+        retired_ms INTEGER NOT NULL
+      ) STRICT`);
+      old.exec(`INSERT INTO acquisition_retirements VALUES
+        (99, '${'a'.repeat(40)}', 200)`);
+    } finally { old.close(); }
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const migrated = new DatabaseSync(dbPath);
+      try {
+        assert.equal(migrated.prepare('SELECT reason FROM acquisition_retirements WHERE attempt_id=99')
+          .get().reason, 'file_wrong_identity');
+      } finally { migrated.close(); }
+    } finally { ledger.close(); }
+  }));
+
 test('a released reservation preserves the one uncertain external attempt across restarts', async () =>
   withLedger(async ({ dbPath, firstId, thirdId }) => {
     const one = openAcquisitionLedger(dbPath);
@@ -287,6 +309,64 @@ test('recording rejected retirement frees the claim but not the rejected candida
         candidate: { indexerId: 7, guid: 'different-release' },
         episodeIds: [1001], nowMs: 210 }).state, 'reserved');
     } finally { ledger?.close(); }
+  }));
+
+test('a proved absent stalled torrent can retire without exhausting first-time acquisition', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    const hash = 'a'.repeat(40);
+    const claim = ledger.reserve({ requestId: firstId, candidate,
+      episodeIds: [1001], evidencePolicy: 'first_time_permissive', nowMs: 200 });
+    try {
+    ledger.bindPreparedTorrent({ attemptId: claim.attemptId, candidate,
+      hash, nowMs: 201 });
+    ledger.recordFilePlan({ attemptId: claim.attemptId, hash,
+      plannedFiles: [{ name: '01.mkv', size: 1000, episodeIds: [1001] }], nowMs: 202 });
+    ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+    ledger.recordTorrent({ attemptId: claim.attemptId, hash, nowMs: 204 });
+    assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+      hash, nowMs: 205 }), { state: 'held', reason: 'start_intent_missing' });
+    ledger.beginStart({ attemptId: claim.attemptId, hash,
+      manifestDigest: 'b'.repeat(64), nowMs: 206 });
+    assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }),
+    { state: 'held', reason: 'retirement_not_requested' });
+    assert.deepEqual(ledger.requestStalledRetirement({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }), { state: 'retirement_requested' });
+    assert.deepEqual(ledger.cancelStalledRetirement({ attemptId: claim.attemptId,
+      hash: 'c'.repeat(40) }), { state: 'held', reason: 'torrent_conflict' });
+    assert.deepEqual(ledger.cancelStalledRetirement({ attemptId: claim.attemptId,
+      hash }), { state: 'retirement_cancelled' });
+    assert.equal(ledger.getStalledRetirementIntent(claim.attemptId), null);
+    assert.deepEqual(ledger.requestStalledRetirement({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }), { state: 'retirement_requested' });
+    assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }),
+    { state: 'held', reason: 'delete_intent_missing' });
+    assert.deepEqual(ledger.beginStalledDelete({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }), { state: 'delete_unknown', sendNow: true });
+    assert.deepEqual(ledger.cancelStalledRetirement({ attemptId: claim.attemptId,
+      hash }), { state: 'held', reason: 'delete_already_possible' });
+    assert.deepEqual(ledger.beginStalledDelete({ attemptId: claim.attemptId,
+      hash, nowMs: 208 }), { state: 'delete_unknown', sendNow: false });
+    assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+      hash: 'c'.repeat(40), nowMs: 207 }),
+    { state: 'held', reason: 'torrent_conflict' });
+    assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+      hash, nowMs: 207 }), { state: 'retired_stalled' });
+    ledger.close();
+    ledger = openAcquisitionLedger(dbPath);
+      assert.equal(ledger.getAttempt(claim.attemptId).status, 'retired_stalled');
+      assert.deepEqual(ledger.retireStalled({ attemptId: claim.attemptId,
+        hash, nowMs: 208 }), { state: 'retired_stalled' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], evidencePolicy: 'first_time_permissive', nowMs: 209 }),
+      { state: 'held', reason: 'candidate_retired' });
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'replacement-after-retirement' },
+        episodeIds: [1001], evidencePolicy: 'first_time_permissive',
+        nowMs: 210 }).state, 'reserved');
+    } finally { ledger.close(); }
   }));
 
 test('dispatch intent persists before network action and never auto-retries after restart', async () =>

@@ -113,7 +113,20 @@ export function openAcquisitionLedger(dbPath) {
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_retirements (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       torrent_hash TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT 'file_wrong_identity'
+        CHECK(reason IN ('file_wrong_identity','stalled_download')),
       retired_ms INTEGER NOT NULL CHECK(retired_ms >= 0)
+    ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(acquisition_retirements)').all()
+      .some((column) => column.name === 'reason')) {
+      db.exec("ALTER TABLE acquisition_retirements ADD COLUMN reason TEXT NOT NULL DEFAULT 'file_wrong_identity' CHECK(reason IN ('file_wrong_identity','stalled_download'))");
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_stall_retirement_intents (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      torrent_hash TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('requested','delete_unknown')),
+      created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
+      updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
     ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
@@ -127,8 +140,9 @@ export function openAcquisitionLedger(dbPath) {
   const historicalTarget = db.prepare(`SELECT claim.attempt_id
     FROM acquisition_target_claims claim
     LEFT JOIN acquisition_releases released ON released.attempt_id=claim.attempt_id
+    LEFT JOIN acquisition_retirements retired ON retired.attempt_id=claim.attempt_id
     WHERE claim.anidb_id=? AND claim.episode_id=?
-      AND released.attempt_id IS NULL LIMIT 1`);
+      AND released.attempt_id IS NULL AND retired.attempt_id IS NULL LIMIT 1`);
   const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
     (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
@@ -153,7 +167,17 @@ export function openAcquisitionLedger(dbPath) {
   const findRejection = db.prepare('SELECT torrent_hash,reason,rejected_ms FROM acquisition_rejections WHERE attempt_id=?');
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
-  const findRetirement = db.prepare('SELECT torrent_hash,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const findRetirement = db.prepare('SELECT torrent_hash,reason,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const findStallIntent = db.prepare(`SELECT torrent_hash,status,created_ms,updated_ms
+    FROM acquisition_stall_retirement_intents WHERE attempt_id=?`);
+  const insertStallIntent = db.prepare(`INSERT INTO acquisition_stall_retirement_intents
+    (attempt_id,torrent_hash,status,created_ms,updated_ms)
+    VALUES (?,?,'requested',?,?)`);
+  const beginStallDelete = db.prepare(`UPDATE acquisition_stall_retirement_intents
+    SET status='delete_unknown',updated_ms=?
+    WHERE attempt_id=? AND torrent_hash=? AND status='requested'`);
+  const cancelStallIntent = db.prepare(`DELETE FROM acquisition_stall_retirement_intents
+    WHERE attempt_id=? AND torrent_hash=? AND status='requested'`);
   const rejectedNeedsReview = db.prepare(`SELECT a.id AS attemptId,
     a.request_id AS requestId,a.anidb_id AS anidbId,
     r.reason,r.rejected_ms AS observedMs
@@ -163,7 +187,7 @@ export function openAcquisitionLedger(dbPath) {
     WHERE t.attempt_id IS NULL AND a.id>?
     ORDER BY a.id LIMIT ?`);
   const insertRetirement = db.prepare(`INSERT INTO acquisition_retirements
-    (attempt_id,torrent_hash,retired_ms) VALUES (?,?,?)`);
+    (attempt_id,torrent_hash,reason,retired_ms) VALUES (?,?,?,?)`);
   const handoffTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_intents'");
 
   function transact(action) {
@@ -213,6 +237,7 @@ export function openAcquisitionLedger(dbPath) {
         const existing = candidateRow.get(candidate.indexerId, digest);
         if (existing && findRelease.get(existing.id)) return held('candidate_released');
         if (existing && findRejection.get(existing.id)) return held('candidate_rejected');
+        if (existing && findRetirement.get(existing.id)) return held('candidate_retired');
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           existing.evidence_policy === evidencePolicy &&
           JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
@@ -305,10 +330,119 @@ export function openAcquisitionLedger(dbPath) {
           'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) {
           return held('handoff_already_recorded');
         }
-        insertRetirement.run(attemptId, normalizedHash, nowMs);
+        insertRetirement.run(attemptId, normalizedHash, 'file_wrong_identity', nowMs);
         deactivateClaims.run(attemptId);
         touchAttempt.run(nowMs, attemptId);
         return { state: 'retired_rejected' };
+      });
+    },
+    requestStalledRetirement({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid stalled retirement request');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash ||
+            row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        const existing = findStallIntent.get(attemptId);
+        if (existing) return existing.torrent_hash === normalizedHash
+          ? { state: existing.status === 'requested'
+            ? 'retirement_requested' : 'delete_unknown' }
+          : held('torrent_conflict');
+        if (findRelease.get(attemptId) || findRejection.get(attemptId) ||
+            findRetirement.get(attemptId) || row.status !== 'torrent_observed' ||
+            findStart.get(attemptId)?.torrent_hash !== normalizedHash ||
+            nowMs < row.updated_ms) return held('retirement_conflict');
+        if (handoffTable.get() && db.prepare(
+          'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) {
+          return held('handoff_already_recorded');
+        }
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='completion_checks'").get() &&
+            db.prepare(`SELECT 1 FROM completion_checks WHERE attempt_id=? AND
+              (state IS NULL OR state <> 'held')`).get(attemptId)) {
+          return held('completion_in_progress');
+        }
+        insertStallIntent.run(attemptId, normalizedHash, nowMs, nowMs);
+        return { state: 'retirement_requested' };
+      });
+    },
+    getStalledRetirementIntent(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
+      const row = findStallIntent.get(attemptId);
+      return row ? { hash: row.torrent_hash, status: row.status } : null;
+    },
+    cancelStalledRetirement({ attemptId, hash }) {
+      if (!validId(attemptId) || !validHash(hash)) {
+        throw new TypeError('Invalid stalled retirement cancellation');
+      }
+      return transact(() => {
+        const row = findStallIntent.get(attemptId);
+        if (!row) return { state: 'retirement_cancelled' };
+        const normalizedHash = hash.toLowerCase();
+        if (row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        if (row.status !== 'requested') return held('delete_already_possible');
+        return cancelStallIntent.run(attemptId, normalizedHash).changes === 1
+          ? { state: 'retirement_cancelled' } : held('retirement_conflict');
+      });
+    },
+    beginStalledDelete({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid stalled delete intent');
+      }
+      return transact(() => {
+        const row = findStallIntent.get(attemptId);
+        const normalizedHash = hash.toLowerCase();
+        if (!row) return held('retirement_not_requested');
+        if (row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        if (findRetirement.get(attemptId)) return held('already_retired');
+        if (row.status === 'delete_unknown') {
+          return { state: 'delete_unknown', sendNow: false };
+        }
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        if (beginStallDelete.run(nowMs, attemptId, normalizedHash).changes !== 1) {
+          return held('retirement_conflict');
+        }
+        return { state: 'delete_unknown', sendNow: true };
+      });
+    },
+    // Only a caller that has proved this exact torrent absent and its staging
+    // leaf empty may make this transition. No file or provider action occurs here.
+    retireStalled({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid stalled-torrent retirement');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash ||
+            row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        const existing = findRetirement.get(attemptId);
+        if (existing) return existing.torrent_hash === normalizedHash &&
+          existing.reason === 'stalled_download'
+          ? { state: 'retired_stalled' } : held('retirement_conflict');
+        if (findRelease.get(attemptId) || findRejection.get(attemptId) ||
+            row.status !== 'torrent_observed' || nowMs < row.updated_ms) {
+          return held('retirement_conflict');
+        }
+        if (findStart.get(attemptId)?.torrent_hash !== normalizedHash) {
+          return held('start_intent_missing');
+        }
+        const intent = findStallIntent.get(attemptId);
+        if (intent?.torrent_hash !== normalizedHash) {
+          return held('retirement_not_requested');
+        }
+        if (intent.status !== 'delete_unknown') return held('delete_intent_missing');
+        if (handoffTable.get() && db.prepare(
+          'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) {
+          return held('handoff_already_recorded');
+        }
+        insertRetirement.run(attemptId, normalizedHash, 'stalled_download', nowMs);
+        deactivateClaims.run(attemptId);
+        touchAttempt.run(nowMs, attemptId);
+        return { state: 'retired_stalled' };
       });
     },
     bindPreparedTorrent({ attemptId, candidate, hash, nowMs }) {
@@ -453,7 +587,9 @@ export function openAcquisitionLedger(dbPath) {
         ...(row.evidence_policy === 'first_time_permissive'
           ? { evidencePolicy: row.evidence_policy } : {}),
         status: findRelease.get(attemptId) ? 'released_pre_dispatch' :
-          findRetirement.get(attemptId) ? 'retired_rejected' :
+          findRetirement.get(attemptId)?.reason === 'stalled_download'
+            ? 'retired_stalled' :
+            findRetirement.get(attemptId) ? 'retired_rejected' :
             rejection ? 'rejected_held' : row.status,
         expectedHash: row.expected_hash, torrentHash: row.torrent_hash,
         ...(rejection ? { rejectionReason: rejection.reason } : {}) } : null;
