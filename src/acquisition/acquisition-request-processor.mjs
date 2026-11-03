@@ -68,29 +68,40 @@ export function createAcquisitionRequestProcessor({ readRequest,
       nextCandidateOffset: 0 };
     // Prefer a release with peers, while retaining provider order for ties.
     // The exact AniDB and file checks below still decide whether it is safe.
-    const candidates = [...found.items].sort((a, b) => {
+    const candidates = [...new Map(found.items.map((item) =>
+      [`${item.indexerId}:${item.guid}`, item])).values()].sort((a, b) => {
       const peers = (item) => Number.isSafeInteger(item.seeders) &&
         item.seeders >= 0 ? item.seeders : -1;
       return peers(b) - peers(a);
     });
-    // A watch can gain a newly aired target without the indexer's result
-    // order changing. Its old cursor must not skip an earlier release that
-    // could now cover that target.
+    const candidateId = (item) => createHash('sha256').update(
+      JSON.stringify([item.indexerId, item.guid])).digest('hex');
+    const currentById = new Map(candidates.map((item) =>
+      [candidateId(item), item]));
+    // A new target or changed candidate set starts a fresh sweep. Seeder
+    // changes alone must retain the original order until that sweep ends.
     const fingerprint = createHash('sha256').update(JSON.stringify({
       episodeIds: [...request.episodeIds].sort((a, b) => a - b),
-      candidates: candidates.map((item) => [item.indexerId, item.guid]),
+      candidates: [...currentById.keys()].sort(),
     })).digest('hex');
+    const saved = typeof candidateFingerprint === 'string' &&
+      candidateFingerprint.length <= 3_400 ? candidateFingerprint.split(':') : [];
+    const savedOrder = saved.length === 2 && saved[0] === fingerprint ?
+      saved[1].split(',') : [];
+    const sameSet = savedOrder.length === currentById.size &&
+      new Set(savedOrder).size === savedOrder.length &&
+      savedOrder.every((id) => /^[0-9a-f]{64}$/.test(id) && currentById.has(id));
+    const ordered = sameSet ? savedOrder.map((id) => currentById.get(id)) : candidates;
+    const cursor = `${fingerprint}:${ordered.map(candidateId).join(',')}`;
     const seen = new Set();
     let selected;
-    // Search ranking can change between passes. An index from another result
-    // set could skip a newly arrived candidate, so restart at the first one.
-    const start = candidateFingerprint === fingerprint &&
-      candidateOffset < candidates.length ? candidateOffset : 0;
+    const start = sameSet && candidateOffset < ordered.length ?
+      candidateOffset : 0;
     let nextIndex = start;
-    for (let index = start; index < candidates.length; index++) {
+    for (let index = start; index < ordered.length; index++) {
       if (seen.size >= maxPreflights) break;
       nextIndex = index + 1;
-      const candidate = candidates[index];
+      const candidate = ordered[index];
       const key = `${candidate.indexerId}:${candidate.guid}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -116,8 +127,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
       break;
     }
     if (!selected) return { ...held('no_safe_release'),
-      nextCandidateOffset: nextIndex < candidates.length ? nextIndex : 0,
-      nextCandidateFingerprint: fingerprint };
+      nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+      nextCandidateFingerprint: cursor };
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }
@@ -163,8 +174,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),
-        nextCandidateOffset: nextIndex < candidates.length ? nextIndex : 0,
-        nextCandidateFingerprint: fingerprint };
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor };
     }
     return held(validReason(outcome?.reason) ? outcome.reason :
       'submit_unavailable');
