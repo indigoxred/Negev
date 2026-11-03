@@ -26,6 +26,12 @@ Negev is a self-hosted anime request and acquisition project for series and film
 
 The current source includes guarded components for these flows, but the full operational chain remains unvalidated. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
 
+## Docker preview
+
+[`compose.example.yaml`](compose.example.yaml) is a Linux host-network preview for catalogue search and requests. It binds Negev to `127.0.0.1:3000` and keeps acquisition off. Create a private host data directory **outside this checkout**, owned by UID 1000 with mode `0700`, and place a dedicated Shoko API key in `secrets/shoko.token` with mode `0600`. Set `NEGEV_HOST_DATA` and the locally reachable `NEGEV_SHOKO_URL` in your shell or a gitignored `.env` beside the Compose file, then run `docker compose -f compose.example.yaml up -d`. The `.env.example` values are placeholders, not credentials.
+
+Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Keep the `v0.0.35` image pin until a later version has passed genuine arrival and rollback checks.
+
 ## Development
 
 Use Node.js 24 and pnpm 11:
