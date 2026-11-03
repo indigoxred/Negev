@@ -53,3 +53,9 @@ test('an interrupted acquisition is visible without claiming media is missing', 
     publicAvailability: 'verified_recently', publicVerifiedTargets: 1 }, 'series'),
   'All requested episodes checked playable in Plex recently · Request check paused after an interruption · Needs owner review');
 });
+
+test('a scheduled release recheck does not imply active downloading', () => {
+  assert.equal(progressText({ state: 'release_check_retrying', targetCount: 1,
+    publicAvailability: 'unverified' }, 'movie'),
+  'Release check paused · Negev will retry');
+});

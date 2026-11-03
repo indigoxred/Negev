@@ -11,6 +11,7 @@ function acquisitionText(progress, kind) {
       ? 'Watching for the first aired episode' : 'Saved · no download recorded';
     case 'release_preparing': return 'Preparing a release';
     case 'torrent_unverified': return 'Checking torrent submission';
+    case 'release_check_retrying': return 'Release check paused · Negev will retry';
     case 'torrent_stopped': return 'Release selected · download not started';
     case 'download_unverified': return 'Download requested · completion unverified';
     case 'partial_private_copy':

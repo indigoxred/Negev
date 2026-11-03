@@ -139,3 +139,33 @@ test('an interrupted request with a prior attempt is shown as needing review', a
     acquisitions.close(); requests.close();
     await rm(root, { recursive: true, force: true }); }
 });
+
+test('a held stopped-add check is shown as scheduled for retry', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-retry-progress-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'retry', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      monitorFuture: false, episodeIds: [1001] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const progress = openRequestProgress(dbPath);
+  const queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    const queued = queue.claimNext({ nowMs: 200 });
+    const candidate = { indexerId: 7, guid: 'settling-release' };
+    const claim = acquisitions.reserve({ requestId: saved.requestId,
+      candidate, episodeIds: [1001], nowMs: 201 });
+    acquisitions.bindPreparedTorrent({ attemptId: claim.attemptId,
+      candidate, hash: 'a'.repeat(40), nowMs: 202 });
+    acquisitions.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+    queue.recordResult({ requestId: saved.requestId, pass: queued.pass,
+      state: 'held', reason: 'not_pristine_stopped', checkedMs: 204 });
+    assert.deepEqual(progress.read(saved.requestId), {
+      state: 'release_check_retrying', targetCount: 1,
+      privateVerifiedTargets: 0, activeAttempts: 1,
+      reviewRequired: false, publicAvailability: 'unverified' });
+  } finally { queue.close(); progress.close(); handoffs.close();
+    acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true }); }
+});

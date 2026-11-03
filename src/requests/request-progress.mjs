@@ -36,6 +36,15 @@ export function openRequestProgress(dbPath) {
     WHERE type='table' AND name='acquisition_request_checks'`);
   let oneTimeCompletion;
   let interruptedRequest;
+  let scheduledRetry;
+  const retryScheduled = (requestId) => {
+    if (!scheduledRetry) {
+      if (!hasAcquisitionChecks.get()) return false;
+      scheduledRetry = db.prepare(`SELECT 1 FROM acquisition_request_checks
+        WHERE request_id=? AND state='held' AND next_due_ms IS NOT NULL`);
+    }
+    return Boolean(scheduledRetry.get(requestId));
+  };
   const interrupted = (requestId) => {
     if (!interruptedRequest) {
       if (!hasAcquisitionChecks.get()) return false;
@@ -86,7 +95,8 @@ export function openRequestProgress(dbPath) {
       else if (active.some((row) => row.status === 'torrent_observed')) {
         state = 'torrent_stopped';
       } else if (active.some((row) => row.status === 'dispatch_unknown')) {
-        state = 'torrent_unverified';
+        state = retryScheduled(requestId)
+          ? 'release_check_retrying' : 'torrent_unverified';
       } else if (active.length > 0) state = 'release_preparing';
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
