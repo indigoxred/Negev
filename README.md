@@ -28,7 +28,19 @@ The current source includes guarded components for these flows, but the full ope
 
 ## Docker preview
 
-[`compose.example.yaml`](compose.example.yaml) is a Linux host-network preview for catalogue search and requests. It binds Negev to `127.0.0.1:3000` and keeps acquisition off. Create a private host data directory **outside this checkout**, owned by UID 1000 with mode `0700`, and place a dedicated Shoko API key in `secrets/shoko.token` with mode `0600`. Set `NEGEV_HOST_DATA` and the locally reachable `NEGEV_SHOKO_URL` in your shell or a gitignored `.env` beside the Compose file, then run `docker compose -f compose.example.yaml up -d`. The `.env.example` values are placeholders, not credentials.
+[`compose.example.yaml`](compose.example.yaml) is a Linux host-network preview for catalogue search and requests. It binds Negev to `127.0.0.1:3000` and keeps acquisition off. Create a private host data directory **outside this checkout**, owned by UID 1000 with mode `0700`, and place a dedicated Shoko API key in `secrets/shoko.token` with mode `0600`. Set `NEGEV_HOST_DATA` and the locally reachable `NEGEV_SHOKO_URL` in your shell or a gitignored `.env` beside the Compose file. The `.env.example` values are placeholders, not credentials.
+
+Before the first start, create the owner account with the same Compose configuration. On a Linux shell, enter a 12–128 byte password at the prompt:
+
+```sh
+read -rsp 'Negev owner password: ' negev_admin_password; printf '\n'
+printf '%s\n' "$negev_admin_password" | docker compose -f compose.example.yaml run --rm -T \
+  -e NEGEV_ADMIN_USERNAME=Owner --entrypoint node negev src/auth/init-admin.mjs
+unset negev_admin_password
+docker compose -f compose.example.yaml up -d
+```
+
+Keep the Shoko key and the data directory private. Do not paste the password or API key into Compose, `.env`, an issue, or a shell command argument.
 
 Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Keep the `v0.0.35` image pin until a later version has passed genuine arrival and rollback checks.
 
