@@ -15,6 +15,23 @@ const plannedFiles = [{ name: 'Show/01.mkv', episodeIds: [1001] },
 const attempt = { id: 1, requestId: 1, anidbId: 42, status: 'torrent_observed',
   episodeIds: [1001, 1002], torrentHash: expectedTorrent.hash };
 
+test('passes the selected Shoko hash mode into the exact file verifier', async () => {
+  let observedMode;
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]], ed2kMode: 'emule',
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    verify: async ({ ed2kMode }) => {
+      observedMode = ed2kMode;
+      return { state: 'identity_verified', isCorrupted: false, fileId: 51,
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+        ed2k: 'B'.repeat(32), size: 3 };
+    }, lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.equal(observedMode, 'emule');
+});
+
 test('one reserved episode subset can verify without acquiring the whole request', async () => {
   const result = await verifyStagedBatch({ root: '/staging', request,
     attempt: { ...attempt, episodeIds: [1002] }, expectedTorrent,

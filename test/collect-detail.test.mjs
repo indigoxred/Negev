@@ -23,6 +23,16 @@ test('collects every exact page before returning complete detail', async () => {
   assert.equal(result.requestable, false);
 });
 
+test('collects a complete empty first page for a new airing series', async () => {
+  const empty = { ...page(1, [], 0), airDate: '2026-10-01',
+    episodeCount: 12, restricted: false };
+  const result = await collectAniDbDetail({ anidbId: 1234,
+    loadPage: async () => empty });
+  assert.equal(result.state, 'details');
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.episodes, []);
+});
+
 test('inconsistent identity, total or repeated episode ID fails closed', async () => {
   for (const second of [
     { ...page(2, [episode(3)]), anidbId: 9999 },

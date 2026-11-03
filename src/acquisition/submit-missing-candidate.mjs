@@ -2,7 +2,7 @@ import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 
@@ -72,6 +72,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     selectedQuery = searchQuery;
   }
   if (!selectedQuery) return held('untrusted_release_query');
+  if (!matchesTrustedReleaseTitle(candidate?.title, selectedQuery,
+    detail.title)) return held('release_title_mismatch');
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate });
   if (prepared.state !== 'prepared_stopped') return prepared;
@@ -79,16 +81,24 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {
     return held('preflight_torrent_changed');
   }
-  let selectedEpisodeIds = episodeIds;
-  let selectedFiles = plannedFiles;
-  if (episodeIds === undefined && plannedFiles === undefined) {
-    const plan = planTorrentTargets({ request, detail, prepared,
-      releaseTitle: candidate.title, trustedTitle: selectedQuery });
-    if (plan.state !== 'planned_targets') return plan;
-    selectedEpisodeIds = plan.episodeIds;
-    selectedFiles = plan.plannedFiles;
+  if ((episodeIds !== undefined || plannedFiles !== undefined) &&
+      !exactFilePlan(prepared, plannedFiles, episodeIds)) {
+    return held('file_plan_mismatch');
   }
+  // Re-derive the episode map even when a caller supplies a reviewed plan.
+  // The final server boundary cannot trust stale or forged preflight fields.
+  const mapped = planTorrentTargets({ request, detail, prepared,
+    releaseTitle: candidate.title, trustedTitle: selectedQuery });
+  if (mapped.state !== 'planned_targets') return mapped;
+  const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
+  const selectedFiles = plannedFiles ?? mapped.plannedFiles;
   if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds)) return held('file_plan_mismatch');
+  const mappedByName = new Map(mapped.plannedFiles.map((file) =>
+    [file.name, file.episodeIds]));
+  if (selectedFiles.some((file) => JSON.stringify([...file.episodeIds]
+    .sort((a, b) => a - b)) !== JSON.stringify(mappedByName.get(file.name)))) {
+    return held('file_plan_mismatch');
+  }
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;

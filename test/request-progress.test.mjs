@@ -6,7 +6,8 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
-import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
+import { openAcquisitionRequestQueue,
+  reconcileUnresolvedAcquisitionClaims } from '../src/acquisition/acquisition-request-queue.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { openRequestProgress } from '../src/requests/request-progress.mjs';
 
@@ -105,6 +106,36 @@ test('one-time completion remains visible after its recent Plex proof expires', 
       targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
       reviewRequired: false, publicAvailability: 'unverified' });
   } finally { queue.close(); progress.close(); handoffs.close();
+    acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true }); }
+});
+
+test('an interrupted request with a prior attempt is shown as needing review', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-interrupted-progress-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const saved = requests.submit({ requesterId: 1, requestKey: 'airing-interrupted',
+    nowMs: 100, intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: true, episodeIds: [1001] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const queue = openAcquisitionRequestQueue(dbPath);
+  const progress = openRequestProgress(dbPath);
+  try {
+    acquisitions.reserve({ requestId: saved.requestId,
+      candidate: { indexerId: 7, guid: 'earlier-episode' },
+      episodeIds: [1001], nowMs: 101 });
+    const claim = queue.claimNext({ nowMs: 200 });
+    assert.equal(claim.requestId, saved.requestId);
+    assert.deepEqual(await reconcileUnresolvedAcquisitionClaims({ queue,
+      inspectRequest: (requestId) => acquisitions.inspectRequestAttempts(requestId),
+      now: () => 201 }), { state: 'reviewed',
+      resolved: [saved.requestId], held: [] });
+    assert.deepEqual(progress.read(saved.requestId), {
+      state: 'request_interrupted', targetCount: 1,
+      privateVerifiedTargets: 0, activeAttempts: 1,
+      reviewRequired: true, publicAvailability: 'unverified' });
+  } finally { progress.close(); queue.close(); handoffs.close();
     acquisitions.close(); requests.close();
     await rm(root, { recursive: true, force: true }); }
 });

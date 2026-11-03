@@ -91,6 +91,54 @@ test('restart reconciliation precedes worker ticks and later requests advance', 
   }
 });
 
+test('unverified interrupted request holds its claim while a later request advances', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-unverified-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'unverified', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      episodeIds: [1001], monitorFuture: false } });
+  requests.submit({ requesterId: 1, requestKey: 'independent', nowMs: 2,
+    intent: { state: 'ready', anidbId: 43, kind: 'movie',
+      episodeIds: [1002], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const oldQueue = openAcquisitionRequestQueue(dbPath);
+  oldQueue.claimNext({ nowMs: 100 });
+  oldQueue.close();
+  const inspectRequest = acquisitions.inspectRequestAttempts.bind(acquisitions);
+  let available = false;
+  const processed = [];
+  acquisitions.inspectRequestAttempts = (...args) => {
+    if (!available) throw new Error('ledger unavailable');
+    return inspectRequest(...args);
+  };
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async ({ requestId }) => { processed.push(requestId);
+      return { state: 'held', reason: 'not_ready' }; },
+    processStart: async () => { throw new Error('must not start'); },
+    processCompletion: async () => { throw new Error('must not complete'); },
+    processPublish: async () => { throw new Error('must not publish'); },
+    now: () => 200 });
+  try {
+    const first = await pipeline.initialize();
+    assert.equal(first.state, 'reconciled');
+    assert.deepEqual(first.requests.held, [1]);
+    assert.deepEqual((await pipeline.tickRequests()).results.map((item) => item.requestId), [2]);
+    assert.deepEqual(processed, [2]);
+    available = true;
+    const recovered = await pipeline.initialize();
+    assert.equal(recovered.state, 'reconciled');
+    assert.deepEqual(recovered.requests.resolved, [1]);
+    assert.equal((await pipeline.tickRequests()).state, 'pass_complete');
+  } finally {
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('closing the pipeline waits for an active request check before closing its journal', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-drain-'));
   const dbPath = path.join(dir, 'state.sqlite');

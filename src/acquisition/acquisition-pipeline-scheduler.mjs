@@ -1,8 +1,12 @@
 const stages = ['tickPublish', 'tickCompletions', 'tickStarts', 'tickRequests'];
+const hasReviewHolds = (result) => [result?.requests, result?.starts,
+  result?.completions, result?.publishes]
+  .some((queue) => Array.isArray(queue?.held) && queue.held.length > 0);
 
-// One paced clock for the four durable acquisition stages. Reconciliation
-// finishes before the first tick, and a later stage cannot overlap an active
-// media read. This clock has no provider credentials or startup wiring.
+// One paced clock for the four durable acquisition stages. Each queue is
+// reviewed before the first tick; unresolved claims stay excluded while
+// independent work proceeds. A later stage cannot overlap an active media
+// read. This clock has no provider credentials or startup wiring.
 export function createPipelineScheduler({ pipeline,
   initialDelayMs = 60_000, stepDelayMs = 60_000,
   failureDelayMs = 5 * 60_000,
@@ -30,6 +34,7 @@ export function createPipelineScheduler({ pipeline,
   let activeStage = null;
   let lastStage = null;
   let lastFinishedMs = null;
+  let reviewHeld = false;
   const schedule = (delay) => {
     if (closed) return;
     timer = setTimer(() => {
@@ -48,6 +53,15 @@ export function createPipelineScheduler({ pipeline,
       lastResult = { state: 'held', reason: 'worker_unavailable' }; }
     lastStage = activeStage;
     activeStage = null;
+    // Retry unresolved crash claims after a complete stage cycle. Their
+    // queue rows stay excluded, but they cannot stall independent work.
+    if (stageIndex === 0 && reviewHeld) {
+      try {
+        const checked = await pipeline.initialize();
+        reviewHeld = checked?.state !== 'reconciled' || hasReviewHolds(checked);
+      } catch { reviewHeld = true; }
+      recoveryState = reviewHeld ? 'waiting_with_review' : 'waiting';
+    }
     const finished = now();
     lastFinishedMs = Number.isSafeInteger(finished) && finished >= 0
       ? finished : null;
@@ -67,8 +81,9 @@ export function createPipelineScheduler({ pipeline,
     initialization = (async () => {
       try {
         const result = await pipeline.initialize();
+        reviewHeld = result?.state === 'reconciled' && hasReviewHolds(result);
         recoveryState = result?.state === 'reconciled'
-          ? 'waiting' : 'reconciliation_held';
+          ? reviewHeld ? 'waiting_with_review' : 'waiting' : 'reconciliation_held';
         if (result?.state === 'reconciled') schedule(initialDelayMs);
         else scheduleRecovery();
         return result;

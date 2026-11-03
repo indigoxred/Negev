@@ -37,7 +37,8 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       catch { detail = { state: 'unavailable' }; }
       detailCache.set(watch.anidbId, detail);
     }
-    if (!isCompleteAniDbDetail(detail, watch.anidbId) || detail.kind !== 'series' ||
+    if (!isCompleteAniDbDetail(detail, watch.anidbId, { allowEmptySeries: true }) ||
+        detail.kind !== 'series' ||
         detail.episodes.length > 2_000) {
       results.push({ ...watch, ...held('detail_incomplete') });
       continue;
@@ -57,8 +58,14 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
     // explicit end date. Continue adding aired episodes, but leave watch open.
     const completionUnconfirmed = release.state === 'completed' && detail.endDate == null;
     const state = completionUnconfirmed ? 'airing' : release.state;
-    const advanced = ledger.advanceAiring({ requestId: watch.requestId,
-      detail, releaseState: state, today });
+    let advanced;
+    try {
+      advanced = ledger.advanceAiring({ requestId: watch.requestId,
+        detail, releaseState: state, today });
+    } catch {
+      results.push({ ...watch, ...held('watch_write_unavailable') });
+      continue;
+    }
     results.push({ ...watch, ...advanced,
       ...(completionUnconfirmed ? { reason: 'completion_unconfirmed' } : {}) });
   }

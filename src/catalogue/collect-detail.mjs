@@ -16,7 +16,8 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
     if (result?.state === 'unavailable' || result?.state === 'detail_pending') return { state: 'unavailable' };
     if (result?.state !== 'details' || result.anidbId !== anidbId || result.page !== page ||
         !Number.isSafeInteger(result.total) || result.total < 0 ||
-        !Array.isArray(result.episodes) || result.episodes.length === 0 ||
+        !Array.isArray(result.episodes) ||
+        (result.episodes.length === 0 && !(page === 1 && result.total === 0)) ||
         !['movie', 'series'].includes(result.kind) ||
         typeof result.title !== 'string' || !result.title.trim()) return invalid;
     if (!first) first = result;

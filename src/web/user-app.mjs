@@ -24,6 +24,7 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
+  confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
   discoverCandidates, previewCandidate, probeRequestTargets,
@@ -48,6 +49,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       (secureCookies && origin.protocol !== 'https:') ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
       typeof readRequest !== 'function' ||
+      typeof confirmKnownTitle !== 'function' ||
       typeof getAcquisitionStatus !== 'function' ||
       typeof publicAvailabilityConfigured !== 'boolean') {
     throw new TypeError('Invalid user app configuration');
@@ -63,7 +65,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   const pages = await Promise.all(['index.html', 'app.js', 'style.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
-    'franchise-explorer.mjs'].map((name) =>
+    'franchise-explorer.mjs', 'acquisition-notice.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -78,6 +80,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[6]],
     ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[7]],
     ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[8]],
+    ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[9]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
@@ -145,6 +148,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     let user;
     try { user = await accounts.registerInvite(body); }
     catch (error) { if (error instanceof TypeError) return reply.code(400).send({ error: 'Invalid registration' }); throw error; }
+    if (user.state === 'held' && user.reason === 'authentication_busy') {
+      return reply.header('Retry-After', '1').code(503)
+        .send({ error: 'Authentication busy; retry shortly' });
+    }
     if (user.state === 'held') return reply.code(409).send({ error: 'Invitation unavailable' });
     return reply.code(201).send({ user: { id: user.id, username: user.username, role: user.role } });
   });
@@ -157,6 +164,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(400).send({ error: 'Invalid login' });
     }
     const user = await accounts.authenticate(body);
+    if (user?.state === 'busy') {
+      return reply.header('Retry-After', '1').code(503)
+        .send({ error: 'Authentication busy; retry shortly' });
+    }
     if (!user) return reply.code(401).send({ error: 'Invalid login' });
     request.session.regenerate();
     request.session.set('userId', user.id);
@@ -168,9 +179,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     reply.header('Cache-Control', 'no-store');
     const { id, username, role } = request.negevUser;
     const reportedState = getAcquisitionStatus()?.state;
-    const acquisitionState = ['waiting', 'running', 'reconciling',
-      'reconciliation_held', 'reconciliation_failed', 'stopping', 'stopped']
-      .includes(reportedState) ? reportedState : 'disabled';
+    const acquisitionState = ['disabled', 'waiting', 'waiting_with_review',
+      'running', 'reconciling', 'reconciliation_held',
+      'reconciliation_failed', 'stopping', 'stopped']
+      .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
@@ -273,9 +285,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         Object.keys(request.query).length !== 0) {
       return reply.code(400).send({ error: 'Invalid AniDB ID' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        typeof titleRegistry.observe !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (typeof titleRegistry?.observe !== 'function' ||
+        !(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof loadRelatedTitles !== 'function') {
@@ -310,8 +321,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !allowedBody(request.body, []) || Object.keys(request.body).length !== 0) {
       return reply.code(400).send({ error: 'Invalid title check' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof startTitleCheck !== 'function') {
@@ -336,8 +346,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         Object.keys(request.query).length !== 0) {
       return reply.code(400).send({ error: 'Invalid title check' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof getTitleCheck !== 'function') {
@@ -379,8 +388,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !Number.isSafeInteger(offset) || offset < 0 || offset >= 100) {
       return reply.code(400).send({ error: 'Invalid availability page' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     if (typeof loadDetail !== 'function') {
@@ -418,8 +426,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !['series', 'movie'].includes(request.query.kind)) {
       return reply.code(400).send({ error: 'Invalid availability target' });
     }
-    if (typeof titleRegistry?.isKnownTitle !== 'function' ||
-        !titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(404).send({ error: 'Title not found' });
     }
     return publicAvailability({ anidbId: id, episodeId,
@@ -428,7 +435,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   app.post('/api/catalogue/:id/load-detail', { preHandler: writeGuards,
     config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    if (typeof hydrateTitle !== 'function' || typeof titleRegistry?.isKnownTitle !== 'function') {
+    if (typeof hydrateTitle !== 'function') {
       return reply.code(503).send({ error: 'Catalogue hydration unavailable' });
     }
     const id = Number(request.params.id);
@@ -436,7 +443,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length > 0) {
       return reply.code(400).send({ error: 'Invalid AniDB ID' });
     }
-    if (!titleRegistry.isKnownTitle({ anidbId: id })) {
+    if (!(await confirmKnownTitle({ anidbId: id }))) {
       return reply.code(409).send({ state: 'held', reason: 'unknown_title' });
     }
     const result = await hydrateTitle({ anidbId: id });

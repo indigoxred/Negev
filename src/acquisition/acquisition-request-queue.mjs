@@ -126,7 +126,9 @@ export function openAcquisitionRequestQueue(dbPath) {
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
-      return save.run(state, reason, attemptId, checkedMs, checkedMs + RETRY_DELAY_MS,
+      const nextDueMs = reason === 'interrupted_attempt_present'
+        ? null : checkedMs + RETRY_DELAY_MS;
+      return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
@@ -217,7 +219,8 @@ export function createAcquisitionPageWorker({ queue, processRequest,
 
 // Invoke before starting request workers after a restart. The acquisition
 // ledger must prove that a claim has no saved attempt before it can retry.
-// An uncertain provider read or any saved attempt leaves the claim held.
+// A saved attempt becomes a visible, non-retrying review hold because it
+// may predate the claim or represent an interrupted provider dispatch.
 export async function reconcileUnresolvedAcquisitionClaims({ queue,
   inspectRequest, now = Date.now, limit = 20 } = {}) {
   if (typeof queue?.listUnresolved !== 'function' ||
@@ -236,6 +239,16 @@ export async function reconcileUnresolvedAcquisitionClaims({ queue,
       let observation;
       try { observation = await inspectRequest(claim.requestId); }
       catch { observation = null; }
+      if (observation?.state === 'attempt_present') {
+        try {
+          const saved = queue.recordResult({ requestId: claim.requestId,
+            pass: claim.pass, state: 'held',
+            reason: 'interrupted_attempt_present', checkedMs: now() });
+          if (saved.state === 'recorded') resolved.push(claim.requestId);
+          else heldClaims.push(claim.requestId);
+        } catch { heldClaims.push(claim.requestId); }
+        continue;
+      }
       if (observation?.state !== 'no_attempt') {
         heldClaims.push(claim.requestId);
         continue;

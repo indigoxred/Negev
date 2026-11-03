@@ -35,7 +35,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     loadPage: loadDetail }); }
   catch { return held('detail_unavailable'); }
   if (detail.state !== 'details' || detail.kind !== request.kind ||
-      detail.restricted !== false || detail.title.length > 120) {
+      detail.restricted !== false) {
     return held('detail_unavailable');
   }
   const knownTargets = new Set(detail.episodes.map((episode) => episode.id));
@@ -43,17 +43,24 @@ export async function previewRequestCandidate({ requestId, candidate,
     return held('target_missing');
   }
   const canonicalQuery = trustedReleaseQueries(detail.title)[0];
-  if (!canonicalQuery) return held('detail_unavailable');
+  let aliases = [];
+  if (!canonicalQuery) {
+    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+    catch { return held('trusted_query_unavailable'); }
+  }
+  const firstQuery = trustedReleaseQueries(detail.title, aliases)[0];
+  if (!firstQuery) return held('detail_unavailable');
   let prepared;
-  let searchQuery = canonicalQuery;
-  try { prepared = await prepare({ query: canonicalQuery, candidate }); }
+  let searchQuery = firstQuery;
+  try { prepared = await prepare({ query: firstQuery, candidate }); }
   catch { return held('torrent_preflight_unavailable'); }
   if (prepared?.state === 'held' && prepared.reason === 'candidate_changed') {
-    let aliases;
-    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
-    catch { aliases = []; }
+    if (canonicalQuery) {
+      try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+      catch { aliases = []; }
+    }
     const queries = trustedReleaseQueries(detail.title, aliases);
-    for (const query of queries.filter((value) => value !== canonicalQuery)) {
+    for (const query of queries.filter((value) => value !== firstQuery)) {
       try { await pause(1_000); }
       catch { return held('torrent_preflight_unavailable'); }
       try { prepared = await prepare({ query, candidate }); }

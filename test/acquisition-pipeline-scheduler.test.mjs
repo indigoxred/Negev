@@ -101,6 +101,32 @@ test('held reconciliation retries without scheduling acquisition work', async ()
   assert.equal(closed, true);
 });
 
+test('unresolved crash claim allows other stages and is rechecked without a restart', async () => {
+  const timer = clock();
+  let checks = 0;
+  const stagesSeen = [];
+  const reviewed = (held) => ({ state: 'reconciled',
+    requests: { held }, starts: { held: [] },
+    completions: { held: [] }, publishes: { held: [] } });
+  const pipeline = {
+    initialize: async () => ++checks === 1 ? reviewed([1]) : reviewed([]),
+    tickPublish: async () => { stagesSeen.push('publish'); return { state: 'idle' }; },
+    tickCompletions: async () => { stagesSeen.push('completion'); return { state: 'idle' }; },
+    tickStarts: async () => { stagesSeen.push('start'); return { state: 'idle' }; },
+    tickRequests: async () => { stagesSeen.push('request'); return { state: 'page' }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  assert.equal((await scheduler.start()).state, 'reconciled');
+  assert.equal(scheduler.getStatus().state, 'waiting_with_review');
+  for (let i = 0; i < 4; i++) await timer.advance();
+  assert.deepEqual(stagesSeen, ['publish', 'completion', 'start', 'request']);
+  assert.equal(checks, 2);
+  assert.equal(scheduler.getStatus().state, 'waiting');
+  await scheduler.stop();
+});
+
 test('failed reconciliation retries safely and shutdown cancels that retry', async () => {
   const timer = clock();
   let attempts = 0;

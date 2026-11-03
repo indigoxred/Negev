@@ -3,6 +3,9 @@
 function acquisitionText(progress, kind) {
   const target = kind === 'movie' ? 'film' : 'episode';
   if (progress.state === 'review_needed') return 'Needs owner review';
+  if (progress.state === 'request_interrupted') {
+    return 'Request check paused after an interruption · Needs owner review';
+  }
   switch (progress.state) {
     case 'saved': return progress.targetCount === 0 && kind === 'series'
       ? 'Watching for the first aired episode' : 'Saved · no download recorded';
@@ -29,6 +32,9 @@ export function progressText(progress, kind) {
       ? `All requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`
       : `${progress.publicVerifiedTargets}/${progress.targetCount} requested ${kind === 'movie' ? 'film targets' : 'episodes'} checked playable in Plex recently`;
     if (progress.state === 'review_needed') return `${playback} · Earlier download needs review`;
+    if (progress.state === 'request_interrupted') {
+      return `${playback} · ${acquisitionText(progress, kind)}`;
+    }
     return !complete && progress.state !== 'saved'
       ? `${playback} · ${acquisitionText(progress, kind)}` : playback;
   }
@@ -36,7 +42,9 @@ export function progressText(progress, kind) {
     const target = kind === 'movie' ? 'film targets' : 'episodes';
     const history = `One-time request finished after all ${target} were checked playable in Plex · Current playback not checked recently`;
     return progress.state === 'review_needed'
-      ? `${history} · Earlier download needs review` : history;
+      ? `${history} · Earlier download needs review` :
+      progress.state === 'request_interrupted'
+        ? `${history} · ${acquisitionText(progress, kind)}` : history;
   }
   return acquisitionText(progress, kind);
 }

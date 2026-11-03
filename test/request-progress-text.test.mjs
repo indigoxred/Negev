@@ -44,3 +44,12 @@ test('one-time completion remains historical when current Plex proof expires', (
     publicAvailability: 'unverified', oneTimeAcquisitionComplete: true }, 'movie'),
   'One-time request finished after all film targets were checked playable in Plex · Current playback not checked recently · Earlier download needs review');
 });
+
+test('an interrupted acquisition is visible without claiming media is missing', () => {
+  assert.equal(progressText({ state: 'request_interrupted', targetCount: 1,
+    publicAvailability: 'unverified' }, 'series'),
+  'Request check paused after an interruption · Needs owner review');
+  assert.equal(progressText({ state: 'request_interrupted', targetCount: 1,
+    publicAvailability: 'verified_recently', publicVerifiedTargets: 1 }, 'series'),
+  'All requested episodes checked playable in Plex recently · Request check paused after an interruption · Needs owner review');
+});

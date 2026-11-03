@@ -43,6 +43,7 @@ test('brackets the quiet window with fresh Shoko and scoped Plex checks', async 
     readEvidence: async () => snapshot, now: () => 120_102,
     firstTimePolicy: 'single_uncertain_attempt' }),
   { state: 'missing_confirmed', checkedAtMs: 120_102,
+    observedAtMs: 120_101,
     evidencePolicy: 'first_time_permissive' });
   const withoutSource = await confirmMissingTargets({ request,
     episodeIds: scope.episodeIds, publicLibraryIds: [102],
@@ -52,6 +53,36 @@ test('brackets the quiet window with fresh Shoko and scoped Plex checks', async 
     firstTimePolicy: 'single_uncertain_attempt' });
   assert.equal(withoutSource.state, 'held');
 });
+
+async function assertFirstTimePack(count) {
+  const episodeIds = Array.from({ length: count }, (_, index) => 2001 + index);
+  let episodeReads = 0;
+  const snapshot = await collectFirstTimeUncertain(providers({
+    episodeIds,
+    readEpisode: async (target) => {
+      episodeReads++;
+      return { state: 'not_imported', ...target };
+    },
+    observeImport: async () => ({ ...quiet, episodeIds }),
+  }));
+  assert.equal(episodeReads, 2 * count);
+  assert.deepEqual(snapshot.episodeIds, episodeIds);
+  assert.equal(snapshot.shoko.state, 'unimported_targets');
+  const result = await confirmMissingTargets({
+    request: { id: 1, status: 'held', kind: 'series',
+      anidbId: scope.anidbId, episodeIds },
+    episodeIds, publicLibraryIds: [102],
+    readEvidence: async () => snapshot,
+    now: () => 120_102,
+    firstTimePolicy: 'single_uncertain_attempt',
+  });
+  assert.equal(result.state, 'missing_confirmed');
+}
+
+for (const count of [24, 50]) {
+  test(`a planned ${count}-episode first attempt checks every target on both sides of the quiet window`,
+    () => assertFirstTimePack(count));
+}
 
 test('a file or public card arriving during the quiet window stops acquisition', async () => {
   let shokoReads = 0;

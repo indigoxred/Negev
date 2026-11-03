@@ -66,7 +66,9 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
   return {
     initialize() {
       if (closed) return Promise.resolve(held('pipeline_closed'));
-      if (recovery) return Promise.resolve(recovery);
+      if (recovery && [recovery.requests, recovery.starts,
+        recovery.completions, recovery.publishes]
+        .every((result) => result.held.length === 0)) return Promise.resolve(recovery);
       if (!initialization) {
         initialization = (async () => {
           const requests = await reconcileUnresolvedAcquisitionClaims({
@@ -77,6 +79,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
           const starts = startQueue.reconcileUnresolved({ nowMs: now() });
           const completions = completionQueue.reconcileUnresolved({ nowMs: now() });
           const publishes = publishQueue.reconcileUnresolved({ nowMs: now() });
+          // Each queue excludes its own unresolved claims. Keep those claims
+          // for review while independent items continue through the workers.
           recovery = { state: 'reconciled', requests, starts,
             completions, publishes };
           return recovery;

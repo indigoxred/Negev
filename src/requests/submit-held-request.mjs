@@ -7,8 +7,10 @@ const held = (reason) => ({ state: 'held', reason });
 
 // Held-request orchestration. It never searches an indexer or dispatches
 // qBittorrent. The authenticated caller supplies requesterId.
-export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, now, today }) {
-  if (typeof titleRegistry?.isKnownTitle !== 'function' ||
+export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
+  (input) => titleRegistry?.isKnownTitle(input) ?? false,
+  loadDetail, ledger, now, today }) {
+  if (typeof confirmKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
       typeof ledger?.findSubmission !== 'function' ||
       typeof now !== 'function' || typeof today !== 'function') {
@@ -28,7 +30,7 @@ export function createHeldRequestSubmitter({ titleRegistry, loadDetail, ledger, 
       scope === 'episodes' ? [...new Set(episodeIds)].sort((a, b) => a - b) : null]);
     const previous = ledger.findSubmission({ requesterId, requestKey, commandKey });
     if (previous) return previous;
-    if (!titleRegistry.isKnownTitle({ anidbId })) return held('unknown_title');
+    if (!(await confirmKnownTitle({ anidbId }))) return held('unknown_title');
     const detail = await collectAniDbDetail({ anidbId, loadPage: loadDetail });
     if (detail.state !== 'details') {
       return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');

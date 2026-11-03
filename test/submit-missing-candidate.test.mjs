@@ -137,7 +137,7 @@ test('an alias-only stopped submission revalidates its server-approved title', a
           'content-type': 'application/x-bittorrent' } });
       }, qbittorrentFetch: qbittorrentFetch([]) });
     const result = await submitMissingCandidate({ ...input,
-      detail: { ...baseDetail, title: 'Canonical Title' },
+      detail: { ...baseDetail, title: 'Example' },
       searchQuery: 'Official English',
       releaseQueries: async ({ anidbId }) => {
         assert.equal(anidbId, 42);
@@ -207,6 +207,41 @@ test('a wrong video-to-episode plan holds before reservation or qBittorrent', as
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: async () => { qbCalls++; } });
     const result = await submitMissingCandidate({ ...input,
       plannedFiles: [{ name: 'Other.mkv', size: 1000, episodeIds: [1001] }] });
+    assert.deepEqual(result, { state: 'held', reason: 'file_plan_mismatch' });
+    assert.equal(qbCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
+  }));
+
+test('a supplied file plan cannot bypass the trusted release-title gate', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let qbCalls = 0;
+    const wrongCandidate = { ...candidate, title: 'Different Anime - 01' };
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => ++providerCalls === 1
+        ? Response.json([{ ...wrongCandidate, protocol: 'torrent',
+          downloadUrl: proxy }])
+        : new Response(bytes, { headers: {
+          'content-type': 'application/x-bittorrent' } }),
+      qbittorrentFetch: async () => { qbCalls++; } });
+    const result = await submitMissingCandidate({ ...input,
+      candidate: wrongCandidate });
+    assert.equal(providerCalls, 0);
+    assert.deepEqual(result,
+      { state: 'held', reason: 'release_title_mismatch' });
+    assert.equal(qbCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
+  }));
+
+test('a supplied episode map is recomputed from the current AniDB detail', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let qbCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: prowlarrFetch(),
+      qbittorrentFetch: async () => { qbCalls++; } });
+    const result = await submitMissingCandidate({ ...input,
+      episodeIds: [1002], plannedFiles: [{ name: '01.mkv', size: 1000,
+        episodeIds: [1002] }] });
     assert.deepEqual(result, { state: 'held', reason: 'file_plan_mismatch' });
     assert.equal(qbCalls, 0);
     assert.equal(ledger.getAttempt(1), null);

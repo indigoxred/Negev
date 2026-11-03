@@ -78,3 +78,34 @@ test('searches verified same-ID aliases with a bounded pace and deduplicates rel
   assert.deepEqual(found.items.map((item) => item.guid), ['same', 'english']);
   assert.equal(found.exhaustive, false);
 });
+
+test('a long canonical title can search a short verified same-ID alias', async () => {
+  const searched = [];
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: 'L'.repeat(121) }),
+    releaseQueries: async ({ anidbId }) => {
+      assert.equal(anidbId, 1234);
+      return ['Short Alias'];
+    },
+    searchReleases: async ({ query }) => {
+      searched.push(query);
+      return { state: 'candidates', items: [] };
+    },
+  });
+  assert.equal((await discover({ requestId: 12 })).state, 'candidates');
+  assert.deepEqual(searched, ['Short Alias']);
+});
+
+test('a long canonical title without a valid same-ID alias never searches', async () => {
+  let searches = 0;
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: 'L'.repeat(121) }),
+    releaseQueries: async () => ['X', 'Y'.repeat(121)],
+    searchReleases: async () => { searches++; return { state: 'candidates', items: [] }; },
+  });
+  assert.deepEqual(await discover({ requestId: 12 }),
+    { state: 'held', reason: 'query_too_long' });
+  assert.equal(searches, 0);
+});

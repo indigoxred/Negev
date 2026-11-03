@@ -153,6 +153,53 @@ test('a movie request is saved as one-time held acquisition', async () => {
   }
 });
 
+test('an airing series with no listed episodes saves a watch for its first arrival', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-airing-'));
+  let firstListed = false;
+  const fetchImpl = async (url) => {
+    const route = new URL(url).pathname;
+    if (route.endsWith('/Search')) return json({ Total: 1, List: [
+      { ID: 4567, Title: 'New Airing' }] });
+    if (route.endsWith('/Episode')) {
+      const episodes = firstListed ? [{ ID: 4001, AnimeID: 4567,
+        EpisodeNumber: 1, Type: 'Episode', Title: 'First',
+        AirDate: '2026-10-30' }] : [];
+      return json({ Total: episodes.length, List: episodes });
+    }
+    if (route.endsWith('/AniDB/4567')) return json({ ID: 4567,
+      Title: 'New Airing', Type: 'TV', AirDate: '2026-10-01',
+      EndDate: null, EpisodeCount: 12, Restricted: false });
+    throw Error('Unexpected provider request');
+  };
+  const service = createCatalogueTestService({
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    dbPath: path.join(dir, 'state.sqlite'), testToken: 'synthetic-private-token',
+    fetchImpl, now: () => 1_000_000_000, today: () => '2026-10-31',
+  });
+  try {
+    await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=New', headers: auth });
+    const created = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth, payload: { anidbId: 4567, scope: 'installment',
+        requestKey: 'first-airing' } });
+    assert.equal(created.statusCode, 202);
+    const requestId = created.json().requestId;
+    const before = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}`, headers: auth });
+    assert.deepEqual(before.json().episodeIds, []);
+    assert.equal(before.json().monitorFuture, true);
+    firstListed = true;
+    const poll = await service.pollAiringOnce();
+    assert.deepEqual(poll.results[0].addedEpisodeIds, [4001]);
+    const after = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requestId}`, headers: auth });
+    assert.deepEqual(after.json().episodeIds, [4001]);
+  } finally {
+    await service.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a newly requested ended series still watches for a late catalogue episode', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-late-request-'));
   let finalListed = false;

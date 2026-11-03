@@ -407,6 +407,49 @@ test('a 12-episode file advances in two bounded ticks and saves guarded positive
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('Shoko link ordering changes do not skip a resumed episode', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-order-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const seen = [];
+  const saved = [];
+  let reads = 0;
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: {
+      listFileHintIds: ({ afterFileId }) =>
+        [7].filter((id) => id > afterFileId),
+      getFile: () => ({ state: 'linked', updated: candidate().updated,
+        observedMs: 100 }),
+    },
+    readCandidate: async () => {
+      const item = { ...candidate(),
+        sourcePaths: ['/pure/Anime/pack.mkv', '/pure/Import/pack.mkv'] };
+      return ++reads % 2 === 0 ? { ...item,
+        pairs: [...item.pairs].reverse(),
+        identities: [...item.identities].reverse(),
+        sourcePaths: [...item.sourcePaths].reverse() } : item;
+    },
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ target, budget }) => {
+      seen.push(target.episodeId);
+      budget.cardReads++;
+      return { state: 'available', fileId: 7,
+        proof: { fileId: 7, libraryId: 102, ratingKey: 500,
+          partId: 600, storageKey: '1:2:5' },
+        cardRevision: { observedMs: 100, identitySignature: 'synthetic' } };
+    },
+    proofs: { observeGuarded: ({ episodeId }) => {
+      saved.push(episodeId);
+      return { state: 'recorded' };
+    } }, now: () => 300, maxPairChecks: 10 });
+  try {
+    assert.equal((await worker.runOnce()).state, 'partial');
+    assert.equal((await worker.runOnce()).state, 'checked');
+    assert.deepEqual(seen, Array.from({ length: 12 },
+      (_, index) => 1001 + index));
+    assert.deepEqual(saved, seen);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a changed Shoko candidate cannot save the already observed positive', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-worker-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
@@ -433,6 +476,34 @@ test('a changed Shoko candidate cannot save the already observed positive', asyn
     assert.equal(writes, 0);
     assert.deepEqual(cursor.claim({ inventory: { listFileHintIds: () => [8] },
       nowMs: 301, limit: 1 }).fileIds, [8]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a changed episode identity remains different after ordering normalization', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-identity-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  let reads = 0;
+  let writes = 0;
+  const worker = createFileBackfillWorker({ cursor,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7].filter((id) => id > afterFileId),
+    getFile: () => ({ state: 'linked', updated: candidate(2).updated,
+      observedMs: 100 }) },
+    readCandidate: async () => {
+      const item = candidate(2);
+      return ++reads === 1 ? item : { ...item,
+        pairs: [item.pairs[1], { anidbId: 42, episodeId: 1003 }] };
+    },
+    resolveKind: async () => 'series',
+    observeCandidate: async () => ({ state: 'available', fileId: 7,
+      proof: { fileId: 7, libraryId: 102, ratingKey: 500,
+        partId: 600, storageKey: '1:2:5' },
+      cardRevision: { observedMs: 100, identitySignature: 'synthetic' } }),
+    proofs: { observeGuarded: () => { writes++; return { state: 'recorded' }; } },
+    now: () => 300 });
+  try {
+    assert.equal((await worker.runOnce()).state, 'checked');
+    assert.equal(writes, 0);
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

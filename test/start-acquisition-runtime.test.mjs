@@ -47,19 +47,21 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
     shokoProviderId: acquisition.shokoProviderId }, 'reconcile']);
 });
 
-test('enabled startup fails closed when recovery does not finish', async () => {
+test('held acquisition recovery leaves the request site able to start while retrying', async () => {
   let stopped = 0;
-  await assert.rejects(startAcquisitionRuntime({
+  const runtime = {
+    start: async () => ({ state: 'held', reason: 'reconciliation_incomplete' }),
+    stop: async () => { stopped++; },
+  };
+  const result = await startAcquisitionRuntime({
     config: { acquisitionRuntime: true, acquisition,
       qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
-    service: { openAcquisitionWorkers: () => ({
-      start: async () => ({ state: 'held' }),
-      stop: async () => { stopped++; },
-    }) },
+    service: { openAcquisitionWorkers: () => runtime },
     sessionGate: {}, makeInspector: () => async () => {},
     realpathImpl: async (value) => value,
-  }), /reconciliation/);
-  assert.equal(stopped, 1);
+  });
+  assert.equal(result, runtime);
+  assert.equal(stopped, 0);
 });
 
 test('startup stops its worker when reconciliation throws', async () => {

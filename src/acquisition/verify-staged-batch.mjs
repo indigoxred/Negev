@@ -13,6 +13,7 @@ export async function verifyStagedBatch({
   lookup, verify = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
   maxTotalBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
+  ed2kMode,
 }) {
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedTorrent?.hash) ||
@@ -95,7 +96,7 @@ export async function verifyStagedBatch({
     try {
       result = await verify({ root, relativePath: file.name,
         expected: { animeId: request.anidbId, episodeIds: plannedByName.get(file.name).episodeIds },
-        lookup, readPacer: pacer });
+        lookup, readPacer: pacer, ed2kMode });
     } catch { return held('file_unavailable'); }
     if (result?.state !== 'identity_verified') {
       return held(result?.reason === 'wrong_identity' ? 'file_wrong_identity' :

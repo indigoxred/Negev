@@ -201,13 +201,14 @@ test('restart recovery releases only claims with no saved acquisition attempt', 
             requestId === 3 ? { state: 'unavailable' } : { state: 'no_attempt' };
         }, now: () => 200, limit: 3 });
       assert.deepEqual(seen, [1, 2, 3]);
-      assert.deepEqual(recovered, { state: 'reviewed', resolved: [1], held: [2, 3] });
+      assert.deepEqual(recovered, { state: 'reviewed', resolved: [1, 2], held: [3] });
       assert.equal(queue.getResult(1).reason, 'reconciled_no_dispatch');
-      assert.equal(queue.getResult(2).state, null);
-      assert.deepEqual(queue.listUnresolved().map((item) => item.requestId), [2, 3]);
+      assert.equal(queue.getResult(2).reason, 'interrupted_attempt_present');
+      assert.equal(queue.getResult(2).nextDueMs, null);
+      assert.deepEqual(queue.listUnresolved().map((item) => item.requestId), [3]);
       assert.deepEqual(await reconcileUnresolvedAcquisitionClaims({ queue,
         inspectRequest: () => ({ state: 'no_attempt' }), now: () => 201,
-        limit: 2 }), { state: 'reviewed', resolved: [2, 3], held: [] });
+        limit: 2 }), { state: 'reviewed', resolved: [3], held: [] });
     } finally { queue.close(); }
   }));
 
@@ -232,9 +233,10 @@ test('restart recovery reviews every page of interrupted requests', async () =>
             { state: 'no_attempt' };
         }, now: () => 200, limit: 5 });
       assert.deepEqual(inspected, Array.from({ length: 23 }, (_, i) => i + 1));
-      assert.deepEqual(recovered.held, [21]);
-      assert.equal(recovered.resolved.length, 22);
-      assert.deepEqual(queue.listUnresolved().map((row) => row.requestId), [21]);
+      assert.deepEqual(recovered.held, []);
+      assert.equal(recovered.resolved.length, 23);
+      assert.equal(queue.getResult(21).reason, 'interrupted_attempt_present');
+      assert.deepEqual(queue.listUnresolved().map((row) => row.requestId), []);
     } finally { queue.close(); }
   }));
 

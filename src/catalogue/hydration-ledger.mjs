@@ -5,12 +5,14 @@ const LEASE_MS = 10 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const held = (reason) => ({ state: 'held', reason });
 
-export function isCompleteAniDbDetail(detail, anidbId) {
+export function isCompleteAniDbDetail(detail, anidbId,
+  { allowEmptySeries = false } = {}) {
   if (!Number.isSafeInteger(anidbId) || anidbId <= 0 ||
       detail?.state !== 'details' || detail.anidbId !== anidbId ||
       detail.complete !== true || !Number.isSafeInteger(detail.total) ||
-      detail.total < 1 || !Array.isArray(detail.episodes) ||
+      detail.total < 0 || !Array.isArray(detail.episodes) ||
       detail.episodes.length !== detail.total) return false;
+  if (detail.total === 0) return allowEmptySeries === true && detail.kind === 'series';
   const ids = new Set();
   for (const episode of detail.episodes) {
     if (!Number.isSafeInteger(episode?.id) || episode.id <= 0 || ids.has(episode.id) ||

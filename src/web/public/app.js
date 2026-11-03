@@ -4,6 +4,7 @@ import { createSearchPager } from './search-pages.mjs';
 import { progressText } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
+import { acquisitionNotice } from './acquisition-notice.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -21,15 +22,7 @@ function message(text, error = false) {
   node.textContent = text;
   node.classList.toggle('error', error);
 }
-function acquisitionNotice() {
-  if (['waiting', 'running'].includes(state.acquisitionState)) {
-    return 'Requests are reviewed automatically. Safety checks can hold a release before download or import.';
-  }
-  if (state.acquisitionState === 'disabled') {
-    return 'Automatic acquisition is off.';
-  }
-  return 'Automatic acquisition is paused while its safety checks recover.';
-}
+const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState);
 function element(tag, text, className) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -44,7 +37,11 @@ async function api(url, options = {}) {
   }
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || data.reason || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 function showSession(data) {
@@ -68,8 +65,8 @@ function showSession(data) {
   state.titleChecks = data.capabilities?.titleChecks === true;
   state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
   byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
-    ? `Negev is in preview. ${acquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
-    : `Negev is in preview. ${acquisitionNotice()} Public Plex checks are not active.`;
+    ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
+    : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
   byId('identity').hidden = false;
@@ -115,8 +112,12 @@ async function refreshSession() {
     showSession(data);
     await loadRequests();
     if (data.user.role === 'admin') await loadOperationalReview();
-  } catch {
-    if (sessionResponses.isCurrent(started)) clearWorkspace();
+    return true;
+  } catch (error) {
+    if (!sessionResponses.isCurrent(started)) return false;
+    if ([401, 403].includes(error?.status)) clearWorkspace();
+    else message('Could not check your session. Reload to try again.', true);
+    return false;
   }
 }
 async function loadRequests(append = false) {
@@ -287,8 +288,7 @@ byId('login-form').addEventListener('submit', async (event) => {
       username: fields.get('username'), password: fields.get('password'),
     }) });
     form.reset();
-    await refreshSession();
-    message('Signed in. Search for a show or film.');
+    if (await refreshSession()) message('Signed in. Search for a show or film.');
   } catch (error) { message(error.message, true); }
 });
 byId('register-form').addEventListener('submit', async (event) => {
@@ -343,6 +343,8 @@ byId('search-form').addEventListener('submit', async (event) => {
     results.replaceChildren();
     if (data.catalogueStale) results.append(element('p',
       'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
+    if (data.catalogueCacheWriteFailed) results.append(element('p',
+      'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
     if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
     appendItems(data.items);
     const addMore = () => {
@@ -410,6 +412,11 @@ async function showDetail(item, franchise = null) {
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager?.episodes.length === 0) panel.append(element('p',
+      data.kind === 'movie'
+        ? 'AniDB has no film target listed yet, so this film cannot be requested.'
+        : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
+      'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise');
@@ -569,7 +576,7 @@ async function showDetail(item, franchise = null) {
               body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
-            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${acquisitionNotice()}`);
+            message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${currentAcquisitionNotice()}`);
             await loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
@@ -598,6 +605,7 @@ async function showDetail(item, franchise = null) {
       panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));
       return;
     }
+    if (data.kind === 'movie' && pager.episodes.length === 0) return;
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
@@ -608,7 +616,7 @@ async function showDetail(item, franchise = null) {
           anidbId: item.anidbId, scope: 'installment', requestKey,
         }) });
         requestKeys.saved(scope);
-        message(`Request #${saved.requestId} saved. ${acquisitionNotice()}`);
+        message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
         await loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }

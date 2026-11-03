@@ -63,6 +63,16 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     WHERE id=? AND disabled=0`);
   const publicUser = (row) => ({ id: row.id, username: row.username,
     role: row.role, sessionVersion: row.session_version });
+  // An internet-facing login can receive requests from many source IPs.
+  // Bound simultaneous memory-intensive scrypt work across sign-in and
+  // invited registration, independent of per-IP HTTP rate limits.
+  let activePasswordChecks = 0;
+  const boundedPasswordHash = async (password, salt) => {
+    if (activePasswordChecks >= 2) return null;
+    activePasswordChecks++;
+    try { return await hashPassword(password, salt); }
+    finally { activePasswordChecks--; }
+  };
   function transact(action) {
     let begun = false;
     try {
@@ -113,7 +123,8 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
         return held('invite_unavailable');
       }
       const salt = randomBytes(16).toString('hex');
-      const passwordHash = await hashPassword(password, salt);
+      const passwordHash = await boundedPasswordHash(password, salt);
+      if (passwordHash === null) return held('authentication_busy');
       return transact(() => {
         const invite = findInvite.get(codeHash);
         if (!invite || invite.used_ms !== null || invite.expires_ms <= now()) {
@@ -132,7 +143,9 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       const row = findAuth.get(usernameKey(username));
       const salt = row?.password_salt ?? '0'.repeat(32);
       const expected = Buffer.from(row?.password_hash ?? '0'.repeat(64), 'hex');
-      const actual = Buffer.from(await hashPassword(password, salt), 'hex');
+      const passwordHash = await boundedPasswordHash(password, salt);
+      if (passwordHash === null) return { state: 'busy' };
+      const actual = Buffer.from(passwordHash, 'hex');
       if (!timingSafeEqual(actual, expected) || !row || row.disabled) return null;
       return publicUser(row);
     },
