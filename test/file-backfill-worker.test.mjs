@@ -24,6 +24,33 @@ const candidate = (count = 12, updated = '2026-11-02T00:00:00Z') => ({
     shokoEpisodeId: 2001 + index, tmdbMovieIds: [] })),
   sourcePaths: ['/pure/Anime/pack.mkv'] });
 
+test('an explicitly corrupt release stays unknown while the next file advances', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-corrupt-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  const checked = [];
+  const worker = createFileBackfillWorker({ cursor, maxFilesPerTick: 2,
+    inventory: { listFileHintIds: ({ afterFileId }) =>
+      [7, 8].filter((id) => id > afterFileId).slice(0, 1),
+    getFile: () => ({ state: 'linked', updated: candidate(1).updated,
+      observedMs: 100 }) },
+    readCandidate: async ({ fileId }) => fileId === 7
+      ? { state: 'rejected', reason: 'corrupted_release' }
+      : { ...candidate(1), fileId },
+    resolveKind: async () => 'series',
+    observeCandidate: async ({ candidate: file }) => {
+      checked.push(file.fileId);
+      return { state: 'unknown' };
+    },
+    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    now: () => 300 });
+  try {
+    assert.deepEqual(await worker.runOnce(), { state: 'checked',
+      checkedFiles: 2, checkedPairs: 1, available: 0,
+      load: { cardReads: 0, physicalProbes: 0 } });
+    assert.deepEqual(checked, [8]);
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a rejected source-generation proof keeps its file due for a fresh check', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-race-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));

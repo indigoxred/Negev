@@ -47,10 +47,21 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
     sourcePaths: ['/pure/Anime/Example/01-02.mkv'] });
 });
 
-test('unrecognized, partial, corrupt, and contradictory files cannot nominate episodes', async () => {
+test('an explicitly corrupt linked release is rejected without a positive candidate', async () => {
+  assert.deepEqual(await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json({ ...file,
+      Release: { ...file.Release, IsCorrupted: true } }) }),
+  { state: 'rejected', reason: 'corrupted_release' });
+  assert.deepEqual(await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json({ ...file, ID: 52,
+      Release: { ...file.Release, IsCorrupted: true } }) }),
+  { state: 'unavailable' });
+});
+
+test('unrecognized, partial, and contradictory files cannot nominate episodes', async () => {
   for (const changed of [
     { ...file, SeriesIDs: [] },
-    { ...file, Release: { ...file.Release, IsCorrupted: true } },
+    { ...file, Release: { ...file.Release, IsCorrupted: 'true' } },
     { ...file, Release: { ...file.Release, CrossReferences: [
       { ...refs[0], PercentageStart: 0, PercentageEnd: 50 }, refs[1]] } },
     { ...file, Release: { ...file.Release, CrossReferences: [refs[0]] } },

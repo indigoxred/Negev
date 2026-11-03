@@ -35,6 +35,13 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     file = await readBoundedJson(response, 200_000);
   } catch { return unavailable(); }
   const item = normalizeShokoFile(file);
+  // A Shoko-confirmed corrupt release is a definitive non-candidate for this
+  // pass. Distinguish it from a transient read failure so later files advance.
+  if (item?.fileId === fileId && item.state === 'linked' &&
+      file.IsIgnored === false && file.Release?.ProviderName === 'AniDB' &&
+      file.Release.IsCorrupted === true) {
+    return { state: 'rejected', reason: 'corrupted_release' };
+  }
   if (item?.fileId !== fileId || item.state !== 'linked' ||
       file.IsIgnored !== false || !validId(file.Size) ||
       !Array.isArray(file.Locations) || file.Locations.length < 1 ||
