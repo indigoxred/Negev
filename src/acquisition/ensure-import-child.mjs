@@ -1,4 +1,5 @@
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { access, lstat, mkdir, opendir, realpath } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import path from 'node:path';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 
@@ -12,12 +13,14 @@ const canonical = (value) => typeof value === 'string' &&
 // root still resolve on the same explicit media mount. Never create a parent.
 export async function ensureImportChild({ importRoot, holdingRoot,
   verifyHandoffMounts = verifyHandoffMountRoots,
-  resolve = realpath, inspect = lstat, create = mkdir } = {}) {
+  resolve = realpath, inspect = lstat, create = mkdir,
+  checkAccess = access, openDir = opendir } = {}) {
   if (!canonical(importRoot) || !canonical(holdingRoot) ||
       path.basename(importRoot) !== 'Negev' ||
       typeof verifyHandoffMounts !== 'function' ||
       typeof resolve !== 'function' || typeof inspect !== 'function' ||
-      typeof create !== 'function') return held();
+      typeof create !== 'function' || typeof checkAccess !== 'function' ||
+      typeof openDir !== 'function') return held();
   const parent = path.dirname(importRoot);
   if (!canonical(parent) || parent === holdingRoot ||
       importRoot.startsWith(`${holdingRoot}${path.sep}`) ||
@@ -35,10 +38,17 @@ export async function ensureImportChild({ importRoot, holdingRoot,
       child = await inspect(importRoot);
     }
     if (!child.isDirectory() || child.isSymbolicLink() ||
+        (process.platform !== 'win32' && (child.mode & 0o002) !== 0) ||
         await resolve(parent) !== parent ||
         await resolve(importRoot) !== importRoot ||
         (await verifyHandoffMounts({ holdingRoot,
           importRoot }))?.state !== 'mounted_handoff_roots') return held();
+    await checkAccess(importRoot, constants.W_OK | constants.X_OK);
+    let count = 0;
+    for await (const entry of await openDir(importRoot)) {
+      if (++count > 1_000 || !entry.isDirectory() ||
+          !/^negev-[1-9]\d*-[0-9a-f]{16}$/.test(entry.name)) return held();
+    }
     return { state: 'import_child_ready' };
   } catch { return held(); }
 }
