@@ -7,6 +7,7 @@ const validProof = (proof) => validId(proof?.fileId) &&
   validId(proof.partId);
 const positiveLifetimeMs = 30 * 60_000;
 const retryMs = 5 * 60_000;
+const recentEventRetryMs = 30 * 60_000;
 const leaseMs = 10 * 60_000;
 
 // Shoko changes invalidate cached public proof. Inventory alone never creates
@@ -84,9 +85,9 @@ export function openDirectAvailabilityQueue(dbPath) {
     proof_library_id=NULL,proof_rating_key=NULL,proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND observed_ms<=?`);
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
-    observed_ms AS observedMs,version FROM direct_availability_targets
+    observed_ms AS observedMs,version,priority FROM direct_availability_targets
     WHERE due_ms<=? ORDER BY priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
-  const dueTarget = db.prepare(`SELECT observed_ms AS observedMs,version
+  const dueTarget = db.prepare(`SELECT observed_ms AS observedMs,version,priority
     FROM direct_availability_targets WHERE anidb_id=? AND episode_id=?
     AND due_ms<=?`);
   const claim = db.prepare(`UPDATE direct_availability_targets SET
@@ -95,7 +96,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND version=?`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
-    state=?,due_ms=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
+    state=?,due_ms=?,priority=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
     proof_rating_key=?,proof_part_id=? WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);
   const latestChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
@@ -185,7 +186,8 @@ export function openDirectAvailabilityQueue(dbPath) {
         if (updated.changes !== 1) return { state: 'idle' };
         return { state: 'claimed', target: { anidbId: row.anidbId,
           episodeId: row.episodeId }, observedMs: row.observedMs,
-          version: row.version + 1, startedMs: nowMs, changeId,
+          version: row.version + 1, priority: row.priority,
+          startedMs: nowMs, changeId,
           shokoChangeId };
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
@@ -214,7 +216,8 @@ export function openDirectAvailabilityQueue(dbPath) {
             target.episodeId, row.version).changes !== 1) continue;
           receipts.push({ state: 'claimed', target: { anidbId: target.anidbId,
             episodeId: target.episodeId }, observedMs: row.observedMs,
-            version: row.version + 1, startedMs: nowMs, changeId,
+            version: row.version + 1, priority: row.priority,
+            startedMs: nowMs, changeId,
             shokoChangeId });
         }
         db.exec('COMMIT'); begun = false;
@@ -237,6 +240,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       if (receipt?.state !== 'claimed' || !validId(receipt.target?.anidbId) ||
           !validId(receipt.target?.episodeId) || !validTime(receipt.observedMs) ||
           !validId(receipt.version) || !validTime(receipt.startedMs) ||
+          ![0, 1].includes(receipt.priority) ||
           !validTime(receipt.changeId) ||
           !validTime(receipt.shokoChangeId) ||
           !['available', 'unknown'].includes(state) || !validTime(checkedMs) ||
@@ -266,7 +270,9 @@ export function openDirectAvailabilityQueue(dbPath) {
           db.exec('COMMIT'); begun = false;
           return { state: 'held', reason: 'card_changed' };
         }
-        const updated = record.run(state, dueMs,
+        const recentRetry = state === 'unknown' && receipt.priority === 1 &&
+          checkedMs - receipt.observedMs < recentEventRetryMs;
+        const updated = record.run(state, dueMs, recentRetry ? 1 : 0,
           state === 'available' ? checkedMs : null,
           proof?.fileId ?? null, proof?.libraryId ?? null,
           proof?.ratingKey ?? null, proof?.partId ?? null,
