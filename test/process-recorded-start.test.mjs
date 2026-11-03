@@ -64,3 +64,81 @@ test('start processor reconstructs the exact saved torrent and request', async (
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('start processor reconciles a saved uncertain add without asking the indexer again', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-dispatch-recovery-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const request = requests.submit({ requesterId: 1, requestKey: 'recover', nowMs: 100,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: false, episodeIds: [1001] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  try {
+    const candidate = { indexerId: 7, guid: 'vanished-from-indexer' };
+    const hash = 'a'.repeat(40);
+    const attemptId = acquisitions.reserve({ requestId: request.requestId,
+      candidate, episodeIds: [1001], nowMs: 200 }).attemptId;
+    acquisitions.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    acquisitions.recordFilePlan({ attemptId, hash,
+      plannedFiles: [{ name: '01.mkv', size: 10, episodeIds: [1001] }], nowMs: 202 });
+    acquisitions.beginDispatch({ attemptId, nowMs: 203 });
+    const savePath = `/Downloads/negev/${hash}`;
+    let starts = 0;
+    let writes = 0;
+    let reportedSize = 11;
+    let includePassive = false;
+    let passivePriority = 1;
+    let applyExclusion = false;
+    const options = { attemptId, requests, acquisitions,
+      stagingHostPath: '/srv/staging',
+      qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },
+      verifyStagingRoot: async () => ({ state: 'verified_staging_root' }),
+      readEvidence: async () => ({}), publicLibraryIds: [102], now: () => 205,
+      fetchImpl: async (url, init) => {
+        if (init.method !== 'GET') writes++;
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/filePrio')) {
+          assert.equal(init.body.get('hash'), hash);
+          assert.equal(init.body.get('id'), '1');
+          if (applyExclusion) passivePriority = 0;
+          return new Response('Ok.');
+        }
+        if (endpoint.endsWith('/info')) return Response.json([{
+          hash, category: 'negev', save_path: savePath, state: 'stoppedDL',
+          progress: 0, downloaded: 0, amount_left: 10,
+          auto_tmm: false, force_start: false }]);
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: savePath, download_path: '' });
+        if (endpoint.endsWith('/files')) return Response.json([{
+          index: 0, name: '01.mkv', size: reportedSize, priority: 1, progress: 0 },
+        ...(includePassive ? [{ index: 1, name: 'notes.nfo', size: 5,
+          priority: passivePriority, progress: 0 }] : [])]);
+        throw Error('unexpected downloader read');
+      },
+      start: async () => {
+        starts++;
+        assert.equal(acquisitions.getAttempt(attemptId).status, 'torrent_observed');
+        return { state: 'held', reason: 'provider_unavailable' };
+      },
+    };
+    assert.deepEqual(await processRecordedStart(options),
+      { state: 'held', reason: 'file_plan_mismatch' });
+    assert.equal(acquisitions.getAttempt(attemptId).status, 'dispatch_unknown');
+    assert.equal(starts, 0);
+    reportedSize = 10;
+    includePassive = true;
+    assert.deepEqual(await processRecordedStart(options),
+      { state: 'held', reason: 'passive_exclusion_unconfirmed' });
+    assert.equal(acquisitions.getAttempt(attemptId).status, 'dispatch_unknown');
+    assert.equal(starts, 0);
+    applyExclusion = true;
+    const result = await processRecordedStart(options);
+    assert.deepEqual(result, { state: 'held', reason: 'provider_unavailable' });
+    assert.equal(starts, 1);
+    assert.equal(writes, 2);
+    assert.equal(acquisitions.getAttempt(attemptId).torrentHash, hash);
+  } finally {
+    acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

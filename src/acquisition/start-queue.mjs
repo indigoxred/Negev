@@ -42,7 +42,8 @@ export function openStartQueue(dbPath) {
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
     LEFT JOIN start_checks c ON c.attempt_id=a.id
-    WHERE a.status='torrent_observed' AND s.attempt_id IS NULL AND
+    WHERE a.status IN ('dispatch_unknown','torrent_observed') AND
+      s.attempt_id IS NULL AND
       x.attempt_id IS NULL AND j.attempt_id IS NULL AND t.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
     ORDER BY a.id LIMIT 1`);
