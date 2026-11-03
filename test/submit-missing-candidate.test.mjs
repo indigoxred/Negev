@@ -212,6 +212,20 @@ test('a wrong video-to-episode plan holds before reservation or qBittorrent', as
     assert.equal(ledger.getAttempt(1), null);
   }));
 
+test('an inaccessible staging mount holds before reserving an attempt', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => { providerCalls++; },
+      qbittorrentFetch: async () => { providerCalls++; } });
+    input.qbittorrent.verifyStagingRoot = async () =>
+      ({ state: 'held', reason: 'staging_root_unverified' });
+    assert.deepEqual(await submitMissingCandidate(input),
+      { state: 'held', reason: 'staging_root_unverified' });
+    assert.equal(providerCalls, 0);
+    assert.equal(ledger.getAttempt(1), null);
+  }));
+
 test('a supplied file plan cannot bypass the trusted release-title gate', async () =>
   withLedgers(async ({ request, ledger }) => {
     let qbCalls = 0;

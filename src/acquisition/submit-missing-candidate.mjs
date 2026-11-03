@@ -74,6 +74,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (!selectedQuery) return held('untrusted_release_query');
   if (!matchesTrustedReleaseTitle(candidate?.title, selectedQuery,
     detail.title)) return held('release_title_mismatch');
+  if (typeof qbittorrent.verifyStagingRoot === 'function') {
+    let staging;
+    try { staging = await qbittorrent.verifyStagingRoot(); }
+    catch { return held('staging_root_unverified'); }
+    if (staging?.state !== 'verified_staging_root') {
+      return held('staging_root_unverified');
+    }
+  }
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate, saveRoot: qbittorrent.saveRoot });
   if (prepared.state !== 'prepared_stopped') return prepared;
