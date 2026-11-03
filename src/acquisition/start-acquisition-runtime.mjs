@@ -1,23 +1,25 @@
 import { realpath } from 'node:fs/promises';
-import { createMountInspector } from './docker-mount-witness.mjs';
+import { verifyLocalStagingRoot } from './local-staging-root.mjs';
 
 // Account-server startup boundary. Configuration parsing rejects incomplete
 // opt-ins; this function reviews durable journals before scheduling workers.
 // Unresolved claims stay excluded while independent work can continue.
-// Disabled startup never constructs a witness client.
+// Disabled startup never touches the acquisition filesystem.
 export async function startAcquisitionRuntime({ config, service, sessionGate,
-  makeInspector = createMountInspector, realpathImpl = realpath } = {}) {
+  verifyRoot = verifyLocalStagingRoot, realpathImpl = realpath } = {}) {
   if (config?.acquisitionRuntime !== true) return null;
   const a = config.acquisition;
   if (!a || typeof service?.openAcquisitionWorkers !== 'function' ||
-      typeof makeInspector !== 'function' || typeof realpathImpl !== 'function') {
+      typeof verifyRoot !== 'function' || typeof realpathImpl !== 'function') {
     throw new TypeError('Acquisition startup unavailable');
   }
   const runtime = service.openAcquisitionWorkers({
     qbBaseUrl: config.qbitSidecar?.baseUrl, sessionGate,
-    stagingHostPath: a.stagingHostPath, holdingRoot: a.holdingRoot,
+    stagingHostPath: a.stagingHostPath, qbitStagingRoot: a.qbitStagingRoot,
+    holdingRoot: a.holdingRoot,
     importRoot: a.importRoot,
-    inspectMounts: makeInspector({ socketPath: a.mountWitnessSocket }),
+    verifyStagingRoot: () => verifyRoot({ stagingRoot: a.stagingHostPath,
+      holdingRoot: a.holdingRoot, importRoot: a.importRoot }),
     realpathImpl, shokoProviderId: a.shokoProviderId,
   });
   try {

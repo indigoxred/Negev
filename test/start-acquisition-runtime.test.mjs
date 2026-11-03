@@ -3,22 +3,20 @@ import test from 'node:test';
 import { startAcquisitionRuntime } from '../src/acquisition/start-acquisition-runtime.mjs';
 
 const acquisition = { stagingHostPath: '/staging', holdingRoot: '/holding',
-  importRoot: '/import/Negev', mountWitnessSocket: '/data/mount-witness/mount.sock',
+  importRoot: '/import/Negev', qbitStagingRoot: '/data/torrents/negev',
   shokoProviderId: '11111111-2222-3333-4444-555555555555' };
 
-test('disabled account startup never constructs a mount witness or acquisition worker', async () => {
+test('disabled account startup never constructs an acquisition worker', async () => {
   const result = await startAcquisitionRuntime({
     config: { acquisitionRuntime: false },
     service: { openAcquisitionWorkers: () => { throw Error('worker opened'); } },
     sessionGate: null,
-    makeInspector: () => { throw Error('witness opened'); },
   });
   assert.equal(result, null);
 });
 
 test('enabled startup passes only guarded paths and waits for journal reconciliation', async () => {
   const calls = [];
-  const inspector = async () => ({ state: 'mount_evidence' });
   const runtime = { start: async () => {
     calls.push('reconcile');
     return { state: 'reconciled' };
@@ -33,17 +31,21 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
       return runtime;
     } },
     sessionGate,
-    makeInspector: ({ socketPath }) => {
-      assert.equal(socketPath, acquisition.mountWitnessSocket);
-      return inspector;
+    verifyRoot: async (input) => {
+      assert.deepEqual(input, { stagingRoot: '/staging',
+        holdingRoot: '/holding', importRoot: '/import/Negev' });
+      return { state: 'verified_staging_root' };
     },
     realpathImpl,
   });
   assert.equal(result, runtime);
-  assert.deepEqual(calls, [{ qbBaseUrl: 'http://qbit.internal:8080', sessionGate,
+  const { verifyStagingRoot, ...providers } = calls[0];
+  assert.deepEqual(await verifyStagingRoot(), { state: 'verified_staging_root' });
+  assert.deepEqual([providers, calls[1]], [{ qbBaseUrl: 'http://qbit.internal:8080', sessionGate,
     stagingHostPath: acquisition.stagingHostPath,
+    qbitStagingRoot: acquisition.qbitStagingRoot,
     holdingRoot: acquisition.holdingRoot, importRoot: acquisition.importRoot,
-    inspectMounts: inspector, realpathImpl,
+    realpathImpl,
     shokoProviderId: acquisition.shokoProviderId }, 'reconcile']);
 });
 
@@ -57,7 +59,7 @@ test('held acquisition recovery leaves the request site able to start while retr
     config: { acquisitionRuntime: true, acquisition,
       qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
     service: { openAcquisitionWorkers: () => runtime },
-    sessionGate: {}, makeInspector: () => async () => {},
+    sessionGate: {},
     realpathImpl: async (value) => value,
   });
   assert.equal(result, runtime);
@@ -73,7 +75,7 @@ test('startup stops its worker when reconciliation throws', async () => {
       start: async () => { throw new Error('journal unavailable'); },
       stop: async () => { stopped++; },
     }) },
-    sessionGate: {}, makeInspector: () => async () => {},
+    sessionGate: {},
     realpathImpl: async (value) => value,
   }), /journal unavailable/);
   assert.equal(stopped, 1);

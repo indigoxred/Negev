@@ -75,6 +75,41 @@ const options = { candidate, prepared, hostPath, baseUrl: 'http://qbittorrent.in
   sessionId: 'syntheticSID', nowMs: 201,
   inspectMounts: async () => mounts, realpathImpl: async () => hostPath };
 
+test('portable stopped add uses configured path and local root gate without Docker socket', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    const saveRoot = '/data/torrents/negev';
+    const customPath = `${saveRoot}/${hash}`;
+    const customPrepared = { state: 'prepared_stopped',
+      expected: { hash, category: 'negev', savePath: customPath },
+      form: buildStoppedTorrentAddForm({ torrentBytes: bytes,
+        savePath: customPath, saveRoot, category: 'negev' }) };
+    let guardCalls = 0;
+    let seen = false;
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      prepared: customPrepared, saveRoot, inspectMounts: undefined,
+      realpathImpl: undefined,
+      verifyStagingRoot: async () => {
+        guardCalls++;
+        return { state: 'verified_staging_root' };
+      },
+      fetchImpl: async (url, init) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+        if (endpoint.endsWith('/add')) {
+          seen = true;
+          assert.equal(init.body.get('savepath'), customPath);
+          return new Response('Ok.');
+        }
+        if (!seen && endpoint.endsWith('/info')) return Response.json([]);
+        return Response.json(endpoint.endsWith('/files') ? files :
+          endpoint.endsWith('/properties')
+            ? { save_path: customPath, download_path: '' } :
+            [{ ...torrent, save_path: customPath }]);
+      } });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(guardCalls, 1);
+  }));
+
 test('holds before torrent add when qBittorrent cannot prove its stopped-add API version', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     for (const version of ['v4.6.7', 'v5.2.3', 'v5.4.0', 'v6.0.0', 'unknown']) {

@@ -1,11 +1,14 @@
+import path from 'node:path';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 // Build only. No network call or torrent start is made here. A later caller
 // must reserve the attempt durably and reconcile an uncertain add response.
-export function buildStoppedTorrentAddForm({ torrentBytes, savePath, category }) {
+export function buildStoppedTorrentAddForm({ torrentBytes, savePath,
+  saveRoot, category }) {
   if (!(torrentBytes instanceof Uint8Array) ||
       torrentBytes.byteLength < 1 || torrentBytes.byteLength > 2_000_000 ||
-      !matchesStagingSavePath({ hash: savePath?.slice('/Downloads/negev/'.length), savePath }) ||
+      !matchesStagingSavePath({ hash: typeof savePath === 'string'
+        ? path.posix.basename(savePath) : null, savePath }, { saveRoot }) ||
       category !== 'negev') {
     throw new TypeError('Invalid isolated torrent-add input');
   }

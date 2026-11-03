@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { validStagingSaveRoot } from '../acquisition/staging-save-path.mjs';
 
 function baseUrl(value, label) {
   let url;
@@ -335,18 +336,22 @@ export function parseUserServerConfig(env) {
   const prowlarr = prowlarrConfig(env, dataDir);
   const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
   const acquisitionNames = ['NEGEV_STAGING_HOST_PATH', 'NEGEV_HOLDING_ROOT',
-    'NEGEV_MOUNT_WITNESS_SOCKET', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID'];
+    'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID'];
   let acquisition = null;
   if (acquisitionRuntime) {
     const stagingHostPath = env.NEGEV_STAGING_HOST_PATH;
     const holdingRoot = env.NEGEV_HOLDING_ROOT;
-    const mountWitnessSocket = env.NEGEV_MOUNT_WITNESS_SOCKET;
+    const qbitStagingRoot = env.NEGEV_QBITTORRENT_STAGING_ROOT;
     const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
     if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
         shokoImportFolderId === null || shokoImportRoot === null ||
         env.NEGEV_SHOKO_EVENTS !== '1' || env.NEGEV_SHOKO_RECENT !== '1' ||
         env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
         !validRuntimePath(stagingHostPath) || !validRuntimePath(holdingRoot) ||
+        !validStagingSaveRoot(qbitStagingRoot) ||
+        within(qbitStagingRoot, qbitSidecar.importSavePath) ||
+        within(qbitSidecar.importSavePath, qbitStagingRoot) ||
+        Object.hasOwn(env, 'NEGEV_MOUNT_WITNESS_SOCKET') ||
         stagingHostPath === shokoImportRoot ||
         runtimePathsOverlap(shokoImportRoot, stagingHostPath) ||
         runtimePathsOverlap(stagingHostPath, shokoImportRoot) ||
@@ -354,13 +359,12 @@ export function parseUserServerConfig(env) {
         runtimePathsOverlap(holdingRoot, shokoImportRoot) ||
         runtimePathsOverlap(stagingHostPath, holdingRoot) ||
         runtimePathsOverlap(holdingRoot, stagingHostPath) ||
-        mountWitnessSocket !== path.join(dataDir, 'mount-witness', 'mount.sock') ||
         !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId)) {
-      throw new TypeError('Acquisition runtime is unavailable without guarded providers and mounts');
+      throw new TypeError('Acquisition runtime is unavailable without guarded providers and paths');
     }
-    acquisition = { stagingHostPath, holdingRoot,
+    acquisition = { stagingHostPath, qbitStagingRoot, holdingRoot,
       importRoot: path.join(shokoImportRoot, 'Negev'),
-      mountWitnessSocket, shokoProviderId };
+      shokoProviderId };
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
   }

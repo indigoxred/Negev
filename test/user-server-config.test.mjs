@@ -116,7 +116,7 @@ test('acquisition cannot be advertised as enabled before installed safety gates 
     NEGEV_ACQUISITION_RUNTIME: '0' }).acquisitionRuntime, false);
 });
 
-test('acquisition opt-in requires every guarded provider and private mount witness', () => {
+test('acquisition opt-in requires guarded providers and portable staging paths', () => {
   const importRoot = path.resolve('sample-import-root');
   const configured = { ...valid,
     NEGEV_SHOKO_IMPORT_ROOT: importRoot,
@@ -140,17 +140,17 @@ test('acquisition opt-in requires every guarded provider and private mount witne
     NEGEV_QBITTORRENT_PASSWORD_FILE: path.join(dataDir, 'secrets', 'qbittorrent.password'),
     NEGEV_QBITTORRENT_IMPORT_SAVE_PATH: '/Shoko',
     NEGEV_STAGING_HOST_PATH: path.resolve('staging'),
+    NEGEV_QBITTORRENT_STAGING_ROOT: '/data/torrents/negev',
     NEGEV_HOLDING_ROOT: path.resolve('holding'),
-    NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'mount-witness', 'mount.sock'),
     NEGEV_SHOKO_RELEASE_PROVIDER_ID: '11111111-2222-3333-4444-555555555555',
     NEGEV_ACQUISITION_RUNTIME: '1' };
   const parsed = parseUserServerConfig(configured);
   assert.equal(parsed.acquisitionRuntime, true);
   assert.deepEqual(parsed.acquisition, {
     stagingHostPath: configured.NEGEV_STAGING_HOST_PATH,
+    qbitStagingRoot: configured.NEGEV_QBITTORRENT_STAGING_ROOT,
     holdingRoot: configured.NEGEV_HOLDING_ROOT,
     importRoot: path.join(importRoot, 'Negev'),
-    mountWitnessSocket: configured.NEGEV_MOUNT_WITNESS_SOCKET,
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
   });
   for (const change of [
@@ -164,6 +164,10 @@ test('acquisition opt-in requires every guarded provider and private mount witne
     { NEGEV_HOLDING_ROOT: path.join(importRoot, 'holding') },
     { NEGEV_HOLDING_ROOT: importRoot },
     { NEGEV_HOLDING_ROOT: configured.NEGEV_STAGING_HOST_PATH },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/data/torrents/../outside' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/Shoko' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/Shoko/negev' },
     { NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'docker.sock') },
     { NEGEV_SHOKO_RELEASE_PROVIDER_ID: 'bad' },
   ]) assert.throws(() => parseUserServerConfig({ ...configured, ...change }), TypeError);

@@ -13,11 +13,12 @@ const held = (reason) => ({ state: 'held', reason });
 
 // Bind the real guarded stages to one service's journals and providers. This
 // does not create a timer or perform I/O. The caller must still prove installed
-// availability, mount, credential and Import gates before starting a pipeline.
+// availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
   handoffs, discoverCandidates, previewCandidate, loadDetail,
   releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
-  stagingHostPath, holdingRoot, importRoot, inspectMounts, realpathImpl,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
+  verifyStagingRoot, realpathImpl,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   readEd2kMode = readShokoEd2kMode,
@@ -28,7 +29,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
-        readEvidence, readPublicCoverage, inspectMounts, realpathImpl, providerFetchImpl, now,
+        readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
         verifyHandoffMounts, readEd2kMode]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
@@ -44,6 +45,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof shoko?.providerId !== 'string' ||
       [stagingHostPath, holdingRoot, importRoot]
         .some((value) => typeof value !== 'string' || !value) ||
+      (typeof verifyStagingRoot !== 'function' && typeof inspectMounts !== 'function') ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid acquisition stage providers');
   }
@@ -89,7 +91,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
             publicLibraryIds: publicLibraryIds(request.kind), now,
             prowlarr: { ...prowlarr, fetchImpl: searchFetch },
             qbittorrent: { ...qbittorrent, hostPath: stagingHostPath,
-              inspectMounts, realpathImpl, fetchImpl },
+              saveRoot: qbitStagingRoot, inspectMounts, verifyStagingRoot,
+              realpathImpl, fetchImpl },
           }),
       });
       return process(claim);
@@ -105,7 +108,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         return held('request_unavailable');
       }
       return processRecordedStart({ attemptId, requests, acquisitions,
-        stagingHostPath, qbittorrent, inspectMounts, realpathImpl,
+        stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
+        verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         fetchImpl, now });
     },
@@ -118,7 +122,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const ed2kMode = await selectedEd2kMode(planned);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
-        handoffs, stagingHostPath, holdingRoot, importRoot,
+        handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl,
         readPacer, verifyHandoffMounts, nowMs: now(), ed2kMode });
     },

@@ -43,6 +43,18 @@ function options({ requests, acquisitions, attemptId, observe, verify }) {
     lookup: async () => null, verify };
 }
 
+test('completed verification uses the configured downloader save root', async () =>
+  withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {
+    const result = await verifyRecordedBatch({ ...options({ requests,
+      acquisitions, attemptId,
+      observe: async ({ expected }) => {
+        assert.equal(expected.savePath, `/data/torrents/negev/${hash}`);
+        return { state: 'held', reason: 'not_complete' };
+      }, verify: async () => { throw Error('unexpected byte read'); } }),
+    qbitStagingRoot: '/data/torrents/negev' });
+    assert.equal(result.state, 'held');
+  }));
+
 test('restart verification uses the stored file plan and exact target', async () =>
   withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {
     const result = await verifyRecordedBatch(options({ requests, acquisitions, attemptId,

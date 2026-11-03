@@ -601,7 +601,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       getImportFeedState: readImportFeed,
       observeFirstTimeUncertain,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
-        holdingRoot, importRoot, inspectMounts, realpathImpl,
+        qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
+        verifyStagingRoot, realpathImpl,
         shokoProviderId, readPacer } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
@@ -624,7 +625,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
           dbPath, requests, acquisitions, handoffs, qbBaseUrl, sessionGate,
-          stagingHostPath, holdingRoot, importRoot, inspectMounts,
+          stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
+          inspectMounts, verifyStagingRoot,
           realpathImpl, readPacer, fetchImpl, now,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },

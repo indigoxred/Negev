@@ -42,3 +42,18 @@ test('malformed metainfo remains held before form creation', async () => {
   } });
   assert.deepEqual(result, { state: 'held', reason: 'invalid_torrent_bytes' });
 });
+
+test('prepares a stopped torrent under the configured downloader path', async () => {
+  let calls = 0;
+  const result = await prepareStoppedCandidate({ ...config,
+    saveRoot: '/data/torrents/negev', fetchImpl: async () => {
+      calls++;
+      return calls === 1
+        ? Response.json([{ ...candidate, protocol: 'torrent', downloadUrl: proxy }])
+        : new Response(torrent, { headers: {
+          'content-type': 'application/x-bittorrent' } });
+    } });
+  assert.equal(result.state, 'prepared_stopped');
+  assert.equal(result.expected.savePath, `/data/torrents/negev/${hash}`);
+  assert.equal(result.form.get('savepath'), result.expected.savePath);
+});

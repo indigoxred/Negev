@@ -75,7 +75,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (!matchesTrustedReleaseTitle(candidate?.title, selectedQuery,
     detail.title)) return held('release_title_mismatch');
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
-    query: selectedQuery, candidate });
+    query: selectedQuery, candidate, saveRoot: qbittorrent.saveRoot });
   if (prepared.state !== 'prepared_stopped') return prepared;
   if (expectedHash !== undefined &&
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {

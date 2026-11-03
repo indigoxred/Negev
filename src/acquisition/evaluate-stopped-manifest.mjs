@@ -28,8 +28,8 @@ export function torrentFileKind(name) {
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
 export function evaluateStoppedManifest({ torrent, files, expected,
-  allowSelectedPassive = false }) {
-  if (!matchesStagingSavePath(expected) || expected.category !== 'negev') {
+  allowSelectedPassive = false, saveRoot }) {
+  if (!matchesStagingSavePath(expected, { saveRoot }) || expected.category !== 'negev') {
     throw new TypeError('Invalid stopped-torrent expectation');
   }
   if (!torrent || torrent.hash?.toLowerCase() !== expected.hash.toLowerCase() ||
