@@ -102,3 +102,25 @@ jobs:
               const separate = await verify({ holdingRoot: "/holding", importRoot: "/import" });
               if (separate.reason !== "handoff_mount_unavailable") throw Error("Separate binds were accepted");
             '
+      - name: Verify socket-free acquisition roots in the built image
+        run: |
+          media_root="$(mktemp -d)"
+          trap 'sudo rm -rf "$media_root"' EXIT
+          mkdir -p "$media_root/staging" "$media_root/holding" "$media_root/Import"
+          chmod 0755 "$media_root"
+          sudo chown -R 1000:1000 "$media_root"
+          docker run --rm -i --network none --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --mount "type=bind,src=$media_root,dst=/fixture" \
+            --entrypoint node negev-user-test:ci --input-type=module - <<'NODE'
+          import { ensureImportChild } from './src/acquisition/ensure-import-child.mjs';
+          import { verifyLocalStagingRoot } from './src/acquisition/local-staging-root.mjs';
+          const holdingRoot = '/fixture/holding';
+          const importRoot = '/fixture/Import/Negev';
+          const ready = await ensureImportChild({ holdingRoot, importRoot });
+          if (ready.state !== 'import_child_ready') throw Error('Import child was not prepared');
+          const staging = await verifyLocalStagingRoot({
+            stagingRoot: '/fixture/staging', holdingRoot, importRoot });
+          if (staging.state !== 'verified_staging_root') throw Error('Staging root was not verified');
+          NODE
+          test -d "$media_root/Import/Negev"
