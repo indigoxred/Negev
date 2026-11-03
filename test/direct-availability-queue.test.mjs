@@ -392,6 +392,7 @@ test('a recent Shoko event retries ahead of backfill when Plex indexes after the
     const first = ctx.queue.claimNext({ nowMs: 103 });
     assert.deepEqual(first.target, { anidbId: 43, episodeId: 2001 });
     ctx.queue.recordResult({ claim: first, state: 'unknown', checkedMs: 103 });
+    ctx.reopen();
     const retry = ctx.queue.claimNext({ nowMs: 103 + 5 * 60_000 });
     assert.deepEqual(retry.target, { anidbId: 43, episodeId: 2001 });
     const verifiedMs = 103 + 5 * 60_000;
