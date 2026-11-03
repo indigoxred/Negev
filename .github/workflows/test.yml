@@ -133,3 +133,25 @@ jobs:
           if (staging.state !== 'verified_staging_root') throw Error('Staging root was not verified');
           NODE
           test -d "$media_root/handoff/source/Negev"
+          sudo chown 0:100 "$media_root/staging"
+          sudo chmod 0750 "$media_root/staging"
+          docker run --rm --network none --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --mount "type=bind,src=$media_root/staging,dst=/staging,readonly" \
+            --mount "type=bind,src=$media_root/handoff,dst=/handoff" \
+            --entrypoint node negev-user-test:ci --input-type=module -e '
+              import { verifyLocalStagingRoot as verify } from "./src/acquisition/local-staging-root.mjs";
+              const result = await verify({ stagingRoot: "/staging",
+                holdingRoot: "/handoff/holding", importRoot: "/handoff/source/Negev" });
+              if (result.reason !== "staging_root_unverified") throw Error("Unreadable staging was accepted");
+            '
+          docker run --rm --network none --cap-drop ALL --group-add 100 \
+            --security-opt no-new-privileges \
+            --mount "type=bind,src=$media_root/staging,dst=/staging,readonly" \
+            --mount "type=bind,src=$media_root/handoff,dst=/handoff" \
+            --entrypoint node negev-user-test:ci --input-type=module -e '
+              import { verifyLocalStagingRoot as verify } from "./src/acquisition/local-staging-root.mjs";
+              const result = await verify({ stagingRoot: "/staging",
+                holdingRoot: "/handoff/holding", importRoot: "/handoff/source/Negev" });
+              if (result.state !== "verified_staging_root") throw Error("Readable staging was rejected");
+            '

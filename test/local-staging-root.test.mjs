@@ -9,7 +9,8 @@ const info = '1 0 0:1 / / rw - overlay overlay rw\n' +
 const input = { stagingRoot: '/staging', importRoot: '/import/Negev',
   holdingRoot: '/holding',
   resolve: async (value) => value,
-  read: async () => info };
+  read: async () => info,
+  openDir: async () => ({ close: async () => {} }) };
 
 test('accepts separate canonical read-only staging without Docker inspection', async () => {
   assert.deepEqual(await verifyLocalStagingRoot(input),
@@ -24,6 +25,8 @@ test('holds a missing, redirected, overlapping, or overlay staging root', async 
     { read: async () => '1 0 0:1 / / rw - overlay overlay rw\n' },
     { read: async () => info.replace('/staging ro - btrfs',
       '/staging rw - btrfs') },
+    { openDir: async () => { const error = new Error('permission denied');
+      error.code = 'EACCES'; throw error; } },
   ]) assert.deepEqual(await verifyLocalStagingRoot({ ...input, ...change }),
     { state: 'held', reason: 'staging_root_unverified' });
 });
