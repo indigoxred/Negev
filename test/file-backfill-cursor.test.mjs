@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openFileBackfillCursor, resetFileBackfillEvidence } from
   '../src/availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from
@@ -34,8 +35,120 @@ test('new observer session withdraws old proofs and revisits the first hint', as
       outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 103 }).state,
       'held');
     const restarted = cursor.claim({ inventory, nowMs: 104, limit: 2 });
-    assert.deepEqual(restarted.fileIds, [2, 5]);
+    assert.deepEqual(restarted.fileIds, [2]);
+    assert.equal(restarted.priority, true);
     assert.equal(restarted.pass, first.pass + 1);
+    assert.equal(cursor.record({ claim: restarted,
+      outcomes: [{ fileId: 2, state: 'available' }], nowMs: 105 }).state,
+    'recorded');
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 106, limit: 2 }).fileIds,
+      [2, 5]);
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('restart rechecks formerly proven file IDs before the full inventory pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 5, 9].filter((id) => id > afterFileId).slice(0, limit) };
+  const cursor = openFileBackfillCursor(dbPath);
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 1_000 });
+  try {
+    assert.equal(proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 9, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 }).state, 'recorded');
+    resetFileBackfillEvidence(dbPath);
+    assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'unknown');
+    const priority = cursor.claim({ inventory, nowMs: 1_001, limit: 1 });
+    assert.deepEqual(priority.fileIds, [9]);
+    assert.equal(priority.priority, true);
+    resetFileBackfillEvidence(dbPath);
+    const resumed = cursor.claim({ inventory, nowMs: 1_002, limit: 1 });
+    assert.deepEqual(resumed.fileIds, [9]);
+    assert.equal(resumed.priority, true);
+    assert.equal(cursor.record({ claim: priority,
+      outcomes: [{ fileId: 9, state: 'available' }], nowMs: 1_002 }).state,
+    'held');
+    assert.deepEqual(cursor.record({ claim: resumed,
+      outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 1_003 }),
+    { state: 'recorded', count: 1 });
+    const ordinary = cursor.claim({ inventory, nowMs: 1_004, limit: 1 });
+    assert.deepEqual(ordinary.fileIds, [2]);
+    assert.equal(ordinary.priority, undefined);
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('v0.0.34 cursor schema migrates before queuing old proofs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-migrate-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const old = new DatabaseSync(dbPath);
+  old.exec(`CREATE TABLE file_backfill_cursor (
+    id INTEGER PRIMARY KEY, after_file_id INTEGER NOT NULL,
+    pass INTEGER NOT NULL, receipt INTEGER NOT NULL,
+    pending_json TEXT, claimed_ms INTEGER,
+    pair_offset INTEGER NOT NULL DEFAULT 0, fingerprint TEXT) STRICT;
+    INSERT INTO file_backfill_cursor (id,after_file_id,pass,receipt)
+      VALUES (1,500,3,7);
+    CREATE TABLE file_availability_proofs (
+      anidb_id INTEGER NOT NULL, episode_id INTEGER NOT NULL,
+      file_id INTEGER NOT NULL, library_id INTEGER NOT NULL,
+      rating_key INTEGER NOT NULL, part_id INTEGER NOT NULL,
+      verified_ms INTEGER NOT NULL,
+      PRIMARY KEY(anidb_id,episode_id,file_id,library_id,rating_key,part_id)
+    ) STRICT;
+    INSERT INTO file_availability_proofs VALUES (42,1001,450,102,500,900,900);`);
+  old.close();
+  const cursor = openFileBackfillCursor(dbPath);
+  try {
+    resetFileBackfillEvidence(dbPath);
+    const inventory = { listFileHintIds: () => [2] };
+    const claim = cursor.claim({ inventory, nowMs: 1_000, limit: 1 });
+    assert.deepEqual(claim.fileIds, [450]);
+    assert.equal(claim.priority, true);
+    assert.equal(claim.pass, 4);
+  } finally {
+    cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('partial priority claim resumes with its file and pair offset', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-partial-priority-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 1_000 });
+  let cursor = openFileBackfillCursor(dbPath);
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 9].filter((id) => id > afterFileId).slice(0, limit) };
+  try {
+    proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 9, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 });
+    resetFileBackfillEvidence(dbPath);
+    const first = cursor.claim({ inventory, nowMs: 1_001, limit: 1 });
+    const fingerprint = 'a'.repeat(64);
+    assert.equal(cursor.record({ claim: first, outcomes: [{ fileId: 9,
+      state: 'partial', nextPairOffset: 3, fingerprint }], nowMs: 1_002 }).state,
+    'partial');
+    cursor.close();
+    cursor = openFileBackfillCursor(dbPath);
+    const resumed = cursor.claim({ inventory, nowMs: 1_003, limit: 1 });
+    assert.deepEqual(resumed.fileIds, [9]);
+    assert.equal(resumed.priority, true);
+    assert.equal(resumed.pairOffset, 3);
+    assert.equal(resumed.fingerprint, fingerprint);
+    assert.equal(cursor.record({ claim: resumed, outcomes: [{ fileId: 9,
+      state: 'unknown' }], nowMs: 1_004 }).state, 'recorded');
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 1_005, limit: 1 }).fileIds,
+      [2]);
   } finally {
     proofs.close(); cursor.close();
     await rm(dir, { recursive: true, force: true });

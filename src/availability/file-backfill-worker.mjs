@@ -88,14 +88,16 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
     let source, candidate;
     try {
       source = inventory.getFile(fileId);
+      if (source?.state !== 'linked' || !validTime(source.observedMs)) {
+        return finish({ state: 'unknown' }, 0, 0);
+      }
       candidate = canonicalCandidate(await readCandidate({ fileId }));
     } catch { return sourceReadFailed(); }
     if (candidate?.state === 'busy') {
       return metadataBusy();
     }
     if (candidate?.state === 'unavailable') return sourceReadFailed();
-    if (source?.state !== 'linked' || !validTime(source.observedMs) ||
-        candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
+    if (candidate?.state !== 'candidate' || candidate.fileId !== fileId ||
         candidate.updated !== source.updated || !validId(candidate.size) ||
         !Array.isArray(candidate.pairs) || candidate.pairs.length < 1 ||
         candidate.pairs.length > 100 || candidate.pairs.some((pair) =>
