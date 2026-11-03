@@ -11,6 +11,15 @@ const torrent = {
 };
 const video = { index: 0, name: 'Show/01.mkv', size: 1_000, priority: 1, progress: 0 };
 
+test('accepts the exact configured qBittorrent root and rejects the default root', () => {
+  const custom = { ...expected, savePath: `/data/torrents/negev/${hash}` };
+  const observed = { ...torrent, save_path: custom.savePath };
+  assert.equal(evaluateStoppedManifest({ torrent: observed, files: [video],
+    expected: custom, saveRoot: '/data/torrents/negev' }).state, 'manifest_safe');
+  assert.throws(() => evaluateStoppedManifest({ torrent: observed,
+    files: [video], expected: custom }), TypeError);
+});
+
 test('accepts only a stopped, untouched torrent with selected videos and subtitles', () => {
   const files = [video,
     { index: 1, name: 'Show/01.ass', size: 100, priority: 1, progress: 0 },

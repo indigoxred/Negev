@@ -10,10 +10,10 @@ const held = (reason) => ({ state: 'held', reason });
 const validHash = (value) => typeof value === 'string' &&
   /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(value);
 
-async function exactPreparedTorrent(prepared) {
+async function exactPreparedTorrent(prepared, saveRoot) {
   if (prepared?.state !== 'prepared_stopped' || !validHash(prepared.expected?.hash) ||
       prepared.expected.category !== 'negev' ||
-      !matchesStagingSavePath(prepared.expected) ||
+      !matchesStagingSavePath(prepared.expected, { saveRoot }) ||
       !(prepared.form instanceof FormData)) return null;
   const form = prepared.form;
   const fields = [...form.keys()].sort();
@@ -30,11 +30,12 @@ async function exactPreparedTorrent(prepared) {
     metainfo.hash === prepared.expected.hash.toLowerCase() ? metainfo : null;
 }
 
-// Server-only one-send boundary. No route invokes this yet. Fresh Docker mount
-// evidence and a host realpath check are required on every call. An uncertain
-// POST is reconciled by exact stopped observation, never retried.
+// Server-only one-send boundary. Fresh local staging evidence is required
+// before each write. An uncertain POST is reconciled by exact stopped
+// observation, never retried.
 export async function submitStoppedCandidate({
   ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl,
+  verifyStagingRoot, saveRoot,
   baseUrl, sessionId, nowMs, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   let base;
@@ -45,16 +46,24 @@ export async function submitStoppedCandidate({
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-      typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function' ||
+      (typeof verifyStagingRoot !== 'function' &&
+        (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
       typeof fetchImpl !== 'function' || !ledger ||
       typeof ledger.bindPreparedTorrent !== 'function' ||
       typeof ledger.beginDispatch !== 'function' ||
       typeof ledger.recordTorrent !== 'function') {
     throw new TypeError('Invalid stopped submission configuration');
   }
-  const metainfo = await exactPreparedTorrent(prepared);
+  const metainfo = await exactPreparedTorrent(prepared, saveRoot);
   if (!metainfo) return held('prepared_torrent_mismatch');
   const checkMounts = async () => {
+    if (verifyStagingRoot) {
+      try {
+        const result = await verifyStagingRoot();
+        return result?.state === 'verified_staging_root'
+          ? { state: 'isolated_mount' } : held('staging_root_unverified');
+      } catch { return held('staging_root_unverified'); }
+    }
     let mounts, realPath;
     try {
       mounts = await inspectMounts();
@@ -119,7 +128,7 @@ export async function submitStoppedCandidate({
 
   let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs, allowSelectedPassive: true,
-    expectedFiles: metainfo.files });
+    expectedFiles: metainfo.files, saveRoot });
   if (observed.state === 'manifest_needs_exclusions') {
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),
@@ -132,7 +141,7 @@ export async function submitStoppedCandidate({
       });
     } catch { /* An uncertain response is resolved by the exact manifest below. */ }
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
-      fetchImpl, timeoutMs, expectedFiles: metainfo.files });
+      fetchImpl, timeoutMs, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state !== 'manifest_safe') return observed;
   const recorded = ledger.recordTorrent({ attemptId, hash: expected.hash, nowMs });

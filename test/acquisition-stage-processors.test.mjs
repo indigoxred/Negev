@@ -39,6 +39,9 @@ const options = (calls) => ({
   stagingHostPath: '/srv/negev/staging',
   holdingRoot: '/srv/negev/holding', importRoot: '/srv/shoko/import',
   inspectMounts: async () => { throw Error('no mount read'); },
+  verifyStagingRoot: async () => ({ state: 'verified_staging_root' }),
+  ensureImportRoot: async () => ({ state: 'import_child_ready' }),
+  verifyShokoSource: async () => ({ state: 'verified_shoko_source' }),
   realpathImpl: async () => { throw Error('no realpath'); },
   shoko: { baseUrl: 'http://shoko:8111/', apiKey: 'synthetic',
     providerId: '11111111-2222-4333-8444-555555555555' },
@@ -87,6 +90,10 @@ test('recent exact public coverage avoids the indexer in the wired request stage
 test('completion and publish hold before media work when the own mount is unproved', async () => {
   const calls = [];
   const stages = createAcquisitionStageProcessors({ ...options(calls),
+    ensureImportRoot: async () => {
+      calls.push('ensure-child');
+      return { state: 'import_child_ready' };
+    },
     verifyHandoffMounts: async () => {
       calls.push('handoff-mount');
       return { state: 'held', reason: 'handoff_mount_unavailable' };
@@ -95,7 +102,39 @@ test('completion and publish hold before media work when the own mount is unprov
     { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
-  assert.deepEqual(calls, ['handoff-mount', 'handoff-mount']);
+  assert.deepEqual(calls, ['ensure-child', 'handoff-mount',
+    'ensure-child', 'handoff-mount']);
+});
+
+test('completion holds when the staging mount changed after torrent start', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    verifyStagingRoot: async () => ({ state: 'held',
+      reason: 'staging_root_unverified' }),
+    verifyHandoffMounts: async () => {
+      calls.push('handoff-mount');
+      return { state: 'mounted_handoff_roots' };
+    },
+    acquisitions: { getAttempt: () => { throw Error('must not read attempt'); },
+      getFilePlan: () => { throw Error('must not read file plan'); } },
+  });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'staging_root_unverified' });
+  assert.deepEqual(calls, []);
+});
+
+test('completion and publish hold if Shoko no longer watches the dedicated Source', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    verifyShokoSource: async () => ({ state: 'held',
+      reason: 'shoko_source_unverified' }),
+    ensureImportRoot: async () => { calls.push('child'); throw Error('must not write'); },
+  });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'handoff_mount_unavailable' });
+  assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
+    { state: 'held', reason: 'handoff_mount_unavailable' });
+  assert.deepEqual(calls, []);
 });
 
 test('exact-boundary work holds on Shoko native preference', async () => {

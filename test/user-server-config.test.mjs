@@ -116,7 +116,7 @@ test('acquisition cannot be advertised as enabled before installed safety gates 
     NEGEV_ACQUISITION_RUNTIME: '0' }).acquisitionRuntime, false);
 });
 
-test('acquisition opt-in requires every guarded provider and private mount witness', () => {
+test('acquisition opt-in requires guarded providers and portable staging paths', () => {
   const importRoot = path.resolve('sample-import-root');
   const configured = { ...valid,
     NEGEV_SHOKO_IMPORT_ROOT: importRoot,
@@ -140,17 +140,21 @@ test('acquisition opt-in requires every guarded provider and private mount witne
     NEGEV_QBITTORRENT_PASSWORD_FILE: path.join(dataDir, 'secrets', 'qbittorrent.password'),
     NEGEV_QBITTORRENT_IMPORT_SAVE_PATH: '/Shoko',
     NEGEV_STAGING_HOST_PATH: path.resolve('staging'),
-    NEGEV_HOLDING_ROOT: path.resolve('holding'),
-    NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'mount-witness', 'mount.sock'),
+    NEGEV_QBITTORRENT_STAGING_ROOT: '/data/torrents/negev',
+    NEGEV_HOLDING_ROOT: path.resolve('handoff', 'holding'),
+    NEGEV_ACQUISITION_IMPORT_PARENT: path.resolve('handoff', 'source'),
+    NEGEV_ACQUISITION_IMPORT_FOLDER_ID: '2',
+    NEGEV_ACQUISITION_SHOKO_SOURCE_PATH: '/negev/source',
     NEGEV_SHOKO_RELEASE_PROVIDER_ID: '11111111-2222-3333-4444-555555555555',
     NEGEV_ACQUISITION_RUNTIME: '1' };
   const parsed = parseUserServerConfig(configured);
   assert.equal(parsed.acquisitionRuntime, true);
   assert.deepEqual(parsed.acquisition, {
     stagingHostPath: configured.NEGEV_STAGING_HOST_PATH,
+    qbitStagingRoot: configured.NEGEV_QBITTORRENT_STAGING_ROOT,
     holdingRoot: configured.NEGEV_HOLDING_ROOT,
-    importRoot: path.join(importRoot, 'Negev'),
-    mountWitnessSocket: configured.NEGEV_MOUNT_WITNESS_SOCKET,
+    importRoot: path.join(configured.NEGEV_ACQUISITION_IMPORT_PARENT, 'Negev'),
+    shokoSourcePath: '/negev/source', shokoSourceFolderId: 2,
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
   });
   for (const change of [
@@ -164,6 +168,19 @@ test('acquisition opt-in requires every guarded provider and private mount witne
     { NEGEV_HOLDING_ROOT: path.join(importRoot, 'holding') },
     { NEGEV_HOLDING_ROOT: importRoot },
     { NEGEV_HOLDING_ROOT: configured.NEGEV_STAGING_HOST_PATH },
+    { NEGEV_ACQUISITION_IMPORT_PARENT: undefined },
+    { NEGEV_ACQUISITION_IMPORT_FOLDER_ID: undefined },
+    { NEGEV_ACQUISITION_IMPORT_FOLDER_ID: '1' },
+    { NEGEV_ACQUISITION_SHOKO_SOURCE_PATH: undefined },
+    { NEGEV_ACQUISITION_SHOKO_SOURCE_PATH: '/negev/../source' },
+    { NEGEV_ACQUISITION_IMPORT_PARENT: importRoot },
+    { NEGEV_ACQUISITION_IMPORT_PARENT: path.join(importRoot, 'Negev') },
+    { NEGEV_ACQUISITION_IMPORT_PARENT: configured.NEGEV_HOLDING_ROOT },
+    { NEGEV_ACQUISITION_IMPORT_PARENT: path.resolve('other', 'source') },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/data/torrents/../outside' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/Shoko' },
+    { NEGEV_QBITTORRENT_STAGING_ROOT: '/Shoko/negev' },
     { NEGEV_MOUNT_WITNESS_SOCKET: path.join(dataDir, 'docker.sock') },
     { NEGEV_SHOKO_RELEASE_PROVIDER_ID: 'bad' },
   ]) assert.throws(() => parseUserServerConfig({ ...configured, ...change }), TypeError);

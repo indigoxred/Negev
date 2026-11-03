@@ -8,11 +8,12 @@ import { prepareRecordedHandoff } from './prepare-recorded-handoff.mjs';
 // into Shoko Import or claims public Plex availability.
 export async function processCompletedAttempt({
   requests, acquisitions, handoffs, attemptId,
-  stagingHostPath, holdingRoot, importRoot,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
   qbittorrent, shoko, fetchImpl = fetch, shokoFetchImpl = fetchImpl, nowMs,
   readPacer,
   ed2kMode,
   verifyHandoffMounts,
+  verifyStagingRoot,
 }) {
   if (typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
@@ -25,9 +26,10 @@ export async function processCompletedAttempt({
   }
   return prepareRecordedHandoff({
     requests, acquisitions, handoffs, attemptId,
-    stagingHostPath, holdingRoot, importRoot, nowMs, readPacer,
+    stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, nowMs, readPacer,
     ed2kMode,
     verifyHandoffMounts,
+    verifyStagingRoot,
     observe: ({ expected }) => observeTorrentCompletion({
       baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
       expected, fetchImpl,

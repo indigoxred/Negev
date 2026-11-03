@@ -42,6 +42,16 @@ test('start processor reconstructs the exact saved torrent and request', async (
       } });
     assert.deepEqual(result, { state: 'held', reason: 'provider_unavailable' });
     assert.equal(calls, 1);
+    await processRecordedStart({ attemptId: reserved.attemptId,
+      requests, acquisitions, stagingHostPath: '/srv/staging',
+      qbitStagingRoot: '/data/torrents/negev',
+      qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },
+      inspectMounts: async () => ({}), realpathImpl: async () => '/srv/staging',
+      readEvidence: async () => ({}), publicLibraryIds: [102],
+      start: async (input) => {
+        assert.equal(input.expected.savePath, `/data/torrents/negev/${hash}`);
+        return { state: 'held', reason: 'provider_unavailable' };
+      } });
     assert.deepEqual(await processRecordedStart({ attemptId: 999,
       requests, acquisitions, stagingHostPath: '/srv/staging',
       qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },

@@ -13,6 +13,7 @@ const held = (reason) => ({ state: 'held', reason });
 // gates; a successful HTTP response alone is never evidence of either.
 export async function startStoppedCandidate({
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
+  verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
   now = Date.now, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
@@ -20,14 +21,15 @@ export async function startStoppedCandidate({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.pathname !== '/' || base.search || base.hash ||
-      !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
+      !matchesStagingSavePath(expected, { saveRoot }) || expected.category !== 'negev' ||
       !validQbittorrentSessionId(sessionId) ||
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       typeof now !== 'function' || typeof readRequest !== 'function' ||
       typeof readEvidence !== 'function' ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-      typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function' ||
+      (typeof verifyStagingRoot !== 'function' &&
+        (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
       typeof fetchImpl !== 'function' || typeof ledger?.beginStart !== 'function' ||
       typeof ledger?.getAttempt !== 'function' ||
       typeof ledger?.getFilePlan !== 'function') {
@@ -52,7 +54,7 @@ export async function startStoppedCandidate({
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
   const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
-    fetchImpl, timeoutMs });
+    fetchImpl, timeoutMs, saveRoot });
   if (manifest.state !== 'manifest_safe') return manifest;
   const sorted = (files) => files.map((file) => [file.name, file.size])
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
@@ -93,20 +95,28 @@ export async function startStoppedCandidate({
   // The availability probe may take long enough for qBittorrent priorities or
   // paths to change. Recheck immediately before recording the one-send intent.
   const finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
-    expected, fetchImpl, timeoutMs });
+    expected, fetchImpl, timeoutMs, saveRoot });
   if (finalManifest.state !== 'manifest_safe' ||
       JSON.stringify(finalManifest.videos) !== JSON.stringify(manifest.videos) ||
       JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
     return held('manifest_changed_before_start');
   }
-  let mounts, realPath;
-  try {
-    mounts = await inspectMounts();
-    realPath = await realpathImpl(hostPath);
-  } catch { return held('mount_evidence_unavailable'); }
-  const finalIsolation = evaluateStagingMountIsolation(mounts, { hostPath });
-  if (finalIsolation.state !== 'isolated_mount') return finalIsolation;
-  if (realPath !== hostPath) return held('staging_path_not_canonical');
+  if (verifyStagingRoot) {
+    try {
+      if ((await verifyStagingRoot())?.state !== 'verified_staging_root') {
+        return held('staging_root_unverified');
+      }
+    } catch { return held('staging_root_unverified'); }
+  } else {
+    let mounts, realPath;
+    try {
+      mounts = await inspectMounts();
+      realPath = await realpathImpl(hostPath);
+    } catch { return held('mount_evidence_unavailable'); }
+    const finalIsolation = evaluateStagingMountIsolation(mounts, { hostPath });
+    if (finalIsolation.state !== 'isolated_mount') return finalIsolation;
+    if (realPath !== hostPath) return held('staging_path_not_canonical');
+  }
   let startMs;
   try { startMs = now(); }
   catch { return held('availability_evidence_stale'); }

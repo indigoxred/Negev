@@ -22,13 +22,17 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-time-service-'));
   const dbPath = path.join(dir, 'negev.sqlite');
   const importRoot = path.join(dir, 'Import');
+  const automatedImportParent = path.join(dir, 'handoff', 'source');
   await mkdir(importRoot);
+  await mkdir(automatedImportParent, { recursive: true });
   let clock = 100;
   let connectionState = 'connected';
   const reads = [];
   const service = await createUserService({ dbPath,
     shokoBaseUrl: 'http://shoko.internal:8111/', shokoApiKey: 'synthetic',
     shokoImportRoot: importRoot, shokoImportFolderId: 1,
+    acquisitionImportParent: automatedImportParent,
+    acquisitionImportFolderId: 2,
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
     readShokoConnectionState: () => ({ state: connectionState }),
     waitForImportQuiet: async (ms) => { clock += ms; },
@@ -84,7 +88,7 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     assert.equal(snapshot.plex.probeCoverage, 'health_only');
     assert.equal(snapshot.plex.sourceVerified, true);
     assert.equal(snapshot.importFence.state, 'quiet_window_observed');
-    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 2);
+    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 4);
     assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);
     assert.equal(reads.some((path) => /torrent|download|prowlarr/i.test(path)), false);
     service.flagShokoReconciliation('feed_disconnected');
@@ -105,9 +109,10 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
       sessionGate: { get: async () => { throw Error('no login'); },
         invalidate: () => {} },
       stagingHostPath: path.join(dir, 'staging'),
-      holdingRoot: path.join(dir, 'holding'),
-      importRoot: path.join(importRoot, 'Negev'),
+      holdingRoot: path.join(dir, 'handoff', 'holding'),
+      importRoot: path.join(automatedImportParent, 'Negev'),
       inspectMounts: async () => { throw Error('no mount read'); },
+      verifyShokoSource: async () => ({ state: 'verified_shoko_source' }),
       realpathImpl: async () => { throw Error('no path read'); },
       shokoProviderId: '11111111-2222-4333-8444-555555555555',
     };
@@ -115,6 +120,8 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
       ...workerOptions, importRoot }), TypeError);
     assert.throws(() => service.openAcquisitionWorkers({
       ...workerOptions, importRoot: path.join(dir, 'Anime') }), TypeError);
+    assert.throws(() => service.openAcquisitionWorkers({
+      ...workerOptions, importRoot: path.join(importRoot, 'Negev') }), TypeError);
     assert.throws(() => service.openAcquisitionWorkers({
       ...workerOptions, holdingRoot: path.join(importRoot, 'holding') }), TypeError);
     const runtime = service.openAcquisitionWorkers(workerOptions);

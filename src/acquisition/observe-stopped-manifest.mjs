@@ -9,14 +9,14 @@ const held = (reason) => ({ state: 'held', reason });
 // Read-only, double-observed qBittorrent manifest. It never starts a torrent.
 export async function observeStoppedManifest({
   baseUrl, sessionId, expected, fetchImpl = fetch, timeoutMs = 10_000,
-  allowSelectedPassive = false, expectedFiles,
+  allowSelectedPassive = false, expectedFiles, saveRoot,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || base.pathname !== '/' ||
       !validQbittorrentSessionId(sessionId) ||
-      !matchesStagingSavePath(expected) || expected.category !== 'negev' ||
+      !matchesStagingSavePath(expected, { saveRoot }) || expected.category !== 'negev' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid stopped-manifest configuration');
   }
@@ -82,5 +82,5 @@ export async function observeStoppedManifest({
     }
   }
   return evaluateStoppedManifest({ torrent: after, files: filesAfter, expected,
-    allowSelectedPassive });
+    allowSelectedPassive, saveRoot });
 }

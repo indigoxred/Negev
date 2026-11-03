@@ -52,6 +52,22 @@ test('recorded exact batch is copied privately and journaled once, without publi
       coverage: [{ episodeId: 1001, start: 0, end: 100 }] }),
     nowMs: 205, readPacer: { afterBytes: async () => {} } });
   try {
+    const unavailable = await prepareRecordedHandoff({ requests, acquisitions,
+      handoffs, attemptId: reserved.attemptId, stagingHostPath, holdingRoot,
+      importRoot,
+      observe: async () => ({ state: 'complete', files: [
+        { index: 0, name, size: hash.size }], subtitles: [] }),
+      lookup: async () => null,
+      verify: async () => ({ state: 'identity_verified', isCorrupted: false,
+        fileId: 51, ed2k: hash.ed2k, size: hash.size,
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }] }),
+      verifyStagingRoot: async () => ({ state: 'held',
+        reason: 'staging_root_unverified' }),
+      nowMs: 205, readPacer: { afterBytes: async () => {} } });
+    assert.deepEqual(unavailable, { state: 'held',
+      reason: 'staging_root_unverified' });
+    assert.deepEqual(await readdir(holdingRoot), []);
+    assert.equal(handoffs.getHandoff(reserved.attemptId), null);
     const first = await run();
     assert.equal(first.state, 'handoff_prepared');
     assert.deepEqual(await readFile(path.join(first.holdingPath, name)),

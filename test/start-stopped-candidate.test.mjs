@@ -49,6 +49,32 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
     plex: { state: 'ok', complete: true, sourceVerified: true,
       libraryIds: [102], parts: [] } }) };
 
+test('portable start uses the configured path and local root gate without Docker socket', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    const saveRoot = '/data/torrents/negev';
+    const custom = { ...expected, savePath: `${saveRoot}/${hash}` };
+    let starts = 0;
+    let checks = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest, expected: custom, saveRoot,
+      inspectMounts: undefined, realpathImpl: undefined,
+      verifyStagingRoot: async () => {
+        checks++;
+        return { state: 'verified_staging_root' };
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { starts++; return new Response(''); }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: custom.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files :
+          [{ ...torrent, save_path: custom.savePath }]);
+      } });
+    assert.equal(result.state, 'start_unknown');
+    assert.equal(checks, 1);
+    assert.equal(starts, 1);
+  }));
+
 test('a saved first-time uncertainty policy is rechecked before a stopped torrent starts', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let starts = 0;

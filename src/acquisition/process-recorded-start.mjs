@@ -5,9 +5,10 @@ const held = (reason) => ({ state: 'held', reason });
 
 // Explicit one-attempt continuation. Identity, hash and file plan come from
 // the durable acquisition journal, never from a caller-supplied title or URL.
-// The start gate still rechecks stopped qBittorrent, mount and absence proof.
+// The start gate still rechecks stopped qBittorrent, staging and absence proof.
 export async function processRecordedStart({ attemptId, requests, acquisitions,
-  stagingHostPath, qbittorrent, inspectMounts, realpathImpl, readEvidence,
+  stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
+  verifyStagingRoot, realpathImpl, readEvidence,
   publicLibraryIds, fetchImpl = fetch, now = Date.now,
   start = startStoppedCandidate } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
@@ -18,8 +19,8 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
       typeof stagingHostPath !== 'string' || !stagingHostPath ||
       typeof qbittorrent?.baseUrl !== 'string' ||
       typeof qbittorrent?.sessionId !== 'string' ||
-      typeof inspectMounts !== 'function' ||
-      typeof realpathImpl !== 'function' ||
+      (typeof verifyStagingRoot !== 'function' &&
+        (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
       typeof readEvidence !== 'function' ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
@@ -39,9 +40,11 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
   }
   if (!plan) return held('file_plan_missing');
   const expected = { hash: attempt.torrentHash, category: 'negev',
-    savePath: stagingSavePath(attempt.torrentHash) };
+    savePath: stagingSavePath(attempt.torrentHash,
+      { saveRoot: qbitStagingRoot }) };
   return start({ ledger: acquisitions, attemptId, expected,
-    hostPath: stagingHostPath, inspectMounts, realpathImpl,
+    hostPath: stagingHostPath, inspectMounts, verifyStagingRoot, realpathImpl,
+    saveRoot: qbitStagingRoot,
     baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
     readRequest: (id) => requests.getRequest(id), readEvidence,
     publicLibraryIds, fetchImpl, now });

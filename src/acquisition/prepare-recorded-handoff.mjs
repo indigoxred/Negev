@@ -9,9 +9,10 @@ const held = (reason) => ({ state: 'held', reason });
 // separate, durable operation and must be explicitly reconciled afterward.
 export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
-  stagingHostPath, holdingRoot, importRoot, observe, lookup,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, observe, lookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
   verifyHandoffMounts,
+  verifyStagingRoot,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
@@ -21,7 +22,7 @@ export async function prepareRecordedHandoff({
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
-    stagingHostPath, observe, lookup, verify, verifySubtitle, readPacer,
+    stagingHostPath, qbitStagingRoot, observe, lookup, verify, verifySubtitle, readPacer,
     ed2kMode });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);
@@ -29,6 +30,14 @@ export async function prepareRecordedHandoff({
       hash: attempt.torrentHash, reason: verified.reason, nowMs });
   }
   if (verified.state !== 'batch_identity_verified') return verified;
+  if (verifyStagingRoot) {
+    try {
+      const result = await verifyStagingRoot();
+      if (result !== true && result?.state !== 'verified_staging_root') {
+        return held('staging_root_unverified');
+      }
+    } catch { return held('staging_root_unverified'); }
+  }
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,
     verified, readPacer, verifyHandoffMounts, ed2kMode });

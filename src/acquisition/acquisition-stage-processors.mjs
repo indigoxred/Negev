@@ -5,6 +5,7 @@ import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
+import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
 
@@ -13,13 +14,16 @@ const held = (reason) => ({ state: 'held', reason });
 
 // Bind the real guarded stages to one service's journals and providers. This
 // does not create a timer or perform I/O. The caller must still prove installed
-// availability, mount, credential and Import gates before starting a pipeline.
+// availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
   handoffs, discoverCandidates, previewCandidate, loadDetail,
   releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
-  stagingHostPath, holdingRoot, importRoot, inspectMounts, realpathImpl,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
+  verifyStagingRoot, realpathImpl,
+  verifyShokoSource,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
+  ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
   firstTimePolicy = 'strict' } = {}) {
   const episode = publicSections?.episode;
@@ -28,8 +32,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
-        readEvidence, readPublicCoverage, inspectMounts, realpathImpl, providerFetchImpl, now,
-        verifyHandoffMounts, readEd2kMode]
+        readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
+        verifyHandoffMounts, ensureImportRoot, readEd2kMode,
+        verifyShokoSource]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
@@ -44,6 +49,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof shoko?.providerId !== 'string' ||
       [stagingHostPath, holdingRoot, importRoot]
         .some((value) => typeof value !== 'string' || !value) ||
+      (typeof verifyStagingRoot !== 'function' && typeof inspectMounts !== 'function') ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid acquisition stage providers');
   }
@@ -54,8 +60,19 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
   const handoffMountReady = async () => {
     try {
+      if ((await verifyShokoSource())?.state !== 'verified_shoko_source') {
+        return false;
+      }
+      const child = await ensureImportRoot({ holdingRoot, importRoot,
+        verifyHandoffMounts });
+      if (child?.state !== 'import_child_ready') return false;
       const result = await verifyHandoffMounts({ holdingRoot, importRoot });
       return result?.state === 'mounted_handoff_roots';
+    } catch { return false; }
+  };
+  const stagingMountReady = async () => {
+    try {
+      return (await verifyStagingRoot?.())?.state === 'verified_staging_root';
     } catch { return false; }
   };
   const selectedEd2kMode = async (files) => {
@@ -89,7 +106,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
             publicLibraryIds: publicLibraryIds(request.kind), now,
             prowlarr: { ...prowlarr, fetchImpl: searchFetch },
             qbittorrent: { ...qbittorrent, hostPath: stagingHostPath,
-              inspectMounts, realpathImpl, fetchImpl },
+              saveRoot: qbitStagingRoot, inspectMounts, verifyStagingRoot,
+              realpathImpl, fetchImpl },
           }),
       });
       return process(claim);
@@ -105,12 +123,14 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         return held('request_unavailable');
       }
       return processRecordedStart({ attemptId, requests, acquisitions,
-        stagingHostPath, qbittorrent, inspectMounts, realpathImpl,
+        stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
+        verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         fetchImpl, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl } = {}) {
+      if (!await stagingMountReady()) return held('staging_root_unverified');
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       let planned;
       try { planned = acquisitions.getFilePlan?.(attemptId); }
@@ -118,9 +138,10 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const ed2kMode = await selectedEd2kMode(planned);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
-        handoffs, stagingHostPath, holdingRoot, importRoot,
+        handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl,
-        readPacer, verifyHandoffMounts, nowMs: now(), ed2kMode });
+        readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
+        nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
