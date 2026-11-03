@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -57,6 +57,10 @@ test('copies verified bytes into private holding and leaves Shoko Import empty',
     assert.equal(result.files[0].anidbFileId, 51);
     assert.deepEqual(await readdir(roots.importRoot), []);
     assert.deepEqual(await readFile(path.join(result.holdingPath, file.name)), bytes);
+    if (process.platform !== 'win32') {
+      assert.equal((await stat(path.join(result.holdingPath, file.name))).mode & 0o777,
+        0o644, 'published Shoko media must be readable by Plex after import');
+    }
     assert.deepEqual(await ed2kFile(path.join(result.holdingPath, file.name)),
       { ed2k: file.ed2k, size: bytes.length });
     assert.ok(paced.reduce((sum, count) => sum + count, 0) >= bytes.length * 2);
