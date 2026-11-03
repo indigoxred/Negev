@@ -384,6 +384,40 @@ test('a fresh Shoko event runs before older inventory backfill without starving 
   });
 });
 
+test('a recent Shoko event retries ahead of backfill when Plex indexes after the first check', async () => {
+  await fixture(async (ctx) => {
+    ctx.queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 100 });
+    ctx.queue.enqueue({ anidbId: 43, episodeId: 2001,
+      observedMs: 102, priority: 'event' });
+    const first = ctx.queue.claimNext({ nowMs: 103 });
+    assert.deepEqual(first.target, { anidbId: 43, episodeId: 2001 });
+    ctx.queue.recordResult({ claim: first, state: 'unknown', checkedMs: 103 });
+    ctx.reopen();
+    const retry = ctx.queue.claimNext({ nowMs: 103 + 5 * 60_000 });
+    assert.deepEqual(retry.target, { anidbId: 43, episodeId: 2001 });
+    const verifiedMs = 103 + 5 * 60_000;
+    ctx.queue.recordResult({ claim: retry, state: 'available',
+      checkedMs: verifiedMs, proof: { fileId: 51, libraryId: 102,
+        ratingKey: 500, partId: 600 } });
+    assert.deepEqual(ctx.queue.getStatus({ anidbId: 43, episodeId: 2001,
+      nowMs: verifiedMs }), { state: 'available', verifiedAtMs: verifiedMs });
+  });
+});
+
+test('a late unresolved event returns to ordinary priority after its short retry window', async () => {
+  await fixture(async (ctx) => {
+    ctx.queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 100 });
+    ctx.queue.enqueue({ anidbId: 43, episodeId: 2001,
+      observedMs: 102, priority: 'event' });
+    const late = ctx.queue.claimNext({ nowMs: 102 + 30 * 60_000 });
+    assert.deepEqual(late.target, { anidbId: 43, episodeId: 2001 });
+    ctx.queue.recordResult({ claim: late, state: 'unknown',
+      checkedMs: 102 + 30 * 60_000 });
+    assert.deepEqual(ctx.queue.claimNext({ nowMs: 102 + 35 * 60_000 }).target,
+      { anidbId: 42, episodeId: 1001 });
+  });
+});
+
 test('a prior durable queue gains event priority without losing a pending target', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-migrate-'));
   const dbPath = path.join(root, 'state.sqlite');
