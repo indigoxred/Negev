@@ -185,6 +185,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     }
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {
+      if (priority === 'event' && after?.state === 'linked' &&
+          after.pairs?.length) {
+        fileCursor?.prioritizeFile({ fileId: after.fileId, observedMs });
+      }
       const pairs = new Map();
       for (const pair of [...(before?.pairs ?? []), ...(after?.pairs ?? [])]) {
         pairs.set(`${pair.anidbId}:${pair.episodeId}`, pair);
@@ -220,7 +224,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         observedShoko, { includeProof }));
     };
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
-      now, requireProof: true, observeTarget: async (target) => {
+      now, requireProof: true,
+      onRecordedAvailable: (proof) => fileCursor?.confirmRecentFile({
+        fileId: proof.fileId, nowMs: now() }),
+      observeTarget: async (target) => {
         if (!plexObserver) return { state: 'unknown' };
         if (inventory.getObservedFileIds(target).length === 0) {
           return { state: 'unknown' };
@@ -234,6 +241,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       } });
     const fileWorker = createFileAvailabilityWorker({
       queue: directAvailability, inventory, now,
+      onRecordedAvailable: (proof) => fileCursor?.confirmRecentFile({
+        fileId: proof.fileId, nowMs: now() }),
       readCandidate: ({ fileId }) => metadata.run(() =>
         readShokoFileCandidate({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fileId, fetchImpl })),
