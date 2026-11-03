@@ -15,6 +15,33 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('preflights a more seeded release first without weakening exact checks', async () => {
+  const inspected = [];
+  let submitted;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), seeders: 1 },
+        { ...candidate(2), seeders: 36 },
+        { ...candidate(3), seeders: 0 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assert.deepEqual(await process({ requestId: 4 }),
+    { state: 'stopped_observed', attemptId: 11 });
+  assert.deepEqual(inspected, ['candidate-2']);
+  assert.equal(submitted, 'candidate-2');
+});
+
 test('bounded automatic path skips unsafe preflight and submits one exact stopped candidate', async () => {
   const inspected = [];
   const submitted = [];
