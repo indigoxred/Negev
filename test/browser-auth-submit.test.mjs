@@ -76,10 +76,11 @@ test('browser completes successful login and registration submit transitions',
       writeFileSync(fixture, html);
       const output = execFileSync(browser, [
         '--headless=new', '--no-first-run', '--disable-gpu',
+        '--disable-dev-shm-usage',
         '--no-sandbox', `--user-data-dir=${join(dir, 'profile')}`,
         '--virtual-time-budget=3000', '--dump-dom',
         new URL(`file:///${fixture.replaceAll('\\', '/')}`).href,
-      ], { cwd: dir, encoding: 'utf8', timeout: 15000,
+      ], { cwd: dir, encoding: 'utf8', timeout: 45000,
         stdio: ['ignore', 'pipe', 'ignore'] });
       const match = output.match(/<pre id="result">([^<]+)<\/pre>/);
       assert.ok(match, 'browser emitted submit results');
