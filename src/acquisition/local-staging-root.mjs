@@ -11,7 +11,7 @@ const decode = (value) => value.replace(/\\([0-7]{3})/g,
   (_, digits) => String.fromCharCode(Number.parseInt(digits, 8)));
 
 // A local filesystem gate for a configured shared staging volume. It proves
-// Negev's own paths are present, canonical and backed by a writable mount.
+// Negev's own paths are present and canonical, with staging read-only here.
 // qBittorrent's save path is checked separately through its Web API; Docker
 // socket access is neither needed nor granted to this service.
 export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
@@ -45,7 +45,7 @@ export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
     const covering = mounts.filter(({ point }) =>
       point === '/' || within(point, stagingRoot)).sort((a, b) =>
       b.point.length - a.point.length)[0];
-    return covering?.point !== '/' && covering?.writable &&
+    return covering?.point !== '/' && covering?.writable === false &&
       !['overlay', 'tmpfs', 'ramfs'].includes(covering.type)
       ? { state: 'verified_staging_root' } : held();
   } catch { return held(); }
