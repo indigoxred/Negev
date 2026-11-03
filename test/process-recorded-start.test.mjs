@@ -88,6 +88,7 @@ test('start processor reconciles a saved uncertain add without asking the indexe
     let reportedSize = 11;
     let includePassive = false;
     let passivePriority = 1;
+    let applyExclusion = false;
     const options = { attemptId, requests, acquisitions,
       stagingHostPath: '/srv/staging',
       qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },
@@ -99,7 +100,7 @@ test('start processor reconciles a saved uncertain add without asking the indexe
         if (endpoint.endsWith('/filePrio')) {
           assert.equal(init.body.get('hash'), hash);
           assert.equal(init.body.get('id'), '1');
-          passivePriority = 0;
+          if (applyExclusion) passivePriority = 0;
           return new Response('Ok.');
         }
         if (endpoint.endsWith('/info')) return Response.json([{
@@ -126,10 +127,15 @@ test('start processor reconciles a saved uncertain add without asking the indexe
     assert.equal(starts, 0);
     reportedSize = 10;
     includePassive = true;
+    assert.deepEqual(await processRecordedStart(options),
+      { state: 'held', reason: 'passive_exclusion_unconfirmed' });
+    assert.equal(acquisitions.getAttempt(attemptId).status, 'dispatch_unknown');
+    assert.equal(starts, 0);
+    applyExclusion = true;
     const result = await processRecordedStart(options);
     assert.deepEqual(result, { state: 'held', reason: 'provider_unavailable' });
     assert.equal(starts, 1);
-    assert.equal(writes, 1);
+    assert.equal(writes, 2);
     assert.equal(acquisitions.getAttempt(attemptId).torrentHash, hash);
   } finally {
     acquisitions.close(); requests.close();

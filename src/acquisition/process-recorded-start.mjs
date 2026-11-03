@@ -64,6 +64,12 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
         baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
         expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
       });
+      if (observed.reason === 'unexpected_selected_file') {
+        return held('passive_exclusion_unconfirmed');
+      }
+    }
+    if (observed.state === 'manifest_needs_exclusions') {
+      return held('passive_exclusion_unconfirmed');
     }
     if (observed.state !== 'manifest_safe') return observed;
     const signature = (files) => JSON.stringify(files.map((file) =>
