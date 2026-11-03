@@ -76,6 +76,7 @@ export async function submitStoppedCandidate({
   };
 
   const expected = prepared.expected;
+  let addAttempted = false;
   const bound = ledger.bindPreparedTorrent({ attemptId, candidate,
     hash: expected.hash, nowMs });
   if (bound.state === 'held') return bound;
@@ -112,6 +113,7 @@ export async function submitStoppedCandidate({
     const intent = ledger.beginDispatch({ attemptId, nowMs });
     if (intent.state === 'held') return intent;
     if (intent.sendNow) {
+      addAttempted = true;
       try {
         await fetchImpl(new URL('/api/v2/torrents/add', base), {
           method: 'POST', headers, body: prepared.form, redirect: 'manual',
@@ -129,6 +131,15 @@ export async function submitStoppedCandidate({
   let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs, allowSelectedPassive: true,
     expectedFiles: metainfo.files, saveRoot });
+  // qBittorrent may acknowledge an add before its torrent list exposes the
+  // new hash. Re-read the exact hash briefly; never send another add.
+  for (let retry = 0; addAttempted && observed.reason === 'torrent_unavailable' &&
+      retry < 5; retry++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
+      fetchImpl, timeoutMs, allowSelectedPassive: true,
+      expectedFiles: metainfo.files, saveRoot });
+  }
   if (observed.state === 'manifest_needs_exclusions') {
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),

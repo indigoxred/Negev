@@ -241,6 +241,34 @@ test('uncertain POST response never triggers a second add', async () =>
     assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
   }));
 
+test('reconciles a stopped torrent that appears after the first post-add read', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let posts = 0;
+    let infoReads = 0;
+    const fetchImpl = async (url, init) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+      if (endpoint.endsWith('/add')) {
+        posts++;
+        return new Response('Ok.');
+      }
+      if (endpoint.endsWith('/info')) {
+        infoReads++;
+        return Response.json(infoReads <= 2 ? [] : [torrent]);
+      }
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: savePath, download_path: '' });
+      if (endpoint.endsWith('/files')) return Response.json(files);
+      throw Error('unexpected downloader call');
+    };
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(ledger.getAttempt(attemptId).torrentHash, hash);
+    assert.equal(posts, 1);
+    assert.ok(infoReads >= 4);
+  }));
+
 test('excludes only passive extras before accepting a pristine stopped torrent', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     let added = false;
