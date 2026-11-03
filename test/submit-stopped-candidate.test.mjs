@@ -269,6 +269,55 @@ test('reconciles a stopped torrent that appears after the first post-add read', 
     assert.ok(infoReads >= 4);
   }));
 
+test('a just-added checking torrent gets bounded read-only rechecks before a hold', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let posts = 0;
+    let infoReads = 0;
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+        if (endpoint.endsWith('/add')) { posts++; return new Response('Ok.'); }
+        if (endpoint.endsWith('/info')) {
+          infoReads++;
+          return Response.json(infoReads === 1 ? [] :
+            [{ ...torrent, state: infoReads <= 3 ? 'checkingDL' : 'stoppedDL' }]);
+        }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: savePath, download_path: '' });
+        if (endpoint.endsWith('/files')) return Response.json(files);
+        throw Error('unexpected downloader call');
+      } });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(posts, 1);
+    assert.ok(infoReads >= 5);
+  }));
+
+test('a persistently active torrent remains held after bounded reads and one add', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let posts = 0;
+    let infoReads = 0;
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+        if (endpoint.endsWith('/add')) { posts++; return new Response('Ok.'); }
+        if (endpoint.endsWith('/info')) {
+          infoReads++;
+          return Response.json(infoReads === 1 ? [] :
+            [{ ...torrent, state: 'downloading' }]);
+        }
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: savePath, download_path: '' });
+        if (endpoint.endsWith('/files')) return Response.json(files);
+        throw Error('unexpected downloader call');
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'not_pristine_stopped' });
+    assert.equal(posts, 1);
+    assert.equal(infoReads, 13);
+    assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
+  }));
+
 test('excludes only passive extras before accepting a pristine stopped torrent', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     let added = false;

@@ -132,8 +132,10 @@ export async function submitStoppedCandidate({
     fetchImpl, timeoutMs, allowSelectedPassive: true,
     expectedFiles: metainfo.files, saveRoot });
   // qBittorrent may acknowledge an add before its torrent list exposes the
-  // new hash. Re-read the exact hash briefly; never send another add.
-  for (let retry = 0; addAttempted && observed.reason === 'torrent_unavailable' &&
+  // hash or while it briefly checks the new torrent. Re-read the full exact
+  // manifest briefly; never send another add or accept a non-pristine result.
+  for (let retry = 0; addAttempted &&
+      ['torrent_unavailable', 'not_pristine_stopped'].includes(observed.reason) &&
       retry < 5; retry++) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
