@@ -1,5 +1,7 @@
 import { stagingSavePath } from './staging-save-path.mjs';
 import { startStoppedCandidate } from './start-stopped-candidate.mjs';
+import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
+import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -15,6 +17,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
       typeof requests?.getRequest !== 'function' ||
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof acquisitions?.getFilePlan !== 'function' ||
+      typeof acquisitions?.recordTorrent !== 'function' ||
       typeof acquisitions?.getStart !== 'function' ||
       typeof stagingHostPath !== 'string' || !stagingHostPath ||
       typeof qbittorrent?.baseUrl !== 'string' ||
@@ -35,6 +38,46 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     if (intent) return { state: intent.status, sendNow: false };
     plan = acquisitions.getFilePlan(attemptId);
   } catch { return held('attempt_unavailable'); }
+  if (attempt.status === 'dispatch_unknown' && attempt.expectedHash) {
+    // The indexer may no longer list the release after qBittorrent accepted
+    // it. Reconcile the saved hash from qBittorrent; never send another add.
+    const pending = { hash: attempt.expectedHash, category: 'negev',
+      savePath: stagingSavePath(attempt.expectedHash,
+        { saveRoot: qbitStagingRoot }) };
+    let observed = await observeStoppedManifest({
+      baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
+      expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
+      allowSelectedPassive: true,
+    });
+    if (observed.state === 'manifest_needs_exclusions') {
+      const body = new URLSearchParams({ hash: pending.hash,
+        id: observed.passive.map((file) => String(file.index)).join('|'),
+        priority: '0' });
+      try {
+        await fetchImpl(new URL('/api/v2/torrents/filePrio', qbittorrent.baseUrl), {
+          method: 'POST', headers: { Cookie: qbittorrentSessionCookie(qbittorrent.sessionId),
+            'Content-Type': 'application/x-www-form-urlencoded' },
+          body, redirect: 'manual', signal: AbortSignal.timeout(10_000),
+        });
+      } catch { /* Re-observe the exact stopped torrent after an uncertain response. */ }
+      observed = await observeStoppedManifest({
+        baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
+        expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
+      });
+    }
+    if (observed.state !== 'manifest_safe') return observed;
+    const signature = (files) => JSON.stringify(files.map((file) =>
+      [file.name, file.size]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+    if (!plan || signature(observed.videos) !== signature(plan)) {
+      return held('file_plan_mismatch');
+    }
+    let recorded;
+    try { recorded = acquisitions.recordTorrent({ attemptId,
+      hash: attempt.expectedHash, nowMs: now() }); }
+    catch { return held('attempt_unavailable'); }
+    if (recorded.state !== 'torrent_observed') return recorded;
+    attempt = acquisitions.getAttempt(attemptId);
+  }
   if (attempt.status !== 'torrent_observed' || !attempt.torrentHash) {
     return held('torrent_not_observed');
   }

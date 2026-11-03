@@ -59,6 +59,25 @@ test('one stopped torrent holds while later stopped torrents advance', async () 
       ctx.ids[0].attemptId);
   }));
 
+test('a saved uncertain add is selected for exact stopped-torrent recovery', async () =>
+  fixture(async (ctx) => {
+    const request = ctx.requests.submit({ requesterId: 1,
+      requestKey: 'unknown-dispatch', nowMs: 100,
+      intent: { state: 'ready', anidbId: 43, kind: 'series',
+        monitorFuture: false, episodeIds: [2001] } });
+    const candidate = { indexerId: 7, guid: 'unknown-dispatch' };
+    const hash = 'f'.repeat(40);
+    const attemptId = ctx.acquisitions.reserve({ requestId: request.requestId,
+      candidate, episodeIds: [2001], nowMs: 200 }).attemptId;
+    ctx.acquisitions.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    ctx.acquisitions.recordFilePlan({ attemptId, hash,
+      plannedFiles: [{ name: '01.mkv', size: 10, episodeIds: [2001] }], nowMs: 202 });
+    ctx.acquisitions.beginDispatch({ attemptId, nowMs: 203 });
+    for (const row of ctx.ids) assert.equal(ctx.queue.claimNext({ nowMs: 1_000 })
+      .attemptId, row.attemptId);
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, attemptId);
+  }));
+
 test('a saved start intent is never selected for a second start', async () =>
   fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });
