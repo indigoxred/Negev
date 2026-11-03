@@ -15,7 +15,7 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
 const digest = 'A'.repeat(32);
 
 async function fixture({ detailedPage = false, densePage = false,
-  userRelease = false } = {}) {
+  userRelease = false, flaggedRelease = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));
   cleanup.push(root);
   await mkdir(path.join(root, 'Anime'), { recursive: true });
@@ -82,7 +82,8 @@ async function fixture({ detailedPage = false, densePage = false,
             PercentageStart: 0, PercentageEnd: 100 }] } :
         { ID: `anidb://${digest}+5`, ProviderName: 'AniDB',
           ReleaseURI: 'https://anidb.net/file/800', FileSize: 5,
-          IsCorrupted: false, Hashes: [{ Type: 'ED2K', Value: digest }],
+          IsCorrupted: flaggedRelease,
+          Hashes: [{ Type: 'ED2K', Value: digest }],
           CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
             PercentageStart: null, PercentageEnd: null }] },
         Locations: [{ FileID: 51, IsAccessible: true,
@@ -354,6 +355,21 @@ test('public observer accepts a physically matched Shoko User link only for avai
   assert.deepEqual(await service.observeTarget(target),
     { state: 'available', fileId: 51 });
   service.close();
+});
+
+test('public observer shows a flagged existing AniDB release only after exact Plex proof', async () => {
+  const { config } = await fixture({ flaggedRelease: true });
+  const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+  assert.deepEqual(await readShokoEpisodeFiles({ baseUrl: config.shokoBaseUrl,
+    apiKey: config.shokoApiKey, ...target, fetchImpl: config.fetchImpl }),
+  { state: 'unavailable' });
+  const service = createPlexAvailabilityService(config);
+  try {
+    assert.equal((await service.observeTarget(target)).state, 'unknown');
+    await service.tick({ libraryId: 102, kind: 'episode' });
+    assert.deepEqual(await service.observeTarget(target),
+      { state: 'available', fileId: 51 });
+  } finally { service.close(); }
 });
 
 test('trusted Shoko observation avoids a second episode request during GUID discovery', async () => {

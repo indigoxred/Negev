@@ -47,14 +47,21 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
     sourcePaths: ['/pure/Anime/Example/01-02.mkv'] });
 });
 
-test('an explicitly corrupt linked release is rejected without a positive candidate', async () => {
-  assert.deepEqual(await readShokoFileCandidate({ ...base,
+test('an AniDB-flagged existing file remains eligible for exact Plex availability proof', async () => {
+  const flagged = await readShokoFileCandidate({ ...base,
     fetchImpl: async () => json({ ...file,
-      Release: { ...file.Release, IsCorrupted: true } }) }),
-  { state: 'rejected', reason: 'corrupted_release' });
+      Release: { ...file.Release, IsCorrupted: true } }) });
+  assert.equal(flagged.state, 'candidate');
+  assert.equal(flagged.releaseEvidence, 'anidb_flagged');
+  assert.equal(flagged.anidbFileId, 800);
   assert.deepEqual(await readShokoFileCandidate({ ...base,
     fetchImpl: async () => json({ ...file, ID: 52,
       Release: { ...file.Release, IsCorrupted: true } }) }),
+  { state: 'unavailable' });
+  assert.deepEqual(await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json({ ...file,
+      Release: { ...file.Release, ID: 'anidb://wrong',
+        IsCorrupted: true } }) }),
   { state: 'unavailable' });
 });
 

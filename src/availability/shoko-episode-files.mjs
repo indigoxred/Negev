@@ -84,7 +84,14 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
         file.Locations.length > 20 || !Array.isArray(file.Release?.CrossReferences)) {
       incomplete = true; continue;
     }
-    if (file.Release.IsCorrupted !== false) { incomplete = true; continue; }
+    // A public playback-status observation may use an existing flagged file.
+    // Registered acquisition still rejects it before import.
+    if (file.Release.IsCorrupted !== false &&
+        !(purpose === 'availability' &&
+          file.Release.ProviderName === 'AniDB' &&
+          file.Release.IsCorrupted === true)) {
+      incomplete = true; continue;
+    }
     const ed2k = file.Hashes.find((hash) => hash?.Type === 'ED2K')?.Value;
     const refs = file.Release.CrossReferences;
     const unscopedUserRef = purpose === 'availability' &&
@@ -124,6 +131,9 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
         coverage, releaseEvidence: 'shoko_user_link' };
     }
     if (identity.state !== 'accepted') { incomplete = true; continue; }
+    if (purpose === 'availability' && identity.isCorrupted === true) {
+      identity = { ...identity, releaseEvidence: 'anidb_flagged' };
+    }
     const sourcePaths = [];
     let invalidLocation = false;
     for (const location of file.Locations) {

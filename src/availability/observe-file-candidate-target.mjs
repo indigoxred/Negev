@@ -15,8 +15,9 @@ export async function observeFileCandidateTarget({ candidate, target,
       !['series', 'movie'].includes(target.kind) ||
       candidate?.state !== 'candidate' || !validId(candidate.fileId) ||
       !validId(candidate.size) ||
-      !['registered', 'shoko_user_link'].includes(candidate.releaseEvidence) ||
-      (candidate.releaseEvidence === 'registered' &&
+      !['registered', 'anidb_flagged', 'shoko_user_link']
+        .includes(candidate.releaseEvidence) ||
+      (['registered', 'anidb_flagged'].includes(candidate.releaseEvidence) &&
         !validId(candidate.anidbFileId)) ||
       !Array.isArray(candidate.pairs) || candidate.pairs.length < 1 ||
       candidate.pairs.length > 100 ||

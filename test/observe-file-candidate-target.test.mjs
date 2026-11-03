@@ -48,6 +48,18 @@ test('one Shoko file candidate can prove two distinct exact public episode cards
   }
 });
 
+test('an AniDB-flagged existing file needs the same exact public card and file proof', async () => {
+  const result = await observeFileCandidateTarget({ ...base,
+    candidate: { ...candidate, releaseEvidence: 'anidb_flagged' },
+    target: { anidbId: 42, episodeId: 1001, kind: 'series' } });
+  assert.equal(result.state, 'available');
+  assert.deepEqual(await observeFileCandidateTarget({ ...base,
+    candidate: { ...candidate, anidbFileId: null,
+      releaseEvidence: 'anidb_flagged' },
+    target: { anidbId: 42, episodeId: 1001, kind: 'series' } }),
+  { state: 'unknown', reason: 'file_identity_unverified' });
+});
+
 test('a movie can be proven by its exact public Plex Movie card', async () => {
   const result = await observeFileCandidateTarget({ ...base,
     target: { anidbId: 42, episodeId: 1002, kind: 'movie' },
