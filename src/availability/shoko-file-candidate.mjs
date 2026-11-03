@@ -77,11 +77,23 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
   if (refs.some((ref) => !ref ||
       !Object.hasOwn(ref, 'PercentageStart') ||
       !Object.hasOwn(ref, 'PercentageEnd') ||
-      ref.PercentageStart !== 0 || ref.PercentageEnd !== 100) ||
+      ref.PercentageStart !== 0 ||
+      ![0, 100].includes(ref.PercentageEnd)) ||
       referenceKeys.some((key) => !linked.has(key)) ||
       new Set(referenceKeys).size !== refs.length) {
     return unavailable();
   }
+  // AniDB may link an episode at 0–0: it identifies the release but says
+  // that the file contains none of that episode. Keep the complete raw link
+  // check above, then nominate only episodes with full coverage for Plex proof.
+  const activeRefs = refs.filter((ref) => ref.PercentageEnd === 100);
+  const activeKeys = new Set(referenceKeys.filter((_, index) =>
+    refs[index].PercentageEnd === 100));
+  const activePairs = item.pairs.filter((pair) => activeKeys.has(pairKey(pair)));
+  const activeIdentities = identities.filter((identity) =>
+    activeKeys.has(pairKey(identity)));
+  if (activeRefs.length === 0 || activePairs.length !== activeRefs.length ||
+      activeIdentities.length !== activeRefs.length) return unavailable();
   let anidbFileId = null;
   let releaseEvidence;
   if (file.Release.ProviderName === 'AniDB') {
@@ -91,9 +103,10 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     if (animeIds.size !== 1 || !/^[0-9A-F]{32}$/.test(digest)) {
       return unavailable();
     }
-    const decision = evaluatePreview({ status: 200, release: file.Release },
+    const decision = evaluatePreview({ status: 200,
+      release: { ...file.Release, CrossReferences: activeRefs } },
       { ed2k: digest, size: file.Size, animeId: [...animeIds][0],
-        episodeIds: item.pairs.map((pair) => pair.episodeId) });
+        episodeIds: activePairs.map((pair) => pair.episodeId) });
     if (decision.state !== 'accepted') return unavailable();
     anidbFileId = decision.fileId;
     releaseEvidence = decision.isCorrupted === true
@@ -114,6 +127,6 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
   }
   return { state: 'candidate', fileId, updated: item.updated,
     size: file.Size,
-    anidbFileId, releaseEvidence, pairs: item.pairs,
-    identities, sourcePaths };
+    anidbFileId, releaseEvidence, pairs: activePairs,
+    identities: activeIdentities, sourcePaths };
 }
