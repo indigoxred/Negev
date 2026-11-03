@@ -34,8 +34,51 @@ test('new observer session withdraws old proofs and revisits the first hint', as
       outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 103 }).state,
       'held');
     const restarted = cursor.claim({ inventory, nowMs: 104, limit: 2 });
-    assert.deepEqual(restarted.fileIds, [2, 5]);
+    assert.deepEqual(restarted.fileIds, [2]);
+    assert.equal(restarted.priority, true);
     assert.equal(restarted.pass, first.pass + 1);
+    assert.equal(cursor.record({ claim: restarted,
+      outcomes: [{ fileId: 2, state: 'available' }], nowMs: 105 }).state,
+    'recorded');
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 106, limit: 2 }).fileIds,
+      [2, 5]);
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('restart rechecks formerly proven file IDs before the full inventory pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 5, 9].filter((id) => id > afterFileId).slice(0, limit) };
+  const cursor = openFileBackfillCursor(dbPath);
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 1_000 });
+  try {
+    assert.equal(proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 9, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 }).state, 'recorded');
+    resetFileBackfillEvidence(dbPath);
+    assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
+      'unknown');
+    const priority = cursor.claim({ inventory, nowMs: 1_001, limit: 1 });
+    assert.deepEqual(priority.fileIds, [9]);
+    assert.equal(priority.priority, true);
+    resetFileBackfillEvidence(dbPath);
+    const resumed = cursor.claim({ inventory, nowMs: 1_002, limit: 1 });
+    assert.deepEqual(resumed.fileIds, [9]);
+    assert.equal(resumed.priority, true);
+    assert.equal(cursor.record({ claim: priority,
+      outcomes: [{ fileId: 9, state: 'available' }], nowMs: 1_002 }).state,
+    'held');
+    assert.deepEqual(cursor.record({ claim: resumed,
+      outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 1_003 }),
+    { state: 'recorded', count: 1 });
+    const ordinary = cursor.claim({ inventory, nowMs: 1_004, limit: 1 });
+    assert.deepEqual(ordinary.fileIds, [2]);
+    assert.equal(ordinary.priority, undefined);
   } finally {
     proofs.close(); cursor.close();
     await rm(dir, { recursive: true, force: true });

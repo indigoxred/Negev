@@ -5,8 +5,8 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 
 // No source events are observed while the service is stopped. Withdraw old
-// positives and rewind their scan cursor in one transaction so a restart can
-// recheck every previously scanned file instead of waiting for a later pass.
+// positives and rewind the scan. Recheck formerly proven files first, without
+// treating their old proof as current or increasing the per-tick read budget.
 export function resetFileBackfillEvidence(dbPath) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Invalid file backfill database');
@@ -18,11 +18,16 @@ export function resetFileBackfillEvidence(dbPath) {
       WHERE type='table' AND name IN ('file_backfill_cursor',
         'file_availability_proofs')`).get();
     if (tables.count !== 2) throw new Error('File backfill evidence unavailable');
+    db.exec(`CREATE TABLE IF NOT EXISTS file_backfill_priority (
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0)
+    ) STRICT`);
+    db.exec(`INSERT OR IGNORE INTO file_backfill_priority (file_id)
+      SELECT DISTINCT file_id FROM file_availability_proofs`);
     db.exec('DELETE FROM file_availability_proofs');
     const reset = db.prepare(`UPDATE file_backfill_cursor SET
       after_file_id=0, pass=pass+1, receipt=receipt+1,
       pending_json=NULL, claimed_ms=NULL, pair_offset=0,
-      fingerprint=NULL WHERE id=1`).run();
+      fingerprint=NULL,priority_claim=0 WHERE id=1`).run();
     if (reset.changes !== 1) throw new Error('File backfill cursor unavailable');
     db.exec('COMMIT');
   } catch (error) {
@@ -48,7 +53,9 @@ export function openFileBackfillCursor(dbPath) {
       pending_json TEXT,
       claimed_ms INTEGER,
       pair_offset INTEGER NOT NULL DEFAULT 0 CHECK(pair_offset BETWEEN 0 AND 100),
-      fingerprint TEXT
+      fingerprint TEXT,
+      priority_claim INTEGER NOT NULL DEFAULT 0
+        CHECK(priority_claim IN (0,1))
     ) STRICT`);
     const columns = new Set(db.prepare('PRAGMA table_info(file_backfill_cursor)')
       .all().map((column) => column.name));
@@ -57,20 +64,33 @@ export function openFileBackfillCursor(dbPath) {
       CHECK(pair_offset BETWEEN 0 AND 100)`);
     if (!columns.has('fingerprint')) db.exec(`ALTER TABLE file_backfill_cursor
       ADD COLUMN fingerprint TEXT`);
+    if (!columns.has('priority_claim')) db.exec(`ALTER TABLE file_backfill_cursor
+      ADD COLUMN priority_claim INTEGER NOT NULL DEFAULT 0
+      CHECK(priority_claim IN (0,1))`);
+    db.exec(`CREATE TABLE IF NOT EXISTS file_backfill_priority (
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0)
+    ) STRICT`);
     db.exec(`INSERT OR IGNORE INTO file_backfill_cursor
       (id,after_file_id,pass,receipt) VALUES (1,0,1,0)`);
   } catch (error) { db.close(); throw error; }
   const read = db.prepare(`SELECT after_file_id AS afterFileId,pass,receipt,
     pending_json AS pendingJson,claimed_ms AS claimedMs,
-    pair_offset AS pairOffset,fingerprint
+    pair_offset AS pairOffset,fingerprint,priority_claim AS priorityClaim
     FROM file_backfill_cursor WHERE id=1`);
   const saveClaim = db.prepare(`UPDATE file_backfill_cursor SET
     after_file_id=?,pass=?,receipt=?,pending_json=?,claimed_ms=?,
-    pair_offset=?,fingerprint=? WHERE id=1`);
+    pair_offset=?,fingerprint=?,priority_claim=? WHERE id=1`);
   const saveResult = db.prepare(`UPDATE file_backfill_cursor SET
     after_file_id=?,pending_json=NULL,claimed_ms=NULL,
-    pair_offset=0,fingerprint=NULL
+    pair_offset=0,fingerprint=NULL,priority_claim=0
     WHERE id=1 AND receipt=? AND pending_json IS NOT NULL`);
+  const savePriorityResult = db.prepare(`UPDATE file_backfill_cursor SET
+    pending_json=NULL,claimed_ms=NULL,pair_offset=0,fingerprint=NULL,
+    priority_claim=0 WHERE id=1 AND receipt=? AND pending_json IS NOT NULL`);
+  const nextPriority = db.prepare(`SELECT file_id AS fileId
+    FROM file_backfill_priority ORDER BY file_id LIMIT ?`);
+  const removePriority = db.prepare(`DELETE FROM file_backfill_priority
+    WHERE file_id=?`);
   const validPage = (ids, afterFileId, limit) =>
     Array.isArray(ids) && ids.length <= limit && ids.every((id, index) =>
       validId(id) && id > (index === 0 ? afterFileId : ids[index - 1]));
@@ -90,7 +110,23 @@ export function openFileBackfillCursor(dbPath) {
           db.exec('COMMIT');
           return { state: 'claimed', pass: saved.pass,
             receipt: saved.receipt, claimedMs: saved.claimedMs, fileIds,
-            pairOffset: saved.pairOffset, fingerprint: saved.fingerprint };
+            pairOffset: saved.pairOffset, fingerprint: saved.fingerprint,
+            ...(saved.priorityClaim ? { priority: true } : {}) };
+        }
+        const priorityIds = nextPriority.all(limit).map((row) => row.fileId);
+        if (!validPage(priorityIds, 0, limit)) {
+          db.exec('ROLLBACK');
+          return held('invalid_file_priority_page');
+        }
+        if (priorityIds.length > 0) {
+          const receipt = saved.receipt + 1;
+          if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
+          saveClaim.run(saved.afterFileId, saved.pass, receipt,
+            JSON.stringify(priorityIds), nowMs, 0, null, 1);
+          db.exec('COMMIT');
+          return { state: 'claimed', pass: saved.pass, receipt,
+            claimedMs: nowMs, fileIds: priorityIds, pairOffset: 0,
+            fingerprint: null, priority: true };
         }
         let afterFileId = saved.afterFileId;
         let pass = saved.pass;
@@ -110,7 +146,7 @@ export function openFileBackfillCursor(dbPath) {
         }
         if (ids.length === 0) {
           if (afterFileId !== saved.afterFileId) {
-            saveClaim.run(afterFileId, pass, saved.receipt, null, null, 0, null);
+            saveClaim.run(afterFileId, pass, saved.receipt, null, null, 0, null, 0);
           }
           db.exec('COMMIT');
           return { state: 'idle' };
@@ -118,7 +154,7 @@ export function openFileBackfillCursor(dbPath) {
         const receipt = saved.receipt + 1;
         if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
         saveClaim.run(afterFileId, pass, receipt, JSON.stringify(ids), nowMs,
-          0, null);
+          0, null, 0);
         db.exec('COMMIT');
         return { state: 'claimed', pass, receipt,
           claimedMs: nowMs, fileIds: ids, pairOffset: 0, fingerprint: null };
@@ -130,6 +166,7 @@ export function openFileBackfillCursor(dbPath) {
           !validTime(claim.claimedMs) || nowMs < claim.claimedMs ||
           !Number.isSafeInteger(claim.pairOffset) || claim.pairOffset < 0 ||
           claim.pairOffset > 100 ||
+          (claim.priority !== undefined && claim.priority !== true) ||
           (claim.fingerprint !== null &&
             !/^[0-9a-f]{64}$/.test(claim.fingerprint)) ||
           !Array.isArray(claim.fileIds) || claim.fileIds.length < 1 ||
@@ -157,7 +194,8 @@ export function openFileBackfillCursor(dbPath) {
             saved.claimedMs !== claim.claimedMs ||
             saved.pendingJson !== JSON.stringify(claim.fileIds) ||
             saved.pairOffset !== claim.pairOffset ||
-            saved.fingerprint !== claim.fingerprint) {
+            saved.fingerprint !== claim.fingerprint ||
+            saved.priorityClaim !== (claim.priority === true ? 1 : 0)) {
           db.exec('ROLLBACK');
           return held('stale_file_backfill_claim');
         }
@@ -166,13 +204,18 @@ export function openFileBackfillCursor(dbPath) {
           if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
           saveClaim.run(saved.afterFileId, saved.pass, receipt,
             saved.pendingJson, nowMs, outcomes[0].nextPairOffset,
-            outcomes[0].fingerprint);
+            outcomes[0].fingerprint, saved.priorityClaim);
           db.exec('COMMIT');
           return { state: 'partial', count: 1 };
         }
         const last = claim.fileIds.at(-1);
-        if (last <= saved.afterFileId ||
-            saveResult.run(last, claim.receipt).changes !== 1) {
+        if (claim.priority === true) {
+          for (const fileId of claim.fileIds) removePriority.run(fileId);
+        }
+        if ((claim.priority !== true && last <= saved.afterFileId) ||
+            (claim.priority === true
+              ? savePriorityResult.run(claim.receipt)
+              : saveResult.run(last, claim.receipt)).changes !== 1) {
           db.exec('ROLLBACK');
           return held('stale_file_backfill_claim');
         }

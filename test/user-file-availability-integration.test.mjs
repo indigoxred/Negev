@@ -48,8 +48,14 @@ test('service restart invalidates prior broad proof and rewinds its scan', async
     assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
       'unknown');
     const firstAgain = cursor.claim({ inventory, nowMs: 110, limit: 2 });
-    assert.deepEqual(firstAgain.fileIds, [2, 5]);
+    assert.deepEqual(firstAgain.fileIds, [2]);
+    assert.equal(firstAgain.priority, true);
     assert.equal(firstAgain.pass, prior.pass + 1);
+    assert.equal(cursor.record({ claim: firstAgain,
+      outcomes: [{ fileId: 2, state: 'available' }], nowMs: 111 }).state,
+    'recorded');
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 112, limit: 2 }).fileIds,
+      [2, 5]);
   } finally {
     proofs?.close(); cursor?.close(); await service?.close();
     await rm(root, { recursive: true, force: true });
