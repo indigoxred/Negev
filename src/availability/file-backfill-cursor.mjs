@@ -121,6 +121,9 @@ export function openFileBackfillCursor(dbPath) {
   const validPage = (ids, afterFileId, limit) =>
     Array.isArray(ids) && ids.length <= limit && ids.every((id, index) =>
       validId(id) && id > (index === 0 ? afterFileId : ids[index - 1]));
+  const validPriorityPage = (ids, limit) =>
+    Array.isArray(ids) && ids.length <= limit &&
+    ids.every(validId) && new Set(ids).size === ids.length;
   return {
     prioritizeFile({ fileId, observedMs } = {}) {
       if (!validId(fileId) || !validTime(observedMs) ||
@@ -162,7 +165,8 @@ export function openFileBackfillCursor(dbPath) {
         const saved = read.get();
         if (saved.pendingJson !== null) {
           const fileIds = JSON.parse(saved.pendingJson);
-          if (!validPage(fileIds, 0, 10) || fileIds.length === 0) {
+          if (!(saved.priorityClaim ? validPriorityPage(fileIds, 10) :
+            validPage(fileIds, 0, 10)) || fileIds.length === 0) {
             throw new Error('Invalid saved file backfill claim');
           }
           db.exec('COMMIT');
@@ -172,7 +176,7 @@ export function openFileBackfillCursor(dbPath) {
             ...(saved.priorityClaim ? { priority: true } : {}) };
         }
         const priorityIds = nextPriority.all(limit).map((row) => row.fileId);
-        if (!validPage(priorityIds, 0, limit)) {
+        if (!validPriorityPage(priorityIds, limit)) {
           db.exec('ROLLBACK');
           return held('invalid_file_priority_page');
         }
@@ -228,7 +232,8 @@ export function openFileBackfillCursor(dbPath) {
           (claim.fingerprint !== null &&
             !/^[0-9a-f]{64}$/.test(claim.fingerprint)) ||
           !Array.isArray(claim.fileIds) || claim.fileIds.length < 1 ||
-          !validPage(claim.fileIds, 0, 10) ||
+          !(claim.priority === true ? validPriorityPage(claim.fileIds, 10) :
+            validPage(claim.fileIds, 0, 10)) ||
           !Array.isArray(outcomes) || outcomes.length !== claim.fileIds.length ||
           outcomes.some((item, index) => item?.fileId !== claim.fileIds[index] ||
             !['available', 'unknown', 'held', 'partial'].includes(item.state))) {

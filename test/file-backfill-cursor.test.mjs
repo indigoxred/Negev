@@ -171,6 +171,36 @@ test('a new file outranks restart rechecks without increasing the claim size', a
   }
 });
 
+test('a bounded mixed-rank priority page survives replay and records in rank order', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-page-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const cursor = openFileBackfillCursor(dbPath);
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 100 });
+  try {
+    proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 5, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 99 });
+    resetFileBackfillEvidence(dbPath);
+    cursor.prioritizeFile({ fileId: 51, observedMs: 100 });
+    const inventory = { listFileHintIds: () => [] };
+    const claim = cursor.claim({ inventory, nowMs: 101, limit: 2 });
+    assert.equal(claim.state, 'claimed');
+    assert.equal(claim.priority, true);
+    assert.deepEqual(claim.fileIds, [51, 5]);
+    assert.deepEqual(cursor.claim({ inventory, nowMs: 102, limit: 2 }).fileIds,
+      [51, 5]);
+    assert.equal(cursor.record({ claim, outcomes: [
+      { fileId: 51, state: 'available' },
+      { fileId: 5, state: 'unknown' },
+    ], nowMs: 103 }).state, 'recorded');
+    assert.equal(cursor.claim({ inventory, nowMs: 104, limit: 2 }).state, 'idle');
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a positive during an in-flight early miss queues one later recheck', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-race-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
