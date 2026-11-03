@@ -4,6 +4,8 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
+const validCandidateFingerprint = (value) => typeof value === 'string' &&
+  /^[0-9a-f]{64}(?::[0-9a-f]{64}(?:,[0-9a-f]{64}){0,49})?$/.test(value);
 
 // This queue only chooses which saved request to examine. It never searches
 // an indexer, calls qBittorrent, or treats a held item as completed.
@@ -121,8 +123,7 @@ export function openAcquisitionRequestQueue(dbPath) {
             (!Number.isSafeInteger(nextCandidateOffset) ||
               nextCandidateOffset < 0 || nextCandidateOffset > 50)) ||
           (nextCandidateFingerprint !== null &&
-            (typeof nextCandidateFingerprint !== 'string' ||
-              !/^[0-9a-f]{64}$/.test(nextCandidateFingerprint))) ||
+            !validCandidateFingerprint(nextCandidateFingerprint)) ||
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
@@ -186,8 +187,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
               (!Number.isSafeInteger(outcome.nextCandidateOffset) ||
                 outcome.nextCandidateOffset < 0 || outcome.nextCandidateOffset > 50)) ||
               (outcome?.nextCandidateFingerprint !== undefined &&
-                (typeof outcome.nextCandidateFingerprint !== 'string' ||
-                  !/^[0-9a-f]{64}$/.test(outcome.nextCandidateFingerprint))) ||
+                !validCandidateFingerprint(outcome.nextCandidateFingerprint)) ||
               (outcome?.state === 'stopped_observed' && !validId(outcome.attemptId)) ||
               (outcome?.state !== 'stopped_observed' &&
               (outcome?.state !== 'held' ||
