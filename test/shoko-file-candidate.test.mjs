@@ -47,6 +47,23 @@ test('one exact Shoko file read nominates all fully linked episodes for later Pl
     sourcePaths: ['/pure/Anime/Example/01-02.mkv'] });
 });
 
+test('a registered file nominates its full episode but never a zero-coverage link', async () => {
+  const zeroCoverage = { ...file, Release: { ...file.Release,
+    CrossReferences: [refs[0], { ...refs[1], PercentageEnd: 0 }] } };
+  const result = await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json(zeroCoverage) });
+  assert.equal(result.state, 'candidate');
+  assert.equal(result.anidbFileId, 800);
+  assert.equal(result.releaseEvidence, 'registered');
+  assert.deepEqual(result.pairs, [{ anidbId: 42, episodeId: 1001 }]);
+  assert.deepEqual(result.identities.map((item) => item.episodeId), [1001]);
+
+  const noContent = { ...file, Release: { ...file.Release,
+    CrossReferences: refs.map((ref) => ({ ...ref, PercentageEnd: 0 })) } };
+  assert.deepEqual(await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json(noContent) }), { state: 'unavailable' });
+});
+
 test('an AniDB-flagged existing file remains eligible for exact Plex availability proof', async () => {
   const flagged = await readShokoFileCandidate({ ...base,
     fetchImpl: async () => json({ ...file,
