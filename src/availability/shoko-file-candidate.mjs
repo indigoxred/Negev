@@ -35,18 +35,15 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     file = await readBoundedJson(response, 200_000);
   } catch { return unavailable(); }
   const item = normalizeShokoFile(file);
-  // A Shoko-confirmed corrupt release is a definitive non-candidate for this
-  // pass. Distinguish it from a transient read failure so later files advance.
-  if (item?.fileId === fileId && item.state === 'linked' &&
-      file.IsIgnored === false && file.Release?.ProviderName === 'AniDB' &&
-      file.Release.IsCorrupted === true) {
-    return { state: 'rejected', reason: 'corrupted_release' };
-  }
+  // This reader nominates existing files for public Plex availability only.
+  // An AniDB-flagged release still needs exact registration and same-file
+  // proof; the acquisition verifier keeps its separate clean-release rule.
   if (item?.fileId !== fileId || item.state !== 'linked' ||
       file.IsIgnored !== false || !validId(file.Size) ||
       !Array.isArray(file.Locations) || file.Locations.length < 1 ||
       file.Locations.length > 20 ||
-      file.Release?.IsCorrupted !== false ||
+      ![true, false].includes(file.Release?.IsCorrupted) ||
+      (file.Release.IsCorrupted && file.Release.ProviderName !== 'AniDB') ||
       !Array.isArray(file.Release.CrossReferences) ||
       file.Release.CrossReferences.length !== item.pairs.length) return unavailable();
   const identities = [];
@@ -99,7 +96,8 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
         episodeIds: item.pairs.map((pair) => pair.episodeId) });
     if (decision.state !== 'accepted') return unavailable();
     anidbFileId = decision.fileId;
-    releaseEvidence = 'registered';
+    releaseEvidence = decision.isCorrupted === true
+      ? 'anidb_flagged' : 'registered';
   } else if (userLink) {
     releaseEvidence = 'shoko_user_link';
   } else return unavailable();

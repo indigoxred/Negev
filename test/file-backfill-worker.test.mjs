@@ -24,30 +24,33 @@ const candidate = (count = 12, updated = '2026-11-02T00:00:00Z') => ({
     shokoEpisodeId: 2001 + index, tmdbMovieIds: [] })),
   sourcePaths: ['/pure/Anime/pack.mkv'] });
 
-test('an explicitly corrupt release stays unknown while the next file advances', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-corrupt-'));
+test('a flagged existing release can earn a proof while later files advance', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-flagged-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
   const checked = [];
+  let proofWrites = 0;
   const worker = createFileBackfillWorker({ cursor, maxFilesPerTick: 2,
     inventory: { listFileHintIds: ({ afterFileId }) =>
       [7, 8].filter((id) => id > afterFileId).slice(0, 1),
     getFile: () => ({ state: 'linked', updated: candidate(1).updated,
       observedMs: 100 }) },
-    readCandidate: async ({ fileId }) => fileId === 7
-      ? { state: 'rejected', reason: 'corrupted_release' }
-      : { ...candidate(1), fileId },
+    readCandidate: async ({ fileId }) => ({ ...candidate(1), fileId,
+      releaseEvidence: fileId === 7 ? 'anidb_flagged' : 'registered' }),
     resolveKind: async () => 'series',
     observeCandidate: async ({ candidate: file }) => {
       checked.push(file.fileId);
-      return { state: 'unknown' };
+      return file.fileId === 7 ? { state: 'available', fileId: 7,
+        proof: { fileId: 7 }, cardRevision: { observedMs: 200 } }
+        : { state: 'unknown' };
     },
-    proofs: { observeGuarded: () => { throw Error('No positive'); } },
+    proofs: { observeGuarded: () => { proofWrites++; return { state: 'recorded' }; } },
     now: () => 300 });
   try {
     assert.deepEqual(await worker.runOnce(), { state: 'checked',
-      checkedFiles: 2, checkedPairs: 1, available: 0,
+      checkedFiles: 2, checkedPairs: 2, available: 1,
       load: { cardReads: 0, physicalProbes: 0 } });
-    assert.deepEqual(checked, [8]);
+    assert.deepEqual(checked, [7, 8]);
+    assert.equal(proofWrites, 1);
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

@@ -87,6 +87,25 @@ test('wrong identity, inaccessible location, and unregistered release hold the o
   }
 });
 
+test('availability sees an AniDB-flagged existing file but registered acquisition rejects it', async () => {
+  const flagged = { ...episode, Files: [{ ...episode.Files[0],
+    Release: { ...release, IsCorrupted: true } }] };
+  const fetchImpl = async () => json(flagged);
+  assert.deepEqual(await readShokoEpisodeFiles({ ...base, fetchImpl }),
+    { state: 'unavailable' });
+  const observed = await readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl });
+  assert.equal(observed.state, 'ok');
+  assert.equal(observed.complete, true);
+  assert.equal(observed.files[0].releaseEvidence, 'anidb_flagged');
+  assert.equal(observed.files[0].anidbFileId, 800);
+  assert.deepEqual(await readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl: async () => json({ ...episode,
+      Files: [{ ...episode.Files[0], Release: { ...release,
+        ID: 'anidb://wrong', IsCorrupted: true } }] }) }),
+  { state: 'unavailable' });
+});
+
 test('one accessible location remains usable when an old location is inaccessible', async () => {
   const old = { ID: 71, FileID: 51, ManagedFolderID: 1,
     AbsolutePath: '/pure/Import/old.mkv', IsAccessible: false };
