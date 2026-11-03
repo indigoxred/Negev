@@ -299,6 +299,26 @@ test('a terminally rejected release yields to a later eligible release', async (
   assert.deepEqual(submitted, ['candidate-1', 'candidate-2']);
 });
 
+test('a retired stalled release yields to a later candidate', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: selected }) => selected.guid === 'candidate-1'
+      ? { state: 'held', reason: 'candidate_retired' }
+      : { state: 'stopped_observed', attemptId: 12 },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'candidate_retired');
+  assert.equal(first.nextCandidateOffset, 1);
+  assert.deepEqual(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }),
+  { state: 'stopped_observed', attemptId: 12 });
+});
+
 test('an uncertain first-time attempt does not advance to another release', async () => {
   const process = createAcquisitionRequestProcessor({
     readRequest: () => request,

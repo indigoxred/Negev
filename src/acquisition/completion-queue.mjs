@@ -21,7 +21,7 @@ export function openCompletionQueue(dbPath) {
     db.exec('PRAGMA foreign_keys=ON');
     for (const table of ['requests', 'acquisition_attempts', 'acquisition_starts',
       'acquisition_rejections', 'acquisition_retirements', 'acquisition_releases',
-      'handoff_intents']) {
+      'acquisition_stall_retirement_intents', 'handoff_intents']) {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
         throw new TypeError('Completion ledgers must be initialized first');
       }
@@ -49,10 +49,12 @@ export function openCompletionQueue(dbPath) {
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     LEFT JOIN handoff_intents h ON h.attempt_id=a.id
     LEFT JOIN completion_checks c ON c.attempt_id=a.id
     WHERE a.id>? AND a.status='torrent_observed' AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL AND h.attempt_id IS NULL AND
+      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
+      h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
     ORDER BY a.id LIMIT 1`);
   const advance = db.prepare('UPDATE completion_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
@@ -77,8 +79,10 @@ export function openCompletionQueue(dbPath) {
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state IS NULL AND h.attempt_id IS NULL
       AND j.attempt_id IS NULL AND x.attempt_id IS NULL AND t.attempt_id IS NULL
+      AND si.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;

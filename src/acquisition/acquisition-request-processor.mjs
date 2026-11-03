@@ -158,6 +158,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (outcome?.state === 'held' &&
         (outcome.reason === 'target_already_available' ||
           outcome.reason === 'candidate_rejected' ||
+          outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
