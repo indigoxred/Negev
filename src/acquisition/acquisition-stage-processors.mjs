@@ -20,6 +20,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
   verifyStagingRoot, realpathImpl,
+  verifyShokoSource,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
@@ -32,7 +33,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       typeof handoffs?.getHandoff !== 'function' ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
-        verifyHandoffMounts, ensureImportRoot, readEd2kMode]
+        verifyHandoffMounts, ensureImportRoot, readEd2kMode,
+        verifyShokoSource]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
@@ -58,6 +60,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
   const handoffMountReady = async () => {
     try {
+      if ((await verifyShokoSource())?.state !== 'verified_shoko_source') {
+        return false;
+      }
       const child = await ensureImportRoot({ holdingRoot, importRoot,
         verifyHandoffMounts });
       if (child?.state !== 'import_child_ready') return false;

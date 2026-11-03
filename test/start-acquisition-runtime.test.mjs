@@ -4,6 +4,7 @@ import { startAcquisitionRuntime } from '../src/acquisition/start-acquisition-ru
 
 const acquisition = { stagingHostPath: '/staging', holdingRoot: '/holding',
   importRoot: '/import/Negev', qbitStagingRoot: '/data/torrents/negev',
+  shokoSourcePath: '/negev/source', shokoSourceFolderId: 2,
   shokoProviderId: '11111111-2222-3333-4444-555555555555' };
 
 test('disabled account startup never constructs an acquisition worker', async () => {
@@ -26,12 +27,20 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
   let childReady = false;
   const result = await startAcquisitionRuntime({
     config: { acquisitionRuntime: true, acquisition,
+      shokoBaseUrl: 'http://shoko.internal:8111/',
       qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
+    shokoApiKey: 'synthetic',
     service: { openAcquisitionWorkers: (input) => {
       calls.push(input);
       return runtime;
     } },
     sessionGate,
+    verifySource: async (input) => {
+      assert.deepEqual(input, { baseUrl: 'http://shoko.internal:8111/',
+        apiKey: 'synthetic', folderId: 2, shokoPath: '/negev/source' });
+      calls.push('source');
+      return { state: 'verified_shoko_source' };
+    },
     ensureChild: async (input) => {
       assert.deepEqual(input, { holdingRoot: '/holding',
         importRoot: '/import/Negev' });
@@ -47,7 +56,8 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
     realpathImpl,
   });
   assert.equal(result, runtime);
-  const { verifyStagingRoot, ...providers } = calls[0];
+  const { verifyStagingRoot, verifyShokoSource, ...providers } = calls[0];
+  assert.equal(typeof verifyShokoSource, 'function');
   assert.deepEqual(await verifyStagingRoot(), { state: 'verified_staging_root' });
   assert.deepEqual([providers, calls[1]], [{ qbBaseUrl: 'http://qbit.internal:8080', sessionGate,
     stagingHostPath: acquisition.stagingHostPath,
@@ -55,6 +65,27 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
     holdingRoot: acquisition.holdingRoot, importRoot: acquisition.importRoot,
     realpathImpl,
     shokoProviderId: acquisition.shokoProviderId }, 'reconcile']);
+  assert.equal(calls[2], 'source');
+});
+
+test('unverified Shoko source holds before creating a watched import child', async () => {
+  let childCalls = 0;
+  let gate;
+  await startAcquisitionRuntime({
+    config: { acquisitionRuntime: true, acquisition,
+      shokoBaseUrl: 'http://shoko.internal:8111/',
+      qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
+    shokoApiKey: 'synthetic',
+    service: { openAcquisitionWorkers: ({ verifyStagingRoot }) => {
+      gate = verifyStagingRoot;
+      return { start: async () => ({ state: 'held' }) };
+    } },
+    sessionGate: {},
+    verifySource: async () => ({ state: 'held' }),
+    ensureChild: async () => { childCalls++; return { state: 'import_child_ready' }; },
+  });
+  assert.deepEqual(await gate(), { state: 'held', reason: 'shoko_source_unverified' });
+  assert.equal(childCalls, 0);
 });
 
 test('a missing Import child holds the staging gate before any root approval', async () => {
@@ -68,6 +99,7 @@ test('a missing Import child holds the staging gate before any root approval', a
       return { start: async () => ({ state: 'held' }) };
     } },
     sessionGate: {},
+    verifySource: async () => ({ state: 'verified_shoko_source' }),
     ensureChild: async () => ({ state: 'held' }),
     verifyRoot: async () => { checked++; return { state: 'verified_staging_root' }; },
   });

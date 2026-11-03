@@ -58,6 +58,7 @@ import { collectFirstTimeUncertain } from
 import { openAcquisitionRuntime } from '../acquisition/acquisition-runtime.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
+import { combineImportActivity } from '../availability/combined-import-activity.mjs';
 import { importFeedState, scopedImportFeedState,
   observeImportQuietWindow } from
   '../acquisition/import-quiet-window.mjs';
@@ -73,6 +74,7 @@ const withinRoot = (root, candidate) => {
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   dataDir = null,
   shokoImportRoot = null, shokoImportFolderId = null,
+  acquisitionImportParent = null, acquisitionImportFolderId = null,
   qbitSidecarObserver = null,
   sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
   titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
@@ -107,6 +109,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       (shokoImportFolderId !== null &&
         (!Number.isSafeInteger(shokoImportFolderId) ||
          shokoImportFolderId < 1 || shokoImportRoot === null)) ||
+      ((acquisitionImportParent === null) !==
+        (acquisitionImportFolderId === null)) ||
+      (acquisitionImportParent !== null &&
+        (typeof acquisitionImportParent !== 'string' ||
+         !path.isAbsolute(acquisitionImportParent) ||
+         path.parse(acquisitionImportParent).root === acquisitionImportParent ||
+         path.normalize(acquisitionImportParent) !== acquisitionImportParent ||
+         /[\0\r\n]/.test(acquisitionImportParent) ||
+         !Number.isSafeInteger(acquisitionImportFolderId) ||
+         acquisitionImportFolderId < 1 ||
+         acquisitionImportFolderId === shokoImportFolderId ||
+         shokoImportRoot === null ||
+         withinRoot(shokoImportRoot, acquisitionImportParent) ||
+         withinRoot(acquisitionImportParent, shokoImportRoot))) ||
       (qbitSidecarObserver !== null &&
         (shokoImportFolderId === null ||
          typeof qbitSidecarObserver.readTorrent !== 'function' ||
@@ -300,16 +316,25 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const readImportActivity = shokoImportRoot !== null &&
-      shokoImportFolderId !== null ? (withFingerprint = false, target = null) => metadata.run(() =>
-        readShokoImportActivity({ baseUrl: shokoBaseUrl,
+      shokoImportFolderId !== null ? async (withFingerprint = false, target = null) => {
+        const manual = await metadata.run(() => readShokoImportActivity({
+          baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
           managedFolderId: shokoImportFolderId, withFingerprint,
+          ...(qbitSidecarObserver === null ? {} : {
+            readSidecarTorrent: qbitSidecarObserver.readTorrent,
+            qbitImportSavePath: qbitSidecarObserver.importSavePath }) }));
+        if (acquisitionImportParent === null) return manual;
+        const automated = await metadata.run(() => readShokoImportActivity({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fetchImpl,
+          importRoot: acquisitionImportParent,
+          managedFolderId: acquisitionImportFolderId, withFingerprint,
           ...(target === null ? {} : { target,
             ownedSubtree: 'Negev',
             getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
-          ...(qbitSidecarObserver === null ? {} : {
-            readSidecarTorrent: qbitSidecarObserver.readTorrent,
-            qbitImportSavePath: qbitSidecarObserver.importSavePath }) })) : null;
+        }));
+        return combineImportActivity(manual, automated, withFingerprint);
+      } : null;
     let acquisitionRuntime;
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       readImportActivity,
@@ -602,22 +627,30 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       observeFirstTimeUncertain,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
         qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
-        verifyStagingRoot, realpathImpl,
+        verifyStagingRoot, verifyShokoSource, realpathImpl,
         shokoProviderId, readPacer } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
         }
-        // Publication must be restricted to Negev's child of the configured
-        // Shoko Import root. Preparing inside that watched root is forbidden.
-        if (shokoImportRoot === null ||
-            importRoot !== path.join(shokoImportRoot, 'Negev') ||
+        // Publication is restricted to Negev's child of its separate watched
+        // Shoko Source. Preparing inside that watched root is forbidden.
+        if (acquisitionImportParent === null ||
+            acquisitionImportFolderId === null ||
+            importRoot !== path.join(acquisitionImportParent, 'Negev') ||
             typeof holdingRoot !== 'string' ||
             !path.isAbsolute(holdingRoot) ||
             path.normalize(holdingRoot) !== holdingRoot ||
-            withinRoot(shokoImportRoot, holdingRoot)) {
+            path.basename(holdingRoot) !== 'holding' ||
+            path.basename(acquisitionImportParent) !== 'source' ||
+            path.dirname(holdingRoot) !==
+              path.dirname(acquisitionImportParent) ||
+            withinRoot(shokoImportRoot, holdingRoot) ||
+            withinRoot(acquisitionImportParent, holdingRoot) ||
+            withinRoot(holdingRoot, acquisitionImportParent)) {
           throw new TypeError('Dedicated acquisition handoff roots required');
         }
         if (!prowlarr || !plexObserver || !readImportActivity ||
+            typeof verifyShokoSource !== 'function' ||
             !Array.isArray(plex?.sourcePolicy) ||
             !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
               .test(shokoProviderId)) {
@@ -626,7 +659,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
           dbPath, requests, acquisitions, handoffs, qbBaseUrl, sessionGate,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
-          inspectMounts, verifyStagingRoot,
+          inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },

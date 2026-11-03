@@ -336,11 +336,19 @@ export function parseUserServerConfig(env) {
   const prowlarr = prowlarrConfig(env, dataDir);
   const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
   const acquisitionNames = ['NEGEV_STAGING_HOST_PATH', 'NEGEV_HOLDING_ROOT',
-    'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID'];
+    'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID',
+    'NEGEV_ACQUISITION_IMPORT_PARENT', 'NEGEV_ACQUISITION_IMPORT_FOLDER_ID',
+    'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH'];
   let acquisition = null;
+  let acquisitionImportParent = null;
+  let acquisitionImportFolderId = null;
   if (acquisitionRuntime) {
     const stagingHostPath = env.NEGEV_STAGING_HOST_PATH;
     const holdingRoot = env.NEGEV_HOLDING_ROOT;
+    acquisitionImportParent = env.NEGEV_ACQUISITION_IMPORT_PARENT;
+    const rawAcquisitionFolderId = env.NEGEV_ACQUISITION_IMPORT_FOLDER_ID;
+    acquisitionImportFolderId = Number(rawAcquisitionFolderId);
+    const shokoSourcePath = env.NEGEV_ACQUISITION_SHOKO_SOURCE_PATH;
     const qbitStagingRoot = env.NEGEV_QBITTORRENT_STAGING_ROOT;
     const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
     if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
@@ -348,6 +356,16 @@ export function parseUserServerConfig(env) {
         env.NEGEV_SHOKO_EVENTS !== '1' || env.NEGEV_SHOKO_RECENT !== '1' ||
         env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
         !validRuntimePath(stagingHostPath) || !validRuntimePath(holdingRoot) ||
+        !validRuntimePath(acquisitionImportParent) ||
+        path.basename(holdingRoot) !== 'holding' ||
+        path.basename(acquisitionImportParent) !== 'source' ||
+        path.dirname(holdingRoot) !== path.dirname(acquisitionImportParent) ||
+        path.parse(path.dirname(holdingRoot)).root === path.dirname(holdingRoot) ||
+        typeof rawAcquisitionFolderId !== 'string' ||
+        !/^[1-9]\d*$/.test(rawAcquisitionFolderId) ||
+        !validId(acquisitionImportFolderId) ||
+        acquisitionImportFolderId === shokoImportFolderId ||
+        !validSourceRoot(shokoSourcePath) ||
         !validStagingSaveRoot(qbitStagingRoot) ||
         within(qbitStagingRoot, qbitSidecar.importSavePath) ||
         within(qbitSidecar.importSavePath, qbitStagingRoot) ||
@@ -357,13 +375,20 @@ export function parseUserServerConfig(env) {
         runtimePathsOverlap(stagingHostPath, shokoImportRoot) ||
         runtimePathsOverlap(shokoImportRoot, holdingRoot) ||
         runtimePathsOverlap(holdingRoot, shokoImportRoot) ||
+        runtimePathsOverlap(shokoImportRoot, acquisitionImportParent) ||
+        runtimePathsOverlap(acquisitionImportParent, shokoImportRoot) ||
+        runtimePathsOverlap(acquisitionImportParent, holdingRoot) ||
+        runtimePathsOverlap(holdingRoot, acquisitionImportParent) ||
+        runtimePathsOverlap(acquisitionImportParent, stagingHostPath) ||
+        runtimePathsOverlap(stagingHostPath, acquisitionImportParent) ||
         runtimePathsOverlap(stagingHostPath, holdingRoot) ||
         runtimePathsOverlap(holdingRoot, stagingHostPath) ||
         !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId)) {
       throw new TypeError('Acquisition runtime is unavailable without guarded providers and paths');
     }
     acquisition = { stagingHostPath, qbitStagingRoot, holdingRoot,
-      importRoot: path.join(shokoImportRoot, 'Negev'),
+      importRoot: path.join(acquisitionImportParent, 'Negev'),
+      shokoSourcePath, shokoSourceFolderId: acquisitionImportFolderId,
       shokoProviderId };
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
@@ -372,6 +397,7 @@ export function parseUserServerConfig(env) {
     acquisitionRuntime, acquisition,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
+    acquisitionImportParent, acquisitionImportFolderId,
     shokoEvents: env.NEGEV_SHOKO_EVENTS === '1',
     shokoInventory: env.NEGEV_SHOKO_INVENTORY === '1',
     shokoInventoryHints: env.NEGEV_SHOKO_INVENTORY_HINTS === '1',

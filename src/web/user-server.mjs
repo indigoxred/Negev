@@ -70,7 +70,8 @@ try {
       shokoRecent?.requestSoon();
     },
     today: () => dateInZone(config.timeZone) });
-  await startAcquisitionRuntime({ config, service, sessionGate: qbitSessionGate });
+  await startAcquisitionRuntime({ config, service, sessionGate: qbitSessionGate,
+    shokoApiKey });
   await service.app.listen({ host: config.host, port: config.port });
   const reportShokoFeedStatus = createShokoFeedStatusReporter();
   const flagShokoGap = (reason) => {
