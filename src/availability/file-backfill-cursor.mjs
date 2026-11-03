@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
+const recentWindowMs = 30 * 60_000;
 
 // No source events are observed while the service is stopped. Withdraw old
 // positives and rewind the scan. Recheck formerly proven files first, without
@@ -68,7 +69,17 @@ export function openFileBackfillCursor(dbPath) {
       ADD COLUMN priority_claim INTEGER NOT NULL DEFAULT 0
       CHECK(priority_claim IN (0,1))`);
     db.exec(`CREATE TABLE IF NOT EXISTS file_backfill_priority (
-      file_id INTEGER PRIMARY KEY CHECK(file_id>0)
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0),
+      rank INTEGER NOT NULL DEFAULT 0 CHECK(rank IN (0,1))
+    ) STRICT`);
+    const priorityColumns = new Set(db.prepare('PRAGMA table_info(file_backfill_priority)')
+      .all().map((column) => column.name));
+    if (!priorityColumns.has('rank')) db.exec(`ALTER TABLE file_backfill_priority
+      ADD COLUMN rank INTEGER NOT NULL DEFAULT 0 CHECK(rank IN (0,1))`);
+    db.exec(`CREATE TABLE IF NOT EXISTS file_backfill_recent_events (
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0),
+      expires_ms INTEGER NOT NULL CHECK(expires_ms>=0),
+      confirmed INTEGER NOT NULL DEFAULT 0 CHECK(confirmed IN (0,1))
     ) STRICT`);
     db.exec(`INSERT OR IGNORE INTO file_backfill_cursor
       (id,after_file_id,pass,receipt) VALUES (1,0,1,0)`);
@@ -88,13 +99,60 @@ export function openFileBackfillCursor(dbPath) {
     pending_json=NULL,claimed_ms=NULL,pair_offset=0,fingerprint=NULL,
     priority_claim=0 WHERE id=1 AND receipt=? AND pending_json IS NOT NULL`);
   const nextPriority = db.prepare(`SELECT file_id AS fileId
-    FROM file_backfill_priority ORDER BY file_id LIMIT ?`);
+    FROM file_backfill_priority ORDER BY rank DESC,file_id LIMIT ?`);
   const removePriority = db.prepare(`DELETE FROM file_backfill_priority
     WHERE file_id=?`);
+  const hasPriority = db.prepare(`SELECT file_id FROM file_backfill_priority
+    WHERE file_id=?`);
+  const addPriority = db.prepare(`INSERT INTO file_backfill_priority
+    (file_id,rank) VALUES (?,1) ON CONFLICT(file_id) DO UPDATE SET
+    rank=1 WHERE rank=0`);
+  const rememberRecent = db.prepare(`INSERT INTO file_backfill_recent_events
+    (file_id,expires_ms) VALUES (?,?) ON CONFLICT(file_id) DO UPDATE SET
+    expires_ms=MAX(expires_ms,excluded.expires_ms),confirmed=0`);
+  const readRecent = db.prepare(`SELECT expires_ms AS expiresMs,confirmed
+    FROM file_backfill_recent_events WHERE file_id=?`);
+  const markConfirmed = db.prepare(`UPDATE file_backfill_recent_events
+    SET confirmed=1 WHERE file_id=?`);
+  const forgetRecent = db.prepare(`DELETE FROM file_backfill_recent_events
+    WHERE file_id=?`);
+  const pruneRecent = db.prepare(`DELETE FROM file_backfill_recent_events
+    WHERE expires_ms<?`);
   const validPage = (ids, afterFileId, limit) =>
     Array.isArray(ids) && ids.length <= limit && ids.every((id, index) =>
       validId(id) && id > (index === 0 ? afterFileId : ids[index - 1]));
   return {
+    prioritizeFile({ fileId, observedMs } = {}) {
+      if (!validId(fileId) || !validTime(observedMs) ||
+          !validTime(observedMs + recentWindowMs)) {
+        throw new TypeError('Invalid recent file event');
+      }
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        pruneRecent.run(observedMs);
+        rememberRecent.run(fileId, observedMs + recentWindowMs);
+        const queued = addPriority.run(fileId).changes === 1;
+        db.exec('COMMIT');
+        return { state: queued ? 'queued' : 'unchanged' };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    },
+    confirmRecentFile({ fileId, nowMs } = {}) {
+      if (!validId(fileId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid recent file confirmation');
+      }
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const recent = readRecent.get(fileId);
+        let queued = false;
+        if (recent && nowMs <= recent.expiresMs) {
+          if (hasPriority.get(fileId)) markConfirmed.run(fileId);
+          else { addPriority.run(fileId); forgetRecent.run(fileId); }
+          queued = true;
+        } else if (recent) forgetRecent.run(fileId);
+        db.exec('COMMIT');
+        return { state: queued ? 'queued' : 'unchanged' };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    },
     claim({ inventory, nowMs, limit = 10 } = {}) {
       if (typeof inventory?.listFileHintIds !== 'function' ||
           !validTime(nowMs) || !Number.isSafeInteger(limit) ||
@@ -210,7 +268,16 @@ export function openFileBackfillCursor(dbPath) {
         }
         const last = claim.fileIds.at(-1);
         if (claim.priority === true) {
-          for (const fileId of claim.fileIds) removePriority.run(fileId);
+          for (const [index, fileId] of claim.fileIds.entries()) {
+            const recent = readRecent.get(fileId);
+            removePriority.run(fileId);
+            if (recent && (outcomes[index].state === 'available' ||
+                nowMs > recent.expiresMs)) forgetRecent.run(fileId);
+            else if (recent?.confirmed) {
+              addPriority.run(fileId);
+              forgetRecent.run(fileId);
+            }
+          }
         }
         if ((claim.priority !== true && last <= saved.afterFileId) ||
             (claim.priority === true

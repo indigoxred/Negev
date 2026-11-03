@@ -289,12 +289,15 @@ export function openDirectAvailabilityQueue(dbPath) {
 
 // An explicit tick checks one target. No automatic timer or broad Plex scan.
 export function createDirectAvailabilityWorker({ queue, observeTarget,
-  now = Date.now, requireProof = false } = {}) {
+  now = Date.now, requireProof = false,
+  onRecordedAvailable } = {}) {
   if (typeof queue?.claimNext !== 'function' ||
       typeof queue?.recordResult !== 'function' ||
       typeof queue?.retryBusy !== 'function' ||
       typeof observeTarget !== 'function' || typeof now !== 'function' ||
-      typeof requireProof !== 'boolean') {
+      typeof requireProof !== 'boolean' ||
+      (onRecordedAvailable !== undefined &&
+        typeof onRecordedAvailable !== 'function')) {
     throw new TypeError('Invalid direct availability worker');
   }
   let busy = false;
@@ -318,6 +321,9 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
         const saved = queue.recordResult({ claim: receipt, state,
           checkedMs: now(), proof: state === 'available'
             ? proof ?? null : null });
+        if (saved.state === 'recorded' && state === 'available' && proof) {
+          onRecordedAvailable?.(proof);
+        }
         return saved.state === 'recorded'
           ? { state: 'checked', target: receipt.target, result: state }
           : saved;
@@ -331,11 +337,13 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
 // fresh Shoko file read. Each result is independently proven and recorded.
 export function createFileAvailabilityWorker({ queue, inventory,
   resolveKind, readCandidate, observeCandidate, observeFallback,
-  now = Date.now } = {}) {
+  now = Date.now, onRecordedAvailable } = {}) {
   if (typeof queue?.claimNext !== 'function' ||
       typeof queue?.claimAssociated !== 'function' ||
       typeof queue?.recordResult !== 'function' ||
       typeof queue?.retryBusy !== 'function' ||
+      (onRecordedAvailable !== undefined &&
+        typeof onRecordedAvailable !== 'function') ||
       typeof inventory?.getObservedFileIds !== 'function' ||
       typeof inventory?.getFile !== 'function' ||
       [resolveKind, readCandidate, observeCandidate, observeFallback, now]
@@ -420,6 +428,9 @@ export function createFileAvailabilityWorker({ queue, inventory,
             ? 'available' : 'unknown';
           const saved = queue.recordResult({ claim: receipt, state,
             checkedMs: now(), proof: state === 'available' ? proof : null });
+          if (saved.state === 'recorded' && state === 'available') {
+            onRecordedAvailable?.(proof);
+          }
           if (receipt === first) firstResult = saved.state === 'recorded'
             ? { state: 'checked', target: receipt.target, result: state,
               batchSize: receipts.length } : saved;

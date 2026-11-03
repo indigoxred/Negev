@@ -89,11 +89,12 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
           PercentageStart: 0, PercentageEnd: 100 }] } };
     const calls = [];
     let shokoFileAvailable = true;
+    let clock = 100;
     service = await createUserService({
       dbPath,
       shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
       sessionKey: randomBytes(32), publicOrigin: 'http://localhost:3000',
-      secureCookies: false, now: () => 100,
+      secureCookies: false, now: () => clock,
       shokoInventoryHints: true, fileBackfill: true,
       fileProofLifetimeMs: 30 * 60_000,
       plex: { plexBaseUrl: 'http://plex:32400/', plexToken: 'synthetic',
@@ -189,6 +190,25 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
       assert.equal((await catalogue()).episodes?.[0]?.availability, 'unknown');
       shokoFileAvailable = true;
       assert.equal((await service.refreshShokoFile(51)).state, 'recorded_file');
+      const eventCursor = openFileBackfillCursor(dbPath);
+      try {
+        const eventClaim = eventCursor.claim({ inventory: {
+          listFileHintIds: () => [] }, nowMs: 101, limit: 1 });
+        assert.deepEqual(eventClaim.fileIds, [51]);
+        assert.equal(eventClaim.priority, true);
+        assert.equal(eventCursor.record({ claim: eventClaim,
+          outcomes: [{ fileId: 51, state: 'unknown' }], nowMs: 101 }).state,
+        'recorded');
+      } finally { eventCursor.close(); }
+      clock = 102;
+      assert.equal((await service.tickFileAvailability()).result, 'available');
+      const retriedCursor = openFileBackfillCursor(dbPath);
+      try {
+        const retry = retriedCursor.claim({ inventory: {
+          listFileHintIds: () => [] }, nowMs: 103, limit: 1 });
+        assert.deepEqual(retry.fileIds, [51]);
+        assert.equal(retry.priority, true);
+      } finally { retriedCursor.close(); }
       const reopened = new DatabaseSync(dbPath);
       try {
         assert.equal(reopened.prepare(`SELECT state FROM shoko_inventory_files

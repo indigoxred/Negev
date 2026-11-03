@@ -86,6 +86,112 @@ test('restart rechecks formerly proven file IDs before the full inventory pass',
   }
 });
 
+test('a newly linked file can be queued once ahead of the historical pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-new-priority-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
+    [2, 5, 51].filter((id) => id > afterFileId).slice(0, limit) };
+  let cursor = openFileBackfillCursor(dbPath);
+  try {
+    const ordinary = cursor.claim({ inventory, nowMs: 100, limit: 1 });
+    assert.deepEqual(ordinary.fileIds, [2]);
+    assert.equal(cursor.record({ claim: ordinary,
+      outcomes: [{ fileId: 2, state: 'unknown' }], nowMs: 101 }).state,
+    'recorded');
+    assert.deepEqual(cursor.prioritizeFile({ fileId: 51, observedMs: 100 }),
+      { state: 'queued' });
+    assert.deepEqual(cursor.prioritizeFile({ fileId: 51, observedMs: 100 }),
+      { state: 'unchanged' });
+    cursor.close();
+    cursor = openFileBackfillCursor(dbPath);
+    const recent = cursor.claim({ inventory, nowMs: 102, limit: 1 });
+    assert.deepEqual(recent.fileIds, [51]);
+    assert.equal(recent.priority, true);
+    assert.equal(cursor.record({ claim: recent,
+      outcomes: [{ fileId: 51, state: 'unknown' }], nowMs: 103 }).state,
+    'recorded');
+    const resumedOrdinary = cursor.claim({ inventory, nowMs: 104, limit: 1 });
+    assert.deepEqual(resumedOrdinary.fileIds, [5]);
+    assert.equal(cursor.record({ claim: resumedOrdinary,
+      outcomes: [{ fileId: 5, state: 'unknown' }], nowMs: 104 }).state,
+    'recorded');
+    assert.deepEqual(cursor.confirmRecentFile({ fileId: 51, nowMs: 105 }),
+      { state: 'queued' });
+    const afterCard = cursor.claim({ inventory, nowMs: 106, limit: 1 });
+    assert.deepEqual(afterCard.fileIds, [51]);
+    assert.equal(afterCard.priority, true);
+    assert.equal(cursor.record({ claim: afterCard,
+      outcomes: [{ fileId: 51, state: 'available' }], nowMs: 107 }).state,
+    'recorded');
+    assert.deepEqual(cursor.confirmRecentFile({ fileId: 51, nowMs: 108 }),
+      { state: 'unchanged' });
+  } finally {
+    cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an old event cannot keep reordering the historical pass', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-expiry-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  try {
+    cursor.prioritizeFile({ fileId: 51, observedMs: 100 });
+    const inventory = { listFileHintIds: () => [] };
+    const claim = cursor.claim({ inventory, nowMs: 101 });
+    cursor.record({ claim, outcomes: [{ fileId: 51, state: 'unknown' }],
+      nowMs: 102 });
+    assert.deepEqual(cursor.confirmRecentFile({ fileId: 51,
+      nowMs: 100 + 30 * 60_000 + 1 }), { state: 'unchanged' });
+    assert.equal(cursor.claim({ inventory,
+      nowMs: 100 + 30 * 60_000 + 2 }).state, 'idle');
+  } finally {
+    cursor.close(); await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a new file outranks restart rechecks without increasing the claim size', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-rank-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const cursor = openFileBackfillCursor(dbPath);
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 10_000, now: () => 100 });
+  try {
+    proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 5, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 99 });
+    resetFileBackfillEvidence(dbPath);
+    cursor.prioritizeFile({ fileId: 51, observedMs: 100 });
+    const claim = cursor.claim({ inventory: { listFileHintIds: () => [] },
+      nowMs: 101, limit: 1 });
+    assert.deepEqual(claim.fileIds, [51]);
+    assert.equal(claim.priority, true);
+  } finally {
+    proofs.close(); cursor.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('a positive during an in-flight early miss queues one later recheck', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-race-'));
+  const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
+  try {
+    cursor.prioritizeFile({ fileId: 51, observedMs: 100 });
+    const inventory = { listFileHintIds: () => [] };
+    const early = cursor.claim({ inventory, nowMs: 101, limit: 1 });
+    assert.deepEqual(cursor.confirmRecentFile({ fileId: 51, nowMs: 102 }),
+      { state: 'queued' });
+    assert.equal(cursor.record({ claim: early,
+      outcomes: [{ fileId: 51, state: 'unknown' }], nowMs: 103 }).state,
+    'recorded');
+    const retry = cursor.claim({ inventory, nowMs: 104, limit: 1 });
+    assert.deepEqual(retry.fileIds, [51]);
+    assert.equal(cursor.record({ claim: retry,
+      outcomes: [{ fileId: 51, state: 'available' }], nowMs: 105 }).state,
+    'recorded');
+    assert.equal(cursor.claim({ inventory, nowMs: 106 }).state, 'idle');
+  } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('v0.0.34 cursor schema migrates before queuing old proofs', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-migrate-'));
   const dbPath = path.join(dir, 'state.sqlite');

@@ -17,8 +17,10 @@ test('one Shoko file read checks several exact episode receipts without swallowi
     for (const pair of pairs) queue.enqueue({ ...pair, observedMs: 100 });
     let reads = 0;
     const observed = [];
+    const recordedProofs = [];
     let sharedBudget;
     const worker = createFileAvailabilityWorker({ queue,
+      onRecordedAvailable: (proof) => recordedProofs.push(proof.fileId),
       inventory: {
         getObservedFileIds: () => [51],
         getFile: () => ({ fileId: 51, state: 'linked', pairs }),
@@ -42,6 +44,7 @@ test('one Shoko file read checks several exact episode receipts without swallowi
     assert.equal(reads, 1);
     assert.equal(sharedBudget.cardReads, 4);
     assert.deepEqual(observed, [1001, 1002, 1003, 1004]);
+    assert.deepEqual(recordedProofs, [51, 51, 51, 51]);
     assert.equal(queue.getStatus({ ...pairs[3], nowMs: 101 }).state,
       'available');
     assert.equal(queue.getStatus({ ...pairs[4], nowMs: 101 }).state,
