@@ -110,6 +110,12 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
+  // Once the stopped torrent is recorded, start/completion workers own it.
+  // Replaying its manifest here cannot make progress after it has downloaded,
+  // and must not pin an Airing request ahead of its other episodes.
+  if (reserved.state === 'existing' && reserved.status === 'torrent_observed') {
+    return held('target_busy');
+  }
   const nowMs = now();
   const bound = ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
     candidate, hash: prepared.expected.hash, nowMs });

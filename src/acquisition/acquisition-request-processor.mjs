@@ -175,7 +175,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
         { searchQuery: selected.preview.searchQuery }) }); }
     catch { return held('submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
-      return { state: 'stopped_observed', attemptId: outcome.attemptId };
+      // The attempt now owns its exact target. Keep the request's search
+      // position moving so a Shoko hold for this episode cannot starve later
+      // episodes. The ledger still prevents a second claim for that target.
+      return { state: 'stopped_observed', attemptId: outcome.attemptId,
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor };
     }
     // This result is issued before any reservation or torrent dispatch. A
     // later candidate may cover another requested episode that is still
@@ -189,6 +194,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'candidate_rejected' ||
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||
+          outcome.reason === 'target_busy' ||
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),
