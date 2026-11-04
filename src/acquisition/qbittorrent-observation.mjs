@@ -64,8 +64,12 @@ export async function observeTorrentCompletion({
   }
   if (!Array.isArray(files) || !Array.isArray(filesAfter) ||
       files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
+  const beforeCompletion = evaluateCompletion({ torrent: before, files, expected });
+  const afterCompletion = evaluateCompletion({ torrent: after, files: filesAfter, expected });
   if (before.hash !== after.hash || before.category !== after.category ||
-      before.save_path !== after.save_path || before.state !== after.state ||
+      before.save_path !== after.save_path ||
+      (before.state !== after.state &&
+        (beforeCompletion.state !== 'complete' || afterCompletion.state !== 'complete')) ||
       before.progress !== after.progress || before.amount_left !== after.amount_left ||
       before.auto_tmm !== after.auto_tmm || before.force_start !== after.force_start) {
     return held('torrent_changed');
@@ -74,5 +78,5 @@ export async function observeTorrentCompletion({
     file.index, file.name, file.size, file.priority, file.progress, file.is_seed,
   ]));
   if (fingerprint(files) !== fingerprint(filesAfter)) return held('manifest_changed');
-  return evaluateCompletion({ torrent: after, files, expected });
+  return afterCompletion;
 }

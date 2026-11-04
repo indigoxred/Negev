@@ -47,6 +47,20 @@ test('missing torrent, changed state and selected unsafe files hold', async () =
   { state: 'held', reason: 'manifest_changed' });
 });
 
+test('completed seeding state may change while the exact file evidence stays stable', async () => {
+  const respond = (items) => async () => ({ status: 200,
+    text: async () => JSON.stringify(items.shift()) });
+  assert.deepEqual(await observeTorrentCompletion({ ...config,
+    fetchImpl: respond([[torrent], properties, files,
+      [{ ...torrent, state: 'stalledUP' }], properties, files]) }),
+  { state: 'complete', files: [{ index: 0, name: 'Example/01.mkv', size: 1000 }],
+    subtitles: [] });
+  assert.deepEqual(await observeTorrentCompletion({ ...config,
+    fetchImpl: respond([[{ ...torrent, state: 'downloading' }], properties, files,
+      [torrent], properties, files]) }),
+  { state: 'held', reason: 'torrent_changed' });
+});
+
 test('completion holds if incomplete storage points outside staging or changes', async () => {
   const respond = (items) => async () => ({ status: 200, text: async () => JSON.stringify(items.shift()) });
   assert.deepEqual(await observeTorrentCompletion({ ...config,
