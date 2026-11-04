@@ -2,7 +2,7 @@
 
 Negev is a self-hosted anime request and acquisition project for series and films. It aims to combine a searchable anime catalogue, user requests, airing episode monitoring, guarded torrent acquisition, Shoko import, and public Plex availability in one Docker-hosted service.
 
-**Status:** Early preview. An isolated real series arrival has completed the download, exact AniDB check, Shoko import, and public Plex availability path for two episodes. An existing anime film has passed exact Shoko-to-public-Plex availability checks; a new film acquisition and arrival remain unproved. Continuous Airing watches, broad load, end-user acceptance, and production cutover also remain unproved. Do not treat a successful pilot or healthy container as a production cutover.
+**Status:** Early preview. Isolated genuine arrivals have completed download, exact AniDB file verification, Shoko import, and public Plex availability for two series episodes and one film. A separate manual qBittorrent-to-Shoko import also reached exact public Plex availability without a Negev request. An Airing watch is running, but acquisition of an episode released after the request is not yet proved. Broad load, end-user acceptance of a combined service, and production cutover remain unproved. Do not treat a successful pilot or healthy container as a production cutover.
 
 ## Design
 
@@ -26,7 +26,7 @@ Negev is a self-hosted anime request and acquisition project for series and film
 - A file-backfill service restart withdraws prior positive proofs, rechecks formerly proven files first within the same read limits, then scans the full Shoko inventory. Availability returns only after fresh exact Shoko/Plex checks; a large library can still take time to rebuild.
 - The Plex index defaults to one page of at most five cards, plus at most one due retry card, every 60 seconds. `NEGEV_PLEX_INDEX_INTERVAL_MS` can set 15,000–300,000 ms only when the index is enabled; each tick remains single-flight and the interval begins after that tick finishes. Measure NAS load before shortening it.
 
-The current source includes guarded components for these flows. The isolated request-to-public-Plex-availability chain has been exercised for two series episodes, while the film path has been exercised against an existing public Plex file. The full production chain remains unvalidated. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
+The current source includes guarded components for these flows. The isolated request-to-public-Plex-availability chain has been exercised for two series episodes and one acquired film. The independent availability observer also verified these arrivals and a separate 13-episode manual import against public Plex. This is still short of a production cutover or a full-series/Airing continuation pass. See the source and tests for exact contracts. The planning files under `docs/superpowers/plans/` describe source work; they are not evidence of a deployed feature.
 
 ## Docker preview
 
@@ -44,7 +44,7 @@ docker compose -f compose.example.yaml up -d
 
 Keep the Shoko key and the data directory private. Do not paste the password or API key into Compose, `.env`, an issue, or a shell command argument.
 
-Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
+Use a local browser or a local tunnel with the exact configured `http://localhost:3000` origin for this loopback preview. It rejects a different host or HTTPS origin. A public HTTPS reverse proxy requires the separate exposed configuration (`NEGEV_LISTEN_HOST=0.0.0.0`, `NEGEV_EXPOSE_USERS=1`, and an HTTPS `NEGEV_PUBLIC_ORIGIN` matching the browser URL); verify its TLS and proxy routing before inviting users. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
 
 ## Development
 
