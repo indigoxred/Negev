@@ -499,7 +499,7 @@ test('a retired stalled release yields to a later candidate', async () => {
     candidateFingerprint: first.nextCandidateFingerprint }), 12);
 });
 
-test('an uncertain first-time attempt does not advance to another release', async () => {
+test('an uncertain first-time target remains held across another release', async () => {
   const process = createAcquisitionRequestProcessor({
     readRequest: () => request,
     discoverCandidates: async () => ({ state: 'candidates',
@@ -509,8 +509,49 @@ test('an uncertain first-time attempt does not advance to another release', asyn
     submitCandidate: async () => ({ state: 'held',
       reason: 'uncertain_attempt_exhausted' }),
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'held', reason: 'uncertain_attempt_exhausted' });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'uncertain_attempt_exhausted');
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.reason, 'uncertain_attempt_exhausted');
+  assert.equal(second.nextCandidateOffset, 0);
+});
+
+test('an exhausted uncertain episode does not starve a later distinct episode', async () => {
+  const submitted = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2), candidate(3)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      const episodeId = item.guid === 'candidate-3' ? 1002 : 1001;
+      return { ...preflight, episodeIds: [episodeId],
+        files: [{ name: `Example - ${episodeId === 1001 ? '01' : '02'}.mkv`,
+          size: 1000, episodeIds: [episodeId] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted.push(item.guid);
+      return item.guid === 'candidate-3'
+        ? { state: 'stopped_observed', attemptId: 12 }
+        : { state: 'held', reason: 'uncertain_attempt_exhausted' };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'uncertain_attempt_exhausted');
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.reason, 'uncertain_attempt_exhausted');
+  assert.equal(second.nextCandidateOffset, 2);
+  const third = await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint });
+  assertAttempt(third, 12);
+  assert.deepEqual(submitted, ['candidate-1', 'candidate-2', 'candidate-3']);
 });
 
 test('an import awaiting Plex does not hide a later missing episode candidate', async () => {
