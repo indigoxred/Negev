@@ -5,10 +5,10 @@ import { evaluateHandoffMountInfo, verifyHandoffMountRoots } from
 
 const mounts = [
   '24 1 0:1 / / rw - overlay overlay rw',
-  '30 24 0:43 /pure /mnt/user/pure rw - fuse.shfs shfs rw',
+  '30 24 0:43 /media /mnt/media rw - fuse.shfs shfs rw',
 ].join('\n');
-const roots = { holdingRoot: '/mnt/user/pure/.negev-holding',
-  importRoot: '/mnt/user/pure/Import/Negev' };
+const roots = { holdingRoot: '/mnt/media/holding',
+  importRoot: '/mnt/media/source/Negev' };
 
 test('handoff roots must share one explicit non-overlay mount', () => {
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: mounts, ...roots }),
@@ -31,7 +31,7 @@ test('the reader checks current mountinfo for the resolved roots', async () => {
 });
 
 test('two bind mounts of the same device cannot prove an atomic rename', () => {
-  const separate = `${mounts}\n31 24 0:43 /pure/Import /mnt/user/pure/Import rw - fuse.shfs shfs rw`;
+  const separate = `${mounts}\n31 24 0:43 /media/source /mnt/media/source rw - fuse.shfs shfs rw`;
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: separate, ...roots }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
 });
@@ -58,9 +58,9 @@ test('malformed mount evidence cannot authorize a handoff', () => {
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: 'bad', ...roots }),
     { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo: mounts,
-    holdingRoot: '/mnt/user/pure/../other', importRoot: roots.importRoot }),
+    holdingRoot: '/mnt/media/../other', importRoot: roots.importRoot }),
   { state: 'held', reason: 'handoff_mount_unavailable' });
   assert.deepEqual(evaluateHandoffMountInfo({ mountInfo:
-    `${mounts}\n31 24 0:55 /other /mnt/user/pure rw - fuse.shfs shfs rw`, ...roots }),
+    `${mounts}\n31 24 0:55 /other /mnt/media rw - fuse.shfs shfs rw`, ...roots }),
   { state: 'held', reason: 'handoff_mount_unavailable' });
 });
