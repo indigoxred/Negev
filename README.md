@@ -44,7 +44,7 @@ docker compose -f compose.example.yaml up -d
 
 Keep the Shoko key and the data directory private. Do not paste the password or API key into Compose, `.env`, an issue, or a shell command argument.
 
-Use a local browser or a separately configured HTTPS reverse proxy to reach the loopback listener. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
+Use a local browser or a local tunnel with the exact configured `http://localhost:3000` origin for this loopback preview. It rejects a different host or HTTPS origin. A public HTTPS reverse proxy requires the separate exposed configuration (`NEGEV_LISTEN_HOST=0.0.0.0`, `NEGEV_EXPOSE_USERS=1`, and an HTTPS `NEGEV_PUBLIC_ORIGIN` matching the browser URL); verify its TLS and proxy routing before inviting users. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
 
 ## Development
 
