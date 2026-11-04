@@ -5,7 +5,10 @@ import { collectAniDbDetail } from './collect-detail.mjs';
 // does not connect to Shoko or start an HTTP listener.
 export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requestHydration, now = Date.now }) {
   if (typeof isKnownTitle !== 'function' || typeof loadDetail !== 'function' ||
-      typeof ledger?.reserve !== 'function' || typeof ledger.finishLatestFromDetail !== 'function' ||
+      typeof ledger?.reserve !== 'function' ||
+      typeof ledger.getActiveClaim !== 'function' ||
+      typeof ledger.finishFromDetail !== 'function' ||
+      typeof ledger.finishLatestFromDetail !== 'function' ||
       typeof requestHydration !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid catalogue hydration configuration');
   }
@@ -37,6 +40,20 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
         return { state: 'held', reason: 'detail_unavailable' };
       }
 
+      // A Shoko refresh can finish after the first browser request. Reading a
+      // different title must not leave its ready claim occupying the sole
+      // refresh slot until the lease expires.
+      const active = ledger.getActiveClaim(now());
+      if (active && active.anidbId !== anidbId) {
+        let previous;
+        try {
+          previous = await collectAniDbDetail({ anidbId: active.anidbId,
+            loadPage: loadDetail });
+        } catch { /* Keep the claim until exact detail can be read. */ }
+        if (isCompleteAniDbDetail(previous, active.anidbId)) {
+          ledger.finishFromDetail(active.id, previous, now());
+        }
+      }
       const claim = ledger.reserve({ anidbId, titleKnown: true, detailState: 'detail_pending', nowMs: now() });
       if (claim.state !== 'reserved') return { state: 'pending', reason: claim.reason };
       let submitted;
