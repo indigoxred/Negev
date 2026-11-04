@@ -36,10 +36,15 @@ export function evaluateCompletion({ torrent, files, expected }) {
     names.add(file.name.toLowerCase());
     if (file.priority === 0) continue;
     if (kind === 'passive') return held('unsafe_selected_file');
-    if (file.progress !== 1 || file.is_seed !== true) return held('incomplete');
+    // qBittorrent reports the torrent-wide is_seed flag on index zero only.
+    // Later files can omit it; an explicit false still blocks completion.
+    if (file.progress !== 1 || file.is_seed === false) return held('incomplete');
     const item = { index: file.index, name: file.name, size: file.size };
     if (kind === 'video') selected.push(item);
     else subtitles.push(item);
+  }
+  if (!files.some((file) => file.index === 0 && file.is_seed === true)) {
+    return held('incomplete');
   }
   if (selected.length === 0) return held('no_selected_video');
   return { state: 'complete', files: selected.sort((a, b) => a.index - b.index),

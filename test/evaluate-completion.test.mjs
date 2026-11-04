@@ -25,6 +25,27 @@ test('a completed selected subtitle accompanies the verified video', () => {
   });
 });
 
+test('accepts a complete multi-file torrent when qBittorrent reports is_seed only on index zero', () => {
+  const files = [video, ...Array.from({ length: 12 }, (_, offset) => ({
+    index: offset + 1, name: `Show/episode-${offset + 2}.mkv`,
+    size: 12345, progress: 1, priority: 1,
+  }))];
+  const result = evaluateCompletion({ torrent, files, expected });
+  assert.equal(result.state, 'complete');
+  assert.equal(result.files.length, 13);
+});
+
+test('holds a multi-file torrent if the first seeding flag is missing or another is false', () => {
+  const second = { index: 1, name: 'Show/episode-2.mkv',
+    size: 12345, progress: 1, priority: 1 };
+  assert.deepEqual(evaluateCompletion({ torrent, files: [
+    { ...video, is_seed: undefined }, second], expected }),
+  { state: 'held', reason: 'incomplete' });
+  assert.deepEqual(evaluateCompletion({ torrent, files: [
+    video, { ...second, is_seed: false }], expected }),
+  { state: 'held', reason: 'incomplete' });
+});
+
 test('excluded executables and unsafe names still hold at completion', () => {
   for (const name of ['Show/run.exe', '../escape.txt', 'Show/bad\u202ename.nfo']) {
     assert.deepEqual(evaluateCompletion({ torrent, files: [video,
