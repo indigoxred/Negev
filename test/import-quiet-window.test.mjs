@@ -98,6 +98,30 @@ test('reports only an observed quiet window after two empty roots, idle queues a
     afterObservedAtMs: 1_120_000, feedGeneration: 7 });
 });
 
+test('optional fence trace reports only bounded state, never Import paths', async () => {
+  const observations = [];
+  const secretPath = '1:private-release/episode.mkv';
+  const result = await observeImportQuietWindow({ ...observers(),
+    readScopedFeedState: async () => ({ state: 'pending_unverified',
+      generation: 9, pendingPaths: 1, pendingEvents: 0,
+      pendingKeys: [secretPath] }),
+    trace: (observation) => observations.push(observation),
+  });
+  assert.deepEqual(result, { state: 'held',
+    reason: 'import_quiet_window_unverified' });
+  assert.deepEqual(observations, [{ phase: 'initial_feed',
+    state: 'pending_unverified', generation: 9, pendingPaths: 1,
+    pendingEvents: 0 }, { phase: 'before_activity',
+    state: 'quiet_observed' }]);
+  assert.equal(JSON.stringify(observations).includes(secretPath), false);
+  observations.length = 0;
+  await observeImportQuietWindow({ ...observers(),
+    readScopedFeedState: async () => ({ state: secretPath }),
+    trace: (observation) => observations.push(observation),
+  });
+  assert.deepEqual(observations, [{ phase: 'initial_feed', state: 'invalid' }]);
+});
+
 test('both Import observations receive the exact requested target', async () => {
   const scopes = [];
   const result = await observeImportQuietWindow({ ...observers(),
