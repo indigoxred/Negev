@@ -16,11 +16,22 @@ test('two catalogue-verified missing episodes become one exact first-time observ
     episodeIds: [1001, 1002] });
 });
 
+test('a metadata-confirmed empty local episode is also unimported', async () => {
+  const result = await collectUnimportedTargets({ anidbId: 42,
+    episodeIds: [1001, 1002], readEpisode: async ({ episodeId }) =>
+      episodeId === 1001
+        ? { state: 'not_imported', anidbId: 42, episodeId }
+        : { state: 'empty_episode', anidbId: 42, episodeId } });
+  assert.deepEqual(result, { state: 'unimported_targets', anidbId: 42,
+    episodeIds: [1001, 1002] });
+});
+
 test('one imported, unverified, wrong-title or unavailable episode prevents the aggregate', async () => {
   for (const changed of [
     { state: 'ok', complete: true, files: [] },
     { state: 'not_imported' },
     { state: 'not_imported', anidbId: 99, episodeId: 1002 },
+    { state: 'empty_episode', anidbId: 99, episodeId: 1002 },
     { state: 'unavailable' },
   ]) {
     const result = await collectUnimportedTargets({ anidbId: 42,

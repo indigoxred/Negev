@@ -17,7 +17,7 @@ export async function collectUnimportedTargets({ anidbId, episodeIds,
     let observed;
     try { observed = await readEpisode({ anidbId, episodeId }); }
     catch { observed = null; }
-    if (observed?.state !== 'not_imported' ||
+    if (!['not_imported', 'empty_episode'].includes(observed?.state) ||
         observed.anidbId !== anidbId ||
         observed.episodeId !== episodeId) {
       return { state: 'held', reason: 'target_not_proven_unimported', episodeId };

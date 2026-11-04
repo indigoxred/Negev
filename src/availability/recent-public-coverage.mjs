@@ -5,12 +5,15 @@ const validIds = (items, maximum) => Array.isArray(items) &&
 // Each source contains only current exact Plex positives. A target verified
 // through multiple paths counts once toward its request's public progress.
 export function recentPublicCoverage({ episodeIds, directIds, titleIds,
-  fileIds = [] }) {
+  fileIds = [], includeIds = false }) {
   if (!validIds(episodeIds, 2_000) || !validIds(directIds, 10_000) ||
-      !validIds(titleIds, 10_000) || !validIds(fileIds, 10_000)) {
+      !validIds(titleIds, 10_000) || !validIds(fileIds, 10_000) ||
+      typeof includeIds !== 'boolean') {
     throw new TypeError('Invalid public availability coverage');
   }
   const positives = new Set([...directIds, ...titleIds, ...fileIds]);
-  return { verifiedTargets: episodeIds.filter((id) => positives.has(id)).length,
-    targetCount: episodeIds.length };
+  const availableEpisodeIds = episodeIds.filter((id) => positives.has(id));
+  return { verifiedTargets: availableEpisodeIds.length,
+    targetCount: episodeIds.length,
+    ...(includeIds ? { availableEpisodeIds } : {}) };
 }

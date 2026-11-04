@@ -541,7 +541,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         publicLibraryIds, now,
         readEpisode: (target) => metadata.run(() =>
           readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
-            apiKey: shokoApiKey, ...target, fetchImpl })),
+            apiKey: shokoApiKey, ...target, purpose: 'first_time', fetchImpl })),
         probePublic: (target) => metadata.run(() =>
           plexObserver.probeFirstTimeSections(target)),
         observeImport: (target) => observeImportQuietWindow({ ...target,
@@ -676,7 +676,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           firstTimePolicy: 'single_uncertain_attempt',
           readPublicCoverage: ({ anidbId, episodeIds }) => {
             const checkedMs = now();
-            return recentPublicCoverage({ episodeIds,
+            return recentPublicCoverage({ episodeIds, includeIds: true,
               directIds: directAvailability.getRecentAvailableIds({
                 anidbId, nowMs: checkedMs }),
               titleIds: titleChecks?.getRecentAvailableIds({
