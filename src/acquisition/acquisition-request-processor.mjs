@@ -184,8 +184,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     // This result is issued before any reservation or torrent dispatch. A
     // later candidate may cover another requested episode that is still
-    // missing. A Shoko hold advances only for the exact target with current
-    // public Plex proof; provider-wide uncertainty retries this candidate.
+    // missing. An exhausted uncertain attempt also advances: the ledger
+    // blocks another uncertain claim for its episode, while a disjoint later
+    // episode can still be acquired. Provider-wide uncertainty retries here.
     if (outcome?.state === 'held' &&
         (outcome.reason === 'target_already_available' ||
           (outcome.reason === 'target_not_proven_unimported' &&
@@ -195,6 +196,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||
           outcome.reason === 'target_busy' ||
+          outcome.reason === 'uncertain_attempt_exhausted' ||
           outcome.reason === 'target_not_proven_missing' &&
           selected.preview.episodeIds.includes(outcome.episodeId))) {
       return { ...held(outcome.reason),
