@@ -27,6 +27,33 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('only an exact owned observed candidate is peeked without changing its claim', async () =>
+  withLedger(async ({ dbPath, firstId, secondId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const input = { requestId: firstId, candidate,
+        episodeIds: [1001, 1002] };
+      const reserved = ledger.reserve({ ...input, nowMs: 200 });
+      assert.equal(ledger.getOwnedObservedCandidate(input), null);
+      const hash = 'a'.repeat(40);
+      ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.beginDispatch({ attemptId: reserved.attemptId, nowMs: 202 });
+      ledger.recordTorrent({ attemptId: reserved.attemptId, hash, nowMs: 203 });
+      assert.deepEqual(ledger.getOwnedObservedCandidate(input),
+        { state: 'owned_observed', attemptId: reserved.attemptId });
+      for (const changed of [
+        { requestId: secondId },
+        { candidate: { ...candidate, guid: 'other' } },
+        { episodeIds: [1001] },
+      ]) assert.equal(ledger.getOwnedObservedCandidate({ ...input,
+        ...changed }), null);
+      assert.deepEqual(ledger.reserve({ ...input, nowMs: 204 }),
+        { state: 'existing', attemptId: reserved.attemptId,
+          status: 'torrent_observed' });
+    } finally { ledger.close(); }
+  }));
+
 test('an existing reasonless retirement table gains the legacy reason', async () =>
   withLedger(async ({ dbPath }) => {
     const old = new DatabaseSync(dbPath);

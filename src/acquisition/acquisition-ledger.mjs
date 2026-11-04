@@ -151,6 +151,8 @@ export function openAcquisitionLedger(dbPath) {
   const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
+  const activeAttemptEpisodes = db.prepare(`SELECT episode_id FROM acquisition_target_claims
+    WHERE attempt_id=? AND active=1 ORDER BY episode_id`);
   const planRows = db.prepare('SELECT file_name,file_size,episode_key FROM acquisition_file_plans WHERE attempt_id=? ORDER BY file_name');
   const insertPlan = db.prepare('INSERT INTO acquisition_file_plans(attempt_id,file_name,file_size,episode_key) VALUES (?,?,?,?)');
   const touchAttempt = db.prepare('UPDATE acquisition_attempts SET updated_ms=? WHERE id=?');
@@ -205,6 +207,33 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
+    // Read-only short circuit for a torrent this request already owns. A
+    // matching claim can be reported busy without repeating the expensive
+    // absence fence; it cannot authorize another dispatch or media action.
+    getOwnedObservedCandidate({ requestId, candidate, episodeIds } = {}) {
+      if (!validId(requestId) || !validId(candidate?.indexerId) ||
+          typeof candidate.guid !== 'string' || !candidate.guid ||
+          candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
+          !Array.isArray(episodeIds) || episodeIds.length < 1 ||
+          episodeIds.length > 50 || episodeIds.some((id) => !validId(id)) ||
+          new Set(episodeIds).size !== episodeIds.length) {
+        throw new TypeError('Invalid observed candidate lookup');
+      }
+      const request = requestRow.get(requestId);
+      if (request?.status !== 'held' || episodeIds.some((id) =>
+        !requestedEpisode.get(requestId, request.anidb_id, id))) return null;
+      const digest = createHash('sha256').update(candidate.guid).digest('hex');
+      const existing = candidateRow.get(candidate.indexerId, digest);
+      if (existing?.status !== 'torrent_observed' ||
+          existing.request_id !== requestId ||
+          existing.anidb_id !== request.anidb_id ||
+          findRelease.get(existing.id) || findRejection.get(existing.id) ||
+          findRetirement.get(existing.id) ||
+          JSON.stringify(activeAttemptEpisodes.all(existing.id).map((row) =>
+            row.episode_id)) !== JSON.stringify([...episodeIds].sort((a, b) =>
+              a - b))) return null;
+      return { state: 'owned_observed', attemptId: existing.id };
+    },
     listRejectedNeedsReview({ afterAttemptId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {

@@ -23,6 +23,19 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       typeof now !== 'function') {
     throw new TypeError('Invalid missing-target reservation');
   }
+  // An observed torrent already owns these exact targets. Report that
+  // ownership before asking for a new absence fence, which may be temporarily
+  // unavailable while Shoko is processing the earlier download. This path
+  // never reserves a new attempt or authorizes a second torrent send.
+  let owned;
+  try { owned = ledger.getOwnedObservedCandidate?.({ requestId: request.id,
+    candidate, episodeIds }); }
+  catch { return held('claim_unavailable'); }
+  if (owned !== undefined && owned !== null) {
+    return owned.state === 'owned_observed' && validId(owned.attemptId) ?
+      { state: 'existing', attemptId: owned.attemptId,
+        status: 'torrent_observed' } : held('claim_unavailable');
+  }
   const checked = await confirmMissingTargets({ request, episodeIds,
     readEvidence, publicLibraryIds, firstTimePolicy, now });
   if (checked.state !== 'missing_confirmed') return checked;
