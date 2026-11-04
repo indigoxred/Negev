@@ -91,3 +91,39 @@ test('renewing an established session before a long hash final check logs in onc
     { state: 'authenticated', sessionId: 'sid_2' });
   assert.equal(calls, 2);
 });
+
+test('a cached login is renewed before its known one-hour WebUI lifetime', async () => {
+  let time = 1_000;
+  let calls = 0;
+  const gate = createQbittorrentSessionGate({
+    baseUrl: 'http://qbit.internal:8080/', username: 'negev', password: 'secret',
+    login: async () => ({ state: 'authenticated', sessionId: `sid_${++calls}` }),
+    now: () => time,
+  });
+  assert.equal((await gate.get()).sessionId, 'sid_1');
+  time += 29 * 60_000;
+  assert.equal((await gate.get()).sessionId, 'sid_1');
+  time += 60_000;
+  assert.equal((await gate.get()).sessionId, 'sid_2');
+  assert.equal((await gate.get()).sessionId, 'sid_2');
+  assert.equal(calls, 2);
+});
+
+test('a failed age renewal never falls back to the old session or loops', async () => {
+  let time = 1_000;
+  let calls = 0;
+  const gate = createQbittorrentSessionGate({
+    baseUrl: 'http://qbit.internal:8080/', username: 'negev', password: 'secret',
+    login: async () => ++calls === 1
+      ? { state: 'authenticated', sessionId: 'sid_1' }
+      : { state: 'held', reason: 'authentication_unavailable' },
+    now: () => time,
+  });
+  assert.equal((await gate.get()).sessionId, 'sid_1');
+  time += 30 * 60_000;
+  assert.deepEqual(await gate.get(),
+    { state: 'held', reason: 'authentication_unavailable' });
+  assert.deepEqual(await gate.get(),
+    { state: 'held', reason: 'authentication_backoff' });
+  assert.equal(calls, 2);
+});

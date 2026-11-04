@@ -3,6 +3,9 @@ import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validSid = validQbittorrentSessionId;
+// Refresh before qBittorrent's default one-hour WebUI session lifetime.
+// A configured shorter lifetime still follows the existing 403/backoff path.
+const MAX_SESSION_AGE_MS = 30 * 60_000;
 
 // One session for the paced acquisition runtime. A bad password or a 403
 // latches until restart so worker ticks cannot trigger qBittorrent's IP ban.
@@ -19,6 +22,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
     throw new TypeError('Invalid qBittorrent session gate');
   }
   let sessionId = null;
+  let authenticatedAtMs = null;
   let pending;
   let rejectedReason = null;
   let retryAtMs = null;
@@ -32,12 +36,14 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
   const authenticate = (currentMs) => {
     if (pending) return pending;
     sessionId = null;
+    authenticatedAtMs = null;
     pending = (async () => {
       let result;
       try { result = await login({ baseUrl, username, password }); }
       catch { result = held('authentication_unavailable'); }
       if (result?.state === 'authenticated' && validSid(result.sessionId)) {
         sessionId = result.sessionId;
+        authenticatedAtMs = currentMs;
         retryAtMs = null;
         return { state: 'authenticated', sessionId };
       }
@@ -53,12 +59,14 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
     })().finally(() => { pending = undefined; });
     return pending;
   };
+  const fresh = (currentMs) => sessionId !== null &&
+    authenticatedAtMs !== null && currentMs - authenticatedAtMs < MAX_SESSION_AGE_MS;
   return {
     get() {
       const currentMs = clock();
       if (rejectedReason) return Promise.resolve(held(rejectedReason));
       if (pending) return pending;
-      if (sessionId) return Promise.resolve({ state: 'authenticated', sessionId });
+      if (fresh(currentMs)) return Promise.resolve({ state: 'authenticated', sessionId });
       if (retryAtMs !== null && currentMs < retryAtMs) {
         return Promise.resolve(held('authentication_backoff'));
       }
@@ -72,9 +80,10 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
       if (rejectedReason) return Promise.resolve(held(rejectedReason));
       if (pending) return pending;
       if (sessionId !== expectedSessionId) {
-        return Promise.resolve(sessionId
-          ? { state: 'authenticated', sessionId }
-          : held('authentication_backoff'));
+        return fresh(currentMs)
+          ? Promise.resolve({ state: 'authenticated', sessionId })
+          : sessionId ? authenticate(currentMs)
+            : Promise.resolve(held('authentication_backoff'));
       }
       return authenticate(currentMs);
     },
@@ -83,6 +92,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
         return held('session_mismatch');
       }
       sessionId = null;
+      authenticatedAtMs = null;
       retryAtMs = clock() + retryDelayMs;
       if (!Number.isSafeInteger(retryAtMs)) retryAtMs = Number.MAX_SAFE_INTEGER;
       return { state: 'invalidated' };
