@@ -9,7 +9,7 @@ import { openFileBackfillCursor, resetFileBackfillEvidence } from
 import { openFileProofLedger } from
   '../src/availability/file-proof-ledger.mjs';
 
-test('new observer session withdraws old proofs and revisits the first hint', async () => {
+test('new observer session keeps recent proofs and revisits the first hint', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-backfill-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
@@ -30,7 +30,7 @@ test('new observer session withdraws old proofs and revisits the first hint', as
     assert.deepEqual(pending.fileIds, [9]);
     resetFileBackfillEvidence(dbPath);
     assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
-      'unknown');
+      'available');
     assert.equal(cursor.record({ claim: pending,
       outcomes: [{ fileId: 9, state: 'unknown' }], nowMs: 103 }).state,
       'held');
@@ -63,7 +63,7 @@ test('restart rechecks formerly proven file IDs before the full inventory pass',
       checkedMs: 900 }).state, 'recorded');
     resetFileBackfillEvidence(dbPath);
     assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
-      'unknown');
+      'available');
     const priority = cursor.claim({ inventory, nowMs: 1_001, limit: 1 });
     assert.deepEqual(priority.fileIds, [9]);
     assert.equal(priority.priority, true);

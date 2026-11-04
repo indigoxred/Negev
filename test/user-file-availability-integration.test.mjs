@@ -12,7 +12,7 @@ import { openFileBackfillCursor } from
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
-test('service restart invalidates prior broad proof and rewinds its scan', async () => {
+test('service restart retains recent broad proof and rewinds its scan', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-backfill-restart-'));
   const dbPath = path.join(root, 'state.sqlite');
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
@@ -46,7 +46,7 @@ test('service restart invalidates prior broad proof and rewinds its scan', async
       positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
     cursor = openFileBackfillCursor(dbPath);
     assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
-      'unknown');
+      'available');
     const firstAgain = cursor.claim({ inventory, nowMs: 110, limit: 2 });
     assert.deepEqual(firstAgain.fileIds, [2]);
     assert.equal(firstAgain.priority, true);

@@ -5,9 +5,10 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const recentWindowMs = 30 * 60_000;
 
-// No source events are observed while the service is stopped. Withdraw old
-// positives and rewind the scan. Recheck formerly proven files first, without
-// treating their old proof as current or increasing the per-tick read budget.
+// No source events are observed while the service is stopped. Rewind the scan
+// and recheck formerly proven files first without increasing the per-tick read
+// budget. Keep bounded positive proofs across restart: the proof ledger expires
+// them, while accepted Shoko/Plex source changes invalidate the affected rows.
 export function resetFileBackfillEvidence(dbPath) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Invalid file backfill database');
@@ -24,7 +25,6 @@ export function resetFileBackfillEvidence(dbPath) {
     ) STRICT`);
     db.exec(`INSERT OR IGNORE INTO file_backfill_priority (file_id)
       SELECT DISTINCT file_id FROM file_availability_proofs`);
-    db.exec('DELETE FROM file_availability_proofs');
     const reset = db.prepare(`UPDATE file_backfill_cursor SET
       after_file_id=0, pass=pass+1, receipt=receipt+1,
       pending_json=NULL, claimed_ms=NULL, pair_offset=0,
