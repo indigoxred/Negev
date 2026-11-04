@@ -53,3 +53,10 @@ test('reader failure and invalid target lists cannot claim unimported status', a
   await assert.rejects(collectUnimportedTargets({ anidbId: 42,
     episodeIds: [1001, 1001], readEpisode: async () => null }), TypeError);
 });
+
+test('a busy shared metadata reader has a distinct retryable hold reason', async () => {
+  const result = await collectUnimportedTargets({ anidbId: 42,
+    episodeIds: [1001], readEpisode: async () => ({ state: 'busy' }) });
+  assert.deepEqual(result, { state: 'held', reason: 'metadata_reader_busy',
+    episodeId: 1001 });
+});
