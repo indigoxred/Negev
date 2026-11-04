@@ -349,6 +349,7 @@ test('signed-in user searches AniDB and saves an exact held request across resta
         ? json({ Total: 1, List: [{ ID: 2345, Title: 'Example Movie' }] })
         : json({ Total: 1, List: [{ ID: 1234, Title: 'Example Series' }] });
     }
+    if (parsed.pathname.endsWith('/Relations')) return json([]);
     if (parsed.pathname.endsWith('/AniDB/2345/Episode')) {
       return json({ Total: 1, List: [{ ID: 2001, AnimeID: 2345,
         EpisodeNumber: 1, Type: 'Episode', Title: 'Movie', AirDate: '2026-01-01' }] });

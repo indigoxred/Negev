@@ -123,6 +123,25 @@ test('one exact missing target is reserved then submitted stopped once', async (
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
   }));
 
+test('server submission rejects a related installment before reserving or adding a torrent', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const qbitCalls = [];
+    const sideStory = { ...candidate, title: 'Example: Side Story - 01' };
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async (url) => new URL(url).pathname.endsWith('/search')
+        ? Response.json([{ ...sideStory, protocol: 'torrent', downloadUrl: proxy }])
+        : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } }),
+      qbittorrentFetch: qbittorrentFetch(qbitCalls) });
+    const result = await submitMissingCandidate({ ...input,
+      candidate: sideStory,
+      readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 42,
+        items: [{ anidbId: 43, title: 'Example: Side Story', relation: 'SideStory' }] }),
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
+    assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
+    assert.equal(qbitCalls.length, 0);
+  }));
+
 test('an alias-only stopped submission revalidates its server-approved title', async () =>
   withLedgers(async ({ request, ledger }) => {
     const queries = [];

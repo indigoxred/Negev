@@ -5,6 +5,7 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
+import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -40,10 +41,12 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
+  readRelatedTitles,
   readEvidence, publicLibraryIds, ledger,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
       typeof releaseQueries !== 'function' ||
+      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
         (typeof expectedHash !== 'string' ||
@@ -85,6 +88,16 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate, saveRoot: qbittorrent.saveRoot });
   if (prepared.state !== 'prepared_stopped') return prepared;
+  if (readRelatedTitles) {
+    let related;
+    try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
+    catch { return held('related_title_unavailable'); }
+    const checked = checkRelatedInstallment({ anidbId: request.anidbId,
+      requestedTitle: detail.title, related, releaseTitle: candidate.title,
+      fileNames: prepared.files.filter((file) =>
+        torrentFileKind(file.name) === 'video').map((file) => file.name) });
+    if (checked.state !== 'related_title_clear') return checked;
+  }
   if (expectedHash !== undefined &&
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {
     return held('preflight_torrent_changed');
