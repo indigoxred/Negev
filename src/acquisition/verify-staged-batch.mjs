@@ -135,7 +135,9 @@ export async function verifyStagedBatch({
   try { final = await observe({ expected: expectedTorrent }); }
   catch { return held('torrent_provider_unavailable_after_hash'); }
   if (final?.state === 'held' &&
-      ['provider_unavailable', 'incomplete'].includes(final.reason)) {
+      ['provider_unavailable', 'provider_timeout', 'provider_transport',
+        'provider_http_403', 'provider_http_error', 'provider_invalid_response',
+        'incomplete'].includes(final.reason)) {
     return held(`torrent_${final.reason}_after_hash`);
   }
   const signature = (result) => result?.state === 'complete' && Array.isArray(result.files) &&
