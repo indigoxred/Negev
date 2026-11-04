@@ -4,6 +4,7 @@ import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
+import { matchesTrustedReleaseTitle } from './plan-torrent-targets.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -15,6 +16,7 @@ export async function startStoppedCandidate({
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
+  readRelatedTitles,
   now = Date.now, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   let base;
@@ -26,6 +28,7 @@ export async function startStoppedCandidate({
       !Number.isSafeInteger(attemptId) || attemptId < 1 ||
       typeof now !== 'function' || typeof readRequest !== 'function' ||
       typeof readEvidence !== 'function' ||
+      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       (typeof verifyStagingRoot !== 'function' &&
@@ -53,6 +56,26 @@ export async function startStoppedCandidate({
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
+  if (readRelatedTitles) {
+    if (typeof request.title !== 'string' || !request.title.trim()) {
+      return held('related_title_unavailable');
+    }
+    let related;
+    try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
+    catch { return held('related_title_unavailable'); }
+    if (related?.state !== 'related_titles' ||
+        related.anidbId !== request.anidbId || !Array.isArray(related.items) ||
+        related.items.length > 50 || related.items.some((item) =>
+          !Number.isSafeInteger(item?.anidbId) || item.anidbId < 1 ||
+          typeof item.title !== 'string' || !item.title.trim())) {
+      return held('related_title_unavailable');
+    }
+    if (related.items.some((item) =>
+      !matchesTrustedReleaseTitle(request.title, item.title) &&
+      plannedFiles.some((file) => matchesTrustedReleaseTitle(file.name, item.title)))) {
+      return held('related_installment_mismatch');
+    }
+  }
   const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs, saveRoot });
   if (manifest.state !== 'manifest_safe') return manifest;

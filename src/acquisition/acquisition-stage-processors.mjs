@@ -8,6 +8,7 @@ import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
+import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -21,6 +22,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
   verifyStagingRoot, realpathImpl,
   verifyShokoSource,
+  readRelatedTitles,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
@@ -50,7 +52,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       [stagingHostPath, holdingRoot, importRoot]
         .some((value) => typeof value !== 'string' || !value) ||
       (typeof verifyStagingRoot !== 'function' && typeof inspectMounts !== 'function') ||
-      (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
+      (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') ||
+      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function')) {
     throw new TypeError('Invalid acquisition stage providers');
   }
   const publicLibraryIds = (kind) => kind === 'movie'
@@ -126,6 +129,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
+        readRelatedTitles: readRelatedTitles ?? (({ anidbId }) =>
+          readAniDbRelatedTitles({ baseUrl: shoko.baseUrl,
+            apiKey: shoko.apiKey, anidbId, fetchImpl: providerFetchImpl })),
         fetchImpl, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
