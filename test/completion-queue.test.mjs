@@ -70,6 +70,23 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
   });
 });
 
+test('a newly complete torrent takes priority over older inconclusive lookups in the same pass', async () => {
+  await fixture(async (ctx) => {
+    const older = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: older.attemptId, pass: older.pass,
+      state: 'held', reason: 'file_lookup_inconclusive', checkedMs: 1_000 });
+    const complete = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: complete.attemptId, pass: complete.pass,
+      state: 'held', reason: 'incomplete', checkedMs: 1_000 });
+    const other = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: other.attemptId, pass: other.pass,
+      state: 'held', reason: 'provider_unavailable', checkedMs: 1_000 });
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'pass_complete');
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId,
+      complete.attemptId);
+  });
+});
+
 test('a retirement intent excludes completion while unrelated attempts advance', async () => {
   await fixture(async (ctx) => {
     assert.deepEqual(ctx.acquisitions.requestStalledRetirement({

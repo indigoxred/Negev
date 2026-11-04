@@ -56,7 +56,9 @@ export function openCompletionQueue(dbPath) {
       j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
       h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
-    ORDER BY a.id LIMIT 1`);
+    -- A newly finished download should not wait behind older provider lookups
+    -- that repeatedly return inconclusive. The cursor still bounds each pass.
+    ORDER BY CASE WHEN c.reason='incomplete' THEN 0 ELSE 1 END, a.id LIMIT 1`);
   const advance = db.prepare('UPDATE completion_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE completion_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO completion_checks(attempt_id,pass,state,reason,checked_ms,next_due_ms)
