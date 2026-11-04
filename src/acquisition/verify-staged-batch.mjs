@@ -133,7 +133,11 @@ export async function verifyStagedBatch({
 
   let final;
   try { final = await observe({ expected: expectedTorrent }); }
-  catch { return held('torrent_changed_after_hash'); }
+  catch { return held('torrent_provider_unavailable_after_hash'); }
+  if (final?.state === 'held' &&
+      ['provider_unavailable', 'incomplete'].includes(final.reason)) {
+    return held(`torrent_${final.reason}_after_hash`);
+  }
   const signature = (result) => result?.state === 'complete' && Array.isArray(result.files) &&
       (result.subtitles === undefined || Array.isArray(result.subtitles))
     ? JSON.stringify({ videos: result.files.map((file) => [file.index, file.name, file.size]),
