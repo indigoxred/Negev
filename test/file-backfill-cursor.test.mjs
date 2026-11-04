@@ -9,7 +9,7 @@ import { openFileBackfillCursor, resetFileBackfillEvidence } from
 import { openFileProofLedger } from
   '../src/availability/file-proof-ledger.mjs';
 
-test('new observer session keeps recent proofs and revisits the first hint', async () => {
+test('explicit recovery rewind keeps recent proofs and revisits the first hint', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-backfill-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
@@ -49,7 +49,7 @@ test('new observer session keeps recent proofs and revisits the first hint', asy
   }
 });
 
-test('restart rechecks formerly proven file IDs before the full inventory pass', async () => {
+test('explicit recovery rechecks formerly proven file IDs first', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
@@ -149,7 +149,7 @@ test('an old event cannot keep reordering the historical pass', async () => {
   }
 });
 
-test('a new file outranks restart rechecks without increasing the claim size', async () => {
+test('a new file outranks recovery rechecks without increasing claim size', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-rank-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const cursor = openFileBackfillCursor(dbPath);

@@ -43,7 +43,7 @@ import { openDirectAvailabilityQueue, createDirectAvailabilityWorker,
 import { openTitleCheckLedger } from '../availability/title-check-ledger.mjs';
 import { createTitleCheckWorker } from '../availability/title-check-worker.mjs';
 import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs';
-import { openFileBackfillCursor, resetFileBackfillEvidence } from
+import { openFileBackfillCursor } from
   '../availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
 import { createFileBackfillWorker } from '../availability/file-backfill-worker.mjs';
@@ -181,10 +181,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
       shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
     if (fileBackfill) {
+      // Resume the saved sweep and bounded proofs after restart. Accepted
+      // Shoko/Plex changes withdraw only the affected exact proof rows.
       fileCursor = openFileBackfillCursor(dbPath);
       fileProofs = openFileProofLedger(dbPath, {
         positiveLifetimeMs: fileProofLifetimeMs, now });
-      resetFileBackfillEvidence(dbPath);
     }
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {

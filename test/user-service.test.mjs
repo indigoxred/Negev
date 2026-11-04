@@ -1062,8 +1062,7 @@ test('opt-in file proof contributes to request progress and expires without Plex
     } finally { proof.close(); }
     assert.equal((await read()).publicVerifiedTargets, 1);
     const missingOldFile = await service.tickFileBackfill();
-    assert.equal(missingOldFile.state, 'checked');
-    assert.equal(missingOldFile.available, 0);
+    assert.equal(missingOldFile.state, 'idle');
     assert.equal((await service.tickFileBackfill()).state, 'idle');
     clock = 30 * 60_000 + 1_000;
     assert.equal((await read()).publicAvailability, 'unverified');
