@@ -12,6 +12,31 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a forward candidate cursor can continue next pass without a 30-minute delay', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      assert.equal(first.requestId, 1);
+      assert.deepEqual(queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'target_busy', nextCandidateOffset: 1,
+        nextCandidateFingerprint: fingerprint, checkedMs: 100 }),
+      { state: 'recorded' });
+      assert.equal(queue.getResult(1).nextDueMs, 100);
+      assert.equal(queue.claimNext({ nowMs: 100 }).requestId, 2);
+      assert.equal(queue.claimNext({ nowMs: 100 }).requestId, 3);
+      assert.equal(queue.claimNext({ nowMs: 100 }).state, 'pass_complete');
+      const second = queue.claimNext({ nowMs: 100 });
+      assert.equal(second.requestId, 1);
+      assert.equal(second.candidateOffset, 1);
+      queue.recordResult({ requestId: 1, pass: second.pass, state: 'held',
+        reason: 'provider_unavailable', nextCandidateOffset: 1,
+        nextCandidateFingerprint: fingerprint, checkedMs: 101 });
+      assert.equal(queue.getResult(1).nextDueMs, 1_800_101);
+    } finally { queue.close(); }
+  }));
+
 test('future-only watch is skipped until its first episode target is added', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-future-queue-'));
   const dbPath = path.join(dir, 'state.sqlite');
