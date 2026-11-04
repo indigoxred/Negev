@@ -26,6 +26,27 @@ test('plans an exact subset from unambiguous AniDB regular episode numbers', () 
   });
 });
 
+test('plans standard season-episode filenames provisionally against exact AniDB numbers', () => {
+  for (const [name, id] of [
+    ['[Judas] Firefly Wedding - S01E03.mkv', 1003],
+    ['Firefly.Wedding.S01E02.Tennyo.Island.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264.MSubs-ToonsHub.mkv', 1002],
+    ['Show.S02E01.1080p.mkv', 1001],
+  ]) {
+    const video = { name, size: 1200 };
+    assert.deepEqual(planTorrentTargets({ request, detail,
+      prepared: { state: 'prepared_stopped', files: [video] } }), {
+      state: 'planned_targets', episodeIds: [id],
+      plannedFiles: [{ ...video, episodeIds: [id] }],
+    });
+  }
+  for (const name of [
+    'Show.S01E02-E03.mkv', 'Show.S01E02-03.mkv',
+    'Show.S01E02E03.mkv', 'Show.S01E02 - 03.mkv',
+  ]) assert.equal(planTorrentTargets({ request, detail,
+    prepared: { state: 'prepared_stopped', files: [{ name, size: 1200 }] } }).state,
+  'held');
+});
+
 test('numbered episodes and films still require a trusted release title', () => {
   const wrongSeries = planTorrentTargets({ request, detail, prepared: pack,
     releaseTitle: '[Group] Different Anime - 01-02', trustedTitle: 'Example' });
@@ -104,6 +125,13 @@ test('maps an explicitly requested AniDB Special only from an S-number filename'
     state: 'planned_targets', episodeIds: [9002],
     plannedFiles: [{ ...special, episodeIds: [9002] }],
   });
+  const seasonZero = { ...special, name: 'Show.S00E01.mkv' };
+  assert.deepEqual(planTorrentTargets({ request: specialRequest,
+    detail: specialDetail,
+    prepared: { state: 'prepared_stopped', files: [seasonZero] } }), {
+    state: 'planned_targets', episodeIds: [9002],
+    plannedFiles: [{ ...seasonZero, episodeIds: [9002] }],
+  });
   const regular = { name: '[Group] Show - 01 (1080p).mkv', size: 1300 };
   assert.deepEqual(planTorrentTargets({
     request: { ...request, episodeIds: [1001, 9002] }, detail: specialDetail,
@@ -171,7 +199,6 @@ test('passive artwork and notes cannot claim an AniDB episode', () => {
 
 test('ambiguous pack, duplicate number, foreign target, and special hold without a claim', () => {
   const variants = [
-    { ...pack, files: [{ name: 'Show S01E01.mkv', size: 1200 }] },
     { ...pack, files: [{ name: 'Show - 01.mkv', size: 1200 },
       { name: 'Show - 01 alt.mkv', size: 1300 }] },
     { ...pack, files: [{ name: 'Show - 04.mkv', size: 1200 }] },
