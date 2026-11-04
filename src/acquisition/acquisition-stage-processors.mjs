@@ -129,7 +129,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         fetchImpl, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
-      shokoFetchImpl } = {}) {
+      shokoFetchImpl, renewQbittorrent } = {}) {
       if (!await stagingMountReady()) return held('staging_root_unverified');
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       let planned;
@@ -139,7 +139,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
-        qbittorrent, shoko, fetchImpl, shokoFetchImpl,
+        qbittorrent, shoko, fetchImpl, shokoFetchImpl, renewQbittorrent,
         readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
         nowMs: now(), ed2kMode });
     },

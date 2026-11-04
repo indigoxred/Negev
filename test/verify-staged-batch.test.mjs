@@ -32,6 +32,40 @@ test('passes the selected Shoko hash mode into the exact file verifier', async (
   assert.equal(observedMode, 'emule');
 });
 
+test('labels the torrent check after file hashing so it can use a fresh session', async () => {
+  const phases = [];
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]],
+    observe: async ({ phase }) => {
+      phases.push(phase);
+      return { state: 'complete', files: [files[0]] };
+    },
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false,
+      fileId: 51, coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.deepEqual(phases, ['before_hash', 'after_hash']);
+});
+
+test('failed post-hash session renewal holds as authentication, not changed media', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]],
+    observe: async ({ phase }) => phase === 'before_hash'
+      ? { state: 'complete', files: [files[0]] }
+      : { state: 'held', reason: 'authentication_unavailable' },
+    verify: async () => ({ state: 'identity_verified', isCorrupted: false,
+      fileId: 51, coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k: 'B'.repeat(32), size: 3 }),
+    lookup: async () => null,
+  });
+  assert.deepEqual(result,
+    { state: 'held', reason: 'torrent_authentication_unavailable_after_hash' });
+});
+
 test('one reserved episode subset can verify without acquiring the whole request', async () => {
   const result = await verifyStagedBatch({ root: '/staging', request,
     attempt: { ...attempt, episodeIds: [1002] }, expectedTorrent,

@@ -21,7 +21,7 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
         processPublish].some((fn) => typeof fn !== 'function')) {
     throw new TypeError('Invalid acquisition session runners');
   }
-  const withSession = (processor, providers = {}) => async (input) => {
+  const withSession = (processor, providers = {}, allowRenew = false) => async (input) => {
     let session;
     try { session = await sessionGate.get(); }
     catch { return held('authentication_unavailable'); }
@@ -34,16 +34,29 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
       scopedFetch = createQbittorrentSessionFetch({ baseUrl: qbBaseUrl,
         sessionId: session.sessionId, sessionGate, fetchImpl });
     } catch { return held('authentication_unavailable'); }
+    const renewQbittorrent = allowRenew && typeof sessionGate.renew === 'function'
+      ? async (expectedSessionId) => {
+        let renewed;
+        try { renewed = await sessionGate.renew(expectedSessionId); }
+        catch { return held('authentication_unavailable'); }
+        if (renewed?.state !== 'authenticated') return held(renewed?.reason ??
+          'authentication_unavailable');
+        try {
+          return { state: 'authenticated', sessionId: renewed.sessionId,
+            fetchImpl: createQbittorrentSessionFetch({ baseUrl: qbBaseUrl,
+              sessionId: renewed.sessionId, sessionGate, fetchImpl }) };
+        } catch { return held('authentication_unavailable'); }
+      } : undefined;
     return processor({ ...input, ...providers,
       qbittorrent: { baseUrl: qbBaseUrl, sessionId: session.sessionId },
-      fetchImpl: scopedFetch });
+      fetchImpl: scopedFetch, ...(allowRenew ? { renewQbittorrent } : {}) });
   };
   return {
     processRequest: withSession(processRequest,
       { providerFetchImpl: fetchImpl }),
     processStart: withSession(processStart),
     processCompletion: withSession(processCompletion,
-      { shokoFetchImpl: fetchImpl }),
+      { shokoFetchImpl: fetchImpl }, true),
     processPublish,
   };
 }

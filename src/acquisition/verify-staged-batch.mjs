@@ -62,7 +62,7 @@ export async function verifyStagedBatch({
       attempt.episodeIds.some((id) => !plannedIds.has(id))) return held('target_coverage_mismatch');
 
   let first;
-  try { first = await observe({ expected: expectedTorrent }); }
+  try { first = await observe({ expected: expectedTorrent, phase: 'before_hash' }); }
   catch { return held('torrent_unavailable'); }
   if (first?.state !== 'complete') return held(first?.reason ?? 'torrent_unavailable');
   const selected = first.files;
@@ -132,11 +132,13 @@ export async function verifyStagedBatch({
   }
 
   let final;
-  try { final = await observe({ expected: expectedTorrent }); }
+  try { final = await observe({ expected: expectedTorrent, phase: 'after_hash' }); }
   catch { return held('torrent_provider_unavailable_after_hash'); }
   if (final?.state === 'held' &&
       ['provider_unavailable', 'provider_timeout', 'provider_transport',
         'provider_http_403', 'provider_http_error', 'provider_invalid_response',
+        'authentication_backoff', 'authentication_failed',
+        'authentication_forbidden', 'authentication_unavailable',
         'incomplete'].includes(final.reason)) {
     return held(`torrent_${final.reason}_after_hash`);
   }

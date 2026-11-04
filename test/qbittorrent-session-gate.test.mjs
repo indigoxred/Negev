@@ -75,3 +75,19 @@ test('a rejected session is cleared and briefly delayed before login again', asy
   assert.equal((await gate.get()).sessionId, 'sid_2');
   assert.equal(calls, 2);
 });
+
+test('renewing an established session before a long hash final check logs in once', async () => {
+  let calls = 0;
+  const gate = createQbittorrentSessionGate({
+    baseUrl: 'http://qbit.internal:8080/', username: 'negev', password: 'secret',
+    login: async () => ({ state: 'authenticated', sessionId: `sid_${++calls}` }),
+    now: () => 1_000,
+  });
+  assert.equal((await gate.get()).sessionId, 'sid_1');
+  assert.deepEqual(await gate.renew('sid_1'),
+    { state: 'authenticated', sessionId: 'sid_2' });
+  assert.equal((await gate.get()).sessionId, 'sid_2');
+  assert.deepEqual(await gate.renew('sid_1'),
+    { state: 'authenticated', sessionId: 'sid_2' });
+  assert.equal(calls, 2);
+});

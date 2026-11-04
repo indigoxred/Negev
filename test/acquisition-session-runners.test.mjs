@@ -86,3 +86,34 @@ test('completion gets a separate Shoko transport while sharing the qBittorrent s
     { state: 'held', reason: 'test_only' });
   assert.deepEqual(calls, ['http://shoko:8111/api/v3/test']);
 });
+
+test('completion can renew one qBittorrent session after hashing without another worker login', async () => {
+  const cookies = [];
+  let renewals = 0;
+  const run = createAcquisitionSessionRunners({
+    qbBaseUrl: 'http://qb:8080/',
+    sessionGate: {
+      get: async () => ({ state: 'authenticated', sessionId: 'session_1' }),
+      renew: async (sid) => { assert.equal(sid, 'session_1'); renewals++;
+        return { state: 'authenticated', sessionId: 'session_2' }; },
+      invalidate: () => {},
+    },
+    fetchImpl: async (_url, init) => {
+      cookies.push(init.headers.Cookie);
+      return new Response('[]');
+    },
+    processRequest: async () => ({ state: 'held', reason: 'unused' }),
+    processStart: async () => ({ state: 'held', reason: 'unused' }),
+    processCompletion: async ({ renewQbittorrent }) => {
+      const fresh = await renewQbittorrent('session_1');
+      await fresh.fetchImpl('http://qb:8080/api/v2/torrents/info', {
+        headers: { Cookie: `SID=${fresh.sessionId}` }, redirect: 'manual' });
+      return { state: 'held', reason: 'test_only' };
+    },
+    processPublish: async () => ({ state: 'held', reason: 'unused' }),
+  });
+  assert.deepEqual(await run.processCompletion({ attemptId: 1 }),
+    { state: 'held', reason: 'test_only' });
+  assert.equal(renewals, 1);
+  assert.deepEqual(cookies, ['SID=session_2']);
+});

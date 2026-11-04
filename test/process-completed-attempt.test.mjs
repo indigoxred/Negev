@@ -132,6 +132,33 @@ test('completion keeps qBittorrent and Shoko reads on their supplied transports'
   });
 });
 
+test('completion renews qBittorrent only after exact file hashing', async () => {
+  await fixture(async (context) => {
+    const { handoffs, attemptId, config, ...stores } = context;
+    let previewed = false;
+    let renewals = 0;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, ...config,
+      shokoFetchImpl: async (url, init) => {
+        previewed = true;
+        return config.fetchImpl(url, init);
+      },
+      renewQbittorrent: async (oldSessionId) => {
+        assert.equal(previewed, true);
+        assert.equal(oldSessionId, 'session');
+        renewals++;
+        return { state: 'authenticated', sessionId: 'session_fresh',
+          fetchImpl: async (url, init) => {
+            assert.equal(init.headers.Cookie, 'SID=session_fresh');
+            return config.fetchImpl(url, init);
+          } };
+      },
+    });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    assert.equal(renewals, 1);
+  });
+});
+
 test('incomplete torrent holds before reading staged bytes or Shoko', async () => {
   await fixture(async (context) => {
     const { calls, handoffs, attemptId, config, ...stores } = context;
