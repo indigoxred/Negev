@@ -28,6 +28,20 @@ function episodeNumbers(name) {
   const plainRegular = /^(0*[1-9]\d*)$/.exec(stem);
   const plainPair = /^(0*[1-9]\d*)-(0*[1-9]\d*)$/.exec(stem);
   const plainSpecial = /^[Ss](0*[1-9]\d*)$/.exec(stem);
+  const seasonEpisodes = [...stem.matchAll(
+    /(?:^|[ ._-])[Ss](\d{1,3})[Ee](\d{1,4})(?=$|[ ._-])/gi)];
+  // A second coordinate or a range must never be treated as one episode.
+  if (seasonEpisodes.length > 1 ||
+      (seasonEpisodes.length > 0 &&
+        (/(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem) ||
+          /[Ss]\d{1,3}[Ee]\d{1,4}-\d{1,4}/i.test(stem)))) return null;
+  for (const match of seasonEpisodes) {
+    const season = Number(match[1]);
+    const episode = Number(match[2]);
+    if (season > 99 || episode < 1) return null;
+    matches.push({ type: season === 0 ? 'Special' : 'Episode',
+      digits: match[2] });
+  }
   if (plainRegular) matches.push({ type: 'Episode', digits: plainRegular[1] });
   if (plainPair) matches.push({ type: 'Episode', digits: plainPair[1], endDigits: plainPair[2] });
   if (plainSpecial) matches.push({ type: 'Special', digits: plainSpecial[1] });
@@ -43,7 +57,7 @@ function episodeNumbers(name) {
   if (matches.length === 0) {
     // A title-only one-off can be planned provisionally, but an explicit
     // episode coordinate in a format we do not parse must stay ambiguous.
-    return /(?:^|[ ._-])(?:[Ss]\d{1,3}[Ee]\d{1,4}|[Ee]\d{1,4})(?=$|[ ._-])/i.test(stem)
+    return /[Ss]\d{1,3}[Ee]\d{1,4}|(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem)
       ? null : { type: 'Unnumbered', numbers: [] };
   }
   if (matches.length !== 1 || !Number.isSafeInteger(Number(matches[0].digits))) return null;
