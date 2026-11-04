@@ -39,8 +39,18 @@ export async function startShokoSignalRFeed({ baseUrl, apiKey, consumer,
   let stopping = false;
   let resolveClosed;
   const closed = new Promise((resolve) => { resolveClosed = resolve; });
-  const handlers = new Map(targets.map((target) =>
-    [target, (event) => consumer.accept(target, [event])]));
+  const flagConsumerFailure = () => {
+    try { consumer.flagReconciliation('event_consumer_failed'); }
+    catch { /* Keep a failed event handler from rejecting the transport. */ }
+  };
+  // Shoko sends these as fire-and-forget invocations. Returning a consumer
+  // result makes SignalR reply to a call for which Shoko expects no result.
+  const handlers = new Map(targets.map((target) => [target, (event) => {
+    try {
+      void Promise.resolve(consumer.accept(target, [event]))
+        .catch(flagConsumerFailure);
+    } catch { flagConsumerFailure(); }
+  }]));
   for (const [target, handler] of handlers) connection.on(target, handler);
   const join = async () => {
     // Shoko 6's hub method has two SignalR arguments even though its

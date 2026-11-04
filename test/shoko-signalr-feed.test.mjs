@@ -43,12 +43,26 @@ test('subscriber joins Shoko file feed and forwards exact file events', async ()
   assert.deepEqual(connection.calls.slice(0, 3),
     [['start'], ['invoke', 'feed.join_single', 'file', null],
       ['invoke', 'feed.list_joined']]);
-  connection.handlers.get('file:hashed')({ FileID: 42 });
+  assert.equal(connection.handlers.get('file:hashed')({ FileID: 42 }), undefined);
   assert.deepEqual(events, [['file:hashed', [{ FileID: 42 }]]]);
   assert.deepEqual(flags, ['feed_started']);
   await feed.close();
   assert.equal(connection.calls.at(-1)[0], 'stop');
   assert.equal(connection.handlers.size, 0);
+});
+
+test('failed asynchronous file consumers request reconciliation without replying to Shoko', async () => {
+  const connection = fakeConnection();
+  const flags = [];
+  const feed = await startShokoSignalRFeed({ baseUrl: 'http://shoko:8111/',
+    apiKey: 'synthetic-key', consumer: {
+      accept: async () => { throw new Error('synthetic consumer failure'); },
+      flagReconciliation: (reason) => flags.push(reason),
+    }, createConnection: () => connection });
+  assert.equal(connection.handlers.get('file:hashed')({ FileID: 42 }), undefined);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(flags, ['feed_started', 'event_consumer_failed']);
+  await feed.close();
 });
 
 test('refused feed fails closed and disconnects', async () => {
