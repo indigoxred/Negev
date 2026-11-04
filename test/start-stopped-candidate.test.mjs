@@ -49,6 +49,40 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
     plex: { state: 'ok', complete: true, sourceVerified: true,
       libraryIds: [102], parts: [] } }) };
 
+test('a stopped torrent for a separately listed sequel cannot start for the original', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let providerCalls = 0;
+    const result = await startStoppedCandidate({ ...options,
+      ledger: { ...ledger, getFilePlan: () => [{ name:
+        'Harbor Journey - Quiet Cafe - 01.mkv', size: 1000, episodeIds: [1001] }] },
+      attemptId,
+      readRequest: async (id) => ({ ...readRequest(id), title: 'Harbor Journey' }),
+      readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 42,
+        items: [{ anidbId: 43, title: 'Harbor Journey: Quiet Cafe', relation: 'Sequel' }] }),
+      fetchImpl: async (url) => {
+        providerCalls++;
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/files')) return Response.json([{
+          ...files[0], name: 'Harbor Journey - Quiet Cafe - 01.mkv' }]);
+        return Response.json([torrent]);
+      },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
+    assert.equal(providerCalls, 0);
+  }));
+
+test('related-title lookup failure holds the torrent before any provider call', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let providerCalls = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest: async (id) => ({ ...readRequest(id), title: 'Harbor Journey' }),
+      readRelatedTitles: async () => ({ state: 'unavailable' }),
+      fetchImpl: async () => { providerCalls++; throw Error('must not contact provider'); },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'related_title_unavailable' });
+    assert.equal(providerCalls, 0);
+  }));
+
 test('portable start uses the configured path and local root gate without Docker socket', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     const saveRoot = '/data/torrents/negev';

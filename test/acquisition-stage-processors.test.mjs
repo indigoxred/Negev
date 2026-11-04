@@ -182,7 +182,7 @@ test('movie request stage uses both public Plex sections before stopped submissi
   const dbPath = path.join(root, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
   const saved = requests.submit({ requesterId: 1, requestKey: 'movie', nowMs: 1,
-    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+    intent: { state: 'ready', anidbId: 42, kind: 'movie', title: 'Example',
       episodeIds: [1001], monitorFuture: false } });
   const acquisitions = openAcquisitionLedger(dbPath);
   const handoffs = openHandoffLedger(dbPath);
@@ -238,6 +238,8 @@ test('movie request stage uses both public Plex sections before stopped submissi
           plex: { state: 'ok', complete: true, sourceVerified: true,
             libraryIds: observedLibraries, parts: [] } };
       },
+      readRelatedTitles: async () => ({ state: 'related_titles',
+        anidbId: 42, items: [] }),
       inspectMounts: async () => ({ qbittorrent: [
         { Type: 'bind', Source: '/srv/negev/staging',
           Destination: '/Downloads/negev', RW: true }],
