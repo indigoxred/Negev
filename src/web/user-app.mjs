@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
-import rateLimit from '@fastify/rate-limit';
+import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 
@@ -61,7 +61,17 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     expiry: 24 * 60 * 60,
     cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: secureCookies,
       maxAge: 24 * 60 * 60 } });
-  await app.register(rateLimit, { global: false });
+  const peerRateKey = (request) => normalizeIP(request.ip, 64);
+  const accountRateKey = (request) => {
+    let userId;
+    try { userId = request.session?.get('userId'); }
+    catch { /* An invalid session keeps the peer-level limit. */ }
+    return Number.isSafeInteger(userId) && userId > 0
+      ? `account:${userId}` : `peer:${peerRateKey(request)}`;
+  };
+  // A tunnel presents one peer IP for many users. Signed-in accounts get
+  // separate route budgets; login and registration retain peer throttling.
+  await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
   const pages = await Promise.all(['index.html', 'app.js', 'style.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
@@ -110,7 +120,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       { state: 'unknown', reason: 'evidence_incomplete' };
   };
   const writeGuards = [requireOrigin, requireUser, requireCsrf];
-  const authRate = { max: 5, timeWindow: '1 minute' };
+  const authRate = { max: 5, timeWindow: '1 minute', keyGenerator: peerRateKey };
   app.get('/health/live', async () => ({ status: 'ok' }));
   // Read-only operator diagnostic. A quiet observation is never a download
   // permission and no file, path, torrent, or provider details leave the API.
