@@ -196,6 +196,26 @@ test('a changed torrent after hashing cannot pass the batch', async () => {
   assert.deepEqual(result, { state: 'held', reason: 'torrent_changed_after_hash' });
 });
 
+test('a lost qBittorrent read after hashing is distinct from changed file evidence', async () => {
+  for (const [finalObservation, reason] of [
+    [{ state: 'held', reason: 'provider_unavailable' }, 'torrent_provider_unavailable_after_hash'],
+    [{ state: 'held', reason: 'incomplete' }, 'torrent_incomplete_after_hash'],
+  ]) {
+    let observations = 0;
+    const result = await verifyStagedBatch({ root: '/staging', request, attempt,
+      expectedTorrent, plannedFiles,
+      observe: async () => ++observations === 1 ? { state: 'complete', files } : finalObservation,
+      verify: async ({ relativePath }) => ({ state: 'identity_verified', isCorrupted: false,
+        coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002,
+          start: 0, end: 100 }], fileId: relativePath.includes('01') ? 51 : 52,
+        ed2k: 'B'.repeat(32), size: 3 }),
+      lookup: async () => null,
+    });
+    assert.equal(observations, 2);
+    assert.deepEqual(result, { state: 'held', reason });
+  }
+});
+
 test('a changed selected subtitle after video hashing holds the pack', async () => {
   let observations = 0;
   const subtitle = { index: 2, name: 'Show/01.en.srt', size: 120 };
