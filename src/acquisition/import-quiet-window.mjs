@@ -18,6 +18,10 @@ const healthyScopedFeed = (value, keys) => keys.length === 0 ?
 const validActivityKeys = (value) => Array.isArray(value) &&
   value.length <= 128 && value.every(validPendingKey) &&
   new Set(value).size === value.length;
+const diagnosticStates = new Set(['connected', 'connected_uncertain',
+  'connected_scoped', 'pending_unverified', 'unverified', 'disconnected',
+  'quiet_observed', 'busy', 'unavailable', 'scheduled_unverified',
+  'queue_idle_unverified']);
 
 // Bind the actual SignalR connection to the consumer's generation and
 // unresolved paths. This strict state still requires full reconciliation.
@@ -108,7 +112,7 @@ export function scopedImportFeedState({ connection, snapshot,
 // invalidate it on every file event, disconnect, overflow or reconnect.
 export async function observeImportQuietWindow({ anidbId, episodeIds,
   readActivity, readFeedState, readScopedFeedState, wait, now = Date.now,
-  minQuietMs = 120_000, requireFingerprint = false } = {}) {
+  minQuietMs = 120_000, requireFingerprint = false, trace } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
       episodeIds.length < 1 || episodeIds.length > 50 ||
       episodeIds.some((id) => !validId(id)) ||
@@ -117,21 +121,38 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
         .some((fn) => typeof fn !== 'function') ||
       (readScopedFeedState !== undefined &&
         typeof readScopedFeedState !== 'function') ||
+      (trace !== undefined && typeof trace !== 'function') ||
       typeof requireFingerprint !== 'boolean' ||
       !Number.isSafeInteger(minQuietMs) || minQuietMs < 60_000 ||
       minQuietMs > 300_000) {
     throw new TypeError('Invalid import quiet-window observation');
   }
+  const report = (phase, value) => {
+    if (!trace) return;
+    const observation = { phase, state: diagnosticStates.has(value?.state)
+      ? value.state : 'invalid' };
+    for (const key of ['generation', 'pendingPaths', 'pendingEvents',
+      'inFlight', 'reconciliationNeeded', 'fullReconciliationNeeded',
+      'pendingOnlyDebt']) {
+      if (typeof value?.[key] === 'boolean' ||
+          (Number.isSafeInteger(value?.[key]) && value[key] >= 0)) {
+        observation[key] = value[key];
+      }
+    }
+    try { trace(observation); } catch { /* Diagnostics cannot change admission. */ }
+  };
   try {
     const beforeObservedAtMs = now();
     const initialFeed = await (readScopedFeedState ?
       readScopedFeedState() : readFeedState());
+    report('initial_feed', initialFeed);
     if (readScopedFeedState ?
       !['connected', 'connected_uncertain', 'pending_unverified']
         .includes(initialFeed?.state) :
       !healthyFeed(initialFeed)) return held();
     const beforeActivity = await readActivity({ anidbId,
       episodeIds: [...episodeIds] });
+    report('before_activity', beforeActivity);
     if (beforeActivity?.state !== 'quiet_observed') return held();
     if (requireFingerprint &&
         !/^[0-9a-f]{64}$/.test(beforeActivity.fingerprint)) return held();
@@ -139,6 +160,7 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
     if (readScopedFeedState && !validActivityKeys(keys)) return held();
     const beforeFeed = readScopedFeedState ?
       await readScopedFeedState(keys) : initialFeed;
+    report('before_feed', beforeFeed);
     if (readScopedFeedState &&
         (!healthyScopedFeed(beforeFeed, keys) ||
          beforeFeed.generation !== initialFeed.generation ||
@@ -146,8 +168,10 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
     await wait(minQuietMs);
     const afterActivity = await readActivity({ anidbId,
       episodeIds: [...episodeIds] });
+    report('after_activity', afterActivity);
     const afterFeed = await (readScopedFeedState ?
       readScopedFeedState(keys) : readFeedState());
+    report('after_feed', afterFeed);
     const afterObservedAtMs = now();
     if (afterActivity?.state !== 'quiet_observed' ||
         (requireFingerprint &&

@@ -63,6 +63,10 @@ try {
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
     shokoApiKey, sessionKey, qbitSidecarObserver,
+    ...(process.env.NEGEV_IMPORT_FENCE_TRACE === '1' ? {
+      importFenceTrace: (observation) => process.stdout.write(
+        `Negev Import fence ${JSON.stringify(observation)}\n`),
+    } : {}),
     readShokoConnectionState: () => shokoFeedSupervisor?.getState() ??
       { state: 'disconnected' },
     onShokoReconciliationNeeded: (_fileId, fullDebtStarted) => {

@@ -84,6 +84,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   onShokoReconciliationNeeded,
   readShokoConnectionState = () => ({ state: 'disconnected' }),
   waitForImportQuiet = (ms, signal) => sleep(ms, undefined, { signal }),
+  importFenceTrace,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
@@ -135,6 +136,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         typeof onShokoReconciliationNeeded !== 'function') ||
       typeof readShokoConnectionState !== 'function' ||
       typeof waitForImportQuiet !== 'function' ||
+      (importFenceTrace !== undefined &&
+        typeof importFenceTrace !== 'function') ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
         typeof prowlarr.apiKey !== 'string' || !prowlarr.apiKey ||
         !Array.isArray(prowlarr.indexerIds) ||
@@ -549,7 +552,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           readFeedState: readImportFeed,
           readScopedFeedState: readScopedImportFeed,
           wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
-          now, requireFingerprint: true,
+          now, requireFingerprint: true, trace: importFenceTrace,
         }),
         readFeedState: readScopedImportFeed,
       }));
