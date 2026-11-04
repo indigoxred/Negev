@@ -50,6 +50,7 @@ export function openHydrationLedger(dbPath) {
   const latestTitle = db.prepare('SELECT claimed_ms FROM hydration_claims WHERE anidb_id=? ORDER BY claimed_ms DESC LIMIT 1');
   const latestGlobal = db.prepare('SELECT claimed_ms FROM hydration_claims ORDER BY claimed_ms DESC LIMIT 1');
   const active = db.prepare("SELECT COUNT(*) AS count FROM hydration_claims WHERE status='reserved' AND lease_until_ms>?");
+  const activeClaim = db.prepare("SELECT id,anidb_id AS anidbId FROM hydration_claims WHERE status='reserved' AND lease_until_ms>? ORDER BY claimed_ms DESC,id DESC LIMIT 1");
   const recent = db.prepare('SELECT COUNT(*) AS count FROM hydration_claims WHERE claimed_ms>?');
   const insert = db.prepare("INSERT INTO hydration_claims(anidb_id,claimed_ms,lease_until_ms,status) VALUES(?,?,?,'reserved')");
   const find = db.prepare('SELECT id,anidb_id,claimed_ms,lease_until_ms,status FROM hydration_claims WHERE id=?');
@@ -79,6 +80,12 @@ export function openHydrationLedger(dbPath) {
   }
 
   return {
+    getActiveClaim(nowMs) {
+      if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new TypeError('Invalid claim time');
+      }
+      return activeClaim.get(nowMs) ?? null;
+    },
     reserve({ anidbId, titleKnown, detailState, nowMs }) {
       if (!Number.isSafeInteger(nowMs) || nowMs < 0 ||
           !Number.isSafeInteger(nowMs + LEASE_MS)) throw new TypeError('Invalid claim time');

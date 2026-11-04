@@ -107,3 +107,49 @@ test('a later two-page title completes its existing claim without another refres
   assert.equal(ledger.getClaim(claim.claimId).status, 'completed');
   assert.equal(posts, 1);
 }));
+
+test('a ready earlier title releases the global refresh slot when a different title is loaded', async () => withLedger(async (ledger) => {
+  let clock = nowMs;
+  let firstReady = false;
+  const posts = [];
+  const hydrator = createCatalogueHydrator({
+    isKnownTitle: async () => true,
+    loadDetail: async ({ anidbId }) => anidbId === 1234 && firstReady
+      ? detail : { state: 'detail_pending', anidbId },
+    ledger,
+    requestHydration: async ({ anidbId }) => {
+      posts.push(anidbId);
+      return { state: 'queued' };
+    },
+    now: () => clock,
+  });
+  const first = await hydrator.load({ anidbId: 1234 });
+  assert.equal(first.reason, 'refresh_queued');
+  firstReady = true;
+  clock += 61_000;
+  const second = await hydrator.load({ anidbId: 5678 });
+  assert.equal(second.reason, 'refresh_queued');
+  assert.deepEqual(posts, [1234, 5678]);
+  assert.equal(ledger.getClaim(first.claimId).status, 'completed');
+}));
+
+test('a pending earlier title still blocks a different refresh', async () => withLedger(async (ledger) => {
+  let clock = nowMs;
+  const posts = [];
+  const hydrator = createCatalogueHydrator({
+    isKnownTitle: async () => true,
+    loadDetail: async ({ anidbId }) => ({ state: 'detail_pending', anidbId }),
+    ledger,
+    requestHydration: async ({ anidbId }) => {
+      posts.push(anidbId);
+      return { state: 'queued' };
+    },
+    now: () => clock,
+  });
+  const first = await hydrator.load({ anidbId: 1234 });
+  clock += 61_000;
+  assert.deepEqual(await hydrator.load({ anidbId: 5678 }),
+    { state: 'pending', reason: 'active_refresh' });
+  assert.deepEqual(posts, [1234]);
+  assert.equal(ledger.getClaim(first.claimId).status, 'reserved');
+}));
