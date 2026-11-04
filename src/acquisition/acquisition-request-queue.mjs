@@ -127,8 +127,17 @@ export function openAcquisitionRequestQueue(dbPath) {
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
+      const previous = result.get(requestId);
+      // A saved cursor that moved forward cannot revisit the same release in
+      // the next pass. Keep the normal backoff for outages, stationary cursors
+      // and a completed sweep, while allowing a different candidate at the
+      // pipeline's existing paced request stage.
+      const advanced = previous?.pass === pass && previous.state === null &&
+        nextCandidateFingerprint !== null &&
+        nextCandidateOffset !== null &&
+        nextCandidateOffset > previous.candidateOffset;
       const nextDueMs = reason === 'interrupted_attempt_present'
-        ? null : checkedMs + RETRY_DELAY_MS;
+        ? null : advanced ? checkedMs : checkedMs + RETRY_DELAY_MS;
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1
