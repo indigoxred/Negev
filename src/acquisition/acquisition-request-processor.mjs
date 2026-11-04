@@ -133,6 +133,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
           preview.episodeIds.some((id) => !request.episodeIds.includes(id)) ||
           !Array.isArray(preview.files) || preview.files.length < 1 ||
           preview.files.length > 50) continue;
+      // Current exact public proof makes this release unnecessary. Inspect
+      // another candidate in the same bounded run so older episodes are not
+      // delayed by a separate queue retry for each new-episode release.
+      if (preview.episodeIds.every((id) => exactAvailable.has(id))) continue;
       selected = { candidate, preview };
       break;
     }
