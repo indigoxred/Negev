@@ -29,35 +29,54 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
     }
     return value;
   };
+  const authenticate = (currentMs) => {
+    if (pending) return pending;
+    sessionId = null;
+    pending = (async () => {
+      let result;
+      try { result = await login({ baseUrl, username, password }); }
+      catch { result = held('authentication_unavailable'); }
+      if (result?.state === 'authenticated' && validSid(result.sessionId)) {
+        sessionId = result.sessionId;
+        retryAtMs = null;
+        return { state: 'authenticated', sessionId };
+      }
+      if (['authentication_failed', 'authentication_forbidden']
+        .includes(result?.reason)) {
+        rejectedReason = result.reason;
+        retryAtMs = null;
+        return held(rejectedReason);
+      }
+      retryAtMs = currentMs + retryDelayMs;
+      if (!Number.isSafeInteger(retryAtMs)) retryAtMs = Number.MAX_SAFE_INTEGER;
+      return held('authentication_unavailable');
+    })().finally(() => { pending = undefined; });
+    return pending;
+  };
   return {
     get() {
       const currentMs = clock();
       if (rejectedReason) return Promise.resolve(held(rejectedReason));
-      if (sessionId) return Promise.resolve({ state: 'authenticated', sessionId });
       if (pending) return pending;
+      if (sessionId) return Promise.resolve({ state: 'authenticated', sessionId });
       if (retryAtMs !== null && currentMs < retryAtMs) {
         return Promise.resolve(held('authentication_backoff'));
       }
-      pending = (async () => {
-        let result;
-        try { result = await login({ baseUrl, username, password }); }
-        catch { result = held('authentication_unavailable'); }
-        if (result?.state === 'authenticated' && validSid(result.sessionId)) {
-          sessionId = result.sessionId;
-          retryAtMs = null;
-          return { state: 'authenticated', sessionId };
-        }
-        if (['authentication_failed', 'authentication_forbidden']
-          .includes(result?.reason)) {
-          rejectedReason = result.reason;
-          retryAtMs = null;
-          return held(rejectedReason);
-        }
-        retryAtMs = currentMs + retryDelayMs;
-        if (!Number.isSafeInteger(retryAtMs)) retryAtMs = Number.MAX_SAFE_INTEGER;
-        return held('authentication_unavailable');
-      })().finally(() => { pending = undefined; });
-      return pending;
+      return authenticate(currentMs);
+    },
+    renew(expectedSessionId) {
+      if (!validSid(expectedSessionId)) {
+        return Promise.resolve(held('session_mismatch'));
+      }
+      const currentMs = clock();
+      if (rejectedReason) return Promise.resolve(held(rejectedReason));
+      if (pending) return pending;
+      if (sessionId !== expectedSessionId) {
+        return Promise.resolve(sessionId
+          ? { state: 'authenticated', sessionId }
+          : held('authentication_backoff'));
+      }
+      return authenticate(currentMs);
     },
     invalidate(expectedSessionId) {
       if (!validSid(expectedSessionId) || expectedSessionId !== sessionId) {

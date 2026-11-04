@@ -10,6 +10,7 @@ export async function processCompletedAttempt({
   requests, acquisitions, handoffs, attemptId,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
   qbittorrent, shoko, fetchImpl = fetch, shokoFetchImpl = fetchImpl, nowMs,
+  renewQbittorrent,
   readPacer,
   ed2kMode,
   verifyHandoffMounts,
@@ -17,6 +18,7 @@ export async function processCompletedAttempt({
 }) {
   if (typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
+      (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       typeof qbittorrent?.baseUrl !== 'string' ||
       typeof qbittorrent?.sessionId !== 'string' ||
       typeof shoko?.baseUrl !== 'string' ||
@@ -30,10 +32,20 @@ export async function processCompletedAttempt({
     ed2kMode,
     verifyHandoffMounts,
     verifyStagingRoot,
-    observe: ({ expected }) => observeTorrentCompletion({
-      baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
-      expected, fetchImpl,
-    }),
+    observe: async ({ expected, phase }) => {
+      let sessionId = qbittorrent.sessionId;
+      let scopedFetch = fetchImpl;
+      if (phase === 'after_hash' && renewQbittorrent) {
+        const renewed = await renewQbittorrent(sessionId);
+        if (renewed?.state !== 'authenticated') {
+          return { state: 'held', reason: renewed?.reason ?? 'authentication_unavailable' };
+        }
+        sessionId = renewed.sessionId;
+        scopedFetch = renewed.fetchImpl;
+      }
+      return observeTorrentCompletion({ baseUrl: qbittorrent.baseUrl,
+        sessionId, expected, fetchImpl: scopedFetch });
+    },
     lookup: ({ ed2k, size }) => previewAniDbRelease({
       baseUrl: shoko.baseUrl, providerId: shoko.providerId,
       apiKey: shoko.apiKey, ed2k, size, fetchImpl: shokoFetchImpl,
