@@ -12,7 +12,7 @@ import { openFileBackfillCursor } from
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
-test('service restart invalidates prior broad proof and rewinds its scan', async () => {
+test('service restart retains recent broad proof and resumes its scan', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-backfill-restart-'));
   const dbPath = path.join(root, 'state.sqlite');
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
@@ -46,13 +46,13 @@ test('service restart invalidates prior broad proof and rewinds its scan', async
       positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
     cursor = openFileBackfillCursor(dbPath);
     assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
-      'unknown');
+      'available');
     const firstAgain = cursor.claim({ inventory, nowMs: 110, limit: 2 });
-    assert.deepEqual(firstAgain.fileIds, [2]);
-    assert.equal(firstAgain.priority, true);
-    assert.equal(firstAgain.pass, prior.pass + 1);
+    assert.deepEqual(firstAgain.fileIds, [9]);
+    assert.equal(firstAgain.priority, undefined);
+    assert.equal(firstAgain.pass, prior.pass);
     assert.equal(cursor.record({ claim: firstAgain,
-      outcomes: [{ fileId: 2, state: 'available' }], nowMs: 111 }).state,
+      outcomes: [{ fileId: 9, state: 'available' }], nowMs: 111 }).state,
     'recorded');
     assert.deepEqual(cursor.claim({ inventory, nowMs: 112, limit: 2 }).fileIds,
       [2, 5]);
