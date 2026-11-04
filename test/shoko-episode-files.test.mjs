@@ -56,6 +56,25 @@ test('missing local episode and empty local file list stay distinct', async () =
     shokoEpisodeId: 555, shokoSeriesId: 99, tmdbMovieIds: [], files: [] });
 });
 
+test('first-time observation accepts an empty episode only with exact AniDB metadata', async () => {
+  const paths = [];
+  const empty = { IDs: { ID: 555, ParentSeries: 99, AniDB: 1001 }, Files: [] };
+  const result = await readShokoEpisodeFiles({ ...base, purpose: 'first_time',
+    fetchImpl: async (url) => {
+      paths.push(url.pathname);
+      return json(paths.length === 1 ? empty : { ID: 1001, AnimeID: 42 });
+    } });
+  assert.deepEqual(paths, ['/api/v3/Episode/AniDB/1001/Episode',
+    '/api/v3/Episode/AniDB/1001']);
+  assert.deepEqual(result, { state: 'empty_episode', anidbId: 42, episodeId: 1001 });
+  for (const metadata of [{ ID: 1001, AnimeID: 99 },
+    { ID: 1002, AnimeID: 42 }]) {
+    assert.deepEqual(await readShokoEpisodeFiles({ ...base, purpose: 'first_time',
+      fetchImpl: async (url) => url.pathname.endsWith('/Episode')
+        ? json(empty) : json(metadata) }), { state: 'unavailable' });
+  }
+});
+
 test('a 404 without exact AniDB metadata cannot prove a local episode is missing', async () => {
   for (const confirmation of [
     new Response('', { status: 404 }), json({ ID: 1001, AnimeID: 99 }),

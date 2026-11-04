@@ -36,6 +36,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         new Set(request.episodeIds).size !== request.episodeIds.length) {
       return held('request_unavailable');
     }
+    let exactAvailable = new Set();
     if (readPublicCoverage) {
       let coverage;
       try { coverage = await readPublicCoverage(request); }
@@ -45,6 +46,15 @@ export function createAcquisitionRequestProcessor({ readRequest,
           coverage.verifiedTargets > request.episodeIds.length ||
           coverage.targetCount !== request.episodeIds.length) {
         return held('availability_unverified');
+      }
+      if (coverage.availableEpisodeIds !== undefined) {
+        const ids = coverage.availableEpisodeIds;
+        if (!Array.isArray(ids) || ids.length !== coverage.verifiedTargets ||
+            new Set(ids).size !== ids.length ||
+            ids.some((id) => !request.episodeIds.includes(id))) {
+          return held('availability_unverified');
+        }
+        exactAvailable = new Set(ids);
       }
       if (coverage.verifiedTargets === request.episodeIds.length) {
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
@@ -165,9 +175,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     // This result is issued before any reservation or torrent dispatch. A
     // later candidate may cover another requested episode that is still
-    // missing. Provider-wide uncertainty retries the same selected candidate.
+    // missing. A Shoko hold advances only for the exact target with current
+    // public Plex proof; provider-wide uncertainty retries this candidate.
     if (outcome?.state === 'held' &&
         (outcome.reason === 'target_already_available' ||
+          (outcome.reason === 'target_not_proven_unimported' &&
+            selected.preview.episodeIds.includes(outcome.episodeId) &&
+            exactAvailable.has(outcome.episodeId)) ||
           outcome.reason === 'candidate_rejected' ||
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||

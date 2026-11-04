@@ -334,6 +334,47 @@ test('an already playable first candidate does not hide a later missing episode'
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
 
+test('a Shoko hold on a recently playable candidate yields to a missing episode', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 1, targetCount: 2,
+      availableEpisodeIds: [1001] }),
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => item.guid === 'candidate-1'
+      ? preflight : { ...preflight, episodeIds: [1002],
+        files: [{ name: 'Example - 02.mkv', size: 1000,
+          episodeIds: [1002] }] },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => item.guid === 'candidate-1'
+      ? { state: 'held', reason: 'target_not_proven_unimported', episodeId: 1001 }
+      : { state: 'stopped_observed', attemptId: 12 },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'target_not_proven_unimported');
+  assert.equal(first.nextCandidateOffset, 1);
+  assert.deepEqual(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }),
+  { state: 'stopped_observed', attemptId: 12 });
+});
+
+test('an unproven Shoko hold does not skip a candidate', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 2,
+      availableEpisodeIds: [] }),
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'held',
+      reason: 'target_not_proven_unimported', episodeId: 1001 }),
+  });
+  assert.deepEqual(await process({ requestId: 4 }),
+    { state: 'held', reason: 'target_not_proven_unimported' });
+});
+
 test('a terminally rejected release yields to a later eligible release', async () => {
   const submitted = [];
   const process = createAcquisitionRequestProcessor({

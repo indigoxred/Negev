@@ -42,7 +42,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       base.search || base.hash || base.pathname !== '/' ||
       typeof apiKey !== 'string' || !apiKey ||
       !validId(anidbId) || !validId(episodeId) ||
-      !['registered', 'availability'].includes(purpose) ||
+      !['registered', 'availability', 'first_time'].includes(purpose) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko episode observation');
   const url = new URL(`/api/v3/Episode/AniDB/${episodeId}/Episode`, base);
@@ -50,6 +50,17 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   url.searchParams.set('includeReleaseInfo', 'true');
   url.searchParams.set('includeXRefs', 'true');
   url.searchParams.set('includeAbsolutePaths', 'true');
+  const exactMetadataExists = async () => {
+    try {
+      const metadataUrl = new URL(`/api/v3/Episode/AniDB/${episodeId}`, base);
+      const response = await fetchImpl(metadataUrl, { method: 'GET',
+        redirect: 'manual', headers: { Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status !== 200) return false;
+      const metadata = await readBoundedJson(response, 100_000);
+      return metadata?.ID === episodeId && metadata.AnimeID === anidbId;
+    } catch { return false; }
+  };
   let episode;
   try {
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
@@ -58,15 +69,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     if (response.status === 404) {
       // Shoko uses this 404 both for absent AniDB metadata and for an AniDB
       // episode with no local Shoko episode. Confirm which case occurred.
-      const metadataUrl = new URL(`/api/v3/Episode/AniDB/${episodeId}`, base);
-      const metadataResponse = await fetchImpl(metadataUrl, {
-        method: 'GET', redirect: 'manual',
-        headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (metadataResponse.status !== 200) return unavailable();
-      const metadata = await readBoundedJson(metadataResponse, 100_000);
-      return metadata?.ID === episodeId && metadata.AnimeID === anidbId
+      return await exactMetadataExists()
         ? { state: 'not_imported', anidbId, episodeId } : unavailable();
     }
     if (response.status !== 200) return unavailable();
@@ -74,6 +77,12 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   } catch { return unavailable(); }
   if (episode?.IDs?.AniDB !== episodeId || !Array.isArray(episode.Files) ||
       episode.Files.length > 50) return unavailable();
+  // Shoko can create an episode row before importing any file. For a first
+  // acquisition, confirm its AniDB anime identity before treating it as empty.
+  if (purpose === 'first_time' && episode.Files.length === 0) {
+    return await exactMetadataExists()
+      ? { state: 'empty_episode', anidbId, episodeId } : unavailable();
+  }
   const files = [];
   let incomplete = false;
   let unscopedUserEpisodeVerified;
