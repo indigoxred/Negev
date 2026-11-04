@@ -411,7 +411,7 @@ async function showDetail(item, franchise = null) {
       }
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
-    if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed ${data.kind === 'movie' ? 'film' : 'episode'} target${data.total === 1 ? '' : 's'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
         ? 'AniDB has no film target listed yet, so this film cannot be requested.'
@@ -606,6 +606,10 @@ async function showDetail(item, franchise = null) {
       return;
     }
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
+    panel.append(element('p', data.kind === 'movie'
+      ? 'A film request includes the main film, not extras or trailers.'
+      : 'A series request includes regular episodes. Request Specials individually above.',
+    'muted'));
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
