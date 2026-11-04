@@ -199,6 +199,8 @@ test('a changed torrent after hashing cannot pass the batch', async () => {
 test('a lost qBittorrent read after hashing is distinct from changed file evidence', async () => {
   for (const [finalObservation, reason] of [
     [{ state: 'held', reason: 'provider_unavailable' }, 'torrent_provider_unavailable_after_hash'],
+    [{ state: 'held', reason: 'provider_http_403' }, 'torrent_provider_http_403_after_hash'],
+    [{ state: 'held', reason: 'provider_timeout' }, 'torrent_provider_timeout_after_hash'],
     [{ state: 'held', reason: 'incomplete' }, 'torrent_incomplete_after_hash'],
   ]) {
     let observations = 0;

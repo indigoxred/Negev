@@ -80,5 +80,11 @@ test('invalid authentication and provider errors never authorize completion', as
   await assert.rejects(() => observeTorrentCompletion({ ...config, sessionId: 'bad;cookie',
     fetchImpl: async () => { throw Error('must not call'); } }), TypeError);
   assert.deepEqual(await observeTorrentCompletion({ ...config,
-    fetchImpl: async () => ({ status: 403 }) }), { state: 'held', reason: 'provider_unavailable' });
+    fetchImpl: async () => ({ status: 403 }) }), { state: 'held', reason: 'provider_http_403' });
+  assert.deepEqual(await observeTorrentCompletion({ ...config,
+    fetchImpl: async () => { throw new DOMException('timed out', 'TimeoutError'); } }),
+  { state: 'held', reason: 'provider_timeout' });
+  assert.deepEqual(await observeTorrentCompletion({ ...config,
+    fetchImpl: async () => ({ status: 200, text: async () => '{' }) }),
+  { state: 'held', reason: 'provider_invalid_response' });
 });

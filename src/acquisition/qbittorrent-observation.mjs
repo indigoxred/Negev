@@ -23,13 +23,28 @@ export async function observeTorrentCompletion({
   }
   const headers = { Cookie: qbittorrentSessionCookie(sessionId),
     Accept: 'application/json' };
+  let providerFailure = 'provider_unavailable';
+  const timedOut = (error) => ['TimeoutError', 'AbortError'].includes(error?.name);
   const read = async (endpoint, parameter, maxChars) => {
     const url = new URL(`/api/v2/torrents/${endpoint}`, base);
     url.searchParams.set(parameter, expected.hash);
-    const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) throw new Error('qBittorrent read failed');
-    return readBoundedJson(response, maxChars);
+    let response;
+    try {
+      response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs) });
+    } catch (error) {
+      providerFailure = timedOut(error) ? 'provider_timeout' : 'provider_transport';
+      throw error;
+    }
+    if (response.status !== 200) {
+      providerFailure = response.status === 403 ? 'provider_http_403' : 'provider_http_error';
+      throw new Error('qBittorrent read failed');
+    }
+    try { return await readBoundedJson(response, maxChars); }
+    catch (error) {
+      providerFailure = timedOut(error) ? 'provider_timeout' : 'provider_invalid_response';
+      throw error;
+    }
   };
   let before, beforePaths, files, after, afterPaths, filesAfter;
   try {
@@ -49,7 +64,7 @@ export async function observeTorrentCompletion({
     after = final[0];
     afterPaths = await read('properties', 'hash', 100_000);
     filesAfter = await read('files', 'hash', 2_000_000);
-  } catch { return held('provider_unavailable'); }
+  } catch { return held(providerFailure); }
   if ([beforePaths, afterPaths].some((value) =>
     typeof value?.save_path !== 'string' ||
     typeof value?.download_path !== 'string')) return held('storage_path_unverified');
