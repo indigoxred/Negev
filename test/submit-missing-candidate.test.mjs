@@ -306,7 +306,7 @@ test('an unsafe mount holds before qBittorrent add and keeps the attempt inspect
     assert.equal(ledger.getAttempt(1).status, 'reserved');
   }));
 
-test('replaying an observed stopped candidate never sends a second add', async () =>
+test('an observed candidate stays owned without replaying its torrent', async () =>
   withLedgers(async ({ request, ledger }) => {
     const calls = [];
     const input = options({ request, ledger, readEvidence: async () => absent(),
@@ -322,7 +322,7 @@ test('replaying an observed stopped candidate never sends a second add', async (
           endpoint.endsWith('/properties')
             ? { save_path: savePath, download_path: '' } : [torrent]);
       } } });
-    assert.equal(replay.state, 'stopped_observed');
+    assert.deepEqual(replay, { state: 'held', reason: 'target_busy' });
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
   }));
 

@@ -3,6 +3,11 @@ import test from 'node:test';
 import { createAcquisitionRequestProcessor } from
   '../src/acquisition/acquisition-request-processor.mjs';
 
+const assertAttempt = (result, attemptId) => {
+  assert.equal(result.state, 'stopped_observed');
+  assert.equal(result.attemptId, attemptId);
+};
+
 const request = { id: 4, anidbId: 42, kind: 'series', status: 'held',
   episodeIds: [1001, 1002] };
 const candidate = (n) => ({ indexerId: 7, guid: `candidate-${n}`,
@@ -36,10 +41,66 @@ test('preflights a more seeded release first without weakening exact checks', as
       return { state: 'stopped_observed', attemptId: 11 };
     },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'stopped_observed', attemptId: 11 });
+  assertAttempt(await process({ requestId: 4 }), 11);
   assert.deepEqual(inspected, ['candidate-2']);
   assert.equal(submitted, 'candidate-2');
+});
+
+test('a submitted episode advances the saved candidate cursor for other episodes', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      const episodeId = item.guid === 'candidate-1' ? 1001 : 1002;
+      return { ...preflight, episodeIds: [episodeId],
+        files: [{ name: `Example - ${episodeId === 1001 ? '01' : '02'}.mkv`, size: 1000,
+          episodeIds: [episodeId] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return { state: 'stopped_observed', attemptId: seen.length + 10 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assertAttempt(second, 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
+
+test('an owned busy target yields to another episode without a second grab', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      const episodeId = item.guid === 'candidate-1' ? 1001 : 1002;
+      return { ...preflight, episodeIds: [episodeId],
+        files: [{ name: `Example - ${episodeId === 1001 ? '01' : '02'}.mkv`,
+          size: 1000, episodeIds: [episodeId] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-1'
+        ? { state: 'held', reason: 'target_busy' }
+        : { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'target_busy');
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assertAttempt(second, 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
 
 test('bounded automatic path skips unsafe preflight and submits one exact stopped candidate', async () => {
@@ -62,8 +123,7 @@ test('bounded automatic path skips unsafe preflight and submits one exact stoppe
       return { state: 'stopped_observed', attemptId: 11 };
     },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'stopped_observed', attemptId: 11 });
+  assertAttempt(await process({ requestId: 4 }), 11);
   assert.deepEqual(inspected, ['candidate-1', 'candidate-2']);
   assert.equal(submitted.length, 1);
   assert.deepEqual(submitted[0], { request, candidate: candidate(2), detail,
@@ -151,9 +211,8 @@ test('later candidate batches can reach a fourth release without rechecking the 
   assert.equal(first.reason, 'no_safe_release');
   assert.equal(first.nextCandidateOffset, 3);
   assert.match(first.nextCandidateFingerprint, /^[0-9a-f]{64}:/);
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 3,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-    { state: 'stopped_observed', attemptId: 12 });
+  assertAttempt(await process({ requestId: 4, candidateOffset: 3,
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-2',
     'candidate-3', 'candidate-4']);
 });
@@ -203,10 +262,9 @@ test('a newly discovered release starts a fresh candidate sweep', async () => {
   const first = await process({ requestId: 4 });
   assert.equal(first.nextCandidateOffset, 1);
   items = [{ ...candidate(5), seeders: 30 }, ...items];
-  assert.deepEqual(await process({ requestId: 4,
+  assertAttempt(await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-  { state: 'stopped_observed', attemptId: 12 });
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-5']);
 });
 
@@ -236,10 +294,9 @@ test('seeder ranking churn cannot starve a later candidate', async () => {
   });
   const first = await process({ requestId: 4 });
   assert.equal(first.nextCandidateOffset, 2);
-  assert.deepEqual(await process({ requestId: 4,
+  assertAttempt(await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-  { state: 'stopped_observed', attemptId: 12 });
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-2',
     'candidate-3', 'candidate-4']);
 });
@@ -266,10 +323,9 @@ test('a newly aired target invalidates the saved candidate position', async () =
   const first = await process({ requestId: 4 });
   assert.equal(first.nextCandidateOffset, 1);
   requestedIds = [1001, 1002];
-  assert.deepEqual(await process({ requestId: 4,
+  assertAttempt(await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-  { state: 'stopped_observed', attemptId: 12 });
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-1']);
 });
 
@@ -329,8 +385,7 @@ test('preflight skips an exact already playable episode within the same bounded 
       return { state: 'stopped_observed', attemptId: 12 };
     },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'stopped_observed', attemptId: 12 });
+  assertAttempt(await process({ requestId: 4 }), 12);
   assert.deepEqual(previews, ['candidate-1', 'candidate-2']);
   assert.deepEqual(submissions, ['candidate-2']);
 });
@@ -356,9 +411,8 @@ test('an already playable first candidate does not hide a later missing episode'
   const first = await process({ requestId: 4 });
   assert.equal(first.reason, 'target_already_available');
   assert.equal(first.nextCandidateOffset, 1);
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-    { state: 'stopped_observed', attemptId: 12 });
+  assertAttempt(await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
 
@@ -382,8 +436,7 @@ test('a Shoko hold on a recently playable candidate yields to a missing episode'
         : { state: 'stopped_observed', attemptId: 12 };
     },
   });
-  assert.deepEqual(await process({ requestId: 4 }),
-    { state: 'stopped_observed', attemptId: 12 });
+  assertAttempt(await process({ requestId: 4 }), 12);
   assert.deepEqual(submitted, ['candidate-2']);
 });
 
@@ -421,10 +474,9 @@ test('a terminally rejected release yields to a later eligible release', async (
   const first = await process({ requestId: 4 });
   assert.equal(first.reason, 'candidate_rejected');
   assert.equal(first.nextCandidateOffset, 1);
-  assert.deepEqual(await process({ requestId: 4,
+  assertAttempt(await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-  { state: 'stopped_observed', attemptId: 12 });
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(submitted, ['candidate-1', 'candidate-2']);
 });
 
@@ -442,10 +494,9 @@ test('a retired stalled release yields to a later candidate', async () => {
   const first = await process({ requestId: 4 });
   assert.equal(first.reason, 'candidate_retired');
   assert.equal(first.nextCandidateOffset, 1);
-  assert.deepEqual(await process({ requestId: 4,
+  assertAttempt(await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-  { state: 'stopped_observed', attemptId: 12 });
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
 });
 
 test('an uncertain first-time attempt does not advance to another release', async () => {
@@ -483,8 +534,7 @@ test('an import awaiting Plex does not hide a later missing episode candidate', 
   const first = await process({ requestId: 4 });
   assert.equal(first.reason, 'target_not_proven_missing');
   assert.equal(first.nextCandidateOffset, 1);
-  assert.deepEqual(await process({ requestId: 4, candidateOffset: 1,
-    candidateFingerprint: first.nextCandidateFingerprint }),
-    { state: 'stopped_observed', attemptId: 12 });
+  assertAttempt(await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
