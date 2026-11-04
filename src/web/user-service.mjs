@@ -311,6 +311,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
         loadDetail: (input) => metadata.run(() => loadDetail(input)),
+        readRelatedTitles: ({ anidbId }) => metadata.run(() =>
+          readAniDbRelatedTitles({ baseUrl: shokoBaseUrl,
+            apiKey: shokoApiKey, anidbId, fetchImpl })),
         releaseQueries,
         prepare: (input) => metadata.run(() => prepareStoppedCandidate({
           baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,

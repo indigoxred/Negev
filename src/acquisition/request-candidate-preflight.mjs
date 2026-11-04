@@ -4,6 +4,7 @@ import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
+import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -13,11 +14,13 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // that the future downloaded bytes are registered with AniDB.
 export async function previewRequestCandidate({ requestId, candidate,
   readRequest, loadDetail, releaseQueries = async () => [],
+  readRelatedTitles,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   prepare = prepareStoppedCandidate } = {}) {
   if (!validId(requestId) || typeof readRequest !== 'function' ||
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
       typeof releaseQueries !== 'function' || typeof pause !== 'function' ||
+      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
       typeof candidate?.guid !== 'string' || !candidate.guid ||
       candidate.guid.length > MAX_RELEASE_GUID_LENGTH || !validId(candidate.indexerId) ||
       typeof candidate.title !== 'string' || !candidate.title.trim() ||
@@ -74,6 +77,16 @@ export async function previewRequestCandidate({ requestId, candidate,
   }
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
+  }
+  if (readRelatedTitles) {
+    let related;
+    try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
+    catch { return held('related_title_unavailable'); }
+    const checked = checkRelatedInstallment({ anidbId: request.anidbId,
+      requestedTitle: detail.title, related, releaseTitle: candidate.title,
+      fileNames: prepared.files.filter((file) =>
+        torrentFileKind(file.name) === 'video').map((file) => file.name) });
+    if (checked.state !== 'related_title_clear') return checked;
   }
   const plan = planTorrentTargets({ request, detail, prepared,
     releaseTitle: candidate.title, trustedTitle: searchQuery });

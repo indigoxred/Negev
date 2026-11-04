@@ -48,6 +48,18 @@ test('a numbered release for an unrelated title cannot become a preflight', asyn
     { state: 'held', reason: 'release_title_mismatch' });
 });
 
+test('a separately listed side story is held before it can become a preflight', async () => {
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, title: 'Example: Side Story - 01' },
+    readRequest: () => request, loadDetail: async () => detail,
+    readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 42,
+      items: [{ anidbId: 43, title: 'Example: Side Story', relation: 'SideStory' }] }),
+    prepare: async () => ({ ...prepared,
+      files: [{ name: 'Example - Side Story - 01.mkv', size: 1_000 }] }),
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
+});
+
 test('an unnumbered one-episode series remains provisional before exact AniDB admission', async () => {
   const single = { ...detail, total: 1,
     episodes: [detail.episodes[0]] };

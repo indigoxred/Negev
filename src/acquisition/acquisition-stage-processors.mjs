@@ -58,6 +58,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   }
   const publicLibraryIds = (kind) => kind === 'movie'
     ? [...episode, ...movie] : [...episode];
+  const relatedTitleReader = readRelatedTitles ?? (({ anidbId }) =>
+    readAniDbRelatedTitles({ baseUrl: shoko.baseUrl,
+      apiKey: shoko.apiKey, anidbId, fetchImpl: providerFetchImpl }));
   const lookup = ({ ed2k, size }) => previewAniDbRelease({
     baseUrl: shoko.baseUrl, providerId: shoko.providerId,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
@@ -104,7 +107,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         discoverCandidates, previewCandidate, loadDetail,
         submitCandidate: ({ request, ...selected }) =>
           submitMissingCandidate({ request, ...selected,
-            releaseQueries, readEvidence,
+            releaseQueries, readEvidence, readRelatedTitles: relatedTitleReader,
             ledger: acquisitions, firstTimePolicy,
             publicLibraryIds: publicLibraryIds(request.kind), now,
             prowlarr: { ...prowlarr, fetchImpl: searchFetch },
@@ -129,9 +132,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
-        readRelatedTitles: readRelatedTitles ?? (({ anidbId }) =>
-          readAniDbRelatedTitles({ baseUrl: shoko.baseUrl,
-            apiKey: shoko.apiKey, anidbId, fetchImpl: providerFetchImpl })),
+        readRelatedTitles: relatedTitleReader,
         fetchImpl, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
