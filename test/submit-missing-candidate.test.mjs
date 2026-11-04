@@ -313,6 +313,7 @@ test('an observed candidate stays owned without replaying its torrent', async ()
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
     assert.equal((await submitMissingCandidate(input)).state, 'stopped_observed');
     const replay = await submitMissingCandidate({ ...input,
+      readEvidence: async () => { throw new Error('Import observer unavailable'); },
       prowlarr: { ...input.prowlarr, fetchImpl: prowlarrFetch() },
       qbittorrent: { ...input.qbittorrent, fetchImpl: async (url, init) => {
         const endpoint = new URL(url).pathname;

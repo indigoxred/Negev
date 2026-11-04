@@ -44,6 +44,28 @@ test('reserves only when all selected episodes are absent in one fresh complete 
     assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds, [1001, 1002]);
   }));
 
+test('an exact already observed torrent is busy without a second absence observation', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const input = { requestId: request.id, candidate,
+      episodeIds: [1001, 1002] };
+    const reserved = acquisitions.reserve({ ...input, nowMs: 200 });
+    const hash = 'a'.repeat(40);
+    acquisitions.bindPreparedTorrent({ attemptId: reserved.attemptId,
+      candidate, hash, nowMs: 201 });
+    acquisitions.beginDispatch({ attemptId: reserved.attemptId, nowMs: 202 });
+    acquisitions.recordTorrent({ attemptId: reserved.attemptId,
+      hash, nowMs: 203 });
+    let reads = 0;
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001, 1002], readEvidence: async () => {
+        reads++;
+        throw new Error('Import observer unavailable');
+      }, publicLibraryIds: [102], ledger: acquisitions, now: () => 204 });
+    assert.deepEqual(result, { state: 'existing',
+      attemptId: reserved.attemptId, status: 'torrent_observed' });
+    assert.equal(reads, 0);
+  }));
+
 test('an empty Shoko and Plex snapshot without a settled import fence cannot reserve', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     const result = await reserveMissingTargets({ request, candidate,
