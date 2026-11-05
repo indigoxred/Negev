@@ -98,8 +98,12 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
       part.showGuid === showGuid &&
       (siblingGuids?.has(part.itemGuid) ||
-        (registeredAlternate && (alternateEpisodeGuid.test(part.itemGuid) ||
-          segmentEpisodeGuid.test(part.itemGuid))))) : [];
+        (registeredAlternate && alternateEpisodeGuid.test(part.itemGuid)))) : [];
+  const segmentParts = target.kind === 'series' &&
+    shoko.files.some((file) => Number.isSafeInteger(file?.anidbFileId) &&
+      file.anidbFileId > 0)
+    ? plex.parts.filter((part) => part.cardType === 'episode' &&
+      part.showGuid === showGuid && segmentEpisodeGuid.test(part.itemGuid)) : [];
   // Plex can keep a local episode GUID while its parent show remains linked
   // to Shoko. Accept only the exact local card under that public show, then
   // require the same readable physical file and full AniDB episode coverage.
@@ -111,7 +115,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
         !part.externalGuids?.some((guid) =>
           guid.startsWith('tv.plex.agents.custom.shoko://episode/') &&
           guid !== episodeGuid)) : [];
-  const identityParts = [...exactParts, ...siblingParts, ...localParts];
+  const identityParts = [...exactParts, ...siblingParts,
+    ...segmentParts, ...localParts];
   if (identityParts.length === 0) return unknown('card_identity_unverified');
   if (maxChecks === 0) return unknown('comparison_budget_exceeded');
   const publicIds = new Set(publicLibraryIds);
@@ -131,6 +136,9 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
       const shokoPath = localPath(remoteSource, shokoMount);
       if (!shokoPath) return unknown('path_mapping_failed');
       for (const part of identityParts) {
+        if (segmentParts.includes(part) &&
+            !(Number.isSafeInteger(file.anidbFileId) &&
+              file.anidbFileId > 0)) continue;
         if (!publicIds.has(part.libraryId) || part.size !== file.size) continue;
         const mapping = mounts.find((entry) => localPath(part.plexPath, entry));
         const plexPath = mapping && localPath(part.plexPath, mapping);

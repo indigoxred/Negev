@@ -128,6 +128,28 @@ test('a Shoko segment card requires complete episode coverage', async () => {
     { state: 'held', reason: 'partial_episode' });
 });
 
+test('a segment card proves a registered version without borrowing another version identity', async () => {
+  const input = await fixture();
+  const otherPath = path.join(input.shokoMount.localRoot,
+    'Anime', 'Example', '02.mkv');
+  await writeFile(otherPath, 'other');
+  const registered = input.shoko.files[0];
+  const userVersion = { ...registered, fileId: 52, anidbFileId: null,
+    sourcePaths: ['/pure/Anime/Example/02.mkv'] };
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p2' }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, plex,
+    shoko: { ...input.shoko, files: [registered, userVersion] } }),
+  { state: 'available', fileId: 51 });
+  const otherRegistered = { ...registered,
+    sourcePaths: ['/pure/Anime/Example/02.mkv'] };
+  const playableUser = { ...userVersion,
+    sourcePaths: ['/pure/Anime/Example/01.mkv'] };
+  assert.notEqual((await observeKnownCardAvailability({ ...input, plex,
+    shoko: { ...input.shoko,
+      files: [otherRegistered, playableUser] } })).state, 'available');
+});
+
 test('a readable file attached to the wrong Plex show is Unknown', async () => {
   const input = await fixture();
   for (const changed of [
