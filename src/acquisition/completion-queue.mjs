@@ -6,6 +6,8 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const reasonPattern = /^[a-z][a-z0-9_]{0,79}$/;
 const RETRY_MS = 30 * 60_000;
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
+const INCONCLUSIVE_RETRY_MS = [RETRY_MS, 2 * 60 * 60_000,
+  8 * 60 * 60_000, 24 * 60 * 60_000];
 
 // One durable cursor for the expensive completed-file path. Open only after
 // the acquisition and handoff ledgers have created their tables. A crash with
@@ -37,8 +39,14 @@ export function openCompletionQueue(dbPath) {
       state TEXT CHECK(state IN ('held','handoff_prepared','rejected_held')),
       reason TEXT,
       checked_ms INTEGER CHECK(checked_ms>=0),
-      next_due_ms INTEGER CHECK(next_due_ms>=0)
+      next_due_ms INTEGER CHECK(next_due_ms>=0),
+      inconclusive_count INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(completion_checks)').all()
+      .some((column) => column.name === 'inconclusive_count')) {
+      db.exec(`ALTER TABLE completion_checks ADD COLUMN inconclusive_count
+        INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0)`);
+    }
     db.exec('INSERT INTO completion_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
 
@@ -67,8 +75,11 @@ export function openCompletionQueue(dbPath) {
   const check = db.prepare(`SELECT attempt_id AS attemptId,pass,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM completion_checks WHERE attempt_id=?`);
-  const save = db.prepare(`UPDATE completion_checks SET state=?,reason=?,checked_ms=?,next_due_ms=?
+  const save = db.prepare(`UPDATE completion_checks SET
+      state=?,reason=?,checked_ms=?,next_due_ms=?,inconclusive_count=?
     WHERE attempt_id=? AND pass=? AND state IS NULL`);
+  const lookupCount = db.prepare(`SELECT inconclusive_count AS count
+    FROM completion_checks WHERE attempt_id=? AND pass=? AND state IS NULL`);
   const prepared = db.prepare('SELECT 1 FROM handoff_intents WHERE attempt_id=?');
   const rejected = db.prepare('SELECT 1 FROM acquisition_rejections WHERE attempt_id=?');
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,pass FROM completion_checks
@@ -124,8 +135,6 @@ export function openCompletionQueue(dbPath) {
             reason !== null) || !validTime(checkedMs)) {
         throw new TypeError('Invalid completion result');
       }
-      const delay = reason === 'incomplete' ? INCOMPLETE_RETRY_MS : RETRY_MS;
-      if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
       return transact(() => {
         if (state === 'handoff_prepared' && !prepared.get(attemptId)) {
           return held('handoff_not_recorded');
@@ -136,8 +145,17 @@ export function openCompletionQueue(dbPath) {
         if (state === 'held' && (prepared.get(attemptId) || rejected.get(attemptId))) {
           return held('outcome_changed');
         }
+        const prior = lookupCount.get(attemptId, pass);
+        if (!prior) return held('stale_claim');
+        const inconclusiveCount = state === 'held' &&
+          reason === 'file_lookup_inconclusive'
+          ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
+        const delay = reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
+          inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
+        if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
         return save.run(state, reason, checkedMs,
-          state === 'held' ? checkedMs + delay : null, attemptId, pass).changes === 1
+          state === 'held' ? checkedMs + delay : null,
+          inconclusiveCount, attemptId, pass).changes === 1
           ? { state: 'recorded' } : held('stale_claim');
       });
     },
