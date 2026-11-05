@@ -104,10 +104,21 @@ test('a same-size different Plex file cannot create availability', async () => {
     { state: 'awaiting_plex' });
 });
 
-test('a readable file attached to the wrong Plex show or episode is Unknown', async () => {
+test('a registered complete episode on another card in the correct show stays Available', async () => {
+  const input = await fixture();
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    itemGuid: 'tv.plex.agents.custom.shoko://episode/e999' }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, plex }),
+    { state: 'available', fileId: 51 });
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, plex,
+    shoko: { ...input.shoko, files: [{ ...input.shoko.files[0],
+      coverage: [{ episodeId: 1001, start: 0, end: 50 }] }] } }),
+  { state: 'held', reason: 'partial_episode' });
+});
+
+test('a readable file attached to the wrong Plex show is Unknown', async () => {
   const input = await fixture();
   for (const changed of [
-    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e556' },
     { showGuid: 'tv.plex.agents.custom.shoko://show/100' },
   ]) {
     const plex = { ...input.plex, parts: [{ ...input.plex.parts[0], ...changed }] };

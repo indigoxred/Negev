@@ -47,9 +47,10 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
         !Number.isSafeInteger(part?.libraryId) || part.libraryId <= 0 ||
         !Number.isSafeInteger(part.size) || part.size <= 0 ||
         typeof part.plexPath !== 'string')) return unknown('observer_incomplete');
-  // A readable Part under a different Plex episode or show is not available
-  // to the requested installment. An AniDB movie can be a native Anime
-  // episode card or a true Plex Movie card with one exact Shoko-linked TMDB ID.
+  // A different Plex show cannot prove this installment. A different episode
+  // card within the correct show requires the registered-file and physical
+  // checks below. An AniDB movie can use a native Anime episode card or a
+  // true Plex Movie card with one exact Shoko-linked TMDB ID.
   if (!['series', 'movie'].includes(target.kind) ||
       !Number.isSafeInteger(shoko.shokoEpisodeId) || shoko.shokoEpisodeId < 1 ||
       !Number.isSafeInteger(shoko.shokoSeriesId) || shoko.shokoSeriesId < 1) {
@@ -70,18 +71,29 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
           !linkedIds.includes(shoko.shokoEpisodeId)))) {
     return unknown('card_identity_unverified');
   }
+  const alternateEpisodeGuid =
+    /^tv\.plex\.agents\.custom\.shoko:\/\/episode\/e[1-9][0-9]*$/;
   const siblingGuids = target.kind === 'series' && shoko.files.length === 1 &&
     Array.isArray(linkedIds)
     ? new Set(linkedIds.map((id) =>
       `tv.plex.agents.custom.shoko://episode/e${id}`)) : null;
+  const registeredAlternate = shoko.files.length === 1 &&
+    Number.isSafeInteger(shoko.files[0].anidbFileId) &&
+    shoko.files[0].anidbFileId > 0;
   const exactParts = plex.parts.filter((part) =>
     (part.cardType === 'episode' && part.itemGuid === episodeGuid &&
       part.showGuid === showGuid) ||
     (target.kind === 'movie' && part.cardType === 'movie' && movieGuid &&
       (part.itemGuid === movieGuid || part.externalGuids?.includes(movieGuid))));
-  const siblingParts = siblingGuids ? plex.parts.filter((part) =>
+  // Plex can attach the exact AniDB-registered file to another episode card
+  // of the same Shoko show. User-linked files retain the narrower known
+  // sibling rule. Physical identity and full coverage remain mandatory.
+  const siblingParts = target.kind === 'series' && shoko.files.length === 1
+    ? plex.parts.filter((part) =>
     part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
-      siblingGuids.has(part.itemGuid) && part.showGuid === showGuid) : [];
+      part.showGuid === showGuid &&
+      (siblingGuids?.has(part.itemGuid) ||
+        (registeredAlternate && alternateEpisodeGuid.test(part.itemGuid)))) : [];
   // Plex can keep a local episode GUID while its parent show remains linked
   // to Shoko. Accept only the exact local card under that public show, then
   // require the same readable physical file and full AniDB episode coverage.

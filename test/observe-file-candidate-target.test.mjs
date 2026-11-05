@@ -53,12 +53,32 @@ test('one fully linked file playable on a sibling episode card proves both episo
     target: { anidbId: 42, episodeId: 1002, kind: 'series' },
     cardIndex: { ...base.cardIndex,
       lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
-        { libraryId: 102, ratingKey: 500 }] }) },
+        { libraryId: 102, ratingKey: 500 }] }),
+      lookupCards: () => ({ state: 'candidates', cards: [] }) },
   });
   assert.deepEqual(result, { state: 'available', fileId: 51,
     proof: { fileId: 51, libraryId: 102, ratingKey: 500,
       partId: 600, storageKey: '1:2:5',
       presentation: 'alternate_card' } });
+});
+
+test('one registered episode playable on another episode card of its show has alternate-card proof', async () => {
+  const single = { ...candidate, pairs: [candidate.pairs[0]],
+    identities: [candidate.identities[0]] };
+  const result = await observeFileCandidateTarget({ ...base, candidate: single,
+    target: { anidbId: 42, episodeId: 1001, kind: 'series' },
+    cardIndex: { ...base.cardIndex,
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }),
+      lookupCards: () => ({ state: 'candidates', cards: [] }) },
+    readPlex: async () => ({ state: 'ok', complete: true, parts: [{
+      partId: 600, libraryId: 102, size: 5,
+      plexPath: '/source-pure/a.mkv', cardType: 'episode',
+      itemGuid: 'tv.plex.agents.custom.shoko://episode/e777',
+      showGuid: 'tv.plex.agents.custom.shoko://show/99' }] }) });
+  assert.deepEqual(result, { state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+      partId: 600, storageKey: '1:2:5', presentation: 'alternate_card' } });
 });
 
 test('a Plex local episode card in the exact Shoko show can prove the same registered file', async () => {
@@ -107,7 +127,7 @@ test('local-card fallback still rejects the wrong show, wrong local ID and diffe
   assert.notEqual(wrongFile.state, 'available');
 });
 
-test('sibling-card proof rejects a wrong show, unrelated episode and different file', async () => {
+test('alternate-card proof rejects a wrong show and different file', async () => {
   const target = { anidbId: 42, episodeId: 1002, kind: 'series' };
   const cardIndex = { ...base.cardIndex,
     lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
@@ -116,7 +136,6 @@ test('sibling-card proof rejects a wrong show, unrelated episode and different f
   const sibling = (await base.readPlex({ libraryId: 102, ratingKey: 500 })).parts[0];
   for (const changed of [
     { showGuid: 'tv.plex.agents.custom.shoko://show/100' },
-    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e777' },
   ]) {
     const result = await observeFileCandidateTarget({ ...base, target, cardIndex,
       readPlex: async () => ({ state: 'ok', complete: true,
