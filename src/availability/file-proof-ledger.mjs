@@ -48,6 +48,12 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
   const positiveForAnime = db.prepare(`SELECT DISTINCT episode_id AS episodeId
     FROM file_availability_proofs WHERE anidb_id=? AND verified_ms>?
       AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
+  const currentTitles = db.prepare(`SELECT anidb_id AS anidbId,
+      COUNT(DISTINCT episode_id) AS verifiedEpisodeCount,
+      MAX(verified_ms) AS lastVerifiedMs
+    FROM file_availability_proofs
+    WHERE anidb_id>? AND verified_ms>? AND verified_ms<=?
+    GROUP BY anidb_id ORDER BY anidb_id LIMIT ?`);
   let sourceStillCurrent;
   return {
     observe({ anidbId, episodeId, proof, checkedMs } = {}) {
@@ -138,6 +144,19 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       const rows = positiveForAnime.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
+    },
+    listCurrentTitles({ afterAnidbId = 0, limit = 20 } = {}) {
+      const nowMs = now();
+      if (!Number.isSafeInteger(afterAnidbId) || afterAnidbId < 0 ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
+          !validTime(nowMs)) throw new TypeError('Invalid library browse page');
+      const rows = currentTitles.all(afterAnidbId,
+        nowMs - positiveLifetimeMs, nowMs, limit + 1);
+      const items = rows.slice(0, limit).map(({ anidbId,
+        verifiedEpisodeCount, lastVerifiedMs }) =>
+        ({ anidbId, verifiedEpisodeCount, lastVerifiedMs }));
+      return { items, nextAfterAnidbId: rows.length > limit
+        ? items.at(-1).anidbId : null };
     },
     close() { db.close(); },
   };

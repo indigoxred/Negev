@@ -12,6 +12,9 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
   return {
     items: () => [...members.values()],
     next: () => [...members.values()].find((item) => !expanded.has(item.anidbId)) ?? null,
+    status: () => ({ state: expanded.size === 0 ? 'not_checked' :
+      members.size === 1 ? 'no_cached_links' : 'linked_installments',
+    linkedInstallments: members.size - 1 }),
     add(result) {
       if (result?.state !== 'related_titles' ||
           result.completeness !== 'unproven' ||

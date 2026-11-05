@@ -14,9 +14,14 @@ import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
+import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
+import { readShokoPoster } from '../catalogue/shoko-poster.mjs';
+import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
+import { readAniDbRelatedTitles as readArchiveRelatedTitles } from
+  '../catalogue/anidb-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
@@ -175,6 +180,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     directAvailability = openDirectAvailabilityQueue(dbPath);
     if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
     const metadata = createMetadataLimiter();
+    const cataloguePosters = createPosterReader({ fetchImpl, now });
+    const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
@@ -387,23 +394,69 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }) };
       },
       searchTitles: async ({ query, page }) => {
+        const withPublicPresence = (result) => {
+          if (result?.state !== 'results' || !Array.isArray(result.items)) {
+            return result;
+          }
+          const checkedMs = now();
+          return { ...result, items: result.items.map((item) => {
+            const ids = plexObserver ? new Set([
+              ...directAvailability.getRecentAvailableIds({
+                anidbId: item.anidbId, nowMs: checkedMs }),
+              ...(titleChecks?.getRecentAvailableIds({
+                anidbId: item.anidbId, nowMs: checkedMs }) ?? []),
+              ...(fileProofs?.getRecentAvailableIds({
+                anidbId: item.anidbId }) ?? []),
+            ]) : new Set();
+            return { ...item, libraryPresence: {
+              state: ids.size > 0 ? 'in_library' : 'unknown',
+              verifiedEpisodeCount: ids.size,
+            } };
+          }) };
+        };
         const sourceStatus = await titleSource?.refresh();
         if (sourceStatus?.state === 'ready' || sourceStatus?.state === 'stale') {
           const result = titleSource.search({ query, page });
           return sourceStatus.state === 'stale'
-            ? { ...result, catalogueSource: 'anidb_dump', catalogueStale: true,
-              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) }
-            : { ...result, catalogueSource: 'anidb_dump',
-              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) };
+            ? withPublicPresence({ ...result, catalogueSource: 'anidb_dump',
+              catalogueStale: true,
+              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) })
+            : withPublicPresence({ ...result, catalogueSource: 'anidb_dump',
+              ...(sourceStatus.cacheWriteFailed ? { catalogueCacheWriteFailed: true } : {}) });
         }
         const result = await metadata.run(() => searchAniDbTitles({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, query, page, fetchImpl,
         }));
-        return { ...result, catalogueSource: 'shoko_cache' };
+        return withPublicPresence({ ...result, catalogueSource: 'shoko_cache' });
       },
-      loadRelatedTitles: ({ anidbId }) => metadata.run(() =>
-        readAniDbRelatedTitles({ baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
-          anidbId, fetchImpl })),
+      listLibraryTitles: plexObserver && fileProofs ?
+        async ({ afterAnidbId, limit }) => {
+          const source = await titleSource?.refresh();
+          if (titleSource && !['ready', 'stale'].includes(source?.state)) {
+            return { state: 'unavailable' };
+          }
+          const page = fileProofs.listCurrentTitles({ afterAnidbId, limit });
+          return { state: 'current_proofs',
+            items: page.items.map((item) => ({ ...item,
+              title: titleSource?.getTitle(item.anidbId) ??
+                `Anime title unavailable (${item.anidbId})` })),
+            nextAfterAnidbId: page.nextAfterAnidbId };
+        } : undefined,
+      listAiringSchedule: () => weeklySchedule.read(),
+      readPoster: ({ uid }) => metadata.run(() => readShokoPoster({
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, uid, fetchImpl,
+      })),
+      readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
+      loadRelatedTitles: async ({ anidbId }) => {
+        const local = await metadata.run(() => readAniDbRelatedTitles({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
+        }));
+        if (local?.state === 'related_titles' && local.items.length > 0) return local;
+        if (local?.state === 'held' || local?.state === 'busy') return local;
+        const archive = await readArchiveRelatedTitles({ anidbId, fetchImpl,
+          titleForId: (id) => titleSource?.getTitle(id) ?? null });
+        return archive.state === 'related_titles' ? archive : local;
+      },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await metadata.run(() => loadDetail(input));
         if (!plexObserver || detail?.state !== 'details' ||

@@ -56,6 +56,19 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }),
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
+    listLibraryTitles: () => ({ state: 'current_proofs', items: [
+      { anidbId: 1234, title: 'Example series',
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950 }],
+    nextAfterAnidbId: null }),
+    listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
+      checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
+        scheduledDate: '2026-11-02', episodeNumber: '3' }] }),
+    readPoster: async ({ uid }) => uid === '123e4567-e89b-42d3-a456-426614174000'
+      ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([1, 2, 3]) }
+      : { state: 'unavailable' },
+    readCataloguePoster: async ({ anidbId }) => anidbId === 1234
+      ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([0xff, 0xd8, 0xff]) }
+      : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
       attemptId: 9, requestId: 1, anidbId: 1234,
       stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 900,
@@ -110,6 +123,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const page = await app.inject({ method: 'GET', url: '/' });
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-security-policy'], /default-src 'none'/);
+    assert.match(page.headers['content-security-policy'], /img-src 'self'/);
     assert.match(page.body, /Negev/);
     assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);
@@ -141,6 +155,10 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     }
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/library' })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/airing' })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/catalogue/posters/123e4567-e89b-42d3-a456-426614174000' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review' })).statusCode, 401);
     const crossSite = await app.inject({ method: 'POST', url: '/api/login',
@@ -150,10 +168,36 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { username: 'Owner', password: 'long-owner-passphrase' } });
     assert.equal(login.statusCode, 200, login.body);
     const cookie = login.headers['set-cookie'].split(';')[0];
+    const poster = await app.inject({ method: 'GET',
+      url: '/api/catalogue/posters/123e4567-e89b-42d3-a456-426614174000',
+      headers: { cookie } });
+    assert.equal(poster.statusCode, 200);
+    assert.match(poster.headers['content-type'], /image\/jpeg/);
+    assert.deepEqual(poster.rawPayload, Buffer.from([1, 2, 3]));
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/catalogue/posters/not-a-uuid', headers: { cookie } })).statusCode, 404);
+    const cataloguePoster = await app.inject({ method: 'GET',
+      url: '/api/catalogue/posters/anidb/1234', headers: { cookie } });
+    assert.equal(cataloguePoster.statusCode, 200);
+    assert.deepEqual(cataloguePoster.rawPayload, Buffer.from([0xff, 0xd8, 0xff]));
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/catalogue/posters/anidb/9999', headers: { cookie } })).statusCode, 404);
     assert.match(login.headers['set-cookie'], /HttpOnly/);
     assert.match(login.headers['set-cookie'], /SameSite=Strict/);
     const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
     assert.equal(session.json().user.id, owner.id);
+    const library = await app.inject({ method: 'GET', url: '/api/library', headers: { cookie } });
+    assert.equal(library.statusCode, 200);
+    assert.deepEqual(library.json(), { state: 'current_proofs', items: [
+      { anidbId: 1234, title: 'Example series',
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950 }], nextAfterAnidbId: null });
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/library?afterAnidbId=-1', headers: { cookie } })).statusCode, 400);
+    const airing = await app.inject({ method: 'GET', url: '/api/airing', headers: { cookie } });
+    assert.equal(airing.statusCode, 200);
+    assert.deepEqual(airing.json(), { state: 'ready', week: '2026-W45',
+      checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
+        scheduledDate: '2026-11-02', episodeNumber: '3' }] });
     const review = await app.inject({ method: 'GET',
       url: '/api/admin/review', headers: { cookie } });
     assert.equal(review.statusCode, 200);
@@ -266,6 +310,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       headers: { cookie } });
     assert.deepEqual(mine.json().items.map((item) => item.id), [1]);
     assert.equal((await app.inject({ method: 'GET', url: '/api/requests?limit=1000',
+      headers: { cookie } })).statusCode, 400);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests?view=bogus',
       headers: { cookie } })).statusCode, 400);
     const invited = await app.inject({ method: 'POST', url: '/api/invitations',
       headers: { cookie, origin, 'x-negev-csrf': csrf }, payload: {} });

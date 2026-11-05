@@ -38,6 +38,21 @@ test('holds on Shoko failure or malformed catalogue data', async () => {
   assert.deepEqual(await searchAniDbTitles({ ...config, query: 'Example', fetchImpl: async () => ({ status: 200, text: async () => '{"Total":1,"List":[{"ID":0,"Title":""}]}' }) }), { state: 'unavailable' });
 });
 
+test('returns only available, valid cached Shoko poster IDs', async () => {
+  const uid = '123e4567-e89b-42d3-a456-426614174000';
+  const result = await searchAniDbTitles({ ...config, query: 'Poster',
+    fetchImpl: async () => ({ status: 200, text: async () => JSON.stringify({
+      Total: 3, List: [
+        { ID: 1, Title: 'Good', Poster: { UID: uid, Available: true } },
+        { ID: 2, Title: 'Unavailable', Poster: { UID: uid, Available: false } },
+        { ID: 3, Title: 'Malformed', Poster: { UID: '../../wrong', Available: true } },
+      ],
+    }) }) });
+  assert.equal(result.items[0].posterUid, uid);
+  assert.equal(result.items[1].posterUid, undefined);
+  assert.equal(result.items[2].posterUid, undefined);
+});
+
 test('bounds pagination and does not claim a title is requestable', async () => {
   const result = await searchAniDbTitles({ ...config, query: 'Example', page: 2, pageSize: 2, fetchImpl: async () => ({
     status: 200, text: async () => JSON.stringify({ Total: 3, List: [
