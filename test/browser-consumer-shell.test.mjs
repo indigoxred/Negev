@@ -210,8 +210,11 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
           sourceDate: '2026-11-05', items: [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
-            adult: false }, { anidbId: 9589, title: 'The Garden of Words',
-            type: 'Movie', releaseStatus: 'FINISHED', adult: true }],
+            adult: false, libraryPresence: { state: 'unknown',
+              verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
+            type: 'Movie', releaseStatus: 'FINISHED', adult: true,
+            libraryPresence: { state: 'in_library',
+              verifiedEpisodeCount: 1 } }],
           nextAfter: null }));
         return;
       }
@@ -307,6 +310,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(season, /Pale Cocoon/);
       assert.match(season, /The Garden of Words/);
       assert.match(season, /18\+/);
+      assert.match(season, /✓ In library · 1 verified item/);
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
