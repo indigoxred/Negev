@@ -40,5 +40,5 @@
 - [x] Run `node --test test/completion-queue.test.mjs`; confirm the new test fails for the expected cadence.
 - [x] Add a guarded schema migration and compute the next due time within `recordResult`'s transaction.
 - [x] Add tests for reset after a different hold, unchanged incomplete/other delays, and migration of an old table row.
-- [ ] Run focused completion queue and scheduler tests on Linux, then the repository test gate once. Local Windows focused tests pass 23/23; the full Windows run has unrelated catalogue-cache and browser-profile failures and is not a green gate.
-- [ ] Inspect the diff for media, credential and schema scope; commit source and tests for review.
+- [x] Run focused completion queue and scheduler tests on Linux, then the repository test gate once. GitHub Linux test and image jobs passed on the reviewed PR head; local Windows focused tests passed 23/23. The full Windows run had unrelated catalogue-cache and browser-profile failures and was not counted as a green gate.
+- [x] Inspect the diff for media, credential and schema scope; commit source and tests for review. PR #133 merged at `1c0e2a6` after review found no Critical or Important issue.
