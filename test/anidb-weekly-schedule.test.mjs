@@ -20,18 +20,20 @@ days: [
 const reply = (body, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'content-type': 'application/json' } });
 
-test('weekly Airing browse uses exact AniDB IDs and excludes adult entries', async () => {
+test('weekly Airing browse uses exact AniDB IDs and labels adult entries', async () => {
   const calls = [];
   const source = createAniDbWeeklySchedule({ now: () => 1_000,
     fetchImpl: async (url) => { calls.push(url); return reply(week); } });
   assert.deepEqual(await source.read(), { state: 'ready', week: '2026-W45',
-    checkedMs: 1_000, items: [{ anidbId: 50, title: 'Weekly title',
-      scheduledDate: '2026-11-02', episodeNumber: '3' }] });
+    checkedMs: 1_000, items: [{ anidbId: 60, title: 'Adult title',
+      scheduledDate: '2026-11-02', episodeNumber: '2', adult: true },
+    { anidbId: 50, title: 'Weekly title', scheduledDate: '2026-11-02',
+      episodeNumber: '3', adult: false }] });
   assert.equal((await source.read()).state, 'ready');
   assert.equal(calls.length, 1);
 });
 
-test('provider failure is distinct from an empty week and never shows adult data', async () => {
+test('provider failure is distinct from an empty week and rejects unknown age flags', async () => {
   let clock = 1_000;
   let fail = false;
   const source = createAniDbWeeklySchedule({ now: () => clock,

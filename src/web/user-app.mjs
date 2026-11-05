@@ -24,7 +24,7 @@ const constantEqual = (a, b) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
-  listAiringSchedule, searchTitles,
+  listAiringSchedule, listSeasonalTitles, searchTitles,
   readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
@@ -272,14 +272,62 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
           typeof item.scheduledDate !== 'string' ||
           !/^\d{4}-\d{2}-\d{2}$/.test(item.scheduledDate) ||
           typeof item.episodeNumber !== 'string' ||
-          item.episodeNumber.length > 24)) {
+          item.episodeNumber.length > 24 ||
+          typeof item.adult !== 'boolean')) {
       return reply.code(503).send({ error: 'Airing schedule unavailable' });
     }
     return { state: schedule.state, week: schedule.week,
       checkedMs: schedule.checkedMs,
       items: schedule.items.map((item) => ({ anidbId: item.anidbId,
         title: item.title, scheduledDate: item.scheduledDate,
-        episodeNumber: item.episodeNumber })) };
+        episodeNumber: item.episodeNumber, adult: item.adult })) };
+  });
+  app.get('/api/seasons', { preHandler: requireUser,
+    config: { rateLimit: { max: 12, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const query = request.query;
+    if (Object.keys(query).some((key) => !['year', 'season', 'after'].includes(key)) ||
+        typeof query.year !== 'string' || !/^\d{4}$/.test(query.year) ||
+        typeof query.season !== 'string' ||
+        !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
+        query.after !== undefined && (typeof query.after !== 'string' ||
+          !/^(0|[1-9]\d*)$/.test(query.after))) {
+      return reply.code(400).send({ error: 'Invalid season page' });
+    }
+    const year = Number(query.year);
+    const after = Number(query.after ?? '0');
+    if (year < 1900 || year > 2100 || !Number.isSafeInteger(after) ||
+        after > 100_000) return reply.code(400).send({ error: 'Invalid season page' });
+    if (typeof listSeasonalTitles !== 'function') {
+      return reply.code(503).send({ error: 'Seasonal browse unavailable' });
+    }
+    let page;
+    try { page = await listSeasonalTitles({ year, season: query.season,
+      after, limit: 12 }); }
+    catch { return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
+    if (page?.state === 'unavailable') return { state: 'unavailable' };
+    if (!['ready', 'partial', 'stale'].includes(page?.state) ||
+        page.year !== year || page.season !== query.season ||
+        typeof page.sourceDate !== 'string' ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
+        !Array.isArray(page.items) || page.items.length > 12 ||
+        page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
+          item.anidbId < 1 || typeof item.title !== 'string' ||
+          !item.title.trim() || item.title.length > 300 ||
+          typeof item.type !== 'string' || item.type.length > 80 ||
+          typeof item.adult !== 'boolean' ||
+          item.releaseStatus !== null && (typeof item.releaseStatus !== 'string' ||
+            item.releaseStatus.length > 80)) ||
+        page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
+          page.nextAfter <= after || page.nextAfter > 100_000)) {
+      return reply.code(503).send({ error: 'Seasonal browse unavailable' });
+    }
+    return { state: page.state, year, season: query.season,
+      sourceDate: page.sourceDate, items: page.items.map((item) => ({
+        anidbId: item.anidbId, title: item.title, type: item.type,
+        releaseStatus: item.releaseStatus, adult: item.adult })),
+      nextAfter: page.nextAfter };
   });
   app.get('/api/admin/review', { preHandler: requireUser,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },

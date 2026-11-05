@@ -54,12 +54,13 @@ export function createAniDbWeeklySchedule({ fetchImpl = fetch,
             typeof episode.adult_only !== 'boolean') {
           throw new TypeError('Invalid schedule episode');
         }
-        if (episode.adult_only || episode.episode_type !== 'regular') continue;
+        if (episode.episode_type !== 'regular') continue;
         const existing = byTitle.get(episode.anidb_id);
         if (!existing || day.date < existing.scheduledDate) {
           byTitle.set(episode.anidb_id, {
             anidbId: episode.anidb_id, title: episode.anime_title,
             scheduledDate: day.date, episodeNumber: episode.episode_number,
+            adult: episode.adult_only,
           });
         }
       }

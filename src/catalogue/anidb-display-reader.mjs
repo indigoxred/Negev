@@ -33,7 +33,7 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
       });
       if (response.status !== 200) return unavailable();
       const data = await readBoundedJson(response, 96_000);
-      if (data?.anidb_id !== anidbId || data.restricted !== false ||
+      if (data?.anidb_id !== anidbId || typeof data.restricted !== 'boolean' ||
           typeof data.title !== 'string' || !data.title.trim() ||
           data.title.length > 500 ||
           data.title_english !== null && data.title_english !== undefined &&

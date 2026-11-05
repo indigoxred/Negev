@@ -25,10 +25,10 @@ test('display reader accepts only the exact non-restricted AniDB record and coal
   assert.equal(calls, 1);
 });
 
-test('display reader rejects mismatched, restricted and oversized records', async () => {
+test('display reader rejects mismatched, unknown-age and oversized records', async () => {
   for (const data of [
     { anidb_id: 2, restricted: false },
-    { anidb_id: 1, restricted: true },
+    { anidb_id: 1, restricted: null },
     { anidb_id: 1, restricted: false, title: 'x'.repeat(501) },
   ]) {
     const reader = createAniDbDisplayReader({ fetchImpl: async () =>

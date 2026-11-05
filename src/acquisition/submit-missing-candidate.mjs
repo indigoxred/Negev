@@ -55,7 +55,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   if (!isCompleteAniDbDetail(detail, request?.anidbId) ||
       detail.kind !== request.kind) return held('detail_unavailable');
-  if (detail.restricted !== false) return held('restricted_or_unverified');
+  if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
   const catalogueIds = new Set(detail.episodes.map((episode) => episode.id));
   if (!Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
       request.episodeIds.some((id) => !catalogueIds.has(id))) {

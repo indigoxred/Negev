@@ -77,7 +77,7 @@ export function planTorrentTargets({ request, detail, prepared,
       request.status !== 'held' ||
       !['series', 'movie'].includes(request.kind) ||
       !isCompleteAniDbDetail(detail, request.anidbId) ||
-      detail.restricted !== false ||
+      typeof detail.restricted !== 'boolean' ||
       detail.kind !== request.kind ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length < 1 ||
       request.episodeIds.length > 2_000 ||

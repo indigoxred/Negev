@@ -170,7 +170,7 @@ test('an unsafe changed catalogue or preflight identity cannot submit', async ()
   for (const change of [
     { preview: { ...preflight, anidbId: 99 } },
     { preview: { ...preflight, episodeIds: [9999] } },
-    { detail: { ...detail, restricted: true } },
+    { detail: { ...detail, restricted: null } },
     { detail: { ...detail, episodes: detail.episodes.slice(1), total: 1 } },
     { detail: { ...detail, episodes: [
       { ...detail.episodes[0], number: 2 },

@@ -56,14 +56,14 @@ function options({ request, ledger, readEvidence, prowlarrFetch, qbittorrentFetc
       fetchImpl: qbittorrentFetch } };
 }
 
-test('a title newly restricted after request cannot reach Prowlarr or qBittorrent', async () =>
+test('a title with unknown age flag cannot reach Prowlarr or qBittorrent', async () =>
   withLedgers(async ({ request, ledger }) => {
     let providerCalls = 0;
     const input = options({ request, ledger, readEvidence: async () => absent(),
       prowlarrFetch: async () => { providerCalls++; },
       qbittorrentFetch: async () => { providerCalls++; } });
     assert.deepEqual(await submitMissingCandidate({ ...input,
-      detail: { ...baseDetail, restricted: true } }),
+      detail: { ...baseDetail, restricted: null } }),
     { state: 'held', reason: 'restricted_or_unverified' });
     assert.equal(providerCalls, 0);
   }));

@@ -35,7 +35,7 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     if (detail.state !== 'details') {
       return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');
     }
-    if (detail.restricted !== false) return held('restricted_or_unverified');
+    if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
     const title = detail.title.trim();
     if (!title || title.length > 300 || /[\x00-\x1f\x7f]/.test(title)) {
       return held('detail_unavailable');

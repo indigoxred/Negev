@@ -43,7 +43,7 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       results.push({ ...watch, ...held('detail_incomplete') });
       continue;
     }
-    if (detail.restricted !== false) {
+    if (typeof detail.restricted !== 'boolean') {
       results.push({ ...watch, ...held('restricted_or_unverified') });
       continue;
     }
