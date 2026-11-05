@@ -46,13 +46,15 @@ function readAdultPreference(userId) {
 }
 function markAdult(node, item) {
   node.dataset.anidbId = String(item.anidbId);
+  node.dataset.adult = item.adult === true ? 'true' :
+    item.adult === false ? 'false' : 'unknown';
   node.hidden = !state.showAdult && item.adult === true;
   return node;
 }
 function applyAdultVisibility() {
   for (const node of document.querySelectorAll('[data-anidb-id]')) {
-    node.hidden = !state.showAdult &&
-      state.searchItems.get(Number(node.dataset.anidbId))?.adult === true;
+    node.hidden = !state.showAdult && (node.dataset.adult === 'true' ||
+      state.searchItems.get(Number(node.dataset.anidbId))?.adult === true);
   }
   const toggle = byId('adult-toggle');
   toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :

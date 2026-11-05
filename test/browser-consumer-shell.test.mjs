@@ -122,8 +122,17 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `({adultHidden: document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden,
         normalVisible: !document.querySelector('#season-list [data-anidb-id="4158"]')?.hidden})`,
     });
+    const liveToggle = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const toggle = document.querySelector('#adult-toggle');
+        toggle.click();
+        const adultVisible = !document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden;
+        toggle.click();
+        const adultHiddenAgain = document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden;
+        return {adultVisible, adultHiddenAgain}; })()`,
+    });
     return { ...result.value, menu: menu.result.value,
-      adultChoice: adultChoice.result.value, filtered: filtered.result.value };
+      adultChoice: adultChoice.result.value, filtered: filtered.result.value,
+      liveToggle: liveToggle.result.value };
   } finally {
     socket?.close();
     child.kill();
@@ -256,6 +265,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
+      assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');
