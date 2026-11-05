@@ -14,8 +14,17 @@ function acquisitionText(progress, kind) {
     case 'release_check_retrying': return 'Release check paused · Negev will retry';
     case 'torrent_stopped': return 'Release selected · download not started';
     case 'download_unverified': return 'Download requested · completion unverified';
-    case 'partial_private_copy':
-      return `${progress.privateVerifiedTargets}/${progress.targetCount} ${target} target${progress.targetCount === 1 ? '' : 's'} ${progress.targetCount === 1 ? 'has' : 'have'} a recorded private copy · Plex unverified`;
+    case 'release_identity_unverified':
+      return 'Downloaded file not confirmed by AniDB · Negev will retry';
+    case 'release_retirement_pending':
+      return 'Downloaded file not confirmed by AniDB · Release is being safely retired';
+    case 'partial_private_copy': {
+      const suffix = progress.identityCheckPending === true
+        ? ' · Another downloaded file awaits AniDB confirmation; Negev will retry' :
+        progress.identityRetirementPending === true
+          ? ' · Another release is being safely retired' : '';
+      return `${progress.privateVerifiedTargets}/${progress.targetCount} ${target} target${progress.targetCount === 1 ? '' : 's'} ${progress.targetCount === 1 ? 'has' : 'have'} a recorded private copy · Plex unverified${suffix}`;
+    }
     case 'private_copy_recorded':
       return 'Files verified privately · Shoko import unverified';
     case 'import_unverified': return 'Shoko import outcome unverified · Plex unverified';
