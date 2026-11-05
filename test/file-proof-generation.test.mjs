@@ -78,6 +78,12 @@ test('a changed Plex card or physical Part cannot receive a late exact proof', a
     assert.deepEqual(proofs.observeGuarded({ ...target,
       proof: { ...proof, storageKey: '1:3:5' }, checkedMs: 300,
       revision: snapshot(dbPath) }), { state: 'recorded' });
+    assert.deepEqual(proofs.observeGuarded({ ...target,
+      proof: { ...proof, storageKey: '1:3:5',
+        presentation: 'alternate_card' }, checkedMs: 301,
+      revision: snapshot(dbPath) }), { state: 'recorded' });
+    assert.deepEqual(proofs.getCurrent(target), { state: 'available',
+      verifiedAtMs: 301, presentation: 'alternate_card' });
   } finally {
     proofs.close(); plex.close(); shoko.close();
     await rm(dir, { recursive: true, force: true });

@@ -25,8 +25,16 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       rating_key INTEGER NOT NULL CHECK(rating_key>0),
       part_id INTEGER NOT NULL CHECK(part_id>0),
       verified_ms INTEGER NOT NULL CHECK(verified_ms>=0),
+      presentation TEXT NOT NULL DEFAULT 'exact'
+        CHECK(presentation IN ('exact','alternate_card')),
       PRIMARY KEY(anidb_id,episode_id,file_id,library_id,rating_key,part_id)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(file_availability_proofs)').all()
+      .some((column) => column.name === 'presentation')) {
+      db.exec(`ALTER TABLE file_availability_proofs ADD COLUMN presentation
+        TEXT NOT NULL DEFAULT 'exact'
+        CHECK(presentation IN ('exact','alternate_card'))`);
+    }
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_episode
       ON file_availability_proofs(anidb_id,episode_id,verified_ms DESC)`);
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_file
@@ -38,13 +46,16 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     if (discardPriorProofs) db.exec('DELETE FROM file_availability_proofs');
   } catch (error) { db.close(); throw error; }
   const upsert = db.prepare(`INSERT INTO file_availability_proofs
-    (anidb_id,episode_id,file_id,library_id,rating_key,part_id,verified_ms)
-    VALUES (?,?,?,?,?,?,?) ON CONFLICT DO UPDATE SET
-      verified_ms=excluded.verified_ms
+    (anidb_id,episode_id,file_id,library_id,rating_key,part_id,verified_ms,presentation)
+    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO UPDATE SET
+      verified_ms=excluded.verified_ms,
+      presentation=excluded.presentation
     WHERE excluded.verified_ms>=file_availability_proofs.verified_ms`);
-  const current = db.prepare(`SELECT MAX(verified_ms) AS verifiedMs
+  const current = db.prepare(`SELECT verified_ms AS verifiedMs,presentation
     FROM file_availability_proofs WHERE anidb_id=? AND episode_id=?
-      AND verified_ms<=?`);
+      AND verified_ms<=?
+    ORDER BY (verified_ms>? AND presentation='exact') DESC,
+      verified_ms DESC LIMIT 1`);
   const positiveForAnime = db.prepare(`SELECT DISTINCT episode_id AS episodeId
     FROM file_availability_proofs WHERE anidb_id=? AND verified_ms>?
       AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
@@ -62,10 +73,12 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
           !validId(proof?.fileId) || !validId(proof.libraryId) ||
           !validId(proof.ratingKey) || !validId(proof.partId) ||
           !validTime(checkedMs) || !validTime(observedNow) ||
-          checkedMs > observedNow) return held();
+          checkedMs > observedNow ||
+          ![undefined, 'alternate_card'].includes(proof.presentation)) return held();
       const identity = [anidbId, episodeId, proof.fileId,
         proof.libraryId, proof.ratingKey, proof.partId];
-      const saved = upsert.run(...identity, checkedMs);
+      const saved = upsert.run(...identity, checkedMs,
+        proof.presentation ?? 'exact');
       return { state: saved.changes === 1 ? 'recorded' : 'stale' };
     },
     observeGuarded({ anidbId, episodeId, proof, revision,
@@ -87,7 +100,8 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
           card.identitySignature.length > 100_000 ||
           !validTime(card.observedMs) || !validTime(checkedMs) ||
           !validTime(observedNow) || checkedMs > observedNow ||
-          source.observedMs > checkedMs || card.observedMs > checkedMs) {
+          source.observedMs > checkedMs || card.observedMs > checkedMs ||
+          ![undefined, 'alternate_card'].includes(proof.presentation)) {
         return held();
       }
       db.exec('BEGIN IMMEDIATE');
@@ -120,7 +134,8 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
           return { state: 'held', reason: 'source_generation_changed' };
         }
         const saved = upsert.run(anidbId, episodeId, proof.fileId,
-          proof.libraryId, proof.ratingKey, proof.partId, checkedMs);
+          proof.libraryId, proof.ratingKey, proof.partId, checkedMs,
+          proof.presentation ?? 'exact');
         db.exec('COMMIT');
         return { state: saved.changes === 1 ? 'recorded' : 'stale' };
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -131,11 +146,14 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       }
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
-      const row = current.get(anidbId, episodeId, nowMs);
+      const row = current.get(anidbId, episodeId, nowMs,
+        nowMs - positiveLifetimeMs);
       if (!validTime(row?.verifiedMs)) return { state: 'unknown' };
       return { state: row.verifiedMs + positiveLifetimeMs > nowMs
         ? 'available' : 'previously_available',
-      verifiedAtMs: row.verifiedMs };
+      verifiedAtMs: row.verifiedMs,
+      ...(row.presentation === 'alternate_card'
+        ? { presentation: 'alternate_card' } : {}) };
     },
     getRecentAvailableIds({ anidbId } = {}) {
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');

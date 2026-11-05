@@ -241,7 +241,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'details', anidbId: 7,
           title: 'Film with alternate parts', kind: 'movie', restricted: false,
           page: 1, total: 3, nextPage: null, episodes: [
-            { id: 71, number: 1, type: 'Episode', title: 'Complete Movie', availability: 'available' },
+            { id: 71, number: 1, type: 'Episode', title: 'Complete Movie',
+              availability: 'available', availabilityNote: 'alternate_card' },
             { id: 72, number: 2, type: 'Episode', title: 'Part 1', availability: 'unknown' },
             { id: 73, number: 3, type: 'Episode', title: 'Part 2', availability: 'unknown' },
           ] }));
@@ -315,6 +316,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Choose one film entry/);
+      assert.match(alternateFilm, /File present in Plex; listed under another episode/);
       assert.match(alternateFilm, /Request selected film entry/);
       assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));

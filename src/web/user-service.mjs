@@ -53,6 +53,8 @@ import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs
 import { openFileBackfillCursor } from
   '../availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
+import { episodeDisplayAvailability } from
+  '../availability/episode-display-availability.mjs';
 import { createFileBackfillWorker } from '../availability/file-backfill-worker.mjs';
 import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
@@ -239,6 +241,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }
       return metadata.run(() => plexObserver.observeTarget(target,
         observedShoko, { includeProof }));
+    };
+    const observeDisplayPublic = async (target) => {
+      const live = await observeCurrentPublic(target);
+      if (live?.state === 'available') return live;
+      const saved = target.kind === 'series' &&
+        inventory.getObservedFileIds(target).length > 0
+        ? fileProofs?.getCurrent(target) : null;
+      return saved?.state === 'available' &&
+        saved.presentation === 'alternate_card'
+        ? { state: 'available', presentation: 'alternate_card' } : live;
     };
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
       now, requireProof: true,
@@ -472,12 +484,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             episodeId: episode.id, nowMs: now() };
           const direct = directAvailability.getStatus(target).state;
           const title = titleChecks?.getTargetStatus(target).state;
-          const file = fileProofs?.getCurrent(target).state;
-          return { ...episode, availability:
-            direct === 'available' || title === 'available' || file === 'available'
-              ? 'available' : title === 'previously_available' ||
-                file === 'previously_available'
-                ? 'previously_available' : 'unknown' };
+          const file = fileProofs?.getCurrent(target);
+          return { ...episode, ...episodeDisplayAvailability({
+            direct, title, file }) };
         }) };
       },
       startTitleCheck: titleChecks ? ({ anidbId }) =>
@@ -506,7 +515,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       hydrateTitle: shokoHydration ?
         (input) => metadata.run(() => hydrator.load(input)) : undefined,
       observePublicTarget: (target) => plexObserver ?
-        observeCurrentPublic(target) :
+        observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
     });
     const observations = new Set();

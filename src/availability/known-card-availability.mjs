@@ -61,11 +61,28 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     shoko.tmdbMovieIds.length === 1 &&
     Number.isSafeInteger(shoko.tmdbMovieIds[0]) && shoko.tmdbMovieIds[0] > 0
     ? `tmdb://${shoko.tmdbMovieIds[0]}` : null;
-  const identityParts = plex.parts.filter((part) =>
+  const linkedIds = shoko.linkedShokoEpisodeIds;
+  if (linkedIds !== undefined &&
+      (!Array.isArray(linkedIds) || linkedIds.length > 100 ||
+        linkedIds.some((id) => !Number.isSafeInteger(id) || id < 1) ||
+        new Set(linkedIds).size !== linkedIds.length ||
+        (target.kind === 'series' &&
+          !linkedIds.includes(shoko.shokoEpisodeId)))) {
+    return unknown('card_identity_unverified');
+  }
+  const siblingGuids = target.kind === 'series' && shoko.files.length === 1 &&
+    Array.isArray(linkedIds)
+    ? new Set(linkedIds.map((id) =>
+      `tv.plex.agents.custom.shoko://episode/e${id}`)) : null;
+  const exactParts = plex.parts.filter((part) =>
     (part.cardType === 'episode' && part.itemGuid === episodeGuid &&
       part.showGuid === showGuid) ||
     (target.kind === 'movie' && part.cardType === 'movie' && movieGuid &&
       (part.itemGuid === movieGuid || part.externalGuids?.includes(movieGuid))));
+  const siblingParts = siblingGuids ? plex.parts.filter((part) =>
+    part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
+      siblingGuids.has(part.itemGuid) && part.showGuid === showGuid) : [];
+  const identityParts = [...exactParts, ...siblingParts];
   if (identityParts.length === 0) return unknown('card_identity_unverified');
   if (maxChecks === 0) return unknown('comparison_budget_exceeded');
   const publicIds = new Set(publicLibraryIds);
@@ -105,7 +122,9 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
           parts.push({ storageKey: witness.storageKey, libraryId: part.libraryId, readable: true });
           provenParts.push({ fileId: file.fileId, libraryId: part.libraryId,
             ratingKey: part.ratingKey, partId: part.partId,
-            storageKey: witness.storageKey });
+            storageKey: witness.storageKey,
+            ...(part.cardType === 'episode' && part.itemGuid !== episodeGuid
+              ? { presentation: 'alternate_card' } : {}) });
         } else if (['file_unavailable', 'file_changed'].includes(witness?.reason)) {
           incompletePhysical = true;
         } else if (witness?.reason !== 'different_file' && witness?.reason !== 'size_mismatch') {

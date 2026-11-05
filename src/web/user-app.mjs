@@ -121,7 +121,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     let result;
     try { result = await observePublicTarget(target); }
     catch { return { state: 'unknown', reason: 'observer_unavailable' }; }
-    return result?.state === 'available' ? { state: 'available' } :
+    return result?.state === 'available' ? { state: 'available',
+      ...(result.presentation === 'alternate_card'
+        ? { presentation: 'alternate_card' } : {}) } :
       { state: 'unknown', reason: 'evidence_incomplete' };
   };
   const writeGuards = [requireOrigin, requireUser, requireCsrf];

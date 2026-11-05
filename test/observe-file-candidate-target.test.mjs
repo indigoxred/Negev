@@ -48,6 +48,41 @@ test('one Shoko file candidate can prove two distinct exact public episode cards
   }
 });
 
+test('one fully linked file playable on a sibling episode card proves both episodes', async () => {
+  const result = await observeFileCandidateTarget({ ...base,
+    target: { anidbId: 42, episodeId: 1002, kind: 'series' },
+    cardIndex: { ...base.cardIndex,
+      lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+        { libraryId: 102, ratingKey: 500 }] }) },
+  });
+  assert.deepEqual(result, { state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+      partId: 600, storageKey: '1:2:5',
+      presentation: 'alternate_card' } });
+});
+
+test('sibling-card proof rejects a wrong show, unrelated episode and different file', async () => {
+  const target = { anidbId: 42, episodeId: 1002, kind: 'series' };
+  const cardIndex = { ...base.cardIndex,
+    lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+      { libraryId: 102, ratingKey: 500 }] }),
+    lookupCards: () => ({ state: 'candidates', cards: [] }) };
+  const sibling = (await base.readPlex({ libraryId: 102, ratingKey: 500 })).parts[0];
+  for (const changed of [
+    { showGuid: 'tv.plex.agents.custom.shoko://show/100' },
+    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e777' },
+  ]) {
+    const result = await observeFileCandidateTarget({ ...base, target, cardIndex,
+      readPlex: async () => ({ state: 'ok', complete: true,
+        parts: [{ ...sibling, ...changed }] }) });
+    assert.notEqual(result.state, 'available');
+  }
+  const wrongFile = await observeFileCandidateTarget({ ...base,
+    target, cardIndex,
+    proveImpl: async () => ({ state: 'unknown', reason: 'different_file' }) });
+  assert.notEqual(wrongFile.state, 'available');
+});
+
 test('an AniDB-flagged existing file needs the same exact public card and file proof', async () => {
   const result = await observeFileCandidateTarget({ ...base,
     candidate: { ...candidate, releaseEvidence: 'anidb_flagged' },
