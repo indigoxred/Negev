@@ -192,6 +192,7 @@ function clearWorkspace() {
   byId('invite-code').textContent = '';
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
+  byId('identity').open = false;
   byId('workspace').hidden = true;
   byId('auth').hidden = false;
 }

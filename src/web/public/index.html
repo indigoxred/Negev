@@ -23,12 +23,15 @@
       <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime…" required>
       <button type="submit" class="sr-only">Search</button>
     </form>
-    <div id="identity" class="identity" hidden>
-      <span id="username"></span>
-      <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
-      <button id="invite" class="quiet" hidden>Create invite</button>
-      <button id="signout" class="quiet">Sign out</button>
-    </div>
+    <details id="identity" class="identity" hidden>
+      <summary>Account</summary>
+      <div class="account-menu">
+        <span id="username"></span>
+        <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
+        <button id="invite" class="quiet" hidden>Create invite</button>
+        <button id="signout" class="quiet">Sign out</button>
+      </div>
+    </details>
   </header>
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <p id="invite-code" class="invite-code" hidden></p>

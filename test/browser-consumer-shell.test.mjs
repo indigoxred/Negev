@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,13 +21,13 @@ const assets = new Map([
     'consumer-route.mjs'].map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
-const dump = async (url, profile, captureName) => new Promise((resolve, reject) => {
+const dump = async (url, profile, captureName, viewport = '1440,900') => new Promise((resolve, reject) => {
   const screenshot = process.env.NEGEV_UI_CAPTURE_DIR && captureName
     ? join(process.env.NEGEV_UI_CAPTURE_DIR, `${captureName}.png`) : null;
   const child = spawn(browser, ['--headless=new', '--no-first-run',
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
     `--user-data-dir=${profile}`, '--virtual-time-budget=6000',
-    '--window-size=1440,900', ...(screenshot ? [`--screenshot=${screenshot}`] : []),
+    `--window-size=${viewport}`, ...(screenshot ? [`--screenshot=${screenshot}`] : []),
     '--dump-dom', url], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   let output = '';
   const timeout = setTimeout(() => { child.kill(); reject(new Error('Browser timed out')); }, 30_000);
@@ -43,6 +43,76 @@ const dump = async (url, profile, captureName) => new Promise((resolve, reject) 
     else resolve(output);
   });
 });
+
+async function inspectMobile(url, profile) {
+  const child = spawn(browser, ['--headless=new', '--no-first-run',
+    '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
+    '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
+  { stdio: 'ignore', windowsHide: true });
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  let socket;
+  try {
+    let port;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      try {
+        port = Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
+        break;
+      } catch { await wait(100); }
+    }
+    if (!port) throw new Error('Browser debugging port unavailable');
+    const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    const page = pages.find((entry) => entry.type === 'page');
+    if (!page) throw new Error('Browser page unavailable');
+    socket = new WebSocket(page.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener('open', resolve, { once: true });
+      socket.addEventListener('error', reject, { once: true });
+    });
+    let nextId = 0;
+    const pending = new Map();
+    socket.addEventListener('message', (event) => {
+      const message = JSON.parse(event.data);
+      const target = pending.get(message.id);
+      if (!target) return;
+      pending.delete(message.id);
+      if (message.error) target.reject(new Error(message.error.message));
+      else target.resolve(message.result);
+    });
+    const send = (method, params = {}) => new Promise((resolve, reject) => {
+      const id = ++nextId;
+      pending.set(id, { resolve, reject });
+      socket.send(JSON.stringify({ id, method, params }));
+    });
+    await send('Page.enable');
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
+    });
+    await send('Page.navigate', { url });
+    await wait(1200);
+    const { result } = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({width: window.innerWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        accountRight: document.querySelector('#identity').getBoundingClientRect().right,
+        searchRight: document.querySelector('#search-form').getBoundingClientRect().right,
+        hasContent: document.querySelector('#discover-shelves').textContent.includes('This week on AniDB')})`,
+    });
+    if (process.env.NEGEV_UI_CAPTURE_DIR) {
+      const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+      await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'discover-mobile.png'),
+        Buffer.from(shot.data, 'base64'));
+    }
+    const menu = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const account = document.querySelector('#identity');
+        account.open = true; const signout = document.querySelector('#signout');
+        return {right: account.querySelector('.account-menu').getBoundingClientRect().right,
+          signoutVisible: signout.getBoundingClientRect().width > 0}; })()`,
+    });
+    return { ...result.value, menu: menu.result.value };
+  } finally {
+    socket?.close();
+    child.kill();
+  }
+}
 
 test('signed-in consumer routes render real shell with search, library and requests',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
@@ -118,6 +188,14 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(browse, /FX Senshi Kurumi-chan/);
       assert.match(browse, /Verified in your library/);
       assert.match(browse, /The Garden of Words/);
+      const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
+      assert.equal(mobile.width, 390);
+      assert.equal(mobile.hasContent, true);
+      assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
+      assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
+      assert.ok(mobile.searchRight <= 390, 'Search remains visible');
+      assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
+        'Account menu and sign-out remain usable');
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /The Garden of Words/);
       assert.match(library, /Recently verified in public Plex/);
