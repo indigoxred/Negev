@@ -940,13 +940,17 @@ async function showDetail(item, franchise = null) {
           await showDetail(item, franchise);
           return;
         }
+        const session = sessionResponses.current();
+        state.detailHydrationQueued.add(item.anidbId);
         try {
-          const result = await api(`/api/catalogue/${item.anidbId}/load-detail`,
+          await api(`/api/catalogue/${item.anidbId}/load-detail`,
             { method: 'POST', body: '{}' });
-          if (!isCurrentDetail()) return;
-          if (result.state === 'pending') state.detailHydrationQueued.add(item.anidbId);
+          if (!sessionResponses.isCurrent(session) || !isCurrentDetail()) return;
           await showDetail(item, franchise);
         } catch (error) {
+          if (sessionResponses.isCurrent(session)) {
+            state.detailHydrationQueued.delete(item.anidbId);
+          }
           if (isCurrentDetail()) message(error.message, true);
         } finally { button.disabled = false; }
       });

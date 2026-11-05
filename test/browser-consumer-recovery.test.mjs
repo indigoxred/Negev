@@ -22,6 +22,8 @@ test('title and library controls recover from pending and failed reads without d
     let titleReads = 0;
     let detailPosts = 0;
     let detailReady = false;
+    let holdNextDetailPost = false;
+    let heldDetailResponse = null;
     let failedTitleReads = 0;
     let pageTwoReads = 0;
     const json = (response, data, status = 200) => {
@@ -45,7 +47,10 @@ test('title and library controls recover from pending and failed reads without d
           { state: 'detail_pending', anidbId: 1, title: 'Pending title' });
       } else if (path === '/api/catalogue/1/load-detail' && request.method === 'POST') {
         detailPosts++;
-        json(response, { state: 'pending' });
+        if (holdNextDetailPost) {
+          holdNextDetailPost = false;
+          heldDetailResponse = response;
+        } else json(response, { state: 'pending' });
       } else if (path === '/api/catalogue/2') {
         failedTitleReads++;
         json(response, failedTitleReads === 1 ? { error: 'temporarily unavailable' } :
@@ -128,6 +133,27 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       assert.equal(detailPosts, 1, 'ready state must use GET, not repeat hydration POST');
+      detailReady = false;
+      await evaluate("location.hash = '#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash = '#/title/1'");
+      await until("document.querySelector('#detail')?.textContent.includes('Load details')");
+      holdNextDetailPost = true;
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Load details').click()");
+      await until("document.querySelector('#detail button')?.disabled === true");
+      await evaluate("location.hash = '#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash = '#/title/1'");
+      await until("document.querySelector('#detail')?.textContent.includes('Check again')");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
+      await until("document.querySelector('#detail')?.textContent.includes('Check again')");
+      assert.equal(detailPosts, 2, 'an in-flight hydration POST must not be duplicated');
+      assert.ok(heldDetailResponse);
+      json(heldDetailResponse, { state: 'pending' });
+      heldDetailResponse = null;
+      detailReady = true;
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
+      await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       const beforeReentry = titleReads;
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");
@@ -150,6 +176,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(pageTwoReads, 2);
       assert.equal(await evaluate("document.querySelectorAll('#library-list .poster-card').length"), 2);
     } finally {
+      if (heldDetailResponse) json(heldDetailResponse, { state: 'pending' });
       socket?.close();
       child.kill();
       await closed;
