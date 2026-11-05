@@ -38,6 +38,8 @@ export function openPlexCardIndex(dbPath) {
       .some((column) => column.name === 'identity_signature')) {
       db.exec('ALTER TABLE plex_card_observations ADD COLUMN identity_signature TEXT');
     }
+    db.exec(`CREATE INDEX IF NOT EXISTS plex_oldest_card
+      ON plex_card_observations(library_id,kind,observed_ms,rating_key)`);
     db.exec(`CREATE TABLE IF NOT EXISTS plex_part_candidates (
       library_id INTEGER NOT NULL,
       rating_key INTEGER NOT NULL,
@@ -164,6 +166,12 @@ export function openPlexCardIndex(dbPath) {
   const dueRetry = db.prepare(`SELECT rating_key AS ratingKey FROM plex_card_retries
     WHERE library_id=? AND kind=? AND due_ms<=?
     ORDER BY due_ms,rating_key LIMIT 1`);
+  const oldestUnqueuedCard = db.prepare(`SELECT c.rating_key AS ratingKey
+    FROM plex_card_observations c
+    WHERE c.library_id=? AND c.kind=? AND c.observed_ms<=?
+      AND NOT EXISTS (SELECT 1 FROM plex_card_retries r
+        WHERE r.library_id=c.library_id AND r.rating_key=c.rating_key)
+    ORDER BY c.observed_ms,c.rating_key LIMIT 1`);
   const cursor = db.prepare(`SELECT offset FROM plex_card_cursors
     WHERE library_id=? AND kind=?`);
   const saveCursor = db.prepare(`INSERT INTO plex_card_cursors
@@ -328,6 +336,30 @@ export function openPlexCardIndex(dbPath) {
       }
       const row = dueRetry.get(libraryId, kind, nowMs);
       return row ? { ratingKey: row.ratingKey } : null;
+    },
+    scheduleOldestCardRecheck({ libraryId, kind, nowMs,
+      maxAgeMs = 18 * 60 * 60_000 }) {
+      if (!validId(libraryId) || !['episode', 'movie'].includes(kind) ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0 ||
+          !Number.isSafeInteger(maxAgeMs) || maxAgeMs < 60_000 ||
+          maxAgeMs > 7 * 24 * 60 * 60_000) {
+        throw new TypeError('Invalid Plex stale card recheck');
+      }
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        if (dueRetry.get(libraryId, kind, nowMs)) {
+          db.exec('ROLLBACK');
+          return { state: 'retry_already_due' };
+        }
+        const row = oldestUnqueuedCard.get(libraryId, kind, nowMs - maxAgeMs);
+        if (!row) {
+          db.exec('ROLLBACK');
+          return { state: 'no_stale_card' };
+        }
+        saveRetry.run(libraryId, row.ratingKey, kind, 1, nowMs);
+        db.exec('COMMIT');
+        return { state: 'recheck_queued', ratingKey: row.ratingKey };
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
     clearRetry({ libraryId, ratingKey }) {
       if (!validId(libraryId) || !validId(ratingKey)) {

@@ -299,6 +299,47 @@ test('detailed page indexes without card GET but availability rechecks the exact
   service.close();
 });
 
+test('a stale indexed card is directly rechecked when a growing-library sweep cannot retire it', async () => {
+  const { config, calls } = await fixture();
+  let clock = 100;
+  let removed = false;
+  const originalFetch = config.fetchImpl;
+  config.now = () => clock;
+  config.fetchImpl = (url, options) => {
+    if (removed && url.pathname === '/library/sections/102/all') {
+      return Response.json({ MediaContainer: { librarySectionID: 102,
+        offset: 0, totalSize: 2, size: 2,
+        Metadata: [501, 502].map((ratingKey) => ({
+          ratingKey: String(ratingKey), type: 'episode', librarySectionID: 102,
+          guid: `tv.plex.agents.custom.shoko://episode/e${ratingKey}`,
+          grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+          Media: [{ Part: [{ id: ratingKey + 400, size: 5,
+            file: '/source-pure/Anime/one.mkv' }] }],
+        })) } });
+    }
+    if (removed && url.pathname === '/library/metadata/500') {
+      calls.push('plex/library/metadata/500');
+      return Promise.resolve(new Response(null, { status: 404 }));
+    }
+    return originalFetch(url, options);
+  };
+  const service = createPlexAvailabilityService(config);
+  try {
+    assert.equal((await service.tick({ libraryId: 102, kind: 'episode' })).state,
+      'page_indexed');
+    const cardReadsBeforeRemoval = calls.filter((call) =>
+      call === 'plex/library/metadata/500').length;
+    removed = true;
+    clock = 20 * 60 * 60_000;
+    const result = await service.tick({ libraryId: 102, kind: 'episode',
+      includeLoad: true });
+    assert.equal(result.retry, 'retry_missing');
+    assert.equal(result.load.exactCardReads, 1);
+    assert.equal(calls.filter((call) =>
+      call === 'plex/library/metadata/500').length - cardReadsBeforeRemoval, 1);
+  } finally { service.close(); }
+});
+
 test('exact file key selects a playable episode among twelve same-size cards', async () => {
   const { config, calls } = await fixture();
   const source = path.join(config.shokoMount.localRoot, 'Anime', 'one.mkv');
