@@ -17,7 +17,7 @@ const state = { csrf: null, user: null, selected: null,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null,
-  discoverLoaded: false };
+  discoverLoaded: false, showAdult: true, usersLoaded: false };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
@@ -38,6 +38,29 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+function adultPreferenceKey(userId) { return `negev:show-adult:${userId}`; }
+function readAdultPreference(userId) {
+  try { return localStorage.getItem(adultPreferenceKey(userId)) !== 'off'; }
+  catch { return true; }
+}
+function markAdult(node, item) {
+  node.dataset.anidbId = String(item.anidbId);
+  node.hidden = !state.showAdult && item.adult === true;
+  return node;
+}
+function applyAdultVisibility() {
+  for (const node of document.querySelectorAll('[data-anidb-id]')) {
+    node.hidden = !state.showAdult &&
+      state.searchItems.get(Number(node.dataset.anidbId))?.adult === true;
+  }
+  const toggle = byId('adult-toggle');
+  toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :
+    state.showAdult ? '18+ On' : '18+ Off';
+  toggle.setAttribute('aria-pressed', String(state.showAdult));
+  toggle.disabled = state.user?.adultAllowed === false;
+  toggle.title = toggle.disabled ? '18+ access is disabled for this account' :
+    'Show or hide titles marked 18+';
 }
 const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
   ? `/api/catalogue/posters/${item.posterUid}`
@@ -88,6 +111,8 @@ function renderRoute() {
       state.seasonalRouteKey = key;
       void loadSeasonal(choice);
     }
+  } else if (page === 'admin' && !state.usersLoaded) {
+    void loadUsers();
   }
 }
 window.addEventListener('hashchange', renderRoute);
@@ -142,6 +167,8 @@ function showSession(data) {
     nextReviewAttemptId = null;
   }
   state.user = data.user;
+  state.showAdult = data.user.adultAllowed !== false &&
+    readAdultPreference(data.user.id);
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
@@ -156,6 +183,8 @@ function showSession(data) {
   byId('mobile-nav').hidden = false;
   byId('search-form').hidden = false;
   byId('identity').hidden = false;
+  byId('adult-toggle').hidden = false;
+  applyAdultVisibility();
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
   byId('admin-link').hidden = data.user.role !== 'admin';
@@ -172,6 +201,8 @@ function clearWorkspace() {
   seasonalResponses.invalidate();
   discoverResponses.invalidate();
   state.user = null;
+  state.showAdult = true;
+  state.usersLoaded = false;
   state.csrf = null;
   state.selected = null;
   state.searchToken++;
@@ -205,6 +236,7 @@ function clearWorkspace() {
   byId('invite-code').textContent = '';
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
+  byId('adult-toggle').hidden = true;
   byId('identity').open = false;
   byId('workspace').hidden = true;
   byId('auth').hidden = false;
@@ -349,7 +381,9 @@ async function loadRequests() {
   await loadRequestView('history');
 }
 function discoveryCard(item, note, badge, available = false) {
-  const card = element('a', undefined, 'poster-card');
+  const entry = { ...item, adult: item.adult ??
+    state.searchItems.get(item.anidbId)?.adult };
+  const card = markAdult(element('a', undefined, 'poster-card'), entry);
   card.href = titleRoute(item.anidbId);
   const frame = element('span', 'N', 'poster-frame poster-fallback');
   const poster = posterImage(item);
@@ -360,7 +394,7 @@ function discoveryCard(item, note, badge, available = false) {
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
   if (item.adult) copy.append(element('span', '18+', 'badge partial'));
   card.append(frame, copy);
-  state.searchItems.set(item.anidbId, item);
+  state.searchItems.set(item.anidbId, entry);
   return card;
 }
 async function loadDiscover() {
@@ -499,7 +533,7 @@ async function loadSeasonal({ year, season, after }) {
       'No verified titles on this page. Search may find titles missing from the season map.',
       'empty-state'));
     for (const item of page.items) {
-      const button = element('button', undefined, 'poster-card');
+      const button = markAdult(element('button', undefined, 'poster-card'), item);
       button.type = 'button';
       const frame = element('span', undefined, 'poster-frame');
       frame.append(posterImage(item));
@@ -560,7 +594,7 @@ async function loadAiring() {
         'empty-state'));
     }
     for (const item of schedule.items) {
-      const button = element('button', undefined, 'result');
+      const button = markAdult(element('button', undefined, 'result'), item);
       button.type = 'button';
       const art = element('span', 'N', 'poster-fallback');
       const poster = posterImage(item);
@@ -671,6 +705,18 @@ byId('signout').addEventListener('click', async () => {
   clearWorkspace();
   message('Signed out.');
 });
+byId('adult-toggle').addEventListener('click', () => {
+  if (!state.user || state.user.adultAllowed === false) return;
+  state.showAdult = !state.showAdult;
+  try { localStorage.setItem(adultPreferenceKey(state.user.id),
+    state.showAdult ? 'on' : 'off'); } catch { /* Choice still applies this session. */ }
+  applyAdultVisibility();
+  if (parseConsumerRoute(location.hash).page === 'title' && state.selected) {
+    const item = state.searchItems.get(state.selected) ??
+      { anidbId: state.selected, title: `Anime ${state.selected}` };
+    void showDetail(item);
+  }
+});
 byId('invite').addEventListener('click', async () => {
   try {
     const result = await api('/api/invitations', { method: 'POST', body: '{}' });
@@ -679,6 +725,48 @@ byId('invite').addEventListener('click', async () => {
     message('Invitation ready to copy.');
   } catch (error) { message(error.message, true); }
 });
+async function loadUsers() {
+  if (state.user?.role !== 'admin') return;
+  const list = byId('admin-users');
+  list.replaceChildren(element('p', 'Loading accounts…', 'muted'));
+  try {
+    const page = await api('/api/admin/users');
+    if (state.user?.role !== 'admin') return;
+    state.usersLoaded = true;
+    list.replaceChildren();
+    for (const user of page.items) {
+      const row = element('div', undefined, 'user-setting');
+      row.append(element('span', `${user.username} · ${user.role}`));
+      const button = element('button', user.adultAllowed ? '18+ allowed' : '18+ blocked',
+        'quiet');
+      button.type = 'button';
+      button.setAttribute('aria-label', `18+ access for ${user.username}`);
+      button.setAttribute('aria-pressed', String(user.adultAllowed));
+      button.disabled = user.disabled;
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          const result = await api(`/api/admin/users/${user.id}/adult`, {
+            method: 'PATCH', body: JSON.stringify({ allowed: !user.adultAllowed }) });
+          user.adultAllowed = result.adultAllowed;
+          button.textContent = user.adultAllowed ? '18+ allowed' : '18+ blocked';
+          button.setAttribute('aria-pressed', String(user.adultAllowed));
+          if (user.id === state.user.id) {
+            state.user.adultAllowed = user.adultAllowed;
+            state.showAdult = user.adultAllowed && readAdultPreference(user.id);
+            applyAdultVisibility();
+          }
+        } catch (error) { message(error.message, true); }
+        finally { button.disabled = user.disabled; }
+      });
+      row.append(button);
+      list.append(row);
+    }
+  } catch {
+    list.replaceChildren(element('p', 'Account settings are unavailable right now.', 'muted'));
+  }
+}
+byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
 byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = byId('query').value.trim();
@@ -691,8 +779,10 @@ byId('search-form').addEventListener('submit', async (event) => {
   results.replaceChildren(element('p', 'Searching…', 'muted'));
   const appendItems = (items) => {
     for (const item of items) {
-      state.searchItems.set(item.anidbId, item);
-      const button = element('button', undefined, 'result');
+      const known = state.searchItems.get(item.anidbId);
+      const entry = { ...item, adult: item.adult ?? known?.adult };
+      state.searchItems.set(item.anidbId, entry);
+      const button = markAdult(element('button', undefined, 'result'), entry);
       button.type = 'button';
       const tile = element('span', 'N', 'poster-fallback');
       tile.setAttribute('aria-hidden', 'true');
@@ -768,6 +858,15 @@ async function showDetail(item, franchise = null) {
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
+    if (typeof data.restricted === 'boolean') {
+      state.searchItems.set(item.anidbId, { ...item, adult: data.restricted });
+      applyAdultVisibility();
+    }
+    if (data.restricted === true && !state.showAdult) {
+      panel.replaceChildren(element('p',
+        '18+ titles are hidden. Turn on 18+ in the top right to view this title.', 'muted'));
+      return;
+    }
     const detailArt = element('div', 'N', 'detail-art poster-fallback');
     detailArt.setAttribute('aria-hidden', 'true');
     const detailPoster = posterImage(item);
@@ -933,7 +1032,7 @@ async function showDetail(item, franchise = null) {
       });
       check.append(label, button, result);
       if (state.titleChecks) {
-        const checkTitle = element('button', 'Check this title in Plex');
+        const checkTitle = element('button', 'Check whole title in Plex');
         const progress = element('p', '', 'muted');
         const url = `/api/catalogue/${item.anidbId}/title-check`;
         let pollTimer;
@@ -974,7 +1073,9 @@ async function showDetail(item, franchise = null) {
           } catch (error) { message(error.message, true); }
           finally { checkTitle.disabled = false; }
         });
-        check.append(checkTitle, progress);
+        const summary = element('div', undefined, 'title-check-summary');
+        summary.append(checkTitle, progress);
+        panel.append(summary);
         void showProgress();
       }
       if (data.kind === 'series' && typeof data.restricted === 'boolean') {

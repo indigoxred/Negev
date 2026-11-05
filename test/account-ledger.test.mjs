@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 
 async function withAccounts(run) {
@@ -56,6 +57,52 @@ test('expired and duplicate invitations cannot create or elevate users', async (
       const valid = ledger.createInvite({ adminUserId: owner.id, expiresMs: 3_000 });
       assert.deepEqual(await ledger.registerInvite({ code: valid.code, username: 'OWNER',
         password: 'long-member-passphrase' }), { state: 'held', reason: 'username_unavailable' });
+    } finally { ledger.close(); }
+  }));
+
+test('admin can disable adult requests for one user without changing other accounts', async () =>
+  withAccounts(async (dbPath) => {
+    const ledger = openAccountLedger(dbPath, { now: () => 1_000 });
+    try {
+      const owner = await ledger.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+      const invite = ledger.createInvite({ adminUserId: owner.id, expiresMs: 100_000 });
+      const friend = await ledger.registerInvite({ code: invite.code, username: 'Friend',
+        password: 'long-member-passphrase' });
+      assert.equal(friend.adultAllowed, true);
+      assert.equal(ledger.setAdultAllowed({ adminUserId: friend.id, userId: owner.id,
+        allowed: false }).state, 'held');
+      assert.equal(ledger.setAdultAllowed({ adminUserId: owner.id, userId: friend.id,
+        allowed: false }).adultAllowed, false);
+      assert.equal(ledger.getSessionUser({ userId: friend.id,
+        version: friend.sessionVersion }).adultAllowed, false);
+      assert.equal(ledger.getSessionUser({ userId: owner.id,
+        version: owner.sessionVersion }).adultAllowed, true);
+      assert.equal(ledger.listUsers({ adminUserId: owner.id }).items.length, 2);
+    } finally { ledger.close(); }
+    const reopened = openAccountLedger(dbPath, { now: () => 2_000 });
+    try {
+      assert.equal((await reopened.authenticate({ username: 'Friend',
+        password: 'long-member-passphrase' })).adultAllowed, false);
+    } finally { reopened.close(); }
+  }));
+
+test('existing account databases gain the adult setting with access preserved', async () =>
+  withAccounts(async (dbPath) => {
+    const db = new DatabaseSync(dbPath);
+    db.exec(`CREATE TABLE users (
+      id INTEGER PRIMARY KEY, username TEXT NOT NULL, username_key TEXT NOT NULL UNIQUE,
+      role TEXT NOT NULL CHECK(role IN ('admin','member')),
+      password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+      session_version INTEGER NOT NULL DEFAULT 1 CHECK(session_version>0),
+      disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
+      created_ms INTEGER NOT NULL CHECK(created_ms>=0)
+    ) STRICT`);
+    db.close();
+    const ledger = openAccountLedger(dbPath);
+    try {
+      const owner = await ledger.bootstrapAdmin({ username: 'Owner',
+        password: 'long-owner-passphrase' });
+      assert.equal(owner.adultAllowed, true);
     } finally { ledger.close(); }
   }));
 

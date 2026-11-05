@@ -188,17 +188,19 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     request.session.set('userId', user.id);
     request.session.set('version', user.sessionVersion);
     request.session.set('csrfToken', randomBytes(32).toString('hex'));
-    return { user: { id: user.id, username: user.username, role: user.role } };
+    return { user: { id: user.id, username: user.username, role: user.role,
+      adultAllowed: user.adultAllowed } };
   });
   app.get('/api/session', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    const { id, username, role } = request.negevUser;
+    const { id, username, role, adultAllowed } = request.negevUser;
     const reportedState = getAcquisitionStatus()?.state;
     const acquisitionState = ['disabled', 'waiting', 'waiting_with_review',
       'running', 'reconciling', 'reconciliation_held',
       'reconciliation_failed', 'stopping', 'stopped']
       .includes(reportedState) ? reportedState : 'unknown';
-    return { user: { id, username, role }, csrfToken: request.session.get('csrfToken'),
+    return { user: { id, username, role, adultAllowed },
+      csrfToken: request.session.get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
@@ -278,7 +280,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     }
     return { state: schedule.state, week: schedule.week,
       checkedMs: schedule.checkedMs,
-      items: schedule.items.map((item) => ({ anidbId: item.anidbId,
+      items: schedule.items.filter((item) =>
+        request.negevUser.adultAllowed || !item.adult).map((item) => ({ anidbId: item.anidbId,
         title: item.title, scheduledDate: item.scheduledDate,
         episodeNumber: item.episodeNumber, adult: item.adult })) };
   });
@@ -324,7 +327,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
     return { state: page.state, year, season: query.season,
-      sourceDate: page.sourceDate, items: page.items.map((item) => ({
+      sourceDate: page.sourceDate, items: page.items.filter((item) =>
+        request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
         releaseStatus: item.releaseStatus, adult: item.adult })),
       nextAfter: page.nextAfter };
@@ -475,6 +479,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     const result = await loadDetail({ anidbId: id, page });
     if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
+    if (!request.negevUser.adultAllowed && result.restricted !== false) {
+      return reply.code(403).send({ error: '18+ access is disabled for this account' });
+    }
     return { ...result, requestable: false };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,
@@ -668,12 +675,41 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return result.state === 'created' ? reply.code(201).send(result) :
       reply.code(403).send({ error: 'Admin required' });
   });
+  app.get('/api/admin/users', { preHandler: requireUser }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
+    return accounts.listUsers({ adminUserId: request.negevUser.id });
+  });
+  app.patch('/api/admin/users/:id/adult', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
+    const userId = Number(request.params.id);
+    if (!Number.isSafeInteger(userId) || userId <= 0 ||
+        Object.keys(request.query).length ||
+        !allowedBody(request.body, ['allowed']) ||
+        typeof request.body.allowed !== 'boolean') {
+      return reply.code(400).send({ error: 'Invalid account setting' });
+    }
+    const result = accounts.setAdultAllowed({ adminUserId: request.negevUser.id,
+      userId, allowed: request.body.allowed });
+    return result.state === 'updated' ? result :
+      reply.code(404).send({ error: 'Account unavailable' });
+  });
   app.post('/api/requests', { preHandler: writeGuards,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const body = request.body;
     if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey'])) {
       return reply.code(400).send({ error: 'Invalid request' });
+    }
+    if (!request.negevUser.adultAllowed) {
+      if (!Number.isSafeInteger(body.anidbId) || body.anidbId <= 0) {
+        return reply.code(400).send({ error: 'Invalid request' });
+      }
+      const detail = await loadDetail({ anidbId: body.anidbId, page: 1 });
+      if (detail?.restricted !== false) {
+        return reply.code(403).send({ error: '18+ requests are disabled for this account' });
+      }
     }
     const result = await submitRequest({ ...body, requesterId: request.negevUser.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });

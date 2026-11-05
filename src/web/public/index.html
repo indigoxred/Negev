@@ -23,6 +23,7 @@
       <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime…" required>
       <button type="submit" class="sr-only">Search</button>
     </form>
+    <button id="adult-toggle" class="adult-toggle" type="button" aria-pressed="true" hidden>18+ On</button>
     <details id="identity" class="identity" hidden>
       <summary>Account</summary>
       <div class="account-menu">
@@ -118,6 +119,10 @@
         <section id="admin-review" class="panel" hidden><div class="section-head"><h2>Needs attention</h2><button id="refresh-review" class="quiet" type="button">Refresh</button></div>
           <p class="muted">Held imports and rejected files that need an owner review. This list does not change any files.</p>
           <div id="review-list"></div><button id="more-review" type="button" hidden>Show more</button>
+        </section>
+        <section class="panel" aria-labelledby="users-title"><div class="section-head"><h2 id="users-title">User management</h2><button id="refresh-users" class="quiet" type="button">Refresh</button></div>
+          <p class="muted">Allow or block 18+ requests for each account. Users can hide 18+ titles for themselves with the top-right switch.</p>
+          <div id="admin-users"></div>
         </section>
       </section>
     </div>

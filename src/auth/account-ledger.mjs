@@ -35,8 +35,13 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       password_hash TEXT NOT NULL,
       session_version INTEGER NOT NULL DEFAULT 1 CHECK(session_version>0),
       disabled INTEGER NOT NULL DEFAULT 0 CHECK(disabled IN (0,1)),
+      adult_allowed INTEGER NOT NULL DEFAULT 1 CHECK(adult_allowed IN (0,1)),
       created_ms INTEGER NOT NULL CHECK(created_ms>=0)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(users)').all()
+      .some((column) => column.name === 'adult_allowed')) {
+      db.exec('ALTER TABLE users ADD COLUMN adult_allowed INTEGER NOT NULL DEFAULT 1 CHECK(adult_allowed IN (0,1))');
+    }
     db.exec(`CREATE TABLE IF NOT EXISTS invitations (
       id INTEGER PRIMARY KEY,
       code_hash TEXT NOT NULL UNIQUE,
@@ -52,9 +57,12 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     VALUES (?,?,?,?,?,?)`);
   const findName = db.prepare('SELECT id FROM users WHERE username_key=?');
   const findAuth = db.prepare(`SELECT id,username,role,password_salt,password_hash,
-    session_version,disabled FROM users WHERE username_key=?`);
-  const findUser = db.prepare(`SELECT id,username,role,session_version,disabled
+    session_version,disabled,adult_allowed FROM users WHERE username_key=?`);
+  const findUser = db.prepare(`SELECT id,username,role,session_version,disabled,adult_allowed
     FROM users WHERE id=?`);
+  const listAccounts = db.prepare(`SELECT id,username,role,disabled,adult_allowed
+    FROM users ORDER BY id`);
+  const updateAdult = db.prepare(`UPDATE users SET adult_allowed=? WHERE id=? AND disabled=0`);
   const insertInvite = db.prepare(`INSERT INTO invitations
     (code_hash,created_by,expires_ms) VALUES (?,?,?)`);
   const findInvite = db.prepare('SELECT id,expires_ms,used_ms FROM invitations WHERE code_hash=?');
@@ -62,7 +70,8 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const bumpVersion = db.prepare(`UPDATE users SET session_version=session_version+1
     WHERE id=? AND disabled=0`);
   const publicUser = (row) => ({ id: row.id, username: row.username,
-    role: row.role, sessionVersion: row.session_version });
+    role: row.role, sessionVersion: row.session_version,
+    adultAllowed: row.adult_allowed === 1 });
   // An internet-facing login can receive requests from many source IPs.
   // Bound simultaneous memory-intensive scrypt work across sign-in and
   // invited registration, independent of per-IP HTTP rate limits.
@@ -157,6 +166,26 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     revokeSessions({ userId }) {
       if (!validId(userId)) throw new TypeError('Invalid user ID');
       return bumpVersion.run(userId).changes === 1;
+    },
+    listUsers({ adminUserId }) {
+      if (!validId(adminUserId)) throw new TypeError('Invalid admin ID');
+      const admin = findUser.get(adminUserId);
+      if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+      return { state: 'users', items: listAccounts.all().map((row) => ({
+        id: row.id, username: row.username, role: row.role,
+        disabled: row.disabled === 1, adultAllowed: row.adult_allowed === 1,
+      })) };
+    },
+    setAdultAllowed({ adminUserId, userId, allowed }) {
+      if (!validId(adminUserId) || !validId(userId) || typeof allowed !== 'boolean') {
+        throw new TypeError('Invalid account setting');
+      }
+      return transact(() => {
+        const admin = findUser.get(adminUserId);
+        if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+        if (updateAdult.run(Number(allowed), userId).changes !== 1) return held('user_unavailable');
+        return { state: 'updated', userId, adultAllowed: allowed };
+      });
     },
     close() { db.close(); },
   };
