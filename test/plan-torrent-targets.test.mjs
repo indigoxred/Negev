@@ -218,9 +218,10 @@ test('ambiguous pack, duplicate number, foreign target, and special hold without
 test('incomplete or contradictory AniDB detail cannot make a plan', () => {
   for (const changed of [
     { ...detail, complete: false },
-    { ...detail, restricted: true },
     { ...detail, restricted: null },
     { ...detail, anidbId: 43 },
     { ...detail, episodes: [...detail.episodes, { id: 9000, number: 1, type: 'Episode' }] },
   ]) assert.equal(planTorrentTargets({ request, detail: changed, prepared: pack }).state, 'held');
+  assert.equal(planTorrentTargets({ request, detail: { ...detail, restricted: true },
+    prepared: pack }).state, 'planned_targets');
 });

@@ -151,7 +151,7 @@ test('changed request or catalogue blocks before torrent-byte retrieval', async 
   let calls = 0;
   for (const change of [{ request: null },
     { request: { ...request, status: 'cancelled' } },
-    { detail: { ...detail, restricted: true } },
+    { detail: { ...detail, restricted: null } },
     { detail: { ...detail, episodes: detail.episodes.slice(1), total: 1 } }]) {
     const result = await previewRequestCandidate({ requestId: 4, candidate,
       readRequest: () => change.request === undefined ? request : change.request,

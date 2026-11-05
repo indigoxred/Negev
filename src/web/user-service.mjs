@@ -15,6 +15,7 @@ import { createObservedTitleRegistry } from '../catalogue/observed-title-registr
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
+import { createSeasonalCatalogue } from '../catalogue/seasonal-catalogue.mjs';
 import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
@@ -186,6 +187,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       apiKey: shokoApiKey, fetchImpl, now });
     const displayReader = createAniDbDisplayReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
+    const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
@@ -447,6 +449,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
       listAiringSchedule: () => weeklySchedule.read(),
+      listSeasonalTitles: (input) => seasonalCatalogue.read(input),
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),

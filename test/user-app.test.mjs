@@ -62,7 +62,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     nextAfterAnidbId: null }),
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
-        scheduledDate: '2026-11-02', episodeNumber: '3' }] }),
+        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] }),
+    listSeasonalTitles: async ({ year, season, after, limit }) => ({
+      state: 'ready', year, season, sourceDate: '2026-11-05',
+      items: [{ anidbId: 1234, title: 'Example series',
+        type: 'TV Series', releaseStatus: 'RELEASING', adult: false }],
+      nextAfter: null,
+      requestedPage: { after, limit },
+    }),
     readPoster: async ({ uid }) => uid === '123e4567-e89b-42d3-a456-426614174000'
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([1, 2, 3]) }
       : { state: 'unavailable' },
@@ -163,6 +170,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal((await app.inject({ method: 'GET', url: '/api/library' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'GET', url: '/api/airing' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL' })).statusCode, 401);
+    assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/posters/123e4567-e89b-42d3-a456-426614174000' })).statusCode, 401);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review' })).statusCode, 401);
@@ -202,7 +211,18 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(airing.statusCode, 200);
     assert.deepEqual(airing.json(), { state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
-        scheduledDate: '2026-11-02', episodeNumber: '3' }] });
+        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] });
+    const seasonal = await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL', headers: { cookie } });
+    assert.equal(seasonal.statusCode, 200);
+    assert.deepEqual(seasonal.json(), { state: 'ready', year: 2026,
+      season: 'FALL', sourceDate: '2026-11-05', items: [{ anidbId: 1234,
+        title: 'Example series', type: 'TV Series',
+        releaseStatus: 'RELEASING', adult: false }],
+      nextAfter: null });
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL&admin=true',
+      headers: { cookie } })).statusCode, 400);
     const review = await app.inject({ method: 'GET',
       url: '/api/admin/review', headers: { cookie } });
     assert.equal(review.statusCode, 200);

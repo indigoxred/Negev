@@ -105,8 +105,12 @@ test('private search to exact held request never dispatches acquisition', async 
     assert.equal(unknown.json().reason, 'release_state_unknown');
     airDate = '2026-10-01';
     restricted = true;
+    const adult = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth, payload: { ...body, requestKey: 'adult' } });
+    assert.equal(adult.statusCode, 202);
+    restricted = null;
     const blocked = await service.app.inject({ method: 'POST', url: '/api/requests',
-      headers: auth, payload: { ...body, requestKey: 'restricted' } });
+      headers: auth, payload: { ...body, requestKey: 'unverified-age' } });
     assert.equal(blocked.statusCode, 409);
     assert.equal(blocked.json().reason, 'restricted_or_unverified');
   } finally {

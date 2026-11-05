@@ -159,7 +159,17 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'ready', week: '2026-W45',
           checkedMs: 1_000, items: [{ anidbId: 19847,
             title: 'FX Senshi Kurumi-chan', scheduledDate: '2026-11-05',
-            episodeNumber: '4' }] }));
+            episodeNumber: '4', adult: false }] }));
+        return;
+      }
+      if (path === '/api/seasons') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
+          sourceDate: '2026-11-05', items: [{ anidbId: 4158,
+            title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
+            adult: false }, { anidbId: 9589, title: 'The Garden of Words',
+            type: 'Movie', releaseStatus: 'FINISHED', adult: true }],
+          nextAfter: null }));
         return;
       }
       if (path === '/api/catalogue/4158') {
@@ -230,6 +240,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
+      const season = await dump(`${base}/#/airing?year=2026&season=FALL`,
+        join(dir, 'season'), 'season');
+      assert.match(season, /Pale Cocoon/);
+      assert.match(season, /The Garden of Words/);
+      assert.match(season, /18\+/);
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);

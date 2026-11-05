@@ -30,7 +30,7 @@ test('does not search for missing, changed, restricted or incomplete identity', 
     [null, detail, 'request_missing'],
     [request, { ...detail, anidbId: 9999 }, 'detail_unavailable'],
     [request, { ...detail, kind: 'movie' }, 'identity_changed'],
-    [request, { ...detail, restricted: true }, 'restricted_or_unverified'],
+    [request, { ...detail, restricted: null }, 'restricted_or_unverified'],
     [request, { ...detail, episodes: [{ ...detail.episodes[0], id: 9999 }] }, 'target_missing'],
     [request, { state: 'detail_pending', anidbId: 1234 }, 'detail_unavailable'],
   ]) {

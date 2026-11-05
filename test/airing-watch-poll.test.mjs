@@ -46,7 +46,7 @@ test('one failed watch write holds while the next watch advances', async () => {
     [['held', 'watch_write_unavailable'], ['advanced', undefined]]);
 });
 
-test('a newly restricted title holds without blocking the next watch', async () => {
+test('an unknown age flag holds without blocking the next watch', async () => {
   const advanced = [];
   const result = await pollAiringWatches({ today: '2026-02-20', intervalMs: 0,
     ledger: { listActiveAirings: () => [
@@ -54,10 +54,21 @@ test('a newly restricted title holds without blocking the next watch', async () 
     advanceAiring: ({ requestId }) => { advanced.push(requestId);
       return { state: 'advanced' }; } },
     loadDetail: async ({ anidbId }) => details(anidbId,
-      { restricted: anidbId === 42 }) });
+      { restricted: anidbId === 42 ? null : false }) });
   assert.deepEqual(advanced, [2]);
   assert.deepEqual(result.results.map((item) => [item.state, item.reason]),
     [['held', 'restricted_or_unverified'], ['advanced', undefined]]);
+});
+
+test('an adult title with a verified age flag keeps its Airing watch', async () => {
+  const advanced = [];
+  const result = await pollAiringWatches({ today: '2026-02-20', intervalMs: 0,
+    ledger: { listActiveAirings: () => [{ requestId: 1, anidbId: 42 }],
+      advanceAiring: ({ requestId }) => { advanced.push(requestId);
+        return { state: 'advanced' }; } },
+    loadDetail: async () => details(42, { restricted: true }) });
+  assert.deepEqual(advanced, [1]);
+  assert.equal(result.results[0].state, 'advanced');
 });
 
 test('episode-count inference alone cannot close a watch; explicit past end date can', async () => {

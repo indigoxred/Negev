@@ -28,7 +28,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const detail = await collectAniDbDetail({ anidbId: request.anidbId, loadPage: loadDetail });
     if (detail.state !== 'details') return held('detail_unavailable');
     if (detail.kind !== request.kind) return held('identity_changed');
-    if (detail.restricted !== false) return held('restricted_or_unverified');
+    if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
     let aliases;

@@ -147,7 +147,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }
     if (!isCompleteAniDbDetail(detail, request.anidbId) ||
-        detail.kind !== request.kind || detail.restricted !== false) {
+        detail.kind !== request.kind || typeof detail.restricted !== 'boolean') {
       return held('detail_unavailable');
     }
     const currentIds = new Set(detail.episodes.map((episode) => episode.id));

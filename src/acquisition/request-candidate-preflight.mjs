@@ -38,7 +38,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     loadPage: loadDetail }); }
   catch { return held('detail_unavailable'); }
   if (detail.state !== 'details' || detail.kind !== request.kind ||
-      detail.restricted !== false) {
+      typeof detail.restricted !== 'boolean') {
     return held('detail_unavailable');
   }
   const knownTargets = new Set(detail.episodes.map((episode) => episode.id));

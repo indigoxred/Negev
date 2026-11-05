@@ -66,9 +66,27 @@
       </section>
       <section id="view-airing" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
-          <p>This week's AniDB scheduled episodes. This is not the complete seasonal catalogue, and an air date does not promise Plex availability.</p></header>
+          <p>Browse a season, or see this week's scheduled episodes. Availability is checked separately.</p></header>
+        <section class="section" aria-labelledby="season-title">
+          <div class="section-head"><div><h2 id="season-title">Explore a season</h2>
+            <p>AniMap titles with a confirmed AniDB identity. Some titles may be absent from this view; search can still find them.</p></div></div>
+          <form id="season-form" class="season-controls">
+            <label>Year <input id="season-year" name="year" type="number" min="1900" max="2100" step="1" required></label>
+            <label>Season <select id="season-name" name="season">
+              <option value="WINTER">Winter</option><option value="SPRING">Spring</option>
+              <option value="SUMMER">Summer</option><option value="FALL">Fall</option>
+            </select></label>
+            <button type="submit">Browse</button>
+          </form>
+          <p id="season-state" class="muted" role="status"></p>
+          <div id="season-list" class="poster-grid"></div>
+          <div class="season-pages"><button id="season-previous" type="button" hidden>Previous page</button>
+            <button id="season-next" type="button" hidden>Next page</button></div>
+        </section>
+        <section class="section" aria-labelledby="weekly-title"><div class="section-head"><h2 id="weekly-title">This week's episodes</h2></div>
         <div id="airing-state" class="muted"></div>
         <div id="airing-list" class="poster-grid"><p class="muted">Loading this week's schedule…</p></div>
+        </section>
       </section>
       <section id="view-library" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">On this server</p><h1>Your library</h1>

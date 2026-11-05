@@ -5,7 +5,8 @@ import { progressText } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
-import { parseConsumerRoute, searchRoute, titleRoute } from './consumer-route.mjs';
+import { parseConsumerRoute, searchRoute, titleRoute,
+  seasonRoute } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -15,6 +16,7 @@ const state = { csrf: null, user: null, selected: null,
   titleChecks: false, acquisitionState: 'disabled', searchToken: 0,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
+  seasonalRouteKey: null,
   discoverLoaded: false };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
@@ -22,6 +24,7 @@ const reviewResponses = createResponseEpoch();
 const detailResponses = createResponseEpoch();
 const libraryResponses = createResponseEpoch();
 const airingResponses = createResponseEpoch();
+const seasonalResponses = createResponseEpoch();
 const discoverResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 function message(text, error = false) {
@@ -77,8 +80,14 @@ function renderRoute() {
     }
   } else if (page === 'library' && !state.libraryLoaded) {
     void loadLibrary();
-  } else if (page === 'airing' && !state.airingLoaded) {
-    void loadAiring();
+  } else if (page === 'airing') {
+    if (!state.airingLoaded) void loadAiring();
+    const choice = seasonChoice(route);
+    const key = `${choice.year}-${choice.season}-${choice.after}`;
+    if (state.seasonalRouteKey !== key) {
+      state.seasonalRouteKey = key;
+      void loadSeasonal(choice);
+    }
   }
 }
 window.addEventListener('hashchange', renderRoute);
@@ -116,6 +125,7 @@ function showSession(data) {
     detailResponses.invalidate();
     libraryResponses.invalidate();
     airingResponses.invalidate();
+    seasonalResponses.invalidate();
     discoverResponses.invalidate();
     state.selected = null;
     byId('request-list').replaceChildren();
@@ -127,6 +137,7 @@ function showSession(data) {
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
+    state.seasonalRouteKey = null;
     state.discoverLoaded = false;
     nextReviewAttemptId = null;
   }
@@ -158,6 +169,7 @@ function clearWorkspace() {
   detailResponses.invalidate();
   libraryResponses.invalidate();
   airingResponses.invalidate();
+  seasonalResponses.invalidate();
   discoverResponses.invalidate();
   state.user = null;
   state.csrf = null;
@@ -168,6 +180,7 @@ function clearWorkspace() {
   state.libraryLoaded = false;
   state.libraryAfter = null;
   state.airingLoaded = false;
+  state.seasonalRouteKey = null;
   state.discoverLoaded = false;
   state.nextBeforeId = { watching: null, history: null };
   nextReviewAttemptId = null;
@@ -345,6 +358,7 @@ function discoveryCard(item, note, badge, available = false) {
   const copy = element('span', undefined, 'poster-copy');
   copy.append(element('strong', item.title), element('small', note),
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
+  if (item.adult) copy.append(element('span', '18+', 'badge partial'));
   card.append(frame, copy);
   state.searchItems.set(item.anidbId, item);
   return card;
@@ -446,6 +460,83 @@ async function loadLibrary(append = false) {
       'empty-state'));
   }
 }
+function seasonChoice(route) {
+  if (route.year && route.season) return { year: route.year,
+    season: route.season, after: route.after ?? 0 };
+  const date = new Date();
+  return { year: date.getUTCFullYear(),
+    season: ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)],
+    after: 0 };
+}
+async function loadSeasonal({ year, season, after }) {
+  const session = sessionResponses.current();
+  const epoch = seasonalResponses.invalidate();
+  const userId = state.user?.id;
+  const list = byId('season-list');
+  const notice = byId('season-state');
+  byId('season-year').value = String(year);
+  byId('season-name').value = season;
+  byId('season-previous').hidden = true;
+  byId('season-next').hidden = true;
+  notice.textContent = `Loading ${season.toLowerCase()} ${year}…`;
+  list.replaceChildren();
+  try {
+    const params = new URLSearchParams({ year: String(year), season });
+    if (after) params.set('after', String(after));
+    const page = await api(`/api/seasons?${params}`);
+    if (!sessionResponses.isCurrent(session) ||
+        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    if (page.state === 'unavailable') {
+      notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
+      return;
+    }
+    notice.textContent = page.state === 'stale'
+      ? `Showing a saved season list from ${page.sourceDate}; source refresh is unavailable.`
+      : page.state === 'partial'
+        ? `Season list updated ${page.sourceDate}. Some title details could not be checked; try again later.`
+        : `Season list updated ${page.sourceDate}. Sorted by title; local availability is checked separately.`;
+    if (page.items.length === 0) list.append(element('p',
+      'No verified titles on this page. Search may find titles missing from the season map.',
+      'empty-state'));
+    for (const item of page.items) {
+      const button = element('button', undefined, 'poster-card');
+      button.type = 'button';
+      const frame = element('span', undefined, 'poster-frame');
+      frame.append(posterImage(item));
+      const copy = element('span', undefined, 'poster-copy');
+      copy.append(element('strong', item.title),
+        element('small', item.type || 'Anime'));
+      if (item.adult) copy.append(element('span', '18+', 'badge partial'));
+      button.append(frame, copy);
+      button.addEventListener('click', () => {
+        state.searchItems.set(item.anidbId, item);
+        location.hash = titleRoute(item.anidbId);
+      });
+      list.append(button);
+    }
+    const previous = byId('season-previous');
+    previous.hidden = after === 0;
+    previous.onclick = () => { location.hash = seasonRoute(year, season,
+      Math.max(0, after - 12)); };
+    const next = byId('season-next');
+    next.hidden = page.nextAfter === null;
+    next.onclick = () => { location.hash = seasonRoute(year, season,
+      page.nextAfter); };
+  } catch {
+    if (!sessionResponses.isCurrent(session) ||
+        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    notice.textContent = 'Seasonal browsing is unavailable right now. Search still works.';
+  }
+}
+byId('season-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const year = Number(byId('season-year').value);
+  const season = byId('season-name').value;
+  if (!Number.isSafeInteger(year) || year < 1900 || year > 2100) return;
+  const route = seasonRoute(year, season);
+  if (location.hash === route) void loadSeasonal({ year, season, after: 0 });
+  else location.hash = route;
+});
 async function loadAiring() {
   const session = sessionResponses.current();
   const epoch = airingResponses.invalidate();
@@ -479,6 +570,7 @@ async function loadAiring() {
       copy.append(element('strong', item.title),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
         element('span', 'Local availability not checked', 'presence unknown'));
+      if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(art, copy);
       button.addEventListener('click', () => {
         state.searchItems.set(item.anidbId, item);
@@ -885,7 +977,7 @@ async function showDetail(item, franchise = null) {
         check.append(checkTitle, progress);
         void showProgress();
       }
-      if (data.kind === 'series' && data.restricted === false) {
+      if (data.kind === 'series' && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected episode');
         let requesting = false;
         const updateSelection = () => {
@@ -917,7 +1009,7 @@ async function showDetail(item, franchise = null) {
         });
         check.append(requestSelected);
       }
-      if (chooseFilmEntry && data.restricted === false) {
+      if (chooseFilmEntry && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected film entry');
         let requesting = false;
         const updateSelection = () => {
@@ -967,10 +1059,12 @@ async function showDetail(item, franchise = null) {
         advanced.append(more);
       }
     }
-    if (data.restricted !== false) {
-      panel.append(element('p', 'This title is not requestable until its catalogue status is verified.', 'muted'));
+    if (typeof data.restricted !== 'boolean') {
+      panel.append(element('p',
+        'This title is not requestable until its catalogue status is verified.', 'muted'));
       return;
     }
+    if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
     panel.append(element('p', data.kind === 'movie'
       ? (data.total > 1

@@ -7,6 +7,7 @@ Negev is a self-hosted anime request and acquisition project for series and film
 ## Design
 
 - AniDB identifies anime installments and exact release files. A title match alone cannot authorize an import.
+- The seasonal browse view reads AniMap's map into a bounded, compact in-memory index and confirms each displayed AniDB ID and adult flag against its AniDB detail record. The map currently expands to roughly 52 MB during refresh, so Negev streams individual entries instead of parsing one huge JSON object. Seasonal mapping is display-only and can omit ambiguous titles; normal AniDB title search remains available. The weekly schedule is a separate view. Adult/18+ titles are visible and requestable to all signed-in accounts, labeled in browse results; an unknown adult flag holds a request. [AniMap's data attribution](https://animap.id/) lists AniDB data under CC BY-NC-SA 4.0; the UI credits both sources.
 - Airing series retain a watch for future episodes. Completed titles are one-time acquisition requests. Films are requestable from the start.
 - Candidate releases are inspected before qBittorrent starts them. Unexpected executable or archive content is held.
 - Negev needs two configured paths for acquisition: its own mounted staging directory and the corresponding qBittorrent save root. It checks qBittorrent's reported save path and selected files before starting a torrent. It does not require or mount the Docker control socket.
