@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
@@ -42,9 +43,11 @@ async function fixture(run) {
   let queue = openCompletionQueue(dbPath);
   try {
     await run({ root, dbPath, requests, acquisitions, handoffs, attemptIds, hashes,
-      get queue() { return queue; }, reopen() { queue.close(); queue = openCompletionQueue(dbPath); } });
+      get queue() { return queue; },
+      closeQueue() { queue.close(); queue = null; },
+      reopen() { queue?.close(); queue = openCompletionQueue(dbPath); } });
   } finally {
-    queue.close(); handoffs.close(); acquisitions.close(); requests.close();
+    queue?.close(); handoffs.close(); acquisitions.close(); requests.close();
     await rm(root, { recursive: true, force: true });
   }
 }
@@ -68,6 +71,91 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
       { state: 'pass_complete', pass: 2 });
     assert.deepEqual(ctx.queue.claimNext({ nowMs: 301_000 }),
       { state: 'claimed', attemptId: ctx.attemptIds[0], pass: 3 });
+  });
+});
+
+test('repeated inconclusive AniDB lookups back off without losing a restart', async () => {
+  await fixture(async (ctx) => {
+    for (let i = 1; i < 3; i++) {
+      ctx.acquisitions.requestStalledRetirement({ attemptId: ctx.attemptIds[i],
+        hash: ctx.hashes[i], nowMs: 1_000 });
+    }
+    let checkedMs = 1_000;
+    for (const delay of [30 * 60_000, 2 * 60 * 60_000,
+      8 * 60 * 60_000, 24 * 60 * 60_000]) {
+      const claim = ctx.queue.claimNext({ nowMs: checkedMs });
+      assert.equal(claim.attemptId, ctx.attemptIds[0]);
+      assert.deepEqual(ctx.queue.recordResult({ attemptId: claim.attemptId,
+        pass: claim.pass, state: 'held', reason: 'file_lookup_inconclusive',
+        checkedMs }), { state: 'recorded' });
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,
+        checkedMs + delay);
+      assert.equal(ctx.queue.claimNext({ nowMs: checkedMs }).state,
+        'pass_complete');
+      ctx.reopen();
+      assert.equal(ctx.queue.claimNext({ nowMs: checkedMs + delay - 1 }).state,
+        'pass_complete');
+      checkedMs += delay;
+    }
+  });
+});
+
+test('a different completion hold resets the inconclusive lookup delay', async () => {
+  await fixture(async (ctx) => {
+    for (let i = 1; i < 3; i++) {
+      ctx.acquisitions.requestStalledRetirement({ attemptId: ctx.attemptIds[i],
+        hash: ctx.hashes[i], nowMs: 1_000 });
+    }
+    let checkedMs = 1_000;
+    for (const [reason, delay] of [
+      ['file_lookup_inconclusive', 30 * 60_000],
+      ['file_lookup_inconclusive', 2 * 60 * 60_000],
+      ['provider_unavailable', 30 * 60_000],
+      ['file_lookup_inconclusive', 30 * 60_000],
+    ]) {
+      const claim = ctx.queue.claimNext({ nowMs: checkedMs });
+      assert.equal(claim.attemptId, ctx.attemptIds[0]);
+      ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+        state: 'held', reason, checkedMs });
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,
+        checkedMs + delay);
+      assert.equal(ctx.queue.claimNext({ nowMs: checkedMs }).state,
+        'pass_complete');
+      checkedMs += delay;
+    }
+  });
+});
+
+test('old completion rows gain a zero counter without changing their due time', async () => {
+  await fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+      state: 'held', reason: 'file_lookup_inconclusive', checkedMs: 1_000 });
+    const oldDueMs = ctx.queue.getResult(claim.attemptId).nextDueMs;
+    ctx.closeQueue();
+    const db = new DatabaseSync(ctx.dbPath);
+    try {
+      db.exec(`PRAGMA foreign_keys=OFF;
+        CREATE TABLE old_checks (
+          attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+          pass INTEGER NOT NULL CHECK(pass>0),
+          state TEXT CHECK(state IN ('held','handoff_prepared','rejected_held')),
+          reason TEXT,
+          checked_ms INTEGER CHECK(checked_ms>=0),
+          next_due_ms INTEGER CHECK(next_due_ms>=0)
+        ) STRICT;
+        INSERT INTO old_checks SELECT attempt_id,pass,state,reason,
+          checked_ms,next_due_ms FROM completion_checks;
+        DROP TABLE completion_checks;
+        ALTER TABLE old_checks RENAME TO completion_checks;`);
+    } finally { db.close(); }
+    ctx.reopen();
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, oldDueMs);
+    const migrated = new DatabaseSync(ctx.dbPath);
+    try {
+      assert.equal(migrated.prepare(`SELECT inconclusive_count AS count
+        FROM completion_checks WHERE attempt_id=?`).get(claim.attemptId).count, 0);
+    } finally { migrated.close(); }
   });
 });
 
