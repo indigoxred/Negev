@@ -9,6 +9,8 @@ import { openShokoInventoryLedger } from
   '../src/availability/shoko-inventory-worker.mjs';
 import { openPlexCardIndex } from
   '../src/availability/plex-card-index.mjs';
+import { openFileBackfillCursor } from
+  '../src/availability/file-backfill-cursor.mjs';
 
 const target = { anidbId: 42, episodeId: 1001 };
 const shokoFile = (fileId, updated = '2026-11-02T00:00:00Z') => ({
@@ -65,6 +67,40 @@ test('Plex card change withdraws matching proof even when its read started earli
     assert.deepEqual(proof.getCurrent(target), { state: 'unknown' });
   } finally {
     plex.close(); proof.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('replaced Plex identity queues only its formerly proven file for bounded recheck', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-card-reproof-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const proof = openFileProofLedger(dbPath, { positiveLifetimeMs: 1_000,
+    now: () => 500 });
+  const cursor = openFileBackfillCursor(dbPath);
+  const plex = openPlexCardIndex(dbPath);
+  try {
+    plex.recordCard({ ...card(500), observedMs: 100 });
+    plex.recordCard({ ...card(501), observedMs: 100 });
+    proof.observe({ ...target, proof: { fileId: 7, libraryId: 102,
+      ratingKey: 500, partId: 600 }, checkedMs: 200 });
+    proof.observe({ ...target, proof: { fileId: 8, libraryId: 102,
+      ratingKey: 501, partId: 601 }, checkedMs: 210 });
+    plex.recordCard({ ...card(500, 'replaced'), observedMs: 300 });
+    assert.deepEqual(proof.getCurrent(target), { state: 'available',
+      verifiedAtMs: 210 });
+    const next = cursor.claim({ nowMs: 301, limit: 1,
+      inventory: { listFileHintIds: () => [1] } });
+    assert.equal(next.priority, true);
+    assert.deepEqual(next.fileIds, [7]);
+    assert.equal(cursor.record({ claim: next,
+      outcomes: [{ fileId: 7, state: 'unknown' }], nowMs: 302 }).state,
+    'recorded');
+    const after = cursor.claim({ nowMs: 303, limit: 1,
+      inventory: { listFileHintIds: () => [1] } });
+    assert.equal(after.priority, undefined);
+    assert.deepEqual(after.fileIds, [1]);
+  } finally {
+    plex.close(); cursor.close(); proof.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

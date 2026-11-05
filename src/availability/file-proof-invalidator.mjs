@@ -7,6 +7,7 @@ export function createFileProofInvalidator(db) {
   }
   let fileStatement;
   let cardStatement;
+  let prioritizeCardFiles;
   const prepare = (sql) => {
     const columns = db.prepare('PRAGMA table_info(file_availability_proofs)').all();
     if (!['file_id', 'library_id', 'rating_key', 'verified_ms'].every((name) =>
@@ -22,6 +23,18 @@ export function createFileProofInvalidator(db) {
     invalidateCard(libraryId, ratingKey) {
       cardStatement ??= prepare(`DELETE FROM file_availability_proofs
         WHERE library_id=? AND rating_key=?`);
+      // Recheck only files whose exact public proof this card is retiring.
+      // The existing backfill worker still enforces its per-tick read budget.
+      if (cardStatement && !prioritizeCardFiles) {
+        const columns = db.prepare('PRAGMA table_info(file_backfill_priority)').all();
+        if (columns.some((column) => column.name === 'rank')) {
+          prioritizeCardFiles = db.prepare(`INSERT INTO file_backfill_priority
+            (file_id,rank) SELECT DISTINCT file_id,1 FROM file_availability_proofs
+            WHERE library_id=? AND rating_key=?
+            ON CONFLICT(file_id) DO UPDATE SET rank=1 WHERE rank=0`);
+        }
+      }
+      prioritizeCardFiles?.run(libraryId, ratingKey);
       return cardStatement?.run(libraryId, ratingKey).changes ?? 0;
     },
   };
