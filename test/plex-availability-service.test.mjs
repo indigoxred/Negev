@@ -308,7 +308,14 @@ test('a stale indexed card is directly rechecked when a growing-library sweep ca
   config.fetchImpl = (url, options) => {
     if (removed && url.pathname === '/library/sections/102/all') {
       return Response.json({ MediaContainer: { librarySectionID: 102,
-        offset: 0, totalSize: 0, size: 0 } });
+        offset: 0, totalSize: 2, size: 2,
+        Metadata: [501, 502].map((ratingKey) => ({
+          ratingKey: String(ratingKey), type: 'episode', librarySectionID: 102,
+          guid: `tv.plex.agents.custom.shoko://episode/e${ratingKey}`,
+          grandparentGuid: 'tv.plex.agents.custom.shoko://show/99',
+          Media: [{ Part: [{ id: ratingKey + 400, size: 5,
+            file: '/source-pure/Anime/one.mkv' }] }],
+        })) } });
     }
     if (removed && url.pathname === '/library/metadata/500') {
       calls.push('plex/library/metadata/500');
