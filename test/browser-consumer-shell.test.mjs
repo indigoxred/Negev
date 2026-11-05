@@ -49,6 +49,7 @@ async function inspectMobile(url, profile, width = 390) {
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
   { stdio: 'ignore', windowsHide: true });
+  const closed = new Promise((resolve) => child.once('close', resolve));
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let socket;
   try {
@@ -149,6 +150,7 @@ async function inspectMobile(url, profile, width = 390) {
   } finally {
     socket?.close();
     child.kill();
+    await closed;
   }
 }
 
@@ -330,6 +332,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /My requests/);
     } finally {
       await new Promise((resolve) => server.close(resolve));
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true,
+        maxRetries: 5, retryDelay: 100 });
     }
   });
