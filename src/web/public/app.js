@@ -922,9 +922,17 @@ async function showDetail(item, franchise = null) {
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
     if (pager) {
-      const verified = pager.episodes.filter((episode) => episode.availability === 'available').length;
+      const savedCount = data.libraryPresence?.state === 'in_library' &&
+        Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
+        data.libraryPresence.verifiedEpisodeCount > 0
+        ? data.libraryPresence.verifiedEpisodeCount : 0;
+      const pageCount = pager.episodes.filter((episode) =>
+        episode.availability === 'available').length;
+      const verified = Math.max(savedCount, pageCount);
       panel.append(element('p', verified > 0
-        ? `${verified} item${verified === 1 ? '' : 's'} on this page recently verified playable in Plex. Others are not confirmed.`
+        ? `${verified} ${data.kind === 'movie'
+          ? `film entr${verified === 1 ? 'y' : 'ies'}`
+          : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
         : 'Current Plex availability has not been verified for this title.',
       verified > 0 ? 'presence available' : 'presence unknown'));
     }

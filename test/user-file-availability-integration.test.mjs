@@ -168,6 +168,8 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
         url: '/api/catalogue/42', headers: { cookie } })).json();
       assert.equal(await coverage(), 1);
       assert.equal((await catalogue()).episodes?.[0]?.availability, 'available');
+      assert.deepEqual((await catalogue()).libraryPresence,
+        { state: 'in_library', verifiedEpisodeCount: 1 });
       const db = new DatabaseSync(dbPath);
       const source = db.prepare(`SELECT updated,observed_ms AS observedMs
         FROM shoko_inventory_files WHERE file_id=51`).get();
@@ -184,6 +186,8 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
         'unknown');
       assert.equal(await coverage(), undefined);
       assert.equal((await catalogue()).episodes?.[0]?.availability, 'unknown');
+      assert.deepEqual((await catalogue()).libraryPresence,
+        { state: 'unknown', verifiedEpisodeCount: 0 });
       assert.deepEqual(proofs.observeGuarded({ anidbId: 42, episodeId: 1001,
         proof: { fileId: 51, libraryId: 102, ratingKey: 500, partId: 900,
           storageKey: part.storageKey },

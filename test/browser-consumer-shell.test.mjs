@@ -49,6 +49,7 @@ async function inspectMobile(url, profile, width = 390) {
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
   { stdio: 'ignore', windowsHide: true });
+  const closed = new Promise((resolve) => child.once('close', resolve));
   const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let socket;
   try {
@@ -149,6 +150,7 @@ async function inspectMobile(url, profile, width = 390) {
   } finally {
     socket?.close();
     child.kill();
+    await closed;
   }
 }
 
@@ -243,7 +245,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 7,
           title: 'Film with alternate parts', kind: 'movie', restricted: false,
-          page: 1, total: 3, nextPage: null, episodes: [
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 },
+          page: 1, total: 4, nextPage: 2, episodes: [
             { id: 71, number: 1, type: 'Episode', title: 'Complete Movie',
               availability: 'available', availabilityNote: 'alternate_card' },
             { id: 72, number: 2, type: 'Episode', title: 'Part 1', availability: 'unknown' },
@@ -319,6 +322,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Check whole title in Plex/);
       assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
+      assert.match(alternateFilm, /2 film entries verified playable in Plex/);
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
@@ -328,6 +332,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /My requests/);
     } finally {
       await new Promise((resolve) => server.close(resolve));
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true,
+        maxRetries: 5, retryDelay: 100 });
     }
   });
