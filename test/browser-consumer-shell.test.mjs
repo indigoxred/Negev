@@ -130,9 +130,22 @@ async function inspectMobile(url, profile, width = 390) {
         const adultHiddenAgain = document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden;
         return {adultVisible, adultHiddenAgain}; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
+    await wait(800);
+    const franchiseBefore = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const button = document.querySelector('.related-trigger');
+        const before = button?.textContent; button?.click(); return before; })()`,
+    });
+    await wait(300);
+    const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({listed: document.querySelector('.related-list')?.textContent,
+        next: document.querySelector('.related-trigger')?.textContent})`,
+    });
     return { ...result.value, menu: menu.result.value,
       adultChoice: adultChoice.result.value, filtered: filtered.result.value,
-      liveToggle: liveToggle.result.value };
+      liveToggle: liveToggle.result.value,
+      franchise: { before: franchiseBefore.result.value,
+        ...franchiseAfter.result.value } };
   } finally {
     socket?.close();
     child.kill();
@@ -207,6 +220,13 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'not_started' }));
         return;
       }
+      if (path === '/api/catalogue/4158/related') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'related_titles', anidbId: 4158,
+          completeness: 'unproven', items: [{ anidbId: 9589,
+            title: 'The Garden of Words', relation: 'SideStory' }] }));
+        return;
+      }
       if (path === '/api/catalogue/4158') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 4158,
@@ -266,6 +286,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
+      assert.equal(mobile.franchise.before, 'Explore franchise');
+      assert.match(mobile.franchise.listed, /The Garden of Words · SideStory/);
+      assert.equal(mobile.franchise.next, 'Explore next related title');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');
