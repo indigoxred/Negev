@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openFileProofLedger } from
   '../src/availability/file-proof-ledger.mjs';
 
@@ -29,6 +30,67 @@ test('exact positive proofs persist and expire into previously available', async
     clock = 1_300;
     assert.deepEqual(ledger.getCurrent(episode), {
       state: 'previously_available', verifiedAtMs: 1_000 });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('an alternate Plex card remains playable but retains its presentation note', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  let ledger = openFileProofLedger(dbPath, { positiveLifetimeMs: 300,
+    now: () => 1_000 });
+  try {
+    assert.deepEqual(ledger.observe({ ...episode,
+      proof: { ...proof, presentation: 'alternate_card' }, checkedMs: 1_000 }),
+    { state: 'recorded' });
+    assert.deepEqual(ledger.getCurrent(episode), { state: 'available',
+      verifiedAtMs: 1_000, presentation: 'alternate_card' });
+    ledger.close();
+    ledger = openFileProofLedger(dbPath, { positiveLifetimeMs: 300,
+      now: () => 1_000 });
+    assert.deepEqual(ledger.getCurrent(episode), { state: 'available',
+      verifiedAtMs: 1_000, presentation: 'alternate_card' });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a current exact card suppresses an alternate-card note', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  let clock = 1_200;
+  const ledger = openFileProofLedger(path.join(dir, 'state.sqlite'),
+    { positiveLifetimeMs: 300, now: () => clock });
+  try {
+    ledger.observe({ ...episode, proof: { ...proof, fileId: 8 },
+      checkedMs: 1_000 });
+    ledger.observe({ ...episode,
+      proof: { ...proof, presentation: 'alternate_card' },
+      checkedMs: 1_100 });
+    assert.deepEqual(ledger.getCurrent(episode),
+      { state: 'available', verifiedAtMs: 1_000 });
+    clock = 1_300;
+    assert.deepEqual(ledger.getCurrent(episode),
+      { state: 'available', verifiedAtMs: 1_100,
+        presentation: 'alternate_card' });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('an existing proof table gains a safe exact-card default', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const old = new DatabaseSync(dbPath);
+  old.exec(`CREATE TABLE file_availability_proofs (
+    anidb_id INTEGER NOT NULL,episode_id INTEGER NOT NULL,
+    file_id INTEGER NOT NULL,library_id INTEGER NOT NULL,
+    rating_key INTEGER NOT NULL,part_id INTEGER NOT NULL,
+    verified_ms INTEGER NOT NULL,
+    PRIMARY KEY(anidb_id,episode_id,file_id,library_id,rating_key,part_id)
+  ) STRICT`);
+  old.exec(`INSERT INTO file_availability_proofs VALUES
+    (42,1001,7,102,500,900,1000)`);
+  old.close();
+  const ledger = openFileProofLedger(dbPath, { positiveLifetimeMs: 300,
+    now: () => 1_100 });
+  try {
+    assert.deepEqual(ledger.getCurrent(episode), { state: 'available',
+      verifiedAtMs: 1_000 });
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

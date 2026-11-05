@@ -991,7 +991,10 @@ async function showDetail(item, franchise = null) {
       const optionText = (episode) =>
         `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
         `${episode.title ? ` · ${episode.title}` : ''}` +
-        `${episode.availability === 'available' ? ' · Playable in Plex' :
+        `${episode.availability === 'available' ?
+          episode.availabilityNote === 'alternate_card'
+            ? ' · File present in Plex; listed under another episode'
+            : ' · Playable in Plex' :
           episode.availability === 'previously_available'
             ? ' · Previously playable; recheck needed' : ''}`;
       const appendOptions = (episodes) => {
@@ -1001,11 +1004,13 @@ async function showDetail(item, franchise = null) {
           select.append(option);
         }
       };
-      const updateOption = (episodeId, availability) => {
+      const updateOption = (episodeId, availability, presentation) => {
         const episode = pager.episodes.find((entry) => entry.id === episodeId);
         const option = [...select.options].find((entry) => entry.value === String(episodeId));
         if (episode && option) {
           episode.availability = availability;
+          episode.availabilityNote = presentation === 'alternate_card'
+            ? 'alternate_card' : undefined;
           option.textContent = optionText(episode);
         }
       };
@@ -1025,10 +1030,12 @@ async function showDetail(item, franchise = null) {
         result.textContent = 'Checking the public library…';
         try {
           const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
-          updateOption(Number(select.value), status.state);
+          updateOption(Number(select.value), status.state, status.presentation);
           select.dispatchEvent(new Event('change'));
           result.textContent = status.state === 'available' ?
-            'Playable in Plex' : 'Availability is not confirmed yet';
+            status.presentation === 'alternate_card'
+              ? 'File present in Plex; listed under another episode'
+              : 'Playable in Plex' : 'Availability is not confirmed yet';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
         finally { button.disabled = !select.value; select.disabled = false; }
       });

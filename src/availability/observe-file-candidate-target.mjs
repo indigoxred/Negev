@@ -44,9 +44,19 @@ export async function observeFileCandidateTarget({ candidate, target,
   if (!identity) return unknown();
   const episodeIds = candidate.identities.filter((item) =>
     item.anidbId === target.anidbId).map((item) => item.episodeId);
+  const linkedShokoEpisodeIds = target.kind === 'series'
+    ? candidate.identities.filter((item) =>
+      item.anidbId === target.anidbId &&
+      item.shokoSeriesId === identity.shokoSeriesId)
+      .map((item) => item.shokoEpisodeId)
+    : [];
+  if (new Set(linkedShokoEpisodeIds).size !== linkedShokoEpisodeIds.length) {
+    return unknown();
+  }
   const shoko = { state: 'ok', complete: true,
     shokoEpisodeId: identity.shokoEpisodeId,
     shokoSeriesId: identity.shokoSeriesId,
+    linkedShokoEpisodeIds,
     tmdbMovieIds: identity.tmdbMovieIds,
     files: [{ fileId: candidate.fileId, anidbId: target.anidbId,
       episodeIds, coverage: episodeIds.map((episodeId) => ({

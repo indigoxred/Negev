@@ -1,0 +1,7 @@
+# Multi-episode public-file availability
+
+The owner chose file presence and playability over Plex card layout for this rare case. Negev may report an AniDB episode Available when Shoko links that episode at 0–100% to an exact registered file and the same physical file is playable in an allowed public Plex show, even when Plex presents that file on another episode card.
+
+This exception applies only to the file-centric Shoko inventory observer. The alternate Plex episode GUID must be another full-coverage Shoko episode association of that **same file**, under the same Shoko series and public Plex show. The existing exact physical same-file proof, mounted-path checks, card re-read, library ID check, source/card generation checks, and proof invalidation still apply. A wrong show, unrelated episode, partial Shoko reference, different physical file, private library, or incomplete evidence remains Unknown. Direct request-time checks retain their current exact-card behavior; this positive backfill cannot authorize a new acquisition from absence.
+
+Negev records the playable file as present to avoid duplicate acquisition, but the episode detail must say **“File present in Plex; listed under another episode”** rather than hiding the presentation mismatch behind an ordinary Available label. Existing exact-card proofs keep their ordinary label. Negev does not repair Plex layout or change Shoko, Plex, or media metadata in this slice.

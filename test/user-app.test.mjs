@@ -129,6 +129,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         downloadStarted: false }; },
     observePublicTarget: async (target) => { observed.push(target);
       return target.episodeId === 1002 ? { state: 'unknown' } :
+        target.episodeId === 1003
+          ? { state: 'available', presentation: 'alternate_card' } :
         { state: 'available', fileId: 900 }; },
   });
   try {
@@ -315,6 +317,11 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.deepEqual(direct.json(), { state: 'available' });
     assert.deepEqual(observed.at(-1), { anidbId: 1234,
       episodeId: 1001, kind: 'series' });
+    const alternate = await app.inject({ method: 'GET',
+      url: '/api/catalogue/1234/episodes/1003/availability?kind=series',
+      headers: { cookie } });
+    assert.deepEqual(alternate.json(), { state: 'available',
+      presentation: 'alternate_card' });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/episodes/1001/availability?kind=series',
       headers: { cookie } })).statusCode, 404);
