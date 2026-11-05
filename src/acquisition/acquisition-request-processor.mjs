@@ -88,25 +88,32 @@ export function createAcquisitionRequestProcessor({ readRequest,
       JSON.stringify([item.indexerId, item.guid])).digest('hex');
     const currentById = new Map(candidates.map((item) =>
       [candidateId(item), item]));
-    // A new target or changed candidate set starts a fresh sweep. Seeder
-    // changes alone must retain the original order until that sweep ends.
-    const fingerprint = createHash('sha256').update(JSON.stringify({
-      episodeIds: [...request.episodeIds].sort((a, b) => a - b),
-      candidates: [...currentById.keys()].sort(),
-    })).digest('hex');
+    // Only a changed target set restarts a sweep. Indexers can add/drop
+    // releases between pages; keep the still-present unvisited releases in
+    // order and append newcomers so churn cannot starve an older candidate.
+    const fingerprint = createHash('sha256').update(JSON.stringify(
+      [...request.episodeIds].sort((a, b) => a - b))).digest('hex');
     const saved = typeof candidateFingerprint === 'string' &&
       candidateFingerprint.length <= 3_400 ? candidateFingerprint.split(':') : [];
     const savedOrder = saved.length === 2 && saved[0] === fingerprint ?
       saved[1].split(',') : [];
-    const sameSet = savedOrder.length === currentById.size &&
+    const sameTarget = savedOrder.length > 0 &&
       new Set(savedOrder).size === savedOrder.length &&
-      savedOrder.every((id) => /^[0-9a-f]{64}$/.test(id) && currentById.has(id));
-    const ordered = sameSet ? savedOrder.map((id) => currentById.get(id)) : candidates;
+      savedOrder.every((id) => /^[0-9a-f]{64}$/.test(id));
+    const consumed = sameTarget ? savedOrder.slice(0, candidateOffset)
+      .filter((id) => currentById.has(id)) : [];
+    const remaining = sameTarget ? savedOrder.slice(candidateOffset)
+      .filter((id) => currentById.has(id)) : [];
+    const previous = new Set(savedOrder);
+    const newcomers = sameTarget ? [...currentById.keys()]
+      .filter((id) => !previous.has(id)) : [];
+    const order = sameTarget ? [...consumed, ...remaining, ...newcomers] :
+      [...currentById.keys()];
+    const ordered = order.map((id) => currentById.get(id));
     const cursor = `${fingerprint}:${ordered.map(candidateId).join(',')}`;
     const seen = new Set();
     let selected;
-    const start = sameSet && candidateOffset < ordered.length ?
-      candidateOffset : 0;
+    const start = consumed.length < ordered.length ? consumed.length : 0;
     let nextIndex = start;
     for (let index = start; index < ordered.length; index++) {
       if (seen.size >= maxPreflights) break;

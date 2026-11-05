@@ -243,7 +243,7 @@ test('changed provider order preserves the saved candidate sweep', async () => {
     'candidate-3', 'candidate-4']);
 });
 
-test('a newly discovered release starts a fresh candidate sweep', async () => {
+test('a newly discovered release cannot restart the current candidate sweep', async () => {
   let items = [candidate(1), candidate(2), candidate(3), candidate(4)];
   const seen = [];
   const process = createAcquisitionRequestProcessor({
@@ -262,10 +262,79 @@ test('a newly discovered release starts a fresh candidate sweep', async () => {
   const first = await process({ requestId: 4 });
   assert.equal(first.nextCandidateOffset, 1);
   items = [{ ...candidate(5), seeders: 30 }, ...items];
-  assertAttempt(await process({ requestId: 4,
+  const second = await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }), 12);
-  assert.deepEqual(seen, ['candidate-1', 'candidate-5']);
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.nextCandidateOffset, 2);
+  assert.equal(second.reason, 'no_safe_release');
+  const third = await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint });
+  assert.equal(third.nextCandidateOffset, 3);
+  const fourth = await process({ requestId: 4,
+    candidateOffset: third.nextCandidateOffset,
+    candidateFingerprint: third.nextCandidateFingerprint });
+  assert.equal(fourth.nextCandidateOffset, 4);
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: fourth.nextCandidateOffset,
+    candidateFingerprint: fourth.nextCandidateFingerprint }), 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2', 'candidate-3',
+    'candidate-4', 'candidate-5']);
+});
+
+test('removed and added releases do not make a changing catalogue starve older candidates', async () => {
+  let items = [candidate(1), candidate(2), candidate(3), candidate(4)];
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    maxPreflights: 1,
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-4' ? preflight :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
+  });
+  const first = await process({ requestId: 4 });
+  items = [{ ...candidate(5), seeders: 30 }, candidate(2), candidate(3), candidate(4)];
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  items = [{ ...candidate(6), seeders: 40 }, candidate(3), candidate(4), candidate(5)];
+  const third = await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint });
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: third.nextCandidateOffset,
+    candidateFingerprint: third.nextCandidateFingerprint }), 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2', 'candidate-3', 'candidate-4']);
+});
+
+test('a saved cursor from the previous fingerprint format resets safely once', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    maxPreflights: 1,
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw Error('must not submit'); },
+  });
+  const first = await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}` });
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.nextCandidateOffset, 0);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
 
 test('seeder ranking churn cannot starve a later candidate', async () => {
