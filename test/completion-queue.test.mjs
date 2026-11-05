@@ -7,6 +7,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openCompletionQueue, createCompletionWorker } from '../src/acquisition/completion-queue.mjs';
+import { createPipelineScheduler } from '../src/acquisition/acquisition-pipeline-scheduler.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 
 async function fixture(run) {
@@ -70,7 +71,7 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
   });
 });
 
-test('a newly complete torrent takes priority over older inconclusive lookups in the same pass', async () => {
+test('due completion retries advance in ID order so an older retry cannot starve', async () => {
   await fixture(async (ctx) => {
     const older = ctx.queue.claimNext({ nowMs: 1_000 });
     ctx.queue.recordResult({ attemptId: older.attemptId, pass: older.pass,
@@ -83,7 +84,86 @@ test('a newly complete torrent takes priority over older inconclusive lookups in
       state: 'held', reason: 'provider_unavailable', checkedMs: 1_000 });
     assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'pass_complete');
     assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId,
+      older.attemptId);
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId,
       complete.attemptId);
+  });
+});
+
+test('an incomplete higher-ID attempt cannot starve an older due retry across paced passes', async () => {
+  await fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId, pass: first.pass,
+      state: 'held', reason: 'file_lookup_inconclusive', checkedMs: 1_000 });
+    const second = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: second.attemptId, pass: second.pass,
+      state: 'held', reason: 'incomplete', checkedMs: 1_000 });
+    ctx.acquisitions.requestStalledRetirement({ attemptId: ctx.attemptIds[2],
+      hash: ctx.hashes[2], nowMs: 1_000 });
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'pass_complete');
+    let checkedOlder = false;
+    for (let minute = 31; minute <= 79; minute += 4) {
+      const nowMs = minute * 60_000 + 1_000;
+      const claim = ctx.queue.claimNext({ nowMs });
+      if (claim.state !== 'claimed') continue;
+      if (claim.attemptId === first.attemptId) checkedOlder = true;
+      ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+        state: 'held', reason: claim.attemptId === second.attemptId
+          ? 'incomplete' : 'file_lookup_inconclusive', checkedMs: nowMs });
+    }
+    assert.equal(checkedOlder, true);
+  });
+});
+
+test('the four-stage scheduler eventually checks an older due completion retry', async () => {
+  await fixture(async (ctx) => {
+    for (const reason of ['file_lookup_inconclusive', 'incomplete']) {
+      const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+      ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+        state: 'held', reason, checkedMs: 1_000 });
+    }
+    ctx.acquisitions.requestStalledRetirement({ attemptId: ctx.attemptIds[2],
+      hash: ctx.hashes[2], nowMs: 1_000 });
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'pass_complete');
+    let nowMs = 30 * 60_000 + 1_000;
+    let nextTimerId = 0;
+    const timers = new Map();
+    const seen = [];
+    const worker = createCompletionWorker({ queue: ctx.queue, now: () => nowMs,
+      processAttempt: async ({ attemptId }) => {
+        seen.push(attemptId);
+        return { state: 'held', reason: attemptId === ctx.attemptIds[1]
+          ? 'incomplete' : 'file_lookup_inconclusive' };
+      } });
+    const scheduler = createPipelineScheduler({
+      pipeline: {
+        initialize: async () => ({ state: 'reconciled' }),
+        tickPublish: async () => ({ state: 'idle' }),
+        tickCompletions: () => worker.runOnce(),
+        tickStarts: async () => ({ state: 'idle' }),
+        tickRequests: async () => ({ state: 'idle' }),
+        close: async () => {},
+      },
+      now: () => nowMs,
+      setTimer: (callback, delay) => {
+        const id = ++nextTimerId;
+        timers.set(id, { callback, delay });
+        return id;
+      },
+      clearTimer: (id) => timers.delete(id),
+    });
+    try {
+      await scheduler.start();
+      for (let tick = 0; tick < 52; tick++) {
+        const [id, timer] = timers.entries().next().value;
+        timers.delete(id);
+        nowMs += timer.delay;
+        await timer.callback();
+      }
+      assert.ok(seen.includes(ctx.attemptIds[0]),
+        'an older due retry must not be starved by repeated incomplete checks');
+      assert.ok(seen.includes(ctx.attemptIds[1]));
+    } finally { await scheduler.stop(); }
   });
 });
 
