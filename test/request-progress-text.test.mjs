@@ -59,3 +59,20 @@ test('a scheduled release recheck does not imply active downloading', () => {
     publicAvailability: 'unverified' }, 'movie'),
   'Release check paused · Negev will retry');
 });
+
+test('an inconclusive AniDB file check is described without claiming a download failure', () => {
+  assert.equal(progressText({ state: 'release_identity_unverified', targetCount: 1,
+    publicAvailability: 'unverified' }, 'movie'),
+  'Downloaded file not confirmed by AniDB · Negev will retry');
+  assert.equal(progressText({ state: 'release_retirement_pending', targetCount: 1,
+    publicAvailability: 'unverified' }, 'movie'),
+  'Downloaded file not confirmed by AniDB · Release is being safely retired');
+  assert.equal(progressText({ state: 'partial_private_copy', targetCount: 2,
+    privateVerifiedTargets: 1, identityCheckPending: true,
+    publicAvailability: 'unverified' }, 'series'),
+  '1/2 episode targets have a recorded private copy · Plex unverified · Another downloaded file awaits AniDB confirmation; Negev will retry');
+  assert.equal(progressText({ state: 'partial_private_copy', targetCount: 2,
+    privateVerifiedTargets: 1, identityRetirementPending: true,
+    publicAvailability: 'unverified' }, 'series'),
+  '1/2 episode targets have a recorded private copy · Plex unverified · Another release is being safely retired');
+});

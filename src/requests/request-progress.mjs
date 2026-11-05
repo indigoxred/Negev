@@ -34,9 +34,35 @@ export function openRequestProgress(dbPath) {
     WHERE a.request_id=? ORDER BY a.id LIMIT 101`);
   const hasAcquisitionChecks = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_request_checks'`);
+  const hasCompletionChecks = db.prepare(`SELECT 1 FROM sqlite_master
+    WHERE type='table' AND name='completion_checks'`);
   let oneTimeCompletion;
   let interruptedRequest;
   let scheduledRetry;
+  let inconclusiveFileCheck;
+  const fileIdentityState = (requestId) => {
+    if (!inconclusiveFileCheck) {
+      if (!hasCompletionChecks.get()) return null;
+      inconclusiveFileCheck = db.prepare(`SELECT si.attempt_id AS retirement_id
+        FROM completion_checks c
+        JOIN acquisition_attempts a ON a.id=c.attempt_id
+        JOIN acquisition_starts s ON s.attempt_id=a.id
+        LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+        LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
+        LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+        LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
+        LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
+        WHERE a.request_id=? AND a.status='torrent_observed'
+          AND c.state='held' AND c.reason='file_lookup_inconclusive'
+          AND c.next_due_ms IS NOT NULL AND h.attempt_id IS NULL
+          AND j.attempt_id IS NULL AND t.attempt_id IS NULL
+          AND x.attempt_id IS NULL LIMIT 101`);
+    }
+    const rows = inconclusiveFileCheck.all(requestId);
+    if (rows.length > 100) return null;
+    if (rows.some((row) => row.retirement_id === null)) return 'retrying';
+    return rows.length > 0 ? 'retiring' : null;
+  };
   const retryScheduled = (requestId) => {
     if (!scheduledRetry) {
       if (!hasAcquisitionChecks.get()) return false;
@@ -82,6 +108,8 @@ export function openRequestProgress(dbPath) {
       const interruptedCheck = interrupted(requestId);
       const rejectedNeedsReview = rows.some((row) => row.rejected_id && !row.retired_id);
       const reviewRequired = interruptedCheck || rejectedNeedsReview;
+      const identityState = active.some((row) => row.start_status)
+        ? fileIdentityState(requestId) : null;
       let state = 'saved';
       if (rejectedNeedsReview) state = 'review_needed';
       else if (interruptedCheck) state = 'request_interrupted';
@@ -91,7 +119,11 @@ export function openRequestProgress(dbPath) {
           ? 'import_unverified' :
           privateVerifiedTargets >= item.target_count
             ? 'private_copy_recorded' : 'partial_private_copy';
-      } else if (active.some((row) => row.start_status)) state = 'download_unverified';
+      } else if (active.some((row) => row.start_status)) {
+        state = identityState === 'retrying' ? 'release_identity_unverified' :
+          identityState === 'retiring' ? 'release_retirement_pending' :
+            'download_unverified';
+      }
       else if (active.some((row) => row.status === 'torrent_observed')) {
         state = 'torrent_stopped';
       } else if (active.some((row) => row.status === 'dispatch_unknown')) {
@@ -101,6 +133,10 @@ export function openRequestProgress(dbPath) {
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
         reviewRequired, publicAvailability: 'unverified',
+        ...(state === 'partial_private_copy' && identityState === 'retrying'
+          ? { identityCheckPending: true } : {}),
+        ...(state === 'partial_private_copy' && identityState === 'retiring'
+          ? { identityRetirementPending: true } : {}),
         ...(completedOnce(requestId) ? { oneTimeAcquisitionComplete: true } : {}) };
     },
     close() { db.close(); },

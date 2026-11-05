@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openCompletionQueue } from '../src/acquisition/completion-queue.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openAcquisitionRequestQueue,
   reconcileUnresolvedAcquisitionClaims } from '../src/acquisition/acquisition-request-queue.mjs';
@@ -40,6 +41,17 @@ test('request progress distinguishes private proof from public availability', as
     assert.deepEqual(progress.read(saved.requestId), { state: 'download_unverified',
       targetCount: 2, privateVerifiedTargets: 0, activeAttempts: 1,
       reviewRequired: false, publicAvailability: 'unverified' });
+    const completion = openCompletionQueue(dbPath);
+    try {
+      const check = completion.claimNext({ nowMs: 205 });
+      assert.equal(check.attemptId, claim.attemptId);
+      completion.recordResult({ attemptId: claim.attemptId, pass: check.pass,
+        state: 'held', reason: 'file_lookup_inconclusive', checkedMs: 206 });
+      assert.deepEqual(progress.read(saved.requestId), {
+        state: 'release_identity_unverified', targetCount: 2,
+        privateVerifiedTargets: 0, activeAttempts: 1,
+        reviewRequired: false, publicAvailability: 'unverified' });
+    } finally { completion.close(); }
     const manifest = { anidbId: 42, torrentHash: hash,
       files: [{ name: '01.mkv', size: 10, ed2k: 'A'.repeat(32),
         anidbFileId: 51, episodeIds: [1001] }], subtitles: [] };
@@ -50,6 +62,39 @@ test('request progress distinguishes private proof from public availability', as
     assert.deepEqual(progress.read(saved.requestId), { state: 'partial_private_copy',
       targetCount: 2, privateVerifiedTargets: 1, activeAttempts: 1,
       reviewRequired: false, publicAvailability: 'unverified' });
+    const secondCandidate = { indexerId: 7, guid: 'second' };
+    const secondHash = 'c'.repeat(40);
+    const second = acquisitions.reserve({ requestId: saved.requestId,
+      candidate: secondCandidate, episodeIds: [1002], nowMs: 207 });
+    acquisitions.bindPreparedTorrent({ attemptId: second.attemptId,
+      candidate: secondCandidate, hash: secondHash, nowMs: 208 });
+    acquisitions.recordFilePlan({ attemptId: second.attemptId, hash: secondHash,
+      plannedFiles: [{ name: '02.mkv', size: 10, episodeIds: [1002] }], nowMs: 209 });
+    acquisitions.beginDispatch({ attemptId: second.attemptId, nowMs: 210 });
+    acquisitions.recordTorrent({ attemptId: second.attemptId, hash: secondHash, nowMs: 211 });
+    acquisitions.beginStart({ attemptId: second.attemptId, hash: secondHash,
+      manifestDigest: 'd'.repeat(64), nowMs: 212 });
+    const secondCompletion = openCompletionQueue(dbPath);
+    try {
+      const check = secondCompletion.claimNext({ nowMs: 213 });
+      assert.equal(check.attemptId, second.attemptId);
+      secondCompletion.recordResult({ attemptId: second.attemptId,
+        pass: check.pass, state: 'held', reason: 'file_lookup_inconclusive',
+        checkedMs: 214 });
+      assert.deepEqual(progress.read(saved.requestId), {
+        state: 'partial_private_copy', targetCount: 2,
+        privateVerifiedTargets: 1, activeAttempts: 2,
+        reviewRequired: false, publicAvailability: 'unverified',
+        identityCheckPending: true });
+      assert.equal(acquisitions.requestStalledRetirement({
+        attemptId: second.attemptId, hash: secondHash, nowMs: 215 }).state,
+      'retirement_requested');
+      assert.deepEqual(progress.read(saved.requestId), {
+        state: 'partial_private_copy', targetCount: 2,
+        privateVerifiedTargets: 1, activeAttempts: 2,
+        reviewRequired: false, publicAvailability: 'unverified',
+        identityRetirementPending: true });
+    } finally { secondCompletion.close(); }
     assert.equal(progress.read(999), null);
   } finally {
     progress.close(); handoffs.close(); acquisitions.close(); requests.close();
