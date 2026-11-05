@@ -3,52 +3,113 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#101827">
-  <title>Negev · Anime requests</title>
+  <meta name="theme-color" content="#15181e">
+  <title>Negev · Discover anime</title>
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/consumer.css">
   <script src="/app.js" type="module"></script>
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">N</span><span>Negev</span></div>
-    <div id="identity" class="identity" hidden><span id="username"></span><button id="invite" class="quiet" hidden>Create invite</button><button id="signout" class="quiet">Sign out</button></div>
-  </header>
-  <main>
-    <section class="intro">
-      <p class="eyebrow">Anime requests</p>
-      <h1>Find your next show or film.</h1>
-      <p>Search the AniDB catalogue, choose an installment, and save a request.</p>
-    </section>
-    <p id="service-notice" class="notice">Negev is in preview. Sign in to see acquisition status.</p>
-    <p id="message" class="message" role="status" aria-live="polite"></p>
-    <p id="invite-code" class="invite-code" hidden></p>
-    <section id="auth" class="panel auth-panel">
-      <div class="tabs"><button id="login-tab" class="selected" type="button">Sign in</button><button id="register-tab" type="button">Use an invitation</button></div>
-      <form id="login-form">
-        <label>Username<input name="username" autocomplete="username" required></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="primary" type="submit">Sign in</button>
-      </form>
-      <form id="register-form" hidden>
-        <label>Invitation code<input name="code" autocomplete="off" required></label>
-        <label>Username<input name="username" autocomplete="username" required></label>
-        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
-        <button class="primary" type="submit">Create account</button>
-      </form>
-    </section>
-    <section id="workspace" hidden>
-      <form id="search-form" class="search-row" role="search">
-        <label for="query" class="sr-only">Search anime</label>
-        <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime titles" required>
-        <button class="primary" type="submit">Search</button>
-      </form>
-      <div class="columns">
-        <section class="panel" aria-labelledby="results-title"><h2 id="results-title">Search results</h2><div id="results" class="results"><p class="muted">Search by title to begin.</p></div></section>
-        <section class="panel" aria-labelledby="detail-title"><h2 id="detail-title">Installment</h2><div id="detail"><p class="muted">Select a result to see its details.</p></div></section>
+    <a class="brand" href="#/discover"><span class="brand-mark">N</span><span>Negev</span></a>
+    <nav id="main-nav" class="desktop-nav" aria-label="Main" hidden>
+      <a href="#/discover" data-nav="discover">Discover</a>
+      <a href="#/airing" data-nav="airing">Airing</a>
+      <a href="#/library" data-nav="library">Library</a>
+      <a href="#/requests" data-nav="requests">Requests</a>
+    </nav>
+    <form id="search-form" class="global-search" role="search" hidden>
+      <label for="query" class="sr-only">Search anime</label>
+      <input id="query" name="query" type="search" minlength="2" maxlength="120" placeholder="Search anime…" required>
+      <button type="submit" class="sr-only">Search</button>
+    </form>
+    <details id="identity" class="identity" hidden>
+      <summary>Account</summary>
+      <div class="account-menu">
+        <span id="username"></span>
+        <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
+        <button id="invite" class="quiet" hidden>Create invite</button>
+        <button id="signout" class="quiet">Sign out</button>
       </div>
-      <section class="panel history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">My requests</h2><button id="refresh-requests" class="quiet" type="button">Refresh</button></div><div id="request-list"><p class="muted">Loading requests…</p></div><button id="more-requests" type="button" hidden>Show more</button></section>
-      <details id="admin-review" class="panel" hidden><summary>Needs attention</summary><p class="muted">Held imports and rejected files that need an owner review. This list does not change any files.</p><div id="review-list"></div><button id="refresh-review" class="quiet" type="button">Refresh</button><button id="more-review" type="button" hidden>Show more</button></details>
+    </details>
+  </header>
+  <p id="message" class="message" role="status" aria-live="polite"></p>
+  <p id="invite-code" class="invite-code" hidden></p>
+  <main>
+    <section id="auth" class="auth-view">
+      <div class="auth-heading"><p class="eyebrow">Welcome to Negev</p><h1>Discover anime together.</h1>
+        <p>Browse the catalogue, see what you can watch and request what is missing.</p></div>
+      <div class="panel auth-panel">
+        <div class="tabs"><button id="login-tab" class="selected" type="button">Sign in</button><button id="register-tab" type="button">Use an invitation</button></div>
+        <form id="login-form">
+          <label>Username<input name="username" autocomplete="username" required></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <button class="primary" type="submit">Sign in</button>
+        </form>
+        <form id="register-form" hidden>
+          <label>Invitation code<input name="code" autocomplete="off" required></label>
+          <label>Username<input name="username" autocomplete="username" required></label>
+          <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+          <button class="primary" type="submit">Create account</button>
+        </form>
+      </div>
     </section>
+    <div id="workspace" hidden>
+      <section id="view-discover" class="page-view">
+        <header class="page-head"><p class="eyebrow">Discover</p><h1>Anime, ready to explore.</h1>
+          <p>Find something new, or see what is already on this server.</p></header>
+        <div id="discover-shelves"></div>
+        <section class="section"><div class="section-head"><h2 id="results-title">Search the catalogue</h2>
+          <p>Search by name to see series and films.</p></div>
+          <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
+        </section>
+      </section>
+      <section id="view-airing" class="page-view" hidden>
+        <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
+          <p>This week's AniDB scheduled episodes. This is not the complete seasonal catalogue, and an air date does not promise Plex availability.</p></header>
+        <div id="airing-state" class="muted"></div>
+        <div id="airing-list" class="poster-grid"><p class="muted">Loading this week's schedule…</p></div>
+      </section>
+      <section id="view-library" class="page-view" hidden>
+        <header class="page-head"><p class="eyebrow">On this server</p><h1>Your library</h1>
+          <p>Titles with recent exact public Plex proof, including owner imports. Verification is still filling this view.</p></header>
+        <button id="refresh-library" class="quiet" type="button">Refresh verified titles</button>
+        <div id="library-list" class="empty-state">The public-library browse index is being prepared. Search results show verified library matches now.</div>
+      </section>
+      <section id="view-requests" class="page-view" hidden>
+        <header class="page-head"><p class="eyebrow">Your activity</p><h1>My requests</h1>
+          <p>See what is happening, what is ready and what needs help.</p></header>
+        <div class="request-tabs" role="tablist" aria-label="Request status">
+          <button type="button" data-request-tab="history" aria-selected="true">Active &amp; history</button>
+          <button type="button" data-request-tab="watching" aria-selected="false">Watching</button>
+        </div>
+        <section id="request-history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">Your requests</h2><button id="refresh-requests" class="quiet" type="button">Refresh</button></div>
+          <div id="request-list" class="request-list"><p class="muted">Loading requests…</p></div>
+          <button id="more-requests" type="button" hidden>Show more requests</button></section>
+        <section id="request-watching" aria-labelledby="watching-title" hidden><div class="section-head"><h2 id="watching-title">Watching for new episodes</h2></div>
+          <div id="watch-list" class="request-list"><p class="muted">Loading watches…</p></div>
+          <button id="more-watches" type="button" hidden>Show more watches</button></section>
+      </section>
+      <section id="view-title" class="page-view" hidden>
+        <a id="back-to-discover" class="text-link back" href="#/discover">← Back to Discover</a>
+        <div id="detail" class="title-detail"><p class="muted">Loading title…</p></div>
+      </section>
+      <section id="view-admin" class="page-view" hidden>
+        <header class="page-head"><p class="eyebrow">Owner only</p><h1>Administration</h1></header>
+        <p id="service-notice" class="notice">Negev is in preview. Sign in to see acquisition status.</p>
+        <section id="admin-review" class="panel" hidden><div class="section-head"><h2>Needs attention</h2><button id="refresh-review" class="quiet" type="button">Refresh</button></div>
+          <p class="muted">Held imports and rejected files that need an owner review. This list does not change any files.</p>
+          <div id="review-list"></div><button id="more-review" type="button" hidden>Show more</button>
+        </section>
+      </section>
+    </div>
   </main>
+  <nav id="mobile-nav" class="mobile-nav" aria-label="Main" hidden>
+    <a href="#/discover" data-nav="discover">Discover</a>
+    <a href="#/airing" data-nav="airing">Airing</a>
+    <a href="#/library" data-nav="library">Library</a>
+    <a href="#/requests" data-nav="requests">Requests</a>
+  </nav>
+  <footer class="source-credit">Catalogue identity and covers: <a href="https://anidb.net/" target="_blank" rel="noopener noreferrer">AniDB</a> and <a href="https://animap.id/" target="_blank" rel="noopener noreferrer">AniMap</a>.</footer>
 </body>
 </html>

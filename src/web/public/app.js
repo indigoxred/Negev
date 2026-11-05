@@ -5,17 +5,24 @@ import { progressText } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
+import { parseConsumerRoute, searchRoute, titleRoute } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
-  nextBeforeId: null, releaseSearch: false, detailLoad: false,
-  titleChecks: false, acquisitionState: 'disabled', searchToken: 0 };
+  nextBeforeId: { watching: null, history: null }, releaseSearch: false, detailLoad: false,
+  titleChecks: false, acquisitionState: 'disabled', searchToken: 0,
+  lastSearchQuery: '', searchItems: new Map(),
+  libraryLoaded: false, libraryAfter: null, airingLoaded: false,
+  discoverLoaded: false };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
 const detailResponses = createResponseEpoch();
+const libraryResponses = createResponseEpoch();
+const airingResponses = createResponseEpoch();
+const discoverResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 function message(text, error = false) {
   const node = byId('message');
@@ -28,6 +35,63 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
+  ? `/api/catalogue/posters/${item.posterUid}`
+  : `/api/catalogue/posters/anidb/${item.anidbId}`;
+function posterImage(item, className = '') {
+  const poster = document.createElement('img');
+  poster.src = posterUrl(item);
+  poster.alt = '';
+  poster.loading = 'lazy';
+  if (className) poster.className = className;
+  poster.addEventListener('error', () => poster.classList.add('missing-art'));
+  return poster;
+}
+function renderRoute() {
+  if (!state.user) return;
+  const route = parseConsumerRoute(location.hash);
+  const page = route.page === 'admin' && state.user.role !== 'admin'
+    ? 'discover' : route.page;
+  for (const name of ['discover', 'airing', 'library', 'requests', 'title', 'admin']) {
+    byId(`view-${name}`).hidden = name !== page;
+  }
+  for (const link of document.querySelectorAll('[data-nav]')) {
+    if (link.dataset.nav === page) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  document.title = `Negev · ${page[0].toUpperCase()}${page.slice(1)}`;
+  if (page === 'title') {
+    byId('back-to-discover').href = searchRoute(state.lastSearchQuery);
+    if (state.selected !== route.anidbId) {
+      const item = state.searchItems.get(route.anidbId) ??
+        { anidbId: route.anidbId, title: `Anime ${route.anidbId}` };
+      void showDetail(item);
+    }
+  } else if (page === 'discover') {
+    byId('query').value = route.query;
+    byId('discover-shelves').hidden = route.query.length >= 2;
+    if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
+    if (route.query.length >= 2 && route.query !== state.lastSearchQuery) {
+      byId('search-form').requestSubmit();
+    }
+  } else if (page === 'library' && !state.libraryLoaded) {
+    void loadLibrary();
+  } else if (page === 'airing' && !state.airingLoaded) {
+    void loadAiring();
+  }
+}
+window.addEventListener('hashchange', renderRoute);
+window.addEventListener('popstate', renderRoute);
+for (const tab of document.querySelectorAll('[data-request-tab]')) {
+  tab.addEventListener('click', () => {
+    const watching = tab.dataset.requestTab === 'watching';
+    byId('request-history').hidden = watching;
+    byId('request-watching').hidden = !watching;
+    for (const button of document.querySelectorAll('[data-request-tab]')) {
+      button.setAttribute('aria-selected', String(button === tab));
+    }
+  });
 }
 async function api(url, options = {}) {
   const headers = { Accept: 'application/json', ...options.headers };
@@ -50,12 +114,20 @@ function showSession(data) {
     requestResponses.invalidate();
     reviewResponses.invalidate();
     detailResponses.invalidate();
+    libraryResponses.invalidate();
+    airingResponses.invalidate();
+    discoverResponses.invalidate();
     state.selected = null;
     byId('request-list').replaceChildren();
+    byId('watch-list').replaceChildren();
     byId('review-list').replaceChildren();
     byId('detail').replaceChildren(element('p',
       'Select a result to see its details.', 'muted'));
-    state.nextBeforeId = null;
+    state.nextBeforeId = { watching: null, history: null };
+    state.libraryLoaded = false;
+    state.libraryAfter = null;
+    state.airingLoaded = false;
+    state.discoverLoaded = false;
     nextReviewAttemptId = null;
   }
   state.user = data.user;
@@ -69,21 +141,35 @@ function showSession(data) {
     : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
   byId('auth').hidden = true;
   byId('workspace').hidden = false;
+  byId('main-nav').hidden = false;
+  byId('mobile-nav').hidden = false;
+  byId('search-form').hidden = false;
   byId('identity').hidden = false;
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
+  byId('admin-link').hidden = data.user.role !== 'admin';
   byId('admin-review').hidden = data.user.role !== 'admin';
+  renderRoute();
 }
 function clearWorkspace() {
   sessionResponses.invalidate();
   requestResponses.invalidate();
   reviewResponses.invalidate();
   detailResponses.invalidate();
+  libraryResponses.invalidate();
+  airingResponses.invalidate();
+  discoverResponses.invalidate();
   state.user = null;
   state.csrf = null;
   state.selected = null;
   state.searchToken++;
-  state.nextBeforeId = null;
+  state.lastSearchQuery = '';
+  state.searchItems.clear();
+  state.libraryLoaded = false;
+  state.libraryAfter = null;
+  state.airingLoaded = false;
+  state.discoverLoaded = false;
+  state.nextBeforeId = { watching: null, history: null };
   nextReviewAttemptId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
@@ -92,15 +178,21 @@ function clearWorkspace() {
   byId('service-notice').textContent =
     'Negev is in preview. Sign in to see acquisition status.';
   byId('request-list').replaceChildren();
+  byId('watch-list').replaceChildren();
   byId('review-list').replaceChildren();
+  byId('main-nav').hidden = true;
+  byId('mobile-nav').hidden = true;
   byId('more-review').hidden = true;
   byId('admin-review').hidden = true;
   byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
+  byId('discover-shelves').replaceChildren();
   byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));
   byId('search-form').reset();
+  byId('search-form').hidden = true;
   byId('invite-code').textContent = '';
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
+  byId('identity').open = false;
   byId('workspace').hidden = true;
   byId('auth').hidden = false;
 }
@@ -120,27 +212,32 @@ async function refreshSession() {
     return false;
   }
 }
-async function loadRequests(append = false) {
+async function loadRequestView(view, append = false) {
   const session = sessionResponses.current();
   const listRequest = requestResponses.invalidate();
   const userId = state.user?.id;
-  const list = byId('request-list');
+  const watching = view === 'watching';
+  const list = byId(watching ? 'watch-list' : 'request-list');
+  const more = byId(watching ? 'more-watches' : 'more-requests');
   if (!append) {
-    state.nextBeforeId = null;
-    byId('more-requests').hidden = true;
-    list.replaceChildren(element('p', 'Loading requests…', 'muted'));
+    state.nextBeforeId[view] = null;
+    more.hidden = true;
+    list.replaceChildren(element('p', watching ? 'Loading watches…' : 'Loading requests…', 'muted'));
   }
-  const suffix = append && state.nextBeforeId ? `?beforeId=${state.nextBeforeId}` : '';
+  const suffix = append && state.nextBeforeId[view]
+    ? `&beforeId=${state.nextBeforeId[view]}` : '';
   try {
-    const page = await api(`/api/requests${suffix}`);
+    const page = await api(`/api/requests?view=${view}${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
         !requestResponses.isCurrent(listRequest) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
     if (!append && page.items.length === 0) {
-      list.append(element('p', 'No requests yet. Search for an anime to begin.', 'muted'));
+      list.append(element('p', watching ? 'No Airing shows are being watched.' :
+        'No finished or one-time requests yet. Search for an anime to begin.', 'muted'));
     }
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
+      row.append(posterImage(item));
       const heading = element('div');
       const targetCount = item.episodeIds.length;
       const requestedScope = item.kind === 'movie'
@@ -151,6 +248,9 @@ async function loadRequests(append = false) {
         element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · ` +
           `${requestedScope} · ` +
           `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`));
+      const openTitle = element('a', 'View title →', 'text-link');
+      openTitle.href = titleRoute(item.anidbId);
+      heading.append(openTitle);
       if (state.user?.role === 'admin') {
         const technical = element('details', undefined, 'request-technical');
         technical.append(element('summary', 'Technical details'),
@@ -214,12 +314,14 @@ async function loadRequests(append = false) {
             candidates.replaceChildren(element('p', 'Release search is unavailable right now.', 'muted'));
           } finally { button.disabled = false; }
         });
-        row.append(button, candidates);
+        const advanced = element('details', undefined, 'request-technical');
+        advanced.append(element('summary', 'Advanced release tools'), button, candidates);
+        row.append(advanced);
       }
       list.append(row);
     }
-    state.nextBeforeId = page.nextBeforeId;
-    byId('more-requests').hidden = state.nextBeforeId === null;
+    state.nextBeforeId[view] = page.nextBeforeId;
+    more.hidden = state.nextBeforeId[view] === null;
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
         requestResponses.isCurrent(listRequest) && state.user?.id === userId) {
@@ -229,8 +331,174 @@ async function loadRequests(append = false) {
     }
   }
 }
+async function loadRequests() {
+  await loadRequestView('watching');
+  await loadRequestView('history');
+}
+function discoveryCard(item, note, badge, available = false) {
+  const card = element('a', undefined, 'poster-card');
+  card.href = titleRoute(item.anidbId);
+  const frame = element('span', 'N', 'poster-frame poster-fallback');
+  const poster = posterImage(item);
+  poster.addEventListener('load', () => frame.classList.add('has-poster'));
+  frame.append(poster);
+  const copy = element('span', undefined, 'poster-copy');
+  copy.append(element('strong', item.title), element('small', note),
+    element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
+  card.append(frame, copy);
+  state.searchItems.set(item.anidbId, item);
+  return card;
+}
+async function loadDiscover() {
+  const session = sessionResponses.current();
+  const epoch = discoverResponses.invalidate();
+  const userId = state.user?.id;
+  const shelves = byId('discover-shelves');
+  shelves.replaceChildren(element('p', 'Finding anime to explore…', 'muted'));
+  const [airing, library] = await Promise.allSettled([
+    api('/api/airing'), api('/api/library'),
+  ]);
+  if (!sessionResponses.isCurrent(session) ||
+      !discoverResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+  state.discoverLoaded = true;
+  shelves.replaceChildren();
+  const addShelf = ({ title, note, href, items, card }) => {
+    if (!items?.length) return;
+    const section = element('section', undefined, 'section discovery-shelf');
+    const heading = element('div', undefined, 'section-head');
+    const label = element('div');
+    label.append(element('h2', title), element('p', note));
+    const more = element('a', 'Explore all →', 'text-link');
+    more.href = href;
+    heading.append(label, more);
+    const grid = element('div', undefined, 'poster-grid');
+    for (const item of items.slice(0, 6)) grid.append(card(item));
+    section.append(heading, grid);
+    shelves.append(section);
+  };
+  if (airing.status === 'fulfilled' && Array.isArray(airing.value?.items)) {
+    addShelf({ title: 'This week on AniDB',
+      note: airing.value.state === 'stale'
+        ? 'Saved schedule; dates may have changed. Local availability is checked separately.'
+        : 'Upcoming and recent episode dates. Local availability is checked separately.',
+      href: '#/airing', items: airing.value.items,
+      card: (item) => discoveryCard(item,
+        `Episode ${item.episodeNumber} · ${item.scheduledDate}`,
+        'Availability not checked'),
+    });
+  }
+  if (library.status === 'fulfilled' && Array.isArray(library.value?.items)) {
+    addShelf({ title: 'Verified in your library',
+      note: 'A sample of titles with current exact public Plex file proof.',
+      href: '#/library', items: library.value.items,
+      card: (item) => discoveryCard(item,
+        `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
+        'In library', true),
+    });
+  }
+  if (!shelves.childElementCount) shelves.append(element('p',
+    'Browse shelves are unavailable right now. Search the catalogue by title above.',
+    'empty-state'));
+}
+async function loadLibrary(append = false) {
+  const session = sessionResponses.current();
+  const epoch = libraryResponses.invalidate();
+  const userId = state.user?.id;
+  const list = byId('library-list');
+  if (!append) {
+    list.className = 'poster-grid';
+    list.replaceChildren(element('p', 'Loading verified library titles…', 'muted'));
+    state.libraryAfter = null;
+  }
+  try {
+    const suffix = append && state.libraryAfter !== null
+      ? `?afterAnidbId=${state.libraryAfter}` : '';
+    const page = await api(`/api/library${suffix}`);
+    if (!sessionResponses.isCurrent(session) ||
+        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    if (!append) list.replaceChildren();
+    state.libraryLoaded = true;
+    if (!append && page.items.length === 0) {
+      list.append(element('p',
+        'No titles have a recent exact public Plex proof yet. This is not a claim that your library is empty.',
+        'empty-state'));
+    }
+    for (const item of page.items) {
+      list.append(discoveryCard(item,
+        `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
+        'In library', true));
+    }
+    state.libraryAfter = page.nextAfterAnidbId;
+    if (state.libraryAfter !== null) {
+      const more = element('button', 'Show more verified titles', 'text-link');
+      more.type = 'button';
+      more.addEventListener('click', () => {
+        more.remove();
+        void loadLibrary(true);
+      });
+      list.append(more);
+    }
+  } catch {
+    if (!sessionResponses.isCurrent(session) ||
+        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    if (!append) list.replaceChildren(element('p',
+      'Library verification is unavailable right now. No missing titles are assumed.',
+      'empty-state'));
+  }
+}
+async function loadAiring() {
+  const session = sessionResponses.current();
+  const epoch = airingResponses.invalidate();
+  const userId = state.user?.id;
+  const list = byId('airing-list');
+  const notice = byId('airing-state');
+  notice.textContent = '';
+  list.replaceChildren(element('p', 'Loading this week’s schedule…', 'muted'));
+  try {
+    const schedule = await api('/api/airing');
+    if (!sessionResponses.isCurrent(session) ||
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    state.airingLoaded = true;
+    notice.textContent = schedule.state === 'stale'
+      ? `AniDB schedule temporarily unavailable. Showing a saved ${schedule.week} snapshot; check dates before relying on it.`
+      : `AniDB schedule · ${schedule.week}. Availability is checked separately.`;
+    list.replaceChildren();
+    if (schedule.items.length === 0) {
+      list.append(element('p',
+        'No regular episodes are listed for this week. This does not mean no series is airing.',
+        'empty-state'));
+    }
+    for (const item of schedule.items) {
+      const button = element('button', undefined, 'result');
+      button.type = 'button';
+      const art = element('span', 'N', 'poster-fallback');
+      const poster = posterImage(item);
+      poster.addEventListener('load', () => art.classList.add('has-poster'));
+      art.append(poster);
+      const copy = element('span', undefined, 'result-copy');
+      copy.append(element('strong', item.title),
+        element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
+        element('span', 'Local availability not checked', 'presence unknown'));
+      button.append(art, copy);
+      button.addEventListener('click', () => {
+        state.searchItems.set(item.anidbId, item);
+        location.hash = titleRoute(item.anidbId);
+      });
+      list.append(button);
+    }
+  } catch {
+    if (!sessionResponses.isCurrent(session) ||
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    notice.textContent = 'This week’s AniDB schedule is unavailable right now.';
+    list.replaceChildren(element('p',
+      'Try this page again later. Your existing requests and watches are unaffected.',
+      'empty-state'));
+  }
+}
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
-byId('more-requests').addEventListener('click', () => { void loadRequests(true); });
+byId('refresh-library').addEventListener('click', () => { void loadLibrary(); });
+byId('more-requests').addEventListener('click', () => { void loadRequestView('history', true); });
+byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
 async function loadOperationalReview(append = false) {
   if (state.user?.role !== 'admin') return;
   const session = sessionResponses.current();
@@ -323,16 +591,33 @@ byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = byId('query').value.trim();
   if (query.length < 2) return;
+  state.lastSearchQuery = query;
+  const route = searchRoute(query);
+  if (location.hash !== route) location.hash = route;
   const token = ++state.searchToken;
   const results = byId('results');
   results.replaceChildren(element('p', 'Searching…', 'muted'));
   const appendItems = (items) => {
     for (const item of items) {
+      state.searchItems.set(item.anidbId, item);
       const button = element('button', undefined, 'result');
       button.type = 'button';
-      button.append(element('strong', item.title),
-        element('small', `AniDB ${item.anidbId} · Details on selection`));
-      button.addEventListener('click', () => { void showDetail(item); });
+      const tile = element('span', 'N', 'poster-fallback');
+      tile.setAttribute('aria-hidden', 'true');
+      const poster = posterImage(item);
+      poster.addEventListener('load', () => tile.classList.add('has-poster'));
+      poster.addEventListener('error', () => poster.remove());
+      tile.append(poster);
+      const copy = element('span', undefined, 'result-copy');
+      copy.append(element('strong', item.title),
+        element('small', `AniDB ${item.anidbId}`));
+      const presence = item.libraryPresence;
+      copy.append(element('span', presence?.state === 'in_library'
+        ? `✓ In library · ${presence.verifiedEpisodeCount} verified ${presence.verifiedEpisodeCount === 1 ? 'item' : 'items'}`
+        : 'Availability not checked',
+      presence?.state === 'in_library' ? 'presence available' : 'presence unknown'));
+      button.append(tile, copy);
+      button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
       results.append(button);
     }
   };
@@ -391,7 +676,33 @@ async function showDetail(item, franchise = null) {
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
-    panel.replaceChildren(element('p', data.title || item.title, 'detail-title'));
+    const detailArt = element('div', 'N', 'detail-art poster-fallback');
+    detailArt.setAttribute('aria-hidden', 'true');
+    const detailPoster = posterImage(item);
+    detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
+    detailArt.append(detailPoster);
+    panel.replaceChildren(detailArt,
+      element('h1', data.title || item.title, 'detail-title'));
+    const displaySummary = element('div', undefined, 'detail-display');
+    panel.append(displaySummary);
+    void api(`/api/catalogue/${item.anidbId}/display`).then((display) => {
+      if (!isCurrentDetail() || display.state !== 'display') return;
+      displaySummary.replaceChildren();
+      const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
+      if (facts) displaySummary.append(element('p', facts, 'detail-facts'));
+      if (display.englishTitle &&
+          display.englishTitle !== (data.title || item.title)) {
+        displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
+          'detail-alias'));
+      }
+      if (display.description) displaySummary.append(element('p',
+        display.description, 'detail-description'));
+      if (display.tags?.length) {
+        const tags = element('div', undefined, 'detail-tags');
+        for (const tag of display.tags) tags.append(element('span', tag));
+        displaySummary.append(tags);
+      }
+    }).catch(() => { /* Optional display metadata never blocks the title. */ });
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
@@ -412,6 +723,13 @@ async function showDetail(item, franchise = null) {
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager) {
+      const verified = pager.episodes.filter((episode) => episode.availability === 'available').length;
+      panel.append(element('p', verified > 0
+        ? `${verified} item${verified === 1 ? '' : 's'} on this page recently verified playable in Plex. Others are not confirmed.`
+        : 'Current Plex availability has not been verified for this title.',
+      verified > 0 ? 'presence available' : 'presence unknown'));
+    }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
         ? 'AniDB has no film target listed yet, so this film cannot be requested.'
@@ -419,22 +737,26 @@ async function showDetail(item, franchise = null) {
       'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
-    const relatedButton = element('button', 'Explore franchise');
+    const relatedButton = element('button', 'Explore franchise', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
     const renderFamily = () => {
       relatedList.replaceChildren(element('p',
-        'Verified Shoko relationships. Other installments may exist; each title has its own request.', 'muted'));
+        family.status().state === 'no_cached_links'
+          ? 'Shoko has no related titles cached for this installment. Other installments may still exist; search by title to find them.'
+          : 'Verified Shoko relationships. Other installments may exist; each title has its own request.',
+        'muted'));
       for (const installment of family.items()) {
         const open = element('button', `${installment.title}${installment.relation ? ` · ${installment.relation}` : ''}`);
         open.disabled = installment.anidbId === item.anidbId;
         open.addEventListener('click', () => {
-          void showDetail({ anidbId: installment.anidbId,
-            title: installment.title }, family);
+          state.searchItems.set(installment.anidbId, installment);
+          location.hash = titleRoute(installment.anidbId);
         });
         relatedList.append(open);
       }
       relatedButton.textContent = family.next() ? 'Explore next related title' :
-        'No further verified links in this view';
+        'No more cached links to explore';
+      relatedButton.hidden = !family.next();
       relatedButton.disabled = !family.next();
     };
     if (franchise) renderFamily();
@@ -449,7 +771,7 @@ async function showDetail(item, franchise = null) {
       } catch {
         if (isCurrentDetail()) {
           relatedList.append(element('p',
-            'Could not expand this relationship now. Try again later.', 'muted'));
+            'Related titles could not be loaded now. You can still search for another installment by name.', 'muted'));
           relatedButton.disabled = false;
         }
       }
@@ -583,7 +905,9 @@ async function showDetail(item, franchise = null) {
         });
         check.append(requestSelected);
       }
-      panel.append(check);
+      const advanced = element('details', undefined, 'episode-tools');
+      advanced.append(element('summary', 'Episodes & availability'), check);
+      panel.append(advanced);
       if (pager.nextPage !== null) {
         const more = element('button', 'Show more episodes');
         more.addEventListener('click', async () => {
@@ -598,7 +922,7 @@ async function showDetail(item, franchise = null) {
             else more.disabled = false;
           } catch (error) { message(error.message, true); more.disabled = false; }
         });
-        panel.append(more);
+        advanced.append(more);
       }
     }
     if (data.restricted !== false) {
@@ -625,7 +949,7 @@ async function showDetail(item, franchise = null) {
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }
     });
-    panel.append(button);
+    panel.insertBefore(button, relatedButton);
   } catch (error) {
     if (!isCurrentDetail()) return;
     panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'));

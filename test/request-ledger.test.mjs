@@ -109,6 +109,32 @@ test('request history pages only the authenticated owner and survives restart', 
   } finally { ledger.close(); }
 }));
 
+test('active Airing watches and other requests page separately', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const oneTime = { ...intent, monitorFuture: false };
+    const first = ledger.submit({ requesterId: 7, requestKey: 'watch-a', intent, nowMs: 1_000 });
+    const older = ledger.submit({ requesterId: 7, requestKey: 'one-time',
+      intent: oneTime, nowMs: 1_001 });
+    const second = ledger.submit({ requesterId: 7, requestKey: 'watch-b', intent,
+      nowMs: 1_002 });
+    ledger.submit({ requesterId: 8, requestKey: 'other', intent, nowMs: 1_003 });
+    const third = ledger.submit({ requesterId: 7, requestKey: 'watch-c', intent,
+      nowMs: 1_004 });
+    const db = new DatabaseSync(dbPath);
+    db.prepare('UPDATE requests SET watch_closed=1 WHERE id=?').run(second.requestId);
+    db.close();
+    const watching = ledger.listRequests({ requesterId: 7, view: 'watching', limit: 1 });
+    assert.deepEqual(watching.items.map((item) => item.id), [third.requestId]);
+    assert.deepEqual(ledger.listRequests({ requesterId: 7, view: 'watching',
+      beforeId: watching.nextBeforeId, limit: 1 }).items.map((item) => item.id),
+    [first.requestId]);
+    assert.deepEqual(ledger.listRequests({ requesterId: 7, view: 'history' }).items.map(
+      (item) => item.id), [second.requestId, older.requestId]);
+    assert.throws(() => ledger.listRequests({ requesterId: 7, view: 'bogus' }), TypeError);
+  } finally { ledger.close(); }
+}));
+
 test('overlapping scopes share only common episode targets', async () => withPath(async (dbPath) => {
   const ledger = openRequestLedger(dbPath);
   try {

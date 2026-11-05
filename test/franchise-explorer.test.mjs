@@ -36,3 +36,14 @@ test('a title over the safety budget cannot partly enter the franchise', () => {
   assert.deepEqual(view.items().map((item) => item.anidbId), [10]);
   assert.equal(view.next()?.anidbId, 10);
 });
+
+test('an empty cached relation response is not presented as a complete franchise', () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  assert.deepEqual(view.status(), { state: 'not_checked',
+    linkedInstallments: 0 });
+  view.add({ anidbId: 10, state: 'related_titles',
+    completeness: 'unproven', items: [] });
+  assert.deepEqual(view.status(), { state: 'no_cached_links',
+    linkedInstallments: 0 });
+  assert.equal(view.next(), null);
+});

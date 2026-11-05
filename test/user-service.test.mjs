@@ -999,7 +999,12 @@ test('request history reflects recent title-check proof and loses it on expiry',
       publicSections: { episode: [102], movie: [] },
       shokoMount: { appRoot: '/pure', localRoot: dir },
       plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
-    fetchImpl: async () => { throw Error('request history must not scan Plex'); },
+    fetchImpl: async (url) => {
+      if (url.pathname === '/api/v3/Series/AniDB/Search') {
+        return json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
+      }
+      throw Error('request history and search presence must not scan Plex');
+    },
   });
   try {
     const login = await service.app.inject({ method: 'POST', url: '/api/login',
@@ -1008,9 +1013,15 @@ test('request history reflects recent title-check proof and loses it on expiry',
     const cookie = login.headers['set-cookie'].split(';')[0];
     const read = async () => (await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } })).json().items[0].progress;
+    const search = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
     assert.equal((await read()).publicVerifiedTargets, 1);
+    assert.deepEqual((await search()).libraryPresence,
+      { state: 'in_library', verifiedEpisodeCount: 1 });
     clock = 30 * 60_000 + 906;
     assert.equal((await read()).publicAvailability, 'unverified');
+    assert.deepEqual((await search()).libraryPresence,
+      { state: 'unknown', verifiedEpisodeCount: 0 });
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

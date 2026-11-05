@@ -1,4 +1,5 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
+import { validPosterUid } from './shoko-poster.mjs';
 
 // Shoko's title cache reaches beyond locally imported series, but a search
 // hit alone does not contain the episode detail needed for a request.
@@ -48,6 +49,8 @@ export async function searchAniDbTitles({
         title: item.Title,
         detailState: 'pending',
         requestable: false,
+        ...(item.Poster?.Available === true && validPosterUid(item.Poster.UID)
+          ? { posterUid: item.Poster.UID } : {}),
       })),
     };
   } catch {

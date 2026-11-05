@@ -82,6 +82,36 @@ test('a bounded title read returns only currently proven episode IDs', async () 
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('library browse pages only exact current title proofs without duplicate files', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  let clock = 1_500;
+  const ledger = openFileProofLedger(path.join(dir, 'state.sqlite'),
+    { positiveLifetimeMs: 300, now: () => clock });
+  try {
+    ledger.observe({ anidbId: 41, episodeId: 101,
+      proof: { ...proof, fileId: 41 }, checkedMs: 1_400 });
+    ledger.observe({ anidbId: 42, episodeId: 201,
+      proof: { ...proof, fileId: 42 }, checkedMs: 1_400 });
+    ledger.observe({ anidbId: 42, episodeId: 201,
+      proof: { ...proof, fileId: 43 }, checkedMs: 1_450 });
+    ledger.observe({ anidbId: 42, episodeId: 202,
+      proof: { ...proof, fileId: 44 }, checkedMs: 1_450 });
+    ledger.observe({ anidbId: 43, episodeId: 301,
+      proof: { ...proof, fileId: 45 }, checkedMs: 1_000 });
+    assert.deepEqual(ledger.listCurrentTitles({ limit: 1 }), {
+      items: [{ anidbId: 41, verifiedEpisodeCount: 1, lastVerifiedMs: 1_400 }],
+      nextAfterAnidbId: 41,
+    });
+    assert.deepEqual(ledger.listCurrentTitles({ afterAnidbId: 41, limit: 10 }), {
+      items: [{ anidbId: 42, verifiedEpisodeCount: 2, lastVerifiedMs: 1_450 }],
+      nextAfterAnidbId: null,
+    });
+    clock = 1_800;
+    assert.deepEqual(ledger.listCurrentTitles({ limit: 10 }),
+      { items: [], nextAfterAnidbId: null });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a new observer session discards old positives but accepts fresh proofs', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
   const dbPath = path.join(dir, 'state.sqlite');

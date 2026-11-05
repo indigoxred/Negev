@@ -23,7 +23,9 @@ const constantEqual = (a, b) => {
 // Account-backed HTTP boundary. Acquisition and availability are injected
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
-  now = Date.now, submitRequest, readRequest, listRequests, searchTitles, titleRegistry,
+  now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
+  listAiringSchedule, searchTitles,
+  readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
@@ -72,25 +74,28 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   // A tunnel presents one peer IP for many users. Signed-in accounts get
   // separate route budgets; login and registration retain peer throttling.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
-  const pages = await Promise.all(['index.html', 'app.js', 'style.css',
+  const pages = await Promise.all(['index.html', 'app.js', 'style.css', 'consumer.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
-    'franchise-explorer.mjs', 'acquisition-notice.mjs'].map((name) =>
+    'franchise-explorer.mjs', 'acquisition-notice.mjs',
+    'consumer-route.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
-  const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store' };
   for (const [url, contentType, body] of [
     ['/', 'text/html; charset=utf-8', pages[0]],
     ['/app.js', 'text/javascript; charset=utf-8', pages[1]],
     ['/style.css', 'text/css; charset=utf-8', pages[2]],
-    ['/request-key.mjs', 'text/javascript; charset=utf-8', pages[3]],
-    ['/episode-pages.mjs', 'text/javascript; charset=utf-8', pages[4]],
-    ['/search-pages.mjs', 'text/javascript; charset=utf-8', pages[5]],
-    ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[6]],
-    ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[7]],
-    ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[8]],
-    ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[9]],
+    ['/consumer.css', 'text/css; charset=utf-8', pages[3]],
+    ['/request-key.mjs', 'text/javascript; charset=utf-8', pages[4]],
+    ['/episode-pages.mjs', 'text/javascript; charset=utf-8', pages[5]],
+    ['/search-pages.mjs', 'text/javascript; charset=utf-8', pages[6]],
+    ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[7]],
+    ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[8]],
+    ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[9]],
+    ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[10]],
+    ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin) {
@@ -202,6 +207,80 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       ...(typeof startTitleCheck === 'function' &&
         typeof getTitleCheck === 'function' ? { titleChecks: true } : {}) } };
   });
+  app.get('/api/library', { preHandler: requireUser,
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const raw = request.query.afterAnidbId;
+    if (Object.keys(request.query).some((key) => key !== 'afterAnidbId') ||
+        raw !== undefined && (typeof raw !== 'string' ||
+          !/^(0|[1-9]\d*)$/.test(raw))) {
+      return reply.code(400).send({ error: 'Invalid library page' });
+    }
+    const afterAnidbId = raw === undefined ? 0 : Number(raw);
+    if (!Number.isSafeInteger(afterAnidbId) || afterAnidbId < 0) {
+      return reply.code(400).send({ error: 'Invalid library page' });
+    }
+    if (typeof listLibraryTitles !== 'function') {
+      return reply.code(503).send({ error: 'Library browse unavailable' });
+    }
+    let page;
+    try { page = await listLibraryTitles({ afterAnidbId, limit: 20 }); }
+    catch { return reply.code(503).send({ error: 'Library browse unavailable' }); }
+    if (page?.state !== 'current_proofs' || !Array.isArray(page.items) ||
+        page.items.length > 20 ||
+        page.items.some((item, index) =>
+          !Number.isSafeInteger(item?.anidbId) ||
+          item.anidbId <= (index ? page.items[index - 1].anidbId : afterAnidbId) ||
+          typeof item.title !== 'string' || !item.title.trim() ||
+          item.title.length > 500 ||
+          !Number.isSafeInteger(item.verifiedEpisodeCount) ||
+          item.verifiedEpisodeCount < 1 || item.verifiedEpisodeCount > 10_000 ||
+          !Number.isSafeInteger(item.lastVerifiedMs) ||
+          item.lastVerifiedMs < 0 || item.lastVerifiedMs > now()) ||
+        page.nextAfterAnidbId !== null &&
+          (!Number.isSafeInteger(page.nextAfterAnidbId) ||
+            page.nextAfterAnidbId !== page.items.at(-1)?.anidbId)) {
+      return reply.code(503).send({ error: 'Library browse unavailable' });
+    }
+    return { state: 'current_proofs', items: page.items.map((item) => ({
+      anidbId: item.anidbId, title: item.title,
+      verifiedEpisodeCount: item.verifiedEpisodeCount,
+      lastVerifiedMs: item.lastVerifiedMs,
+    })), nextAfterAnidbId: page.nextAfterAnidbId };
+  });
+  app.get('/api/airing', { preHandler: requireUser,
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (Object.keys(request.query).length ||
+        typeof listAiringSchedule !== 'function') {
+      return reply.code(503).send({ error: 'Airing schedule unavailable' });
+    }
+    let schedule;
+    try { schedule = await listAiringSchedule(); }
+    catch { return reply.code(503).send({ error: 'Airing schedule unavailable' }); }
+    if (!['ready', 'stale'].includes(schedule?.state) ||
+        !/^\d{4}-W\d{2}$/.test(schedule.week ?? '') ||
+        !Number.isSafeInteger(schedule.checkedMs) ||
+        schedule.checkedMs < 0 || schedule.checkedMs > now() ||
+        !Array.isArray(schedule.items) || schedule.items.length > 200 ||
+        schedule.items.some((item) =>
+          !Number.isSafeInteger(item?.anidbId) || item.anidbId < 1 ||
+          typeof item.title !== 'string' || !item.title.trim() ||
+          item.title.length > 250 ||
+          typeof item.scheduledDate !== 'string' ||
+          !/^\d{4}-\d{2}-\d{2}$/.test(item.scheduledDate) ||
+          typeof item.episodeNumber !== 'string' ||
+          item.episodeNumber.length > 24)) {
+      return reply.code(503).send({ error: 'Airing schedule unavailable' });
+    }
+    return { state: schedule.state, week: schedule.week,
+      checkedMs: schedule.checkedMs,
+      items: schedule.items.map((item) => ({ anidbId: item.anidbId,
+        title: item.title, scheduledDate: item.scheduledDate,
+        episodeNumber: item.episodeNumber })) };
+  });
   app.get('/api/admin/review', { preHandler: requireUser,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
   }, async (request, reply) => {
@@ -269,6 +348,69 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(503).send({ error: 'Catalogue unavailable' });
     }
     return result;
+  });
+  app.get('/api/catalogue/posters/:uid', { preHandler: requireUser,
+    config: { rateLimit: { max: 180, timeWindow: '1 minute' } } }, async (request, reply) => {
+    if (typeof readPoster !== 'function' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.params.uid)) {
+      return reply.code(404).send();
+    }
+    const result = await readPoster({ uid: request.params.uid });
+    if (result?.state !== 'image' ||
+        !['image/jpeg', 'image/png', 'image/webp'].includes(result.type) ||
+        !Buffer.isBuffer(result.bytes) || result.bytes.length > 2_000_000) {
+      return reply.code(404).send();
+    }
+    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.type(result.type);
+    return result.bytes;
+  });
+  app.get('/api/catalogue/posters/anidb/:id', { preHandler: requireUser,
+    config: { rateLimit: { max: 180, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const id = Number(request.params.id);
+    if (!Number.isSafeInteger(id) || id < 1 || id > 2_147_483_647 ||
+        typeof readCataloguePoster !== 'function' ||
+        !(await confirmKnownTitle({ anidbId: id }))) return reply.code(404).send();
+    const result = await readCataloguePoster({ anidbId: id });
+    if (result?.state !== 'image' || result.type !== 'image/jpeg' ||
+        !Buffer.isBuffer(result.bytes) || result.bytes.length > 2_000_000) {
+      return reply.code(404).send();
+    }
+    reply.header('Cache-Control', 'private, max-age=3600');
+    reply.type('image/jpeg');
+    return result.bytes;
+  });
+  app.get('/api/catalogue/:id/display', { preHandler: requireUser,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'private, max-age=600');
+    const anidbId = Number(request.params.id);
+    if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
+        anidbId > 2_147_483_647 || Object.keys(request.query).length) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID' });
+    }
+    if (!(await confirmKnownTitle({ anidbId }))) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof readDisplayMetadata !== 'function') {
+      return reply.code(503).send({ error: 'Display details unavailable' });
+    }
+    const display = await readDisplayMetadata({ anidbId });
+    if (display?.state !== 'display' || display.anidbId !== anidbId ||
+        typeof display.title !== 'string' || !display.title.trim() ||
+        display.title.length > 500 ||
+        ![display.englishTitle, display.type, display.description].every((value) =>
+          value === null || typeof value === 'string') ||
+        display.englishTitle?.length > 500 || display.type?.length > 80 ||
+        display.description?.length > 4_000 ||
+        display.startYear !== null &&
+          (!Number.isSafeInteger(display.startYear) ||
+            display.startYear < 1800 || display.startYear > 2200) ||
+        !Array.isArray(display.tags) || display.tags.length > 8 ||
+        display.tags.some((tag) => typeof tag !== 'string' || tag.length > 80)) {
+      return reply.code(503).send({ error: 'Display details unavailable' });
+    }
+    return display;
   });
   app.get('/api/catalogue/:id', { preHandler: requireUser,
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -495,17 +637,18 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   app.get('/api/requests', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof listRequests !== 'function') return reply.code(503).send({ error: 'Request history unavailable' });
-    const { beforeId: rawBefore, limit: rawLimit } = request.query;
+    const { beforeId: rawBefore, limit: rawLimit, view = 'all' } = request.query;
     const beforeId = rawBefore === undefined ? Number.MAX_SAFE_INTEGER : Number(rawBefore);
     const limit = rawLimit === undefined ? 20 : Number(rawLimit);
-    if (Object.keys(request.query).some((key) => !['beforeId', 'limit'].includes(key)) ||
+    if (Object.keys(request.query).some((key) => !['beforeId', 'limit', 'view'].includes(key)) ||
+        !['all', 'watching', 'history'].includes(view) ||
         (rawBefore !== undefined && (typeof rawBefore !== 'string' || !/^[1-9]\d*$/.test(rawBefore))) ||
         (rawLimit !== undefined && (typeof rawLimit !== 'string' || !/^[1-9]\d*$/.test(rawLimit))) ||
         !Number.isSafeInteger(beforeId) || beforeId < 1 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
       return reply.code(400).send({ error: 'Invalid history page' });
     }
-    return listRequests({ requesterId: request.negevUser.id, beforeId, limit });
+    return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

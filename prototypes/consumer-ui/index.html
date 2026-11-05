@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#15181e">
+  <title>Negev · Visual preview</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/discover" aria-label="Negev home"><span class="brand-mark">N</span>Negev</a>
+    <nav class="desktop-nav" aria-label="Main">
+      <a href="#/discover" data-nav="discover">Discover</a>
+      <a href="#/airing" data-nav="airing">Airing</a>
+      <a href="#/library" data-nav="library">Library</a>
+      <a href="#/requests" data-nav="requests">Requests</a>
+    </nav>
+    <label class="global-search"><span class="sr-only">Search anime</span><input id="search" type="search" placeholder="Search anime…" aria-label="Search anime"></label>
+    <span class="avatar" aria-label="Sample account">R</span>
+  </header>
+  <div class="preview"><b>Visual preview</b> Sample titles and statuses. No live Negev, NAS, Plex or download connection.</div>
+  <main id="main"></main>
+  <nav class="mobile-nav" aria-label="Main">
+    <a href="#/discover" data-nav="discover">Discover</a>
+    <a href="#/airing" data-nav="airing">Airing</a>
+    <a href="#/library" data-nav="library">Library</a>
+    <a href="#/requests" data-nav="requests">Requests</a>
+  </nav>
+  <dialog id="confirm">
+    <h2>Preview action</h2><p id="confirm-copy"></p>
+    <div class="dialog-actions"><button id="cancel" class="button secondary">Go back</button><button id="continue" class="button">See requests</button></div>
+  </dialog>
+</body>
+</html>
