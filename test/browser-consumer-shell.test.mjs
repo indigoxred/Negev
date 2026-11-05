@@ -44,7 +44,7 @@ const dump = async (url, profile, captureName, viewport = '1440,900') => new Pro
   });
 });
 
-async function inspectMobile(url, profile) {
+async function inspectMobile(url, profile, width = 390) {
   const child = spawn(browser, ['--headless=new', '--no-first-run',
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
@@ -85,7 +85,7 @@ async function inspectMobile(url, profile) {
     });
     await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', {
-      width: 390, height: 844, deviceScaleFactor: 1, mobile: true,
+      width, height: 844, deviceScaleFactor: 1, mobile: true,
     });
     await send('Page.navigate', { url });
     await wait(1200);
@@ -93,10 +93,13 @@ async function inspectMobile(url, profile) {
       expression: `({width: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
         accountRight: document.querySelector('#identity').getBoundingClientRect().right,
+        accountTop: document.querySelector('#identity').getBoundingClientRect().top,
+        headerBottom: document.querySelector('.topbar').getBoundingClientRect().bottom,
+        mobileNavVisible: document.querySelector('#mobile-nav').getBoundingClientRect().height > 0,
         searchRight: document.querySelector('#search-form').getBoundingClientRect().right,
         hasContent: document.querySelector('#discover-shelves').textContent.includes('This week on AniDB')})`,
     });
-    if (process.env.NEGEV_UI_CAPTURE_DIR) {
+    if (process.env.NEGEV_UI_CAPTURE_DIR && width === 390) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
       await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'discover-mobile.png'),
         Buffer.from(shot.data, 'base64'));
@@ -204,6 +207,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
+      const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
+      assert.ok(tablet.accountTop < tablet.headerBottom,
+        'Account control stays inside the tablet header');
+      assert.equal(tablet.mobileNavVisible, true,
+        'Tablet navigation stays visible after the desktop links no longer fit');
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /The Garden of Words/);
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
