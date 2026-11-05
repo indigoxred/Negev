@@ -789,6 +789,12 @@ async function showDetail(item, franchise = null) {
       }
       const label = element('label', data.kind === 'movie' ? 'Check a film target in Plex' : 'Check an episode in Plex');
       const select = element('select');
+      const chooseFilmEntry = data.kind === 'movie' && data.total > 1;
+      if (chooseFilmEntry) {
+        const placeholder = element('option', 'Choose one film entry');
+        placeholder.value = '';
+        select.append(placeholder);
+      }
       const optionText = (episode) =>
         `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
         `${episode.title ? ` · ${episode.title}` : ''}` +
@@ -814,18 +820,24 @@ async function showDetail(item, franchise = null) {
       label.append(select);
       const button = element('button', 'Check availability');
       const result = element('p', '', 'muted');
-      select.addEventListener('change', () => { result.textContent = ''; });
+      button.disabled = !select.value;
+      select.addEventListener('change', () => {
+        result.textContent = '';
+        button.disabled = !select.value;
+      });
       button.addEventListener('click', async () => {
+        if (!select.value) return;
         button.disabled = true;
         select.disabled = true;
         result.textContent = 'Checking the public library…';
         try {
           const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
           updateOption(Number(select.value), status.state);
+          select.dispatchEvent(new Event('change'));
           result.textContent = status.state === 'available' ?
             'Playable in Plex' : 'Availability is not confirmed yet';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
-        finally { button.disabled = false; select.disabled = false; }
+        finally { button.disabled = !select.value; select.disabled = false; }
       });
       check.append(label, button, result);
       if (state.titleChecks) {
@@ -905,6 +917,36 @@ async function showDetail(item, franchise = null) {
         });
         check.append(requestSelected);
       }
+      if (chooseFilmEntry && data.restricted === false) {
+        const requestSelected = element('button', 'Request selected film entry');
+        let requesting = false;
+        const updateSelection = () => {
+          const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
+          requestSelected.disabled = requesting || episode?.type !== 'Episode' ||
+            episode.availability === 'available';
+        };
+        select.addEventListener('change', updateSelection);
+        updateSelection();
+        requestSelected.addEventListener('click', async () => {
+          const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
+          if (requesting || episode?.type !== 'Episode' ||
+              episode.availability === 'available') return;
+          const scope = { userId: state.user.id, anidbId: item.anidbId,
+            selection: `film-entry-${episode.id}` };
+          requesting = true;
+          updateSelection();
+          try {
+            const saved = await api('/api/requests', { method: 'POST',
+              body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
+                episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
+            requestKeys.saved(scope);
+            message(`Request #${saved.requestId} saved for film entry ${episode.number}. ${currentAcquisitionNotice()}`);
+            await loadRequests();
+          } catch (error) { message(error.message, true); }
+          finally { requesting = false; updateSelection(); }
+        });
+        check.append(requestSelected);
+      }
       const advanced = element('details', undefined, 'episode-tools');
       advanced.append(element('summary', 'Episodes & availability'), check);
       panel.append(advanced);
@@ -931,9 +973,12 @@ async function showDetail(item, franchise = null) {
     }
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
     panel.append(element('p', data.kind === 'movie'
-      ? 'A film request includes the main film, not extras or trailers.'
+      ? (data.total > 1
+        ? 'AniDB lists multiple film entries, which may be alternate editions or parts. Choose one exact entry under Episodes & availability; each entry is requested separately.'
+        : 'A film request includes the main film, not extras or trailers.')
       : 'A series request includes regular episodes. Request Specials individually above.',
     'muted'));
+    if (data.kind === 'movie' && data.total > 1) return;
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     button.addEventListener('click', async () => {
       button.disabled = true;
