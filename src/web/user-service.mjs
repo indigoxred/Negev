@@ -252,10 +252,21 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         saved.presentation === 'alternate_card'
         ? { state: 'available', presentation: 'alternate_card' } : live;
     };
+    const onRecordedAvailable = (proof, target) => {
+      if (!fileCursor) return;
+      const observedMs = now();
+      const recent = fileCursor.confirmRecentFile({
+        fileId: proof.fileId, nowMs: observedMs });
+      if (recent.state === 'unchanged' &&
+          fileProofs.getCurrent(target).state !== 'available') {
+        // A direct check can discover a file without a Shoko event. Give
+        // that exact file one bounded durable-proof pass ahead of the sweep.
+        fileCursor.prioritizeFile({ fileId: proof.fileId, observedMs });
+      }
+    };
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
       now, requireProof: true,
-      onRecordedAvailable: (proof) => fileCursor?.confirmRecentFile({
-        fileId: proof.fileId, nowMs: now() }),
+      onRecordedAvailable,
       observeTarget: async (target) => {
         if (!plexObserver) return { state: 'unknown' };
         if (inventory.getObservedFileIds(target).length === 0) {
@@ -270,8 +281,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       } });
     const fileWorker = createFileAvailabilityWorker({
       queue: directAvailability, inventory, now,
-      onRecordedAvailable: (proof) => fileCursor?.confirmRecentFile({
-        fileId: proof.fileId, nowMs: now() }),
+      onRecordedAvailable,
       readCandidate: ({ fileId }) => metadata.run(() =>
         readShokoFileCandidate({ baseUrl: shokoBaseUrl,
           apiKey: shokoApiKey, fileId, fetchImpl })),
