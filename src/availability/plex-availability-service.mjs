@@ -153,6 +153,10 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
         ...readers });
       const page = await worker.tick();
+      // A changing addedAt page can invalidate every full sweep. Recheck one
+      // older indexed card directly instead of treating a page omission as
+      // proof of removal; the existing retry worker enforces the read cap.
+      index.scheduleOldestCardRecheck({ libraryId, kind, nowMs: now() });
       const retry = await retryOnePlexCard({ libraryId, kind, index, now,
         readCard: readers.readCard });
       const result = retry.state === 'no_due_retry' ? page :

@@ -421,6 +421,34 @@ test('changed section total during a multi-page pass prevents withdrawal', async
   ledger.close();
 });
 
+test('an old card omitted by shifting pages gets one direct retry without a complete sweep', async () => {
+  const { ledger } = await index();
+  ledger.recordCard({ ...card(500), observedMs: 1 });
+  ledger.recordCard({ ...card(501), observedMs: 2 });
+  const nowMs = 20 * 60 * 60_000;
+  assert.deepEqual(ledger.scheduleOldestCardRecheck({ libraryId: 102,
+    kind: 'episode', nowMs, maxAgeMs: 18 * 60 * 60_000 }),
+  { state: 'recheck_queued', ratingKey: 500 });
+  assert.deepEqual(ledger.scheduleOldestCardRecheck({ libraryId: 102,
+    kind: 'episode', nowMs, maxAgeMs: 18 * 60 * 60_000 }),
+  { state: 'retry_already_due' });
+  assert.equal((await retryOnePlexCard({ libraryId: 102, kind: 'episode', index: ledger,
+    now: () => nowMs, readCard: async () => ({ state: 'not_found' }) })).state,
+  'retry_missing');
+  assert.deepEqual(ledger.lookupCards({ sizes: [5], libraryIds: [102],
+    kind: 'episode' }).cards.map((row) => row.ratingKey), [501]);
+  assert.deepEqual(ledger.scheduleOldestCardRecheck({ libraryId: 102,
+    kind: 'episode', nowMs: nowMs + 1, maxAgeMs: 18 * 60 * 60_000 }),
+  { state: 'recheck_queued', ratingKey: 501 });
+  assert.equal((await retryOnePlexCard({ libraryId: 102, kind: 'episode', index: ledger,
+    now: () => nowMs + 1, readCard: async () => ({ state: 'ok', complete: true,
+      parts: card(501).parts }) })).state, 'retry_indexed');
+  assert.deepEqual(ledger.scheduleOldestCardRecheck({ libraryId: 102,
+    kind: 'episode', nowMs: nowMs + 2, maxAgeMs: 18 * 60 * 60_000 }),
+  { state: 'no_stale_card' });
+  ledger.close();
+});
+
 test('failed card reads retain one bounded durable retry until a successful card', async () => {
   const { path: dbPath, ledger } = await index();
   assert.deepEqual(ledger.deferCard({ libraryId: 102, ratingKey: 500,
