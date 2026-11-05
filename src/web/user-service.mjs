@@ -494,7 +494,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const detail = await metadata.run(() => loadDetail(input));
         if (!plexObserver || detail?.state !== 'details' ||
             !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
-        return { ...detail, episodes: detail.episodes.map((episode) => {
+        return { ...detail,
+          libraryPresence: publicPresenceForTitle(detail.anidbId, now()),
+          episodes: detail.episodes.map((episode) => {
           const target = { anidbId: detail.anidbId,
             episodeId: episode.id, nowMs: now() };
           const directStatus = directAvailability.getStatus(target);
