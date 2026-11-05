@@ -206,7 +206,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         'Account menu and sign-out remain usable');
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /The Garden of Words/);
-      assert.match(library, /Recently verified in public Plex/);
+      assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
+      assert.match(library, /1 verified item/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);

@@ -424,22 +424,9 @@ async function loadLibrary(append = false) {
         'empty-state'));
     }
     for (const item of page.items) {
-      const button = element('button', undefined, 'result');
-      button.type = 'button';
-      const art = element('span', 'N', 'poster-fallback');
-      const poster = posterImage(item);
-      poster.addEventListener('load', () => art.classList.add('has-poster'));
-      art.append(poster);
-      const copy = element('span', undefined, 'result-copy');
-      copy.append(element('strong', item.title),
-        element('small', `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`),
-        element('span', 'Recently verified in public Plex', 'presence available'));
-      button.append(art, copy);
-      button.addEventListener('click', () => {
-        state.searchItems.set(item.anidbId, item);
-        location.hash = titleRoute(item.anidbId);
-      });
-      list.append(button);
+      list.append(discoveryCard(item,
+        `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
+        'In library', true));
     }
     state.libraryAfter = page.nextAfterAnidbId;
     if (state.libraryAfter !== null) {
