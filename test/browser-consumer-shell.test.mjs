@@ -171,6 +171,17 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'unknown' }] }));
         return;
       }
+      if (path === '/api/catalogue/7') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 7,
+          title: 'Film with alternate parts', kind: 'movie', restricted: false,
+          page: 1, total: 3, nextPage: null, episodes: [
+            { id: 71, number: 1, type: 'Episode', title: 'Complete Movie', availability: 'available' },
+            { id: 72, number: 2, type: 'Episode', title: 'Part 1', availability: 'unknown' },
+            { id: 73, number: 3, type: 'Episode', title: 'Part 2', availability: 'unknown' },
+          ] }));
+        return;
+      }
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
@@ -224,6 +235,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
+      const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
+      assert.match(alternateFilm, /Choose one film entry/);
+      assert.match(alternateFilm, /Request selected film entry/);
+      assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
       assert.match(requests, /My requests/);

@@ -45,6 +45,24 @@ test('completed installment and movie are one-time exact acquisitions', () => {
   });
 });
 
+test('a film with alternative full and multipart entries needs one explicit target', () => {
+  const movie = { ...detail, kind: 'movie', total: 3, episodes: [
+    { id: 2001, number: 1, type: 'Episode', title: 'Complete Movie' },
+    { id: 2002, number: 2, type: 'Episode', title: 'Part 1' },
+    { id: 2003, number: 3, type: 'Episode', title: 'Part 2' },
+  ] };
+  assert.deepEqual(planRequest({ detail: movie, releaseState: 'completed',
+    scope: 'installment' }), { state: 'held', reason: 'ambiguous_movie_scope' });
+  assert.deepEqual(planRequest({ detail: movie, releaseState: 'completed',
+    scope: 'episodes', episodeIds: [2001] }), {
+    state: 'ready', anidbId: 1234, kind: 'movie',
+    episodeIds: [2001], monitorFuture: false,
+  });
+  assert.deepEqual(planRequest({ detail: movie, releaseState: 'completed',
+    scope: 'episodes', episodeIds: [2002, 2003] }),
+  { state: 'held', reason: 'ambiguous_movie_scope' });
+});
+
 test('explicit special selection never adds regular episodes or another installment', () => {
   assert.deepEqual(planRequest({ detail, releaseState: 'completed', scope: 'episodes', episodeIds: [1099] }), {
     state: 'ready', anidbId: 1234, kind: 'series', episodeIds: [1099], monitorFuture: false,

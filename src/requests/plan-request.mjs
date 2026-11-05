@@ -40,6 +40,11 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
     })) return held('episode_not_aired');
     selected = episodeIds;
   }
+  // AniDB may list a complete movie alongside alternative multipart entries.
+  // A film request must name one exact target; never acquire all editions.
+  if (detail.kind === 'movie' && selected.length !== 1) {
+    return held('ambiguous_movie_scope');
+  }
   if (selected.length === 0 && !(releaseState === 'airing' &&
     detail.kind === 'series' && scope === 'installment')) {
     return held('invalid_episode_selection');
