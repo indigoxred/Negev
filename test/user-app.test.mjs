@@ -66,7 +66,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listSeasonalTitles: async ({ year, season, after, limit }) => ({
       state: 'ready', year, season, sourceDate: '2026-11-05',
       items: [{ anidbId: 1234, title: 'Example series',
-        type: 'TV Series', releaseStatus: 'RELEASING', adult: false }],
+        type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
+        libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
       nextAfter: null,
       requestedPage: { after, limit },
     }),
@@ -220,7 +221,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.deepEqual(seasonal.json(), { state: 'ready', year: 2026,
       season: 'FALL', sourceDate: '2026-11-05', items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
-        releaseStatus: 'RELEASING', adult: false }],
+        releaseStatus: 'RELEASING', adult: false,
+        libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
       nextAfter: null });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&admin=true',

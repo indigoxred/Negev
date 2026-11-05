@@ -322,6 +322,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
           !item.title.trim() || item.title.length > 300 ||
           typeof item.type !== 'string' || item.type.length > 80 ||
           typeof item.adult !== 'boolean' ||
+          item.libraryPresence !== undefined &&
+            (!['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
+              !Number.isSafeInteger(item.libraryPresence?.verifiedEpisodeCount) ||
+              item.libraryPresence.verifiedEpisodeCount < 0 ||
+              (item.libraryPresence.state === 'unknown' &&
+                item.libraryPresence.verifiedEpisodeCount !== 0)) ||
           item.releaseStatus !== null && (typeof item.releaseStatus !== 'string' ||
             item.releaseStatus.length > 80)) ||
         page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
@@ -332,7 +338,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       sourceDate: page.sourceDate, items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
-        releaseStatus: item.releaseStatus, adult: item.adult })),
+        releaseStatus: item.releaseStatus, adult: item.adult,
+        ...(item.libraryPresence === undefined ? {} :
+          { libraryPresence: item.libraryPresence }) })),
       nextAfter: page.nextAfter };
   });
   app.get('/api/admin/review', { preHandler: requireUser,

@@ -1000,7 +1000,17 @@ test('request history reflects recent title-check proof and loses it on expiry',
       shokoMount: { appRoot: '/pure', localRoot: dir },
       plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
     fetchImpl: async (url) => {
-      if (url.pathname === '/api/v3/Series/AniDB/Search') {
+      const endpoint = new URL(url);
+      if (endpoint.pathname === '/api/v1/map') {
+        return Response.json({ lastUpdate: '2026-11-05', data: [{ title: 'Example',
+          status: 'RELEASING', animeSeason: { year: 2026, season: 'FALL' },
+          sources: ['https://anidb.net/anime/42'] }] });
+      }
+      if (endpoint.pathname === '/api/anidb/42') {
+        return Response.json({ anidb_id: 42, title: 'Example',
+          type: 'TV Series', restricted: false });
+      }
+      if (endpoint.pathname === '/api/v3/Series/AniDB/Search') {
         return json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
       }
       throw Error('request history and search presence must not scan Plex');
@@ -1015,12 +1025,18 @@ test('request history reflects recent title-check proof and loses it on expiry',
       url: '/api/requests', headers: { cookie } })).json().items[0].progress;
     const search = async () => (await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
+    const season = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL', headers: { cookie } })).json().items[0];
     assert.equal((await read()).publicVerifiedTargets, 1);
     assert.deepEqual((await search()).libraryPresence,
+      { state: 'in_library', verifiedEpisodeCount: 1 });
+    assert.deepEqual((await season()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
     clock = 30 * 60_000 + 906;
     assert.equal((await read()).publicAvailability, 'unverified');
     assert.deepEqual((await search()).libraryPresence,
+      { state: 'unknown', verifiedEpisodeCount: 0 });
+    assert.deepEqual((await season()).libraryPresence,
       { state: 'unknown', verifiedEpisodeCount: 0 });
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });

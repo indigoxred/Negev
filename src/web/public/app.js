@@ -399,6 +399,14 @@ function discoveryCard(item, note, badge, available = false) {
   state.searchItems.set(item.anidbId, entry);
   return card;
 }
+function publicPresenceBadge(presence) {
+  const available = presence?.state === 'in_library';
+  const count = presence?.verifiedEpisodeCount ?? 0;
+  return element('span', available
+    ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
+    : 'Availability not checked',
+  `presence ${available ? 'available' : 'unknown'}`);
+}
 async function loadDiscover() {
   const session = sessionResponses.current();
   const epoch = discoverResponses.invalidate();
@@ -541,7 +549,8 @@ async function loadSeasonal({ year, season, after }) {
       frame.append(posterImage(item));
       const copy = element('span', undefined, 'poster-copy');
       copy.append(element('strong', item.title),
-        element('small', item.type || 'Anime'));
+        element('small', item.type || 'Anime'),
+        publicPresenceBadge(item.libraryPresence));
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(frame, copy);
       button.addEventListener('click', () => {
@@ -795,11 +804,7 @@ byId('search-form').addEventListener('submit', async (event) => {
       const copy = element('span', undefined, 'result-copy');
       copy.append(element('strong', item.title),
         element('small', `AniDB ${item.anidbId}`));
-      const presence = item.libraryPresence;
-      copy.append(element('span', presence?.state === 'in_library'
-        ? `✓ In library · ${presence.verifiedEpisodeCount} verified ${presence.verifiedEpisodeCount === 1 ? 'item' : 'items'}`
-        : 'Availability not checked',
-      presence?.state === 'in_library' ? 'presence available' : 'presence unknown'));
+      copy.append(publicPresenceBadge(item.libraryPresence));
       button.append(tile, copy);
       button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
       results.append(button);

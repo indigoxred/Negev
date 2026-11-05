@@ -377,6 +377,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
     let acquisitionRuntime;
+    const publicPresenceForTitle = (anidbId, checkedMs) => {
+      const ids = plexObserver ? new Set([
+        ...directAvailability.getRecentAvailableIds({ anidbId, nowMs: checkedMs }),
+        ...(titleChecks?.getRecentAvailableIds({ anidbId, nowMs: checkedMs }) ?? []),
+        ...(fileProofs?.getRecentAvailableIds({ anidbId }) ?? []),
+      ]) : new Set();
+      return { state: ids.size > 0 ? 'in_library' : 'unknown',
+        verifiedEpisodeCount: ids.size };
+    };
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
       readImportActivity,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
@@ -418,18 +427,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           }
           const checkedMs = now();
           return { ...result, items: result.items.map((item) => {
-            const ids = plexObserver ? new Set([
-              ...directAvailability.getRecentAvailableIds({
-                anidbId: item.anidbId, nowMs: checkedMs }),
-              ...(titleChecks?.getRecentAvailableIds({
-                anidbId: item.anidbId, nowMs: checkedMs }) ?? []),
-              ...(fileProofs?.getRecentAvailableIds({
-                anidbId: item.anidbId }) ?? []),
-            ]) : new Set();
-            return { ...item, libraryPresence: {
-              state: ids.size > 0 ? 'in_library' : 'unknown',
-              verifiedEpisodeCount: ids.size,
-            } };
+            return { ...item, libraryPresence:
+              publicPresenceForTitle(item.anidbId, checkedMs) };
           }) };
         };
         const sourceStatus = await titleSource?.refresh();
@@ -461,7 +460,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
       listAiringSchedule: () => weeklySchedule.read(),
-      listSeasonalTitles: (input) => seasonalCatalogue.read(input),
+      listSeasonalTitles: async (input) => {
+        const page = await seasonalCatalogue.read(input);
+        if (!Array.isArray(page.items)) return page;
+        const checkedMs = now();
+        return { ...page, items: page.items.map((item) => ({ ...item,
+          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
+      },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
