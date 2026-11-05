@@ -116,6 +116,18 @@ test('a registered complete episode on another card in the correct show stays Av
   { state: 'held', reason: 'partial_episode' });
 });
 
+test('a Shoko segment card requires complete episode coverage', async () => {
+  const input = await fixture();
+  const plex = { ...input.plex, parts: [{ ...input.plex.parts[0],
+    itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p2' }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, plex }),
+    { state: 'available', fileId: 51 });
+  const shoko = { ...input.shoko, files: [{ ...input.shoko.files[0],
+    coverage: [{ episodeId: 1001, start: 0, end: 50 }] }] };
+  assert.deepEqual(await observeKnownCardAvailability({ ...input, shoko, plex }),
+    { state: 'held', reason: 'partial_episode' });
+});
+
 test('a readable file attached to the wrong Plex show is Unknown', async () => {
   const input = await fixture();
   for (const changed of [

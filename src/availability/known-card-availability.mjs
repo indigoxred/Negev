@@ -73,6 +73,11 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   }
   const alternateEpisodeGuid =
     /^tv\.plex\.agents\.custom\.shoko:\/\/episode\/e[1-9][0-9]*$/;
+  // Relay uses pN for a metadata segment of the same Shoko episode.
+  // Accept that card only for an AniDB-registered file; the later physical
+  // witness and full episode-coverage checks still apply.
+  const segmentEpisodeGuid = new RegExp(
+    `^tv\\.plex\\.agents\\.custom\\.shoko:\\/\\/episode\\/e${shoko.shokoEpisodeId}p[1-9][0-9]*$`);
   const siblingGuids = target.kind === 'series' && shoko.files.length === 1 &&
     Array.isArray(linkedIds)
     ? new Set(linkedIds.map((id) =>
@@ -93,7 +98,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
       part.showGuid === showGuid &&
       (siblingGuids?.has(part.itemGuid) ||
-        (registeredAlternate && alternateEpisodeGuid.test(part.itemGuid)))) : [];
+        (registeredAlternate && (alternateEpisodeGuid.test(part.itemGuid) ||
+          segmentEpisodeGuid.test(part.itemGuid))))) : [];
   // Plex can keep a local episode GUID while its parent show remains linked
   // to Shoko. Accept only the exact local card under that public show, then
   // require the same readable physical file and full AniDB episode coverage.

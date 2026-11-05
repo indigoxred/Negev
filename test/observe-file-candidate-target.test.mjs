@@ -81,6 +81,45 @@ test('one registered episode playable on another episode card of its show has al
       partId: 600, storageKey: '1:2:5', presentation: 'alternate_card' } });
 });
 
+test('a registered episode on its Shoko segment card has exact alternate-card proof', async () => {
+  const single = { ...candidate, pairs: [candidate.pairs[0]],
+    identities: [candidate.identities[0]] };
+  const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+  const cardIndex = { ...base.cardIndex,
+    lookupCardsByCandidateKey: () => ({ state: 'candidates', cards: [
+      { libraryId: 102, ratingKey: 500 }] }),
+    lookupCards: () => ({ state: 'candidates', cards: [] }) };
+  const part = { partId: 600, libraryId: 102, size: 5,
+    plexPath: '/source-pure/a.mkv', cardType: 'episode',
+    itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p2',
+    showGuid: 'tv.plex.agents.custom.shoko://show/99' };
+  const input = { ...base, candidate: single, target, cardIndex,
+    readPlex: async () => ({ state: 'ok', complete: true, parts: [part] }) };
+  assert.deepEqual(await observeFileCandidateTarget(input), {
+    state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 500,
+      partId: 600, storageKey: '1:2:5', presentation: 'alternate_card' },
+  });
+  for (const changed of [
+    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p0' },
+    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p2junk' },
+    { itemGuid: 'tv.plex.agents.custom.shoko://episode/e556p2' },
+    { showGuid: 'tv.plex.agents.custom.shoko://show/100' },
+  ]) {
+    const result = await observeFileCandidateTarget({ ...input,
+      readPlex: async () => ({ state: 'ok', complete: true,
+        parts: [{ ...part, ...changed }] }) });
+    assert.notEqual(result.state, 'available');
+  }
+  const userLinked = await observeFileCandidateTarget({ ...input,
+    candidate: { ...single, anidbFileId: null,
+      releaseEvidence: 'shoko_user_link' } });
+  assert.notEqual(userLinked.state, 'available');
+  const wrongFile = await observeFileCandidateTarget({ ...input,
+    proveImpl: async () => ({ state: 'held', reason: 'different_file' }) });
+  assert.notEqual(wrongFile.state, 'available');
+});
+
 test('a Plex local episode card in the exact Shoko show can prove the same registered file', async () => {
   const result = await observeFileCandidateTarget({ ...base,
     target: { anidbId: 42, episodeId: 1001, kind: 'series' },
