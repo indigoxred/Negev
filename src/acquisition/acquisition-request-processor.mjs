@@ -13,11 +13,13 @@ const validReason = (value) => typeof value === 'string' &&
 // this processor cannot authorize absence or start the resulting torrent.
 export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
-  readPublicCoverage,
+  readPublicCoverage, inspectCandidateTargets,
   maxPreflights = 3 } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       (readPublicCoverage !== undefined && typeof readPublicCoverage !== 'function') ||
+      (inspectCandidateTargets !== undefined &&
+        typeof inspectCandidateTargets !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, candidateOffset = 0,
@@ -144,6 +146,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.
       if (preview.episodeIds.every((id) => exactAvailable.has(id))) continue;
+      if (inspectCandidateTargets) {
+        let claim;
+        try { claim = await inspectCandidateTargets({ requestId, candidate,
+          episodeIds: preview.episodeIds }); }
+        catch { return held('claim_probe_unavailable'); }
+        if (claim?.state === 'skip_active') continue;
+        if (claim?.state !== 'eligible') return held('claim_probe_unavailable');
+      }
       selected = { candidate, preview };
       break;
     }

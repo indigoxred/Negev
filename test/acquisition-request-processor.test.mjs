@@ -623,6 +623,50 @@ test('an exhausted uncertain episode does not starve a later distinct episode', 
   assert.deepEqual(submitted, ['candidate-1', 'candidate-2', 'candidate-3']);
 });
 
+test('active old claims are skipped within the bounded preview pass', async () => {
+  const inspected = [];
+  const submitted = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2), candidate(3)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      const episodeId = item.guid === 'candidate-3' ? 1002 : 1001;
+      return { ...preflight, episodeIds: [episodeId],
+        files: [{ name: `Example - ${episodeId === 1001 ? '01' : '02'}.mkv`,
+          size: 1000, episodeIds: [episodeId] }] };
+    },
+    inspectCandidateTargets: ({ episodeIds }) => ({ state:
+      episodeIds[0] === 1001 ? 'skip_active' : 'eligible' }),
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted.push(item.guid);
+      return { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 12);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-2', 'candidate-3']);
+  assert.deepEqual(submitted, ['candidate-3']);
+});
+
+test('a page of active claims advances the candidate cursor without submission', async () => {
+  let submissions = 0;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2), candidate(3), candidate(4)] }),
+    previewCandidate: async () => preflight,
+    inspectCandidateTargets: () => ({ state: 'skip_active' }),
+    loadDetail: async () => { throw Error('detail read'); },
+    submitCandidate: async () => { submissions++; },
+  });
+  const result = await process({ requestId: 4 });
+  assert.equal(result.reason, 'no_safe_release');
+  assert.equal(result.nextCandidateOffset, 3);
+  assert.equal(submissions, 0);
+});
+
 test('an import awaiting Plex does not hide a later missing episode candidate', async () => {
   const seen = [];
   const process = createAcquisitionRequestProcessor({

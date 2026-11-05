@@ -207,6 +207,31 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
+    // A read-only preflight shortcut. An active claim blocks another release
+    // for the same episode, but an unfinished claim for this exact candidate
+    // must still reach the normal replay/reconciliation path.
+    inspectCandidateTargets({ requestId, candidate, episodeIds } = {}) {
+      if (!validId(requestId) || !validId(candidate?.indexerId) ||
+          typeof candidate.guid !== 'string' || !candidate.guid ||
+          candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
+          !Array.isArray(episodeIds) || episodeIds.length < 1 ||
+          episodeIds.length > 50 || episodeIds.some((id) => !validId(id)) ||
+          new Set(episodeIds).size !== episodeIds.length) {
+        throw new TypeError('Invalid candidate target inspection');
+      }
+      const request = requestRow.get(requestId);
+      if (!request) return { state: 'unavailable' };
+      const digest = createHash('sha256').update(candidate.guid).digest('hex');
+      const own = candidateRow.get(candidate.indexerId, digest);
+      for (const id of episodeIds) {
+        const active = busyTarget.get(request.anidb_id, id);
+        if (active && (active.attempt_id !== own?.id ||
+            own.request_id !== requestId || own.status === 'torrent_observed')) {
+          return { state: 'skip_active' };
+        }
+      }
+      return { state: 'eligible' };
+    },
     // Read-only short circuit for a torrent this request already owns. A
     // matching claim can be reported busy without repeating the expensive
     // absence fence; it cannot authorize another dispatch or media action.

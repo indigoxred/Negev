@@ -104,6 +104,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const process = createAcquisitionRequestProcessor({
         readRequest: (id) => requests.getRequest(id),
         readPublicCoverage,
+        inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
         discoverCandidates, previewCandidate, loadDetail,
         submitCandidate: ({ request, ...selected }) =>
           submitMissingCandidate({ request, ...selected,
