@@ -41,6 +41,71 @@ test('direct Shoko arrival is Unknown until exact public Plex proof, then expire
   });
 });
 
+test('a direct alternate-card proof keeps its presentation across restart and invalidation', async () => {
+  await fixture(async (ctx) => {
+    const index = openPlexCardIndex(ctx.dbPath);
+    try {
+      const target = { anidbId: 42, episodeId: 1001 };
+      const proof = { fileId: 51, libraryId: 102, ratingKey: 500,
+        partId: 600, presentation: 'alternate_card' };
+      index.recordCard({ libraryId: 102, ratingKey: 500,
+        kind: 'episode', observedMs: 10,
+        parts: [{ libraryId: 102, partId: 600, size: 5,
+          plexPath: '/source-pure/500.mkv' }] });
+      ctx.queue.enqueue({ ...target, observedMs: 20 });
+      const claim = ctx.queue.claimNext({ nowMs: 20 });
+      assert.deepEqual(ctx.queue.recordResult({ claim, state: 'available',
+        checkedMs: 21, proof }), { state: 'recorded' });
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 21 }),
+        { state: 'available', verifiedAtMs: 21,
+          presentation: 'alternate_card' });
+      ctx.reopen();
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 22 }),
+        { state: 'available', verifiedAtMs: 21,
+          presentation: 'alternate_card' });
+      index.forgetCard({ libraryId: 102, ratingKey: 500, observedMs: 23 });
+      assert.deepEqual(ctx.queue.getStatus({ ...target, nowMs: 23 }),
+        { state: 'unknown' });
+    } finally { index.close(); }
+  });
+});
+
+test('a direct proof rejects an unsupported presentation', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 20 });
+    const claim = ctx.queue.claimNext({ nowMs: 20 });
+    assert.throws(() => ctx.queue.recordResult({ claim, state: 'available',
+      checkedMs: 21, proof: { fileId: 51, libraryId: 102,
+        ratingKey: 500, partId: 600, presentation: 'wrong_show' } }),
+    TypeError);
+  });
+});
+
+test('an older direct queue gains presentation without losing an exact positive', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-migration-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const old = new DatabaseSync(dbPath);
+  try {
+    old.exec(`CREATE TABLE direct_availability_targets (
+      anidb_id INTEGER NOT NULL, episode_id INTEGER NOT NULL,
+      observed_ms INTEGER NOT NULL, due_ms INTEGER NOT NULL,
+      version INTEGER NOT NULL, priority INTEGER NOT NULL,
+      state TEXT NOT NULL, verified_ms INTEGER,
+      proof_file_id INTEGER, proof_library_id INTEGER,
+      proof_rating_key INTEGER, proof_part_id INTEGER,
+      PRIMARY KEY(anidb_id,episode_id)) STRICT`);
+    old.exec(`INSERT INTO direct_availability_targets VALUES
+      (42,1001,20,1800021,1,0,'available',21,51,102,500,600)`);
+  } finally { old.close(); }
+  const queue = openDirectAvailabilityQueue(dbPath);
+  try {
+    assert.deepEqual(queue.getStatus({ anidbId: 42,
+      episodeId: 1001, nowMs: 22 }),
+    { state: 'available', verifiedAtMs: 21 });
+  } finally { queue.close(); await rm(root, { recursive: true, force: true }); }
+});
+
 test('metadata contention retains a direct arrival for the next tick', async () => {
   await fixture(async (ctx) => {
     const target = { anidbId: 42, episodeId: 1001 };

@@ -20,6 +20,16 @@ test('an exact public card removes the alternate-card note', () => {
   { availability: 'available' });
 });
 
+test('a direct alternate-card status keeps its playable explanation', () => {
+  assert.deepEqual(episodeDisplayAvailability({ direct: 'available',
+    directPresentation: 'alternate_card', title: 'unknown',
+    file: { state: 'unknown' } }),
+  { availability: 'available', availabilityNote: 'alternate_card' });
+  assert.deepEqual(episodeDisplayAvailability({ direct: 'available',
+    title: 'unknown', file: { state: 'unknown' } }),
+  { availability: 'available' });
+});
+
 test('stale and missing proofs do not claim current playability', () => {
   assert.deepEqual(episodeDisplayAvailability({ direct: 'unknown',
     title: 'unknown', file: { state: 'previously_available',

@@ -1,6 +1,9 @@
-export function episodeDisplayAvailability({ direct, title, file } = {}) {
+export function episodeDisplayAvailability({ direct, directPresentation,
+  title, file } = {}) {
   if (direct === 'available' || title === 'available') {
-    return { availability: 'available' };
+    return { availability: 'available',
+      ...(direct === 'available' && directPresentation === 'alternate_card'
+        ? { availabilityNote: 'alternate_card' } : {}) };
   }
   if (file?.state === 'available') {
     return { availability: 'available',
