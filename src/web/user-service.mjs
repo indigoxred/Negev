@@ -482,11 +482,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return { ...detail, episodes: detail.episodes.map((episode) => {
           const target = { anidbId: detail.anidbId,
             episodeId: episode.id, nowMs: now() };
-          const direct = directAvailability.getStatus(target).state;
+          const directStatus = directAvailability.getStatus(target);
           const title = titleChecks?.getTargetStatus(target).state;
           const file = fileProofs?.getCurrent(target);
           return { ...episode, ...episodeDisplayAvailability({
-            direct, title, file }) };
+            direct: directStatus.state,
+            directPresentation: directStatus.presentation,
+            title, file }) };
         }) };
       },
       startTitleCheck: titleChecks ? ({ anidbId }) =>

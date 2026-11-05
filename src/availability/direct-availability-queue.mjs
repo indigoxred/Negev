@@ -4,7 +4,8 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validProof = (proof) => validId(proof?.fileId) &&
   validId(proof.libraryId) && validId(proof.ratingKey) &&
-  validId(proof.partId);
+  validId(proof.partId) &&
+  [undefined, 'alternate_card'].includes(proof.presentation);
 const positiveLifetimeMs = 30 * 60_000;
 const retryMs = 5 * 60_000;
 const recentEventRetryMs = 30 * 60_000;
@@ -32,6 +33,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       proof_library_id INTEGER,
       proof_rating_key INTEGER,
       proof_part_id INTEGER,
+      proof_presentation TEXT CHECK(proof_presentation IN ('alternate_card')),
       PRIMARY KEY(anidb_id,episode_id)
     ) STRICT`);
     const columns = new Set(db.prepare(`PRAGMA table_info(direct_availability_targets)`)
@@ -40,6 +42,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       ['priority', 'INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0,1))'],
       ['proof_file_id', 'INTEGER'], ['proof_library_id', 'INTEGER'],
       ['proof_rating_key', 'INTEGER'], ['proof_part_id', 'INTEGER'],
+      ['proof_presentation', "TEXT CHECK(proof_presentation IN ('alternate_card'))"],
     ]) {
       if (!columns.has(name)) db.exec(`ALTER TABLE direct_availability_targets
         ADD COLUMN ${name} ${declaration}`);
@@ -74,7 +77,8 @@ export function openDirectAvailabilityQueue(dbPath) {
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
   const find = db.prepare(`SELECT observed_ms AS observedMs,due_ms AS dueMs,
-    version,state,verified_ms AS verifiedMs FROM direct_availability_targets
+    version,state,verified_ms AS verifiedMs,
+    proof_presentation AS proofPresentation FROM direct_availability_targets
     WHERE anidb_id=? AND episode_id=?`);
   const insert = db.prepare(`INSERT INTO direct_availability_targets
     (anidb_id,episode_id,observed_ms,due_ms,version,priority,state,verified_ms)
@@ -97,7 +101,8 @@ export function openDirectAvailabilityQueue(dbPath) {
     WHERE anidb_id=? AND episode_id=? AND version=?`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
     state=?,due_ms=?,priority=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
-    proof_rating_key=?,proof_part_id=? WHERE anidb_id=? AND episode_id=?
+    proof_rating_key=?,proof_part_id=?,proof_presentation=?
+    WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);
   const latestChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
     FROM plex_card_change_events`);
@@ -145,7 +150,9 @@ export function openDirectAvailabilityQueue(dbPath) {
       const row = find.get(anidbId, episodeId);
       return row?.state === 'available' && validTime(row.verifiedMs) &&
         row.verifiedMs <= nowMs && row.verifiedMs + positiveLifetimeMs > nowMs
-        ? { state: 'available', verifiedAtMs: row.verifiedMs }
+        ? { state: 'available', verifiedAtMs: row.verifiedMs,
+          ...(row.proofPresentation === 'alternate_card'
+            ? { presentation: 'alternate_card' } : {}) }
         : { state: 'unknown' };
     },
     getCoverage({ anidbId, episodeIds, nowMs }) {
@@ -276,6 +283,7 @@ export function openDirectAvailabilityQueue(dbPath) {
           state === 'available' ? checkedMs : null,
           proof?.fileId ?? null, proof?.libraryId ?? null,
           proof?.ratingKey ?? null, proof?.partId ?? null,
+          proof?.presentation ?? null,
           receipt.target.anidbId, receipt.target.episodeId,
           receipt.observedMs, receipt.version);
         db.exec('COMMIT'); begun = false;
