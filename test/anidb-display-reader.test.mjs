@@ -36,3 +36,25 @@ test('display reader rejects mismatched, restricted and oversized records', asyn
     assert.equal((await reader.read({ anidbId: 1 })).state, 'unavailable');
   }
 });
+
+test('different display titles use a bounded queue without blocking one another', async () => {
+  let active = 0;
+  let peak = 0;
+  let release;
+  const hold = new Promise((resolve) => { release = resolve; });
+  const reader = createAniDbDisplayReader({ concurrency: 2,
+    fetchImpl: async (url) => {
+      active++; peak = Math.max(peak, active);
+      await hold;
+      active--;
+      const id = Number(String(url).split('/').at(-1));
+      return new Response(JSON.stringify({ anidb_id: id, restricted: false,
+        title: `Anime ${id}`, title_english: null, description: null,
+        tags: [] }));
+    } });
+  const reads = [1, 2, 3].map((anidbId) => reader.read({ anidbId }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(peak, 2);
+  release();
+  assert.ok((await Promise.all(reads)).every((result) => result.state === 'display'));
+});

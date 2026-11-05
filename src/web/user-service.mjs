@@ -449,8 +449,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       listAiringSchedule: () => weeklySchedule.read(),
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
-      readDisplayMetadata: ({ anidbId }) =>
-        metadata.run(() => displayReader.read({ anidbId })),
+      readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
       loadRelatedTitles: async ({ anidbId }) => {
         const local = await metadata.run(() => readAniDbRelatedTitles({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
