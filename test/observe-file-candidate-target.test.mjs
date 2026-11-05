@@ -120,6 +120,24 @@ test('a registered episode on its Shoko segment card has exact alternate-card pr
   assert.notEqual(wrongFile.state, 'available');
 });
 
+test('a registered AniDB movie file can prove a second linked entry on its public Anime card', async () => {
+  const target = { anidbId: 42, episodeId: 1001, kind: 'movie' };
+  const cardIndex = { ...base.cardIndex,
+    lookupCardsByCandidateKey: ({ kind }) => ({ state: 'candidates',
+      cards: kind === 'episode' ? [{ libraryId: 102, ratingKey: 501 }] : [] }),
+    lookupCards: () => ({ state: 'candidates', cards: [] }) };
+  const input = { ...base, target, cardIndex };
+  assert.deepEqual(await observeFileCandidateTarget(input), {
+    state: 'available', fileId: 51,
+    proof: { fileId: 51, libraryId: 102, ratingKey: 501,
+      partId: 601, storageKey: '1:2:5', presentation: 'alternate_card' },
+  });
+  const userLinked = await observeFileCandidateTarget({ ...input,
+    candidate: { ...candidate, anidbFileId: null,
+      releaseEvidence: 'shoko_user_link' } });
+  assert.notEqual(userLinked.state, 'available');
+});
+
 test('a Plex local episode card in the exact Shoko show can prove the same registered file', async () => {
   const result = await observeFileCandidateTarget({ ...base,
     target: { anidbId: 42, episodeId: 1001, kind: 'series' },
