@@ -87,6 +87,34 @@ test('recent exact public coverage avoids the indexer in the wired request stage
   assert.deepEqual(calls, ['request:1']);
 });
 
+test('the wired request stage skips a proven active claim before submission', async () => {
+  const calls = [];
+  const release = { indexerId: 1, guid: 'owned-elsewhere',
+    title: 'Example - 01', evidence: 'unverified' };
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    acquisitions: { getAttempt: () => null,
+      inspectCandidateTargets: ({ requestId, candidate, episodeIds }) => {
+        assert.equal(requestId, 1);
+        assert.equal(candidate.guid, release.guid);
+        assert.deepEqual(episodeIds, [1001]);
+        calls.push('claim');
+        return { state: 'skip_active' };
+      } },
+    discoverCandidates: async ({ requestId }) => ({ state: 'candidates',
+      requestId, anidbId: 42, items: [release] }),
+    previewCandidate: async ({ requestId }) => ({ state: 'preflight',
+      requestId, anidbId: 42, torrentHash,
+      episodeIds: [1001], files: [{ name: 'Example - 01.mkv',
+        size: 1000, episodeIds: [1001] }] }),
+  });
+  const result = await stages.processRequest({ requestId: 1,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('qBittorrent called'); },
+    providerFetchImpl: async () => { throw Error('Prowlarr called'); } });
+  assert.equal(result.reason, 'no_safe_release');
+  assert.deepEqual(calls, ['request:1', 'claim']);
+});
+
 test('completion and publish hold before media work when the own mount is unproved', async () => {
   const calls = [];
   const stages = createAcquisitionStageProcessors({ ...options(calls),

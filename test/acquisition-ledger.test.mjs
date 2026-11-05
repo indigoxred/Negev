@@ -27,6 +27,46 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('active-claim preview skips other releases but preserves unfinished replay', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const input = { requestId: firstId, candidate,
+        episodeIds: [1001] };
+      const other = { indexerId: 7, guid: 'another-release' };
+      assert.deepEqual(ledger.inspectCandidateTargets(input),
+        { state: 'eligible' });
+      const reserved = ledger.reserve({ ...input, nowMs: 200 });
+      assert.equal(reserved.state, 'reserved');
+      assert.deepEqual(ledger.inspectCandidateTargets(input),
+        { state: 'eligible' });
+      assert.deepEqual(ledger.inspectCandidateTargets({ ...input,
+        candidate: other }), { state: 'skip_active' });
+      assert.deepEqual(ledger.inspectCandidateTargets({ ...input,
+        candidate: other, episodeIds: [1002] }), { state: 'eligible' });
+      const hash = 'a'.repeat(40);
+      ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.beginDispatch({ attemptId: reserved.attemptId, nowMs: 202 });
+      assert.deepEqual(ledger.inspectCandidateTargets(input),
+        { state: 'eligible' });
+      ledger.recordTorrent({ attemptId: reserved.attemptId, hash, nowMs: 203 });
+      assert.deepEqual(ledger.inspectCandidateTargets(input),
+        { state: 'skip_active' });
+      assert.deepEqual(ledger.inspectCandidateTargets({ ...input,
+        episodeIds: [1001, 1002] }), { state: 'skip_active' });
+      ledger.beginStart({ attemptId: reserved.attemptId, hash,
+        manifestDigest: 'b'.repeat(64), nowMs: 204 });
+      assert.deepEqual(ledger.recordTerminalRejection({ attemptId: reserved.attemptId,
+        hash, reason: 'file_wrong_identity', nowMs: 205 }),
+      { state: 'rejected_held', reason: 'file_wrong_identity' });
+      assert.equal(ledger.retireRejected({ attemptId: reserved.attemptId,
+        hash, nowMs: 206 }).state, 'retired_rejected');
+      assert.deepEqual(ledger.inspectCandidateTargets({ ...input,
+        candidate: other }), { state: 'eligible' });
+    } finally { ledger.close(); }
+  }));
+
 test('only an exact owned observed candidate is peeked without changing its claim', async () =>
   withLedger(async ({ dbPath, firstId, secondId }) => {
     const ledger = openAcquisitionLedger(dbPath);
