@@ -25,7 +25,7 @@ const constantEqual = (a, b) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
   listAiringSchedule, searchTitles,
-  readPoster, readCataloguePoster, titleRegistry,
+  readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
@@ -350,7 +350,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return result;
   });
   app.get('/api/catalogue/posters/:uid', { preHandler: requireUser,
-    config: { rateLimit: { max: 40, timeWindow: '1 minute' } } }, async (request, reply) => {
+    config: { rateLimit: { max: 180, timeWindow: '1 minute' } } }, async (request, reply) => {
     if (typeof readPoster !== 'function' ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.params.uid)) {
       return reply.code(404).send();
@@ -366,7 +366,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     return result.bytes;
   });
   app.get('/api/catalogue/posters/anidb/:id', { preHandler: requireUser,
-    config: { rateLimit: { max: 40, timeWindow: '1 minute' } } }, async (request, reply) => {
+    config: { rateLimit: { max: 180, timeWindow: '1 minute' } } }, async (request, reply) => {
     const id = Number(request.params.id);
     if (!Number.isSafeInteger(id) || id < 1 || id > 2_147_483_647 ||
         typeof readCataloguePoster !== 'function' ||
@@ -379,6 +379,38 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     reply.header('Cache-Control', 'private, max-age=3600');
     reply.type('image/jpeg');
     return result.bytes;
+  });
+  app.get('/api/catalogue/:id/display', { preHandler: requireUser,
+    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'private, max-age=600');
+    const anidbId = Number(request.params.id);
+    if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
+        anidbId > 2_147_483_647 || Object.keys(request.query).length) {
+      return reply.code(400).send({ error: 'Invalid AniDB ID' });
+    }
+    if (!(await confirmKnownTitle({ anidbId }))) {
+      return reply.code(404).send({ error: 'Title not found' });
+    }
+    if (typeof readDisplayMetadata !== 'function') {
+      return reply.code(503).send({ error: 'Display details unavailable' });
+    }
+    const display = await readDisplayMetadata({ anidbId });
+    if (display?.state !== 'display' || display.anidbId !== anidbId ||
+        typeof display.title !== 'string' || !display.title.trim() ||
+        display.title.length > 500 ||
+        ![display.englishTitle, display.type, display.description].every((value) =>
+          value === null || typeof value === 'string') ||
+        display.englishTitle?.length > 500 || display.type?.length > 80 ||
+        display.description?.length > 4_000 ||
+        display.startYear !== null &&
+          (!Number.isSafeInteger(display.startYear) ||
+            display.startYear < 1800 || display.startYear > 2200) ||
+        !Array.isArray(display.tags) || display.tags.length > 8 ||
+        display.tags.some((tag) => typeof tag !== 'string' || tag.length > 80)) {
+      return reply.code(503).send({ error: 'Display details unavailable' });
+    }
+    return display;
   });
   app.get('/api/catalogue/:id', { preHandler: requireUser,
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {

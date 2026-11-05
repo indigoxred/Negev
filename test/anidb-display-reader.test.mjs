@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createAniDbDisplayReader } from '../src/catalogue/anidb-display-reader.mjs';
+
+test('display reader accepts only the exact non-restricted AniDB record and coalesces viewers', async () => {
+  let calls = 0;
+  const reader = createAniDbDisplayReader({ now: () => 1_000,
+    fetchImpl: async (url) => {
+      calls++;
+      assert.equal(url, 'https://animap.id/api/anidb/4158');
+      return new Response(JSON.stringify({ anidb_id: 4158,
+        title: 'Pale Cocoon', title_english: null,
+        type: 'OVA', restricted: false, startyear: 2005,
+        description: '<p>A quiet archive &amp; a lost world.</p>',
+        tags: [{ name: 'science fiction', weight: 600 }] }));
+    } });
+  const results = await Promise.all(Array.from({ length: 4 }, () =>
+    reader.read({ anidbId: 4158 })));
+  assert.equal(calls, 1);
+  assert.ok(results.every((result) => result.state === 'display'));
+  assert.deepEqual(results[0], { state: 'display', anidbId: 4158,
+    title: 'Pale Cocoon', englishTitle: null, type: 'OVA', startYear: 2005,
+    description: 'A quiet archive & a lost world.', tags: ['science fiction'] });
+  await reader.read({ anidbId: 4158 });
+  assert.equal(calls, 1);
+});
+
+test('display reader rejects mismatched, restricted and oversized records', async () => {
+  for (const data of [
+    { anidb_id: 2, restricted: false },
+    { anidb_id: 1, restricted: true },
+    { anidb_id: 1, restricted: false, title: 'x'.repeat(501) },
+  ]) {
+    const reader = createAniDbDisplayReader({ fetchImpl: async () =>
+      new Response(JSON.stringify(data)) });
+    assert.equal((await reader.read({ anidbId: 1 })).state, 'unavailable');
+  }
+});

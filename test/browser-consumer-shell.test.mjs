@@ -168,6 +168,14 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'unknown' }] }));
         return;
       }
+      if (path === '/api/catalogue/4158/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 4158,
+          title: 'Pale Cocoon', englishTitle: null, type: 'OVA',
+          startYear: 2005, description: 'A quiet archive and a lost world.',
+          tags: ['Science fiction'] }));
+        return;
+      }
       const asset = assets.get(path);
       if (!asset) { response.writeHead(404); response.end(); return; }
       try {
@@ -202,9 +210,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
-      const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'));
+      const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
+      assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);

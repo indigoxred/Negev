@@ -69,6 +69,11 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readCataloguePoster: async ({ anidbId }) => anidbId === 1234
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([0xff, 0xd8, 0xff]) }
       : { state: 'unavailable' },
+    readDisplayMetadata: async ({ anidbId }) => anidbId === 1234
+      ? { state: 'display', anidbId, title: 'Example series',
+        englishTitle: null, type: 'TV Series', startYear: 2026,
+        description: 'A story about a test.', tags: ['Adventure'] }
+      : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
       attemptId: 9, requestId: 1, anidbId: 1234,
       stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 900,
@@ -293,6 +298,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/episodes/1001/availability?kind=series',
       headers: { cookie } })).statusCode, 404);
+    const display = await app.inject({ method: 'GET',
+      url: '/api/catalogue/1234/display', headers: { cookie } });
+    assert.equal(display.statusCode, 200);
+    assert.equal(display.json().description, 'A story about a test.');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/catalogue/9999/display', headers: { cookie } })).statusCode, 404);
     const checkedPage = await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/availability-page?page=1&offset=0',
       headers: { cookie } });

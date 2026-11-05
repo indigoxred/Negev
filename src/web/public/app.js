@@ -689,8 +689,33 @@ async function showDetail(item, franchise = null) {
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
-    panel.replaceChildren(posterImage(item, 'detail-art'),
+    const detailArt = element('div', 'N', 'detail-art poster-fallback');
+    detailArt.setAttribute('aria-hidden', 'true');
+    const detailPoster = posterImage(item);
+    detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
+    detailArt.append(detailPoster);
+    panel.replaceChildren(detailArt,
       element('h1', data.title || item.title, 'detail-title'));
+    const displaySummary = element('div', undefined, 'detail-display');
+    panel.append(displaySummary);
+    void api(`/api/catalogue/${item.anidbId}/display`).then((display) => {
+      if (!isCurrentDetail() || display.state !== 'display') return;
+      displaySummary.replaceChildren();
+      const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
+      if (facts) displaySummary.append(element('p', facts, 'detail-facts'));
+      if (display.englishTitle &&
+          display.englishTitle !== (data.title || item.title)) {
+        displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
+          'detail-alias'));
+      }
+      if (display.description) displaySummary.append(element('p',
+        display.description, 'detail-description'));
+      if (display.tags?.length) {
+        const tags = element('div', undefined, 'detail-tags');
+        for (const tag of display.tags) tags.append(element('span', tag));
+        displaySummary.append(tags);
+      }
+    }).catch(() => { /* Optional display metadata never blocks the title. */ });
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
@@ -725,7 +750,7 @@ async function showDetail(item, franchise = null) {
       'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
-    const relatedButton = element('button', 'Explore franchise');
+    const relatedButton = element('button', 'Explore franchise', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
     const renderFamily = () => {
       relatedList.replaceChildren(element('p',

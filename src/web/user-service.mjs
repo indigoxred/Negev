@@ -15,9 +15,10 @@ import { createObservedTitleRegistry } from '../catalogue/observed-title-registr
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
 import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
+import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
-import { readShokoPoster } from '../catalogue/shoko-poster.mjs';
+import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
 import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { readAniDbRelatedTitles as readArchiveRelatedTitles } from
@@ -181,6 +182,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
     const metadata = createMetadataLimiter();
     const cataloguePosters = createPosterReader({ fetchImpl, now });
+    const shokoPosters = createShokoPosterReader({ baseUrl: shokoBaseUrl,
+      apiKey: shokoApiKey, fetchImpl, now });
+    const displayReader = createAniDbDisplayReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
@@ -443,10 +447,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
       listAiringSchedule: () => weeklySchedule.read(),
-      readPoster: ({ uid }) => metadata.run(() => readShokoPoster({
-        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, uid, fetchImpl,
-      })),
+      readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
+      readDisplayMetadata: ({ anidbId }) =>
+        metadata.run(() => displayReader.read({ anidbId })),
       loadRelatedTitles: async ({ anidbId }) => {
         const local = await metadata.run(() => readAniDbRelatedTitles({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
