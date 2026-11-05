@@ -82,7 +82,7 @@ test('repeated inconclusive AniDB lookups back off without losing a restart', as
     }
     let checkedMs = 1_000;
     for (const delay of [30 * 60_000, 2 * 60 * 60_000,
-      8 * 60 * 60_000, 24 * 60 * 60_000]) {
+      8 * 60 * 60_000, 24 * 60 * 60_000, 24 * 60 * 60_000]) {
       const claim = ctx.queue.claimNext({ nowMs: checkedMs });
       assert.equal(claim.attemptId, ctx.attemptIds[0]);
       assert.deepEqual(ctx.queue.recordResult({ attemptId: claim.attemptId,
