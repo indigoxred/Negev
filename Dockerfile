@@ -1,6 +1,8 @@
 FROM node:24-bookworm-slim
 
 ENV NODE_ENV=production
+# Allow slow IPv4 image hosts to connect before Node tries the next address.
+ENV NODE_OPTIONS=--network-family-autoselection-attempt-timeout=2000
 WORKDIR /app
 RUN npm install --global pnpm@11.25.0
 COPY package.json pnpm-lock.yaml ./
