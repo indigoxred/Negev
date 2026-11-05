@@ -43,7 +43,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const discovered = [];
   const previewed = [];
   let acquisitionState = 'disabled';
-  const knownTitles = new Set([1234]);
+  const knownTitles = new Set([1234, 1235]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
     getAcquisitionStatus: () => ({ state: acquisitionState }),
@@ -104,7 +104,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     confirmKnownTitle: async ({ anidbId }) =>
       knownTitles.has(anidbId) || anidbId === 1234,
     loadDetail: async ({ anidbId, page }) => ({ state: 'details',
-      anidbId, page, kind: 'series', episodes: [
+      anidbId, page, kind: 'series', restricted: anidbId === 1235, episodes: [
         { id: 1001, number: 1, type: 'Episode', title: 'One' },
         { id: 1002, number: 2, type: 'Episode', title: 'Two' },
         { id: 1003, number: 3, type: 'Episode', title: 'Three' },
@@ -354,6 +354,18 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { username: 'Friend', password: 'long-member-passphrase' } });
     assert.equal(friendLogin.statusCode, 200, friendLogin.body);
     const friendCookie = friendLogin.headers['set-cookie'].split(';')[0];
+    const users = await app.inject({ method: 'GET', url: '/api/admin/users',
+      headers: { cookie } });
+    assert.equal(users.statusCode, 200, users.body);
+    assert.equal(users.json().items.find((item) => item.username === 'Friend').adultAllowed, true);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/admin/users',
+      headers: { cookie: friendCookie } })).statusCode, 403);
+    const adultSetting = await app.inject({ method: 'PATCH',
+      url: `/api/admin/users/${register.json().user.id}/adult`,
+      headers: { cookie, origin, 'x-negev-csrf': csrf },
+      payload: { allowed: false } });
+    assert.equal(adultSetting.statusCode, 200, adultSetting.body);
+    assert.equal(adultSetting.json().adultAllowed, false);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review', headers: { cookie: friendCookie } })).statusCode, 403);
     const friendList = await app.inject({ method: 'GET', url: '/api/requests',
@@ -361,6 +373,19 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.deepEqual(friendList.json().items, []);
     const friendSession = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie: friendCookie } });
+    assert.equal(friendSession.json().user.adultAllowed, false);
+    const deniedAdult = await app.inject({ method: 'POST', url: '/api/requests',
+      headers: { cookie: friendCookie, origin,
+        'x-negev-csrf': friendSession.json().csrfToken },
+      payload: { anidbId: 1235, scope: 'installment', requestKey: 'adult-denied' } });
+    assert.equal(deniedAdult.statusCode, 403, deniedAdult.body);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235',
+      headers: { cookie: friendCookie } })).statusCode, 403);
+    const allowedOrdinary = await app.inject({ method: 'POST', url: '/api/requests',
+      headers: { cookie: friendCookie, origin,
+        'x-negev-csrf': friendSession.json().csrfToken },
+      payload: { anidbId: 1234, scope: 'installment', requestKey: 'ordinary-allowed' } });
+    assert.equal(allowedOrdinary.statusCode, 202, allowedOrdinary.body);
     assert.deepEqual(friendSession.json().capabilities, {
       releaseSearch: false, detailLoad: false, availabilityChecks: false,
       acquisitionState: 'reconciliation_held' });

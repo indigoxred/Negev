@@ -110,7 +110,20 @@ async function inspectMobile(url, profile, width = 390) {
         return {right: account.querySelector('.account-menu').getBoundingClientRect().right,
           signoutVisible: signout.getBoundingClientRect().width > 0}; })()`,
     });
-    return { ...result.value, menu: menu.result.value };
+    const adultChoice = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const toggle = document.querySelector('#adult-toggle');
+        const before = toggle.getAttribute('aria-pressed'); toggle.click();
+        return {before, after: toggle.getAttribute('aria-pressed'),
+          saved: localStorage.getItem('negev:show-adult:1')}; })()`,
+    });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/airing?year=2026&season=FALL') });
+    await wait(800);
+    const filtered = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({adultHidden: document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden,
+        normalVisible: !document.querySelector('#season-list [data-anidb-id="4158"]')?.hidden})`,
+    });
+    return { ...result.value, menu: menu.result.value,
+      adultChoice: adultChoice.result.value, filtered: filtered.result.value };
   } finally {
     socket?.close();
     child.kill();
@@ -125,8 +138,16 @@ test('signed-in consumer routes render real shell with search, library and reque
         "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'");
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
-        response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin' },
-          csrfToken: 'test-only', capabilities: { acquisitionState: 'disabled' } }));
+        response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
+          adultAllowed: true },
+          csrfToken: 'test-only', capabilities: { acquisitionState: 'disabled',
+            titleChecks: true } }));
+        return;
+      }
+      if (path === '/api/admin/users') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'users', items: [{ id: 1,
+          username: 'Owner', role: 'admin', disabled: false, adultAllowed: true }] }));
         return;
       }
       if (path === '/api/requests') {
@@ -170,6 +191,11 @@ test('signed-in consumer routes render real shell with search, library and reque
             adult: false }, { anidbId: 9589, title: 'The Garden of Words',
             type: 'Movie', releaseStatus: 'FINISHED', adult: true }],
           nextAfter: null }));
+        return;
+      }
+      if (path === '/api/catalogue/4158/title-check') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'not_started' }));
         return;
       }
       if (path === '/api/catalogue/4158') {
@@ -228,6 +254,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
+      assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
+      assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');
@@ -250,6 +278,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
+      assert.match(detail, /Check whole title in Plex/);
+      assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Request selected film entry/);
