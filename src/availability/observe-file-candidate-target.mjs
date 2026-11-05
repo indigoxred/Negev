@@ -58,7 +58,10 @@ export async function observeFileCandidateTarget({ candidate, target,
     shokoSeriesId: identity.shokoSeriesId,
     linkedShokoEpisodeIds,
     tmdbMovieIds: identity.tmdbMovieIds,
-    files: [{ fileId: candidate.fileId, anidbId: target.anidbId,
+    files: [{ fileId: candidate.fileId,
+      ...(validId(candidate.anidbFileId) ?
+        { anidbFileId: candidate.anidbFileId } : {}),
+      anidbId: target.anidbId,
       episodeIds, coverage: episodeIds.map((episodeId) => ({
         episodeId, start: 0, end: 100 })), size: candidate.size,
       sourcePaths: candidate.sourcePaths }] };
