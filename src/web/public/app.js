@@ -17,7 +17,8 @@ const state = { csrf: null, user: null, selected: null,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null,
-  discoverLoaded: false, showAdult: true, usersLoaded: false };
+  discoverLoaded: false, showAdult: true, usersLoaded: false,
+  detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
 const requestResponses = createResponseEpoch();
 const reviewResponses = createResponseEpoch();
@@ -96,7 +97,13 @@ function renderRoute() {
         { anidbId: route.anidbId, title: `Anime ${route.anidbId}` };
       void showDetail(item);
     }
-  } else if (page === 'discover') {
+  } else {
+    if (state.selected !== null) {
+      detailResponses.invalidate();
+      state.selected = null;
+    }
+  }
+  if (page === 'discover') {
     byId('query').value = route.query;
     byId('discover-shelves').hidden = route.query.length >= 2;
     if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
@@ -155,6 +162,7 @@ function showSession(data) {
     seasonalResponses.invalidate();
     discoverResponses.invalidate();
     state.selected = null;
+    state.detailHydrationQueued.clear();
     byId('request-list').replaceChildren();
     byId('watch-list').replaceChildren();
     byId('review-list').replaceChildren();
@@ -207,6 +215,7 @@ function clearWorkspace() {
   state.usersLoaded = false;
   state.csrf = null;
   state.selected = null;
+  state.detailHydrationQueued.clear();
   state.searchToken++;
   state.lastSearchQuery = '';
   state.searchItems.clear();
@@ -458,7 +467,7 @@ async function loadDiscover() {
     'Browse shelves are unavailable right now. Search the catalogue by title above.',
     'empty-state'));
 }
-async function loadLibrary(append = false) {
+async function loadLibrary(append = false, continuation = null) {
   const session = sessionResponses.current();
   const epoch = libraryResponses.invalidate();
   const userId = state.user?.id;
@@ -475,6 +484,9 @@ async function loadLibrary(append = false) {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
+    else {
+      continuation?.button.remove();
+    }
     state.libraryLoaded = true;
     if (!append && page.items.length === 0) {
       list.append(element('p',
@@ -490,9 +502,20 @@ async function loadLibrary(append = false) {
     if (state.libraryAfter !== null) {
       const more = element('button', 'Show more verified titles', 'text-link');
       more.type = 'button';
+      let notice = null;
       more.addEventListener('click', () => {
-        more.remove();
-        void loadLibrary(true);
+        if (more.disabled) return;
+        more.disabled = true;
+        notice?.remove();
+        notice = null;
+        void loadLibrary(true, { button: more, showError() {
+          more.disabled = false;
+          more.textContent = 'Retry loading more titles';
+          notice = element('p',
+            'The next page could not be loaded. Titles already shown are still available.',
+            'empty-state');
+          more.after(notice);
+        } });
       });
       list.append(more);
     }
@@ -502,6 +525,7 @@ async function loadLibrary(append = false) {
     if (!append) list.replaceChildren(element('p',
       'Library verification is unavailable right now. No missing titles are assumed.',
       'empty-state'));
+    else continuation?.showError();
   }
 }
 function seasonChoice(route) {
@@ -906,18 +930,33 @@ async function showDetail(item, franchise = null) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
       } else {
         panel.append(element('p', 'Episode details are being prepared. This title cannot be requested yet.', 'muted'));
-        const button = element('button', 'Load details');
-        button.addEventListener('click', async () => {
-          button.disabled = true;
-          try {
-            const result = await api(`/api/catalogue/${item.anidbId}/load-detail`,
-              { method: 'POST', body: '{}' });
-            message(result.state === 'pending' ? 'Detail refresh queued. Check again later.' : 'Details are ready. Select the title again.');
-          } catch (error) { message(error.message, true); }
-          finally { button.disabled = false; }
-        });
-        panel.append(button);
       }
+      const queued = state.detailHydrationQueued.has(item.anidbId);
+      const button = element('button', queued || !state.detailLoad
+        ? 'Check again' : 'Load details');
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        if (queued || !state.detailLoad) {
+          await showDetail(item, franchise);
+          return;
+        }
+        const session = sessionResponses.current();
+        state.detailHydrationQueued.add(item.anidbId);
+        try {
+          await api(`/api/catalogue/${item.anidbId}/load-detail`,
+            { method: 'POST', body: '{}' });
+          if (!sessionResponses.isCurrent(session) || !isCurrentDetail()) return;
+          await showDetail(item, franchise);
+        } catch (error) {
+          if (sessionResponses.isCurrent(session)) {
+            state.detailHydrationQueued.delete(item.anidbId);
+          }
+          if (isCurrentDetail()) message(error.message, true);
+        } finally { button.disabled = false; }
+      });
+      panel.append(button);
+    } else {
+      state.detailHydrationQueued.delete(item.anidbId);
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
@@ -1214,7 +1253,10 @@ async function showDetail(item, franchise = null) {
     panel.insertBefore(button, relatedButton);
   } catch (error) {
     if (!isCurrentDetail()) return;
-    panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'));
+    const retry = element('button', 'Try again');
+    retry.type = 'button';
+    retry.addEventListener('click', () => { void showDetail(item, franchise); });
+    panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'), retry);
     message(error.message, true);
   }
 }
