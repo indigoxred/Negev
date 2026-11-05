@@ -38,4 +38,4 @@
 - [x] Write and pass a failing ledger test for the alternate-card marker and exact-card preference.
 - [x] Write and pass focused presentation-helper and API tests for the note; add a browser fixture. The local Windows Edge browser test returned an empty DOM before reaching the fixture, so Linux CI still needs to run it.
 - [x] Run focused availability suites and review the diff.
-- [ ] Verify against the read-only *IS: Infinite Stratos 2* file/card evidence in a disposable Negev database, without changing production.
+- [x] Verify against the read-only *IS: Infinite Stratos 2* file/card evidence without changing production: a separate Node process in the running container loaded the candidate source via in-memory module URLs, read Shoko file 1557 and public Plex card 473558, and returned `available` with `presentation=alternate_card`, the expected file/part IDs and a card revision. It used a read-only SQLite connection and performed no ledger write.
