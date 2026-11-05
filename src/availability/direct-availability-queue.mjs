@@ -330,7 +330,7 @@ export function createDirectAvailabilityWorker({ queue, observeTarget,
           checkedMs: now(), proof: state === 'available'
             ? proof ?? null : null });
         if (saved.state === 'recorded' && state === 'available' && proof) {
-          onRecordedAvailable?.(proof);
+          onRecordedAvailable?.(proof, receipt.target);
         }
         return saved.state === 'recorded'
           ? { state: 'checked', target: receipt.target, result: state }
@@ -437,7 +437,7 @@ export function createFileAvailabilityWorker({ queue, inventory,
           const saved = queue.recordResult({ claim: receipt, state,
             checkedMs: now(), proof: state === 'available' ? proof : null });
           if (saved.state === 'recorded' && state === 'available') {
-            onRecordedAvailable?.(proof);
+            onRecordedAvailable?.(proof, receipt.target);
           }
           if (receipt === first) firstResult = saved.state === 'recorded'
             ? { state: 'checked', target: receipt.target, result: state,

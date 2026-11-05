@@ -112,8 +112,11 @@ test('metadata contention retains a direct arrival for the next tick', async () 
     ctx.queue.enqueue({ ...target, observedMs: 100, priority: 'event' });
     let clock = 101;
     let reads = 0;
+    const recorded = [];
     const worker = createDirectAvailabilityWorker({ queue: ctx.queue,
       now: () => clock, requireProof: true,
+      onRecordedAvailable: (proof, item) =>
+        recorded.push({ fileId: proof.fileId, target: item }),
       observeTarget: async () => ++reads === 1 ? { state: 'busy' } :
         { state: 'available', proof: { fileId: 51, libraryId: 102,
           ratingKey: 500, partId: 600 } },
@@ -127,6 +130,7 @@ test('metadata contention retains a direct arrival for the next tick', async () 
       { state: 'checked', target, result: 'available' });
     assert.equal(ctx.queue.getStatus({ ...target, nowMs: clock }).state,
       'available');
+    assert.deepEqual(recorded, [{ fileId: 51, target }]);
   });
 });
 
