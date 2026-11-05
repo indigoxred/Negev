@@ -316,7 +316,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Choose one film entry/);
-      assert.match(alternateFilm, /File present in Plex; listed under another episode/);
+      assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
       assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));

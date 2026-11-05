@@ -993,7 +993,7 @@ async function showDetail(item, franchise = null) {
         `${episode.title ? ` · ${episode.title}` : ''}` +
         `${episode.availability === 'available' ?
           episode.availabilityNote === 'alternate_card'
-            ? ' · File present in Plex; listed under another episode'
+            ? ' · Playable in Plex; episode card not linked to this episode'
             : ' · Playable in Plex' :
           episode.availability === 'previously_available'
             ? ' · Previously playable; recheck needed' : ''}`;
@@ -1034,7 +1034,7 @@ async function showDetail(item, franchise = null) {
           select.dispatchEvent(new Event('change'));
           result.textContent = status.state === 'available' ?
             status.presentation === 'alternate_card'
-              ? 'File present in Plex; listed under another episode'
+              ? 'Playable in Plex; episode card not linked to this episode'
               : 'Playable in Plex' : 'Availability is not confirmed yet';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
         finally { button.disabled = !select.value; select.disabled = false; }

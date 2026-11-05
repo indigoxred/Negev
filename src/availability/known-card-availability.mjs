@@ -82,7 +82,18 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   const siblingParts = siblingGuids ? plex.parts.filter((part) =>
     part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
       siblingGuids.has(part.itemGuid) && part.showGuid === showGuid) : [];
-  const identityParts = [...exactParts, ...siblingParts];
+  // Plex can keep a local episode GUID while its parent show remains linked
+  // to Shoko. Accept only the exact local card under that public show, then
+  // require the same readable physical file and full AniDB episode coverage.
+  const localParts = target.kind === 'series' && shoko.files.length === 1
+    ? plex.parts.filter((part) =>
+      part.cardType === 'episode' && part.showGuid === showGuid &&
+        Number.isSafeInteger(part.ratingKey) && part.ratingKey > 0 &&
+        part.itemGuid === `local://${part.ratingKey}` &&
+        !part.externalGuids?.some((guid) =>
+          guid.startsWith('tv.plex.agents.custom.shoko://episode/') &&
+          guid !== episodeGuid)) : [];
+  const identityParts = [...exactParts, ...siblingParts, ...localParts];
   if (identityParts.length === 0) return unknown('card_identity_unverified');
   if (maxChecks === 0) return unknown('comparison_budget_exceeded');
   const publicIds = new Set(publicLibraryIds);
