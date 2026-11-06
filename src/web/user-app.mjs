@@ -292,10 +292,13 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const query = request.query;
-    if (Object.keys(query).some((key) => !['year', 'season', 'after'].includes(key)) ||
+    if (Object.keys(query).some((key) => !['year', 'season', 'after', 'kind', 'tag'].includes(key)) ||
         typeof query.year !== 'string' || !/^\d{4}$/.test(query.year) ||
         typeof query.season !== 'string' ||
         !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
+        !['all', 'series', 'movies'].includes(query.kind ?? 'all') ||
+        (query.tag !== undefined && (typeof query.tag !== 'string' ||
+          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(query.tag))) ||
         query.after !== undefined && (typeof query.after !== 'string' ||
           !/^(0|[1-9]\d*)$/.test(query.after))) {
       return reply.code(400).send({ error: 'Invalid season page' });
@@ -309,7 +312,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     }
     let page;
     try { page = await listSeasonalTitles({ year, season: query.season,
-      after, limit: 12 }); }
+      after, limit: 12, kind: query.kind ?? 'all', tag: query.tag ?? '' }); }
     catch { return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
     if (page?.state === 'unavailable') return { state: 'unavailable' };
     if (!['ready', 'partial', 'stale'].includes(page?.state) ||

@@ -34,4 +34,13 @@ test('season and page survive reload and Back/Forward without accepting arbitrar
     query: '', year: 2026, season: 'FALL', after: 12 });
   assert.deepEqual(parseConsumerRoute('#/airing?year=2026&season=FALL&admin=1'),
     { page: 'discover', anidbId: null, query: '' });
+  const filtered = seasonRoute(2026, 'FALL', 12,
+    { kind: 'movies', tag: 'sci-fi' });
+  assert.equal(filtered,
+    '#/airing?year=2026&season=FALL&after=12&kind=movies&tag=sci-fi');
+  assert.deepEqual(parseConsumerRoute(filtered), { page: 'airing', anidbId: null,
+    query: '', year: 2026, season: 'FALL', after: 12,
+    kind: 'movies', tag: 'sci-fi' });
+  assert.deepEqual(parseConsumerRoute('#/airing?year=2026&season=FALL&kind=unsafe'),
+    { page: 'discover', anidbId: null, query: '' });
 });

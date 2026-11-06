@@ -48,6 +48,37 @@ test('unknown restriction never displays a seasonal card and visibly marks parti
   assert.deepEqual(result.items, []);
 });
 
+test('season type and tag filters apply before pagination using exact AniDB map entries', async () => {
+  const entries = [
+    { ...row('Action show', 1), tags: ['Action', 'Adventure'] },
+    { ...row('Drama film', 2), type: 'MOVIE', tags: ['Drama'] },
+    { ...row('Action film', 3), type: 'MOVIE', tags: ['Action'] },
+    { ...row('Comedy OVA', 4), type: 'OVA', tags: ['Comedy'] },
+  ];
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified title', type: 'Anime', restricted: false }),
+  now: () => 1000 });
+  const films = await reader.read({ year: 2026, season: 'FALL',
+    kind: 'movies', limit: 1 });
+  assert.deepEqual(films.items.map((item) => item.anidbId), [3]);
+  assert.equal(films.nextAfter, 1);
+  const second = await reader.read({ year: 2026, season: 'FALL',
+    kind: 'movies', after: films.nextAfter, limit: 1 });
+  assert.deepEqual(second.items.map((item) => item.anidbId), [2]);
+  assert.equal(second.nextAfter, null);
+  const actionShows = await reader.read({ year: 2026, season: 'FALL',
+    kind: 'series', tag: 'action' });
+  assert.deepEqual(actionShows.items.map((item) => item.anidbId), [1]);
+  assert.equal(actionShows.nextAfter, null);
+  await assert.rejects(reader.read({ year: 2026, season: 'FALL',
+    kind: 'unsafe' }), TypeError);
+  await assert.rejects(reader.read({ year: 2026, season: 'FALL',
+    tag: '\nunsafe' }), TypeError);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;

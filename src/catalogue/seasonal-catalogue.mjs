@@ -8,6 +8,9 @@ const MAX_MAP_BYTES = 60_000_000;
 const MAX_DETAIL_BYTES = 128_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const seasons = new Set(['WINTER', 'SPRING', 'SUMMER', 'FALL']);
+const kinds = new Set(['all', 'series', 'movies']);
+const validTag = (value) => typeof value === 'string' &&
+  (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const validDate = (value) => typeof value === 'string' &&
   datePattern.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
@@ -39,6 +42,10 @@ async function parseMap(response) {
     const key = `${year}-${season}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push({ anidbId: ids[0], title: entry.title.trim(),
+      type: typeof entry.type === 'string' ? entry.type.toUpperCase() : '',
+      tags: Array.isArray(entry.tags) && entry.tags.length <= 100
+        ? entry.tags.filter((tag) => validTag(tag) && tag !== '')
+          .map((tag) => tag.trim().toLowerCase()) : [],
       releaseStatus: typeof entry.status === 'string' && entry.status.length <= 80
         ? entry.status : null });
   };
@@ -192,17 +199,23 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       return value;
     } catch { return { kind: 'unknown' }; }
   }
-  return { async read({ year, season, after = 0, limit = 12 } = {}) {
+  return { async read({ year, season, after = 0, limit = 12,
+    kind = 'all', tag = '' } = {}) {
     if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
         !seasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
-        !Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
+        !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
+        !kinds.has(kind) || !validTag(tag)) {
       throw new TypeError('Invalid season page');
     }
     const time = now();
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     const mapState = await loadMap(time);
     if (mapState === 'unavailable') return { state: 'unavailable' };
-    const entries = cached.groups.get(`${year}-${season}`) ?? [];
+    const entries = (cached.groups.get(`${year}-${season}`) ?? [])
+      .filter((entry) => (kind === 'all' || (kind === 'movies'
+        ? entry.type === 'MOVIE'
+        : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
+        (!tag || entry.tags.includes(tag.trim().toLowerCase())));
     const page = entries.slice(after, after + limit);
     const found = [];
     for (let offset = 0; offset < page.length; offset += 4) {
