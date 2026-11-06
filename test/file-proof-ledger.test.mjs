@@ -174,6 +174,26 @@ test('library browse pages only exact current title proofs without duplicate fil
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a Plex link chooses a current public card and disappears when proof expires', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
+  let clock = 1_500;
+  const ledger = openFileProofLedger(path.join(dir, 'state.sqlite'),
+    { positiveLifetimeMs: 300, now: () => clock });
+  try {
+    assert.equal(ledger.getCurrentTitleCard({ anidbId: 42 }), null);
+    ledger.observe({ anidbId: 42, episodeId: 1001,
+      proof: { ...proof, ratingKey: 501, presentation: 'alternate_card' },
+      checkedMs: 1_450 });
+    ledger.observe({ anidbId: 42, episodeId: 1002,
+      proof: { ...proof, fileId: 8, ratingKey: 502, partId: 902 },
+      checkedMs: 1_400 });
+    assert.deepEqual(ledger.getCurrentTitleCard({ anidbId: 42 }),
+      { libraryId: 102, ratingKey: 502 });
+    clock = 1_800;
+    assert.equal(ledger.getCurrentTitleCard({ anidbId: 42 }), null);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a new observer session discards old positives but accepts fresh proofs', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-proof-'));
   const dbPath = path.join(dir, 'state.sqlite');
