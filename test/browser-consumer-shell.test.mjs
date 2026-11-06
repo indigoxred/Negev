@@ -289,6 +289,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
+      assert.match(browse, /This season/);
+      assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /This week on AniDB/);
       assert.match(browse, /FX Senshi Kurumi-chan/);
       assert.match(browse, /Verified in your library/);
