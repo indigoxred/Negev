@@ -1,0 +1,11 @@
+# Shoko-first identity fallback
+
+Negev prefers Shoko's exact AniDB file result. An inconclusive lookup is not a wrong-file verdict and must not retire or replace a completed download. This policy follows the owner's November 2026 clarification: AniDB registration helps recognition but is not a requirement for every encode, especially while a show is airing.
+
+For a completed candidate, retain the qBittorrent manifest, selected file names, file sizes and hashes. If exact AniDB file identity is unavailable, use the request's AniDB anime and episode targets, the selected release's episode claim, and Shoko's catalogue identities to decide whether a limited Shoko handoff is plausible. A title string alone is insufficient. Keep the provisional state distinct from an exact-file match. Before publishing, recheck the torrent, file bytes, target scope and private mounts; never silently reuse an exact-release manifest for a provisional one.
+
+After Shoko hashes the imported file, look it up by ED2K and size through its supported API. Give Shoko time to assign its own release. If it assigns the correct release, continue normally. If it assigns a conflicting identity, hold the attempt and do not overwrite it. If it remains unrecognized, compare independent release and episode evidence and, only for an unambiguous one-file/one-episode match, use Shoko's supported ReleaseInfo API to create a User link. Re-read the file and current release immediately before linking. Never overwrite an existing release, infer multi-episode coverage, or link an unrelated file sharing a name.
+
+An import is successful only after the same Shoko file appears as playable under the correct public Plex show. Availability and request completion continue to use that public evidence. Ambiguous cases remain held without blocking later items. A held download must not be deleted or redownloaded solely because the exact-file lookup returned 204.
+
+Production stays on the current exact-file path until isolated tests prove arrival, late recognition, conflicting recognition, crash recovery, withdrawal and public Plex proof for both series and movies. The existing Airing episode is the first genuine candidate for the revised path; its content identity is not yet independently proved.
