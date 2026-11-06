@@ -99,12 +99,13 @@
         <header class="page-head"><p class="eyebrow">Your activity</p><h1>My requests</h1>
           <p>See what is happening, what is ready and what needs help.</p></header>
         <div class="request-tabs" role="tablist" aria-label="Request status">
-          <button type="button" data-request-tab="history" aria-selected="true">Active &amp; history</button>
+          <button type="button" data-request-tab="history" aria-selected="true">Recent requests</button>
           <button type="button" data-request-tab="watching" aria-selected="false">Watching</button>
         </div>
         <section id="request-history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">Your requests</h2><button id="refresh-requests" class="quiet" type="button">Refresh</button></div>
+          <p class="muted">Recent requests are grouped below. Show older requests to continue through your history.</p>
           <div id="request-list" class="request-list"><p class="muted">Loading requests…</p></div>
-          <button id="more-requests" type="button" hidden>Show more requests</button></section>
+          <button id="more-requests" type="button" hidden>Show older requests</button></section>
         <section id="request-watching" aria-labelledby="watching-title" hidden><div class="section-head"><h2 id="watching-title">Watching for new episodes</h2></div>
           <div id="watch-list" class="request-list"><p class="muted">Loading watches…</p></div>
           <button id="more-watches" type="button" hidden>Show more watches</button></section>

@@ -396,7 +396,8 @@ async function loadRequestView(view, append = false) {
         advanced.append(element('summary', 'Advanced release tools'), button, candidates);
         row.append(advanced);
       }
-      list.append(row);
+      if (watching) list.append(row);
+      else requestGroupRows(list, presentation.group).append(row);
     }
     state.nextBeforeId[view] = page.nextBeforeId;
     more.hidden = state.nextBeforeId[view] === null;
@@ -408,6 +409,26 @@ async function loadRequestView(view, append = false) {
       message(error.message, true);
     }
   }
+}
+const historyGroupOrder = ['attention', 'active', 'completed'];
+const historyGroupTitles = {
+  attention: 'Needs attention', active: 'Active', completed: 'Completed',
+};
+function requestGroupRows(list, group) {
+  const category = historyGroupOrder.includes(group) ? group : 'active';
+  let section = [...list.children].find((child) =>
+    child.dataset.requestGroup === category);
+  if (!section) {
+    section = element('section', undefined, 'request-group');
+    section.dataset.requestGroup = category;
+    section.append(element('h3', historyGroupTitles[category]),
+      element('div', undefined, 'request-group-rows'));
+    const next = [...list.children].find((child) =>
+      historyGroupOrder.indexOf(child.dataset.requestGroup) >
+      historyGroupOrder.indexOf(category));
+    list.insertBefore(section, next ?? null);
+  }
+  return section.lastElementChild;
 }
 async function loadRequests() {
   await loadRequestView('watching');
