@@ -271,8 +271,8 @@ async function refreshSession() {
     const data = await api('/api/session');
     if (!sessionResponses.isCurrent(started)) return;
     showSession(data);
-    await loadRequests();
-    if (data.user.role === 'admin') await loadOperationalReview();
+    loadRequests();
+    if (data.user.role === 'admin') void loadOperationalReview();
     return true;
   } catch (error) {
     if (!sessionResponses.isCurrent(started)) return false;
@@ -431,9 +431,10 @@ function requestGroupRows(list, group) {
   }
   return section.lastElementChild;
 }
-async function loadRequests() {
+function loadRequests() {
   if (!state.user) return;
-  await Promise.all([loadRequestView('watching'), loadRequestView('history')]);
+  void loadRequestView('watching');
+  void loadRequestView('history');
 }
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??
@@ -1209,7 +1210,7 @@ async function showDetail(item, franchise = null) {
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
             message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${currentAcquisitionNotice()}`);
-            await loadRequests();
+            loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
         });
@@ -1239,7 +1240,7 @@ async function showDetail(item, franchise = null) {
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
             message(`Request #${saved.requestId} saved for film entry ${episode.number}. ${currentAcquisitionNotice()}`);
-            await loadRequests();
+            loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
         });
@@ -1290,7 +1291,7 @@ async function showDetail(item, franchise = null) {
         }) });
         requestKeys.saved(scope);
         message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
-        await loadRequests();
+        loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }
     });

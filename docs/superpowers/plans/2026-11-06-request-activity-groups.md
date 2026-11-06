@@ -51,3 +51,5 @@
 - [ ] Run both isolated browser tests and the full Linux Node suite; commit.
 
 Ruling: A pending Watching read must not delay the History view. The two owner-scoped GETs now run concurrently; if this is wrong, the cost is one extra simultaneous read on route entry, within the existing two-request bound.
+
+Final review found that awaiting both reads still delayed the owner review panel and sign-in completion. A browser regression failed with Watching held, then passed after both request reads and the owner review started independently. The same bounded reads and response-epoch checks remain.

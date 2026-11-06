@@ -30,9 +30,10 @@ test('title and library controls recover from pending and failed reads without d
     let searchReads = 0;
     let requestReads = 0;
     let historyReads = 0;
+    let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
-    let holdWatchingRequests = false;
+    let holdWatchingRequests = true;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
       response.writeHead(status, { 'Content-Type': 'application/json' });
@@ -49,6 +50,9 @@ test('title and library controls recover from pending and failed reads without d
           detailLoad: true, acquisitionState: 'disabled' } });
       } else if (path === '/api/logout') {
         json(response, { state: 'signed_out' });
+      } else if (path === '/api/admin/review') {
+        operationalReads++;
+        json(response, { items: [], nextAfterAttemptId: null });
       } else if (path === '/api/catalogue/1' && request.method === 'GET') {
         titleReads++;
         json(response, detailReady ? { state: 'details', anidbId: 1,
@@ -169,6 +173,15 @@ test('title and library controls recover from pending and failed reads without d
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
+      for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
+        await wait(100);
+      }
+      assert.equal(heldWatchingResponses.length, 1);
+      assert.ok(historyReads > 0, 'History starts while Watching is pending');
+      assert.ok(operationalReads > 0,
+        'owner review starts while Watching is pending');
+      holdWatchingRequests = false;
+      heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#detail')?.textContent.includes('Load details')");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Load details').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Check again')");
