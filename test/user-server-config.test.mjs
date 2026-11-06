@@ -82,6 +82,20 @@ test('non-loopback listener requires explicit exposure and HTTPS origin', () => 
   ]) assert.throws(() => parseUserServerConfig({ ...exposed, ...change }), TypeError);
 });
 
+test('a local tunnel can serve an HTTPS origin while Negev stays on loopback', () => {
+  const tunnel = { ...valid, NEGEV_EXPOSE_USERS: '1',
+    NEGEV_PUBLIC_ORIGIN: 'https://negev.example.test' };
+  const parsed = parseUserServerConfig(tunnel);
+  assert.equal(parsed.host, '127.0.0.1');
+  assert.equal(parsed.secureCookies, true);
+  assert.throws(() => parseUserServerConfig({ ...tunnel,
+    NEGEV_EXPOSE_USERS: undefined }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...tunnel,
+    NEGEV_PUBLIC_ORIGIN: 'http://localhost:3000' }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_EXPOSE_USERS: 'yes' }), TypeError);
+});
+
 test('incomplete or ambiguous user-server configuration fails closed', () => {
   for (const change of [
     { NEGEV_USER_SERVER: undefined }, { NEGEV_DATA_DIR: 'relative' },

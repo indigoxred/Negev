@@ -320,8 +320,16 @@ export function parseUserServerConfig(env) {
   const publicOrigin = env.NEGEV_PUBLIC_ORIGIN;
   const origin = baseUrl(publicOrigin, 'public origin');
   const host = env.NEGEV_LISTEN_HOST ?? '127.0.0.1';
-  const exposed = host === '0.0.0.0' && env.NEGEV_EXPOSE_USERS === '1';
-  if (host !== '127.0.0.1' && !exposed) throw new TypeError('User listener bind not allowed');
+  if (env.NEGEV_EXPOSE_USERS !== undefined &&
+      !['0', '1'].includes(env.NEGEV_EXPOSE_USERS)) {
+    throw new TypeError('Invalid user exposure flag');
+  }
+  const exposed = env.NEGEV_EXPOSE_USERS === '1';
+  // A tunnel running in the same network namespace can reach loopback. Keep
+  // the HTTPS origin and secure cookie without opening a second LAN listener.
+  if (host !== '127.0.0.1' && !(host === '0.0.0.0' && exposed)) {
+    throw new TypeError('User listener bind not allowed');
+  }
   if (exposed ? origin.protocol !== 'https:' :
       origin.protocol !== 'http:' || !['localhost', '127.0.0.1'].includes(origin.hostname)) {
     throw new TypeError('Public origin does not match listener safety');

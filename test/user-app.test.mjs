@@ -10,6 +10,32 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', async () => {
+  const publicOrigin = 'https://negev.example.test';
+  const accounts = {
+    authenticate: async () => ({ id: 1, username: 'Owner', role: 'admin',
+      sessionVersion: 1, adultAllowed: true }),
+    registerInvite: async () => null, getSessionUser: () => null,
+    createInvite: () => null, revokeSessions: () => false,
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin, secureCookies: true,
+    submitRequest: async () => null, readRequest: () => null });
+  try {
+    const denied = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: 'http://localhost:3000' },
+      payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    assert.equal(denied.statusCode, 403);
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: publicOrigin },
+      payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    assert.equal(login.statusCode, 200);
+    assert.match(login.headers['set-cookie'], /^__Host-negev=/);
+    assert.match(login.headers['set-cookie'], /; Secure(?:;|$)/i);
+    assert.match(login.headers['set-cookie'], /; HttpOnly(?:;|$)/i);
+  } finally { await app.close(); }
+});
+
 test('busy password verification is retryable for sign-in and invited registration', async () => {
   const accounts = {
     authenticate: async () => ({ state: 'busy' }),
