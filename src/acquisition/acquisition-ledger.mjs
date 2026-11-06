@@ -121,6 +121,10 @@ export function openAcquisitionLedger(dbPath) {
       .some((column) => column.name === 'reason')) {
       db.exec("ALTER TABLE acquisition_retirements ADD COLUMN reason TEXT NOT NULL DEFAULT 'file_wrong_identity' CHECK(reason IN ('file_wrong_identity','stalled_download'))");
     }
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_prestart_mismatch_retirements (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      retired_ms INTEGER NOT NULL CHECK(retired_ms >= 0)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_stall_retirement_intents (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       torrent_hash TEXT NOT NULL,
@@ -170,6 +174,10 @@ export function openAcquisitionLedger(dbPath) {
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
   const findRetirement = db.prepare('SELECT torrent_hash,reason,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const findPrestartMismatchRetirement = db.prepare(
+    'SELECT retired_ms FROM acquisition_prestart_mismatch_retirements WHERE attempt_id=?');
+  const insertPrestartMismatchRetirement = db.prepare(
+    'INSERT INTO acquisition_prestart_mismatch_retirements(attempt_id,retired_ms) VALUES (?,?)');
   const findStallIntent = db.prepare(`SELECT torrent_hash,status,created_ms,updated_ms
     FROM acquisition_stall_retirement_intents WHERE attempt_id=?`);
   const insertStallIntent = db.prepare(`INSERT INTO acquisition_stall_retirement_intents
@@ -322,6 +330,107 @@ export function openAcquisitionLedger(dbPath) {
         insertRelease.run(attemptId, nowMs);
         deactivateClaims.run(attemptId);
         return { state: 'released_pre_dispatch' };
+      });
+    },
+    requestPrestartMismatchRetirement({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid prestart mismatch retirement request');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash ||
+            row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        if (row.status !== 'torrent_observed' || findStart.get(attemptId) ||
+            findRelease.get(attemptId) || findRejection.get(attemptId) ||
+            findRetirement.get(attemptId) || nowMs < row.updated_ms ||
+            (handoffTable.get() && db.prepare(
+              'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) ||
+            (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='completion_checks'").get() &&
+              db.prepare('SELECT 1 FROM completion_checks WHERE attempt_id=?').get(attemptId))) {
+          return held('prestart_state_changed');
+        }
+        const existing = findStallIntent.get(attemptId);
+        if (existing) return existing.torrent_hash === normalizedHash
+          ? { state: existing.status === 'requested'
+            ? 'retirement_requested' : 'delete_unknown' }
+          : held('torrent_conflict');
+        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='start_checks'").get() ||
+            !db.prepare(`SELECT 1 FROM start_checks WHERE attempt_id=? AND
+              state='held' AND reason='related_installment_mismatch'`).get(attemptId)) {
+          return held('mismatch_not_recorded');
+        }
+        insertStallIntent.run(attemptId, normalizedHash, nowMs, nowMs);
+        return { state: 'retirement_requested' };
+      });
+    },
+    beginPrestartMismatchDelete({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid prestart mismatch delete intent');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash ||
+            row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        const intent = findStallIntent.get(attemptId);
+        if (intent?.torrent_hash !== normalizedHash) {
+          return held('retirement_not_requested');
+        }
+        if (row.status !== 'torrent_observed' || findStart.get(attemptId) ||
+            findRetirement.get(attemptId) || nowMs < row.updated_ms ||
+            nowMs < intent.updated_ms) return held('prestart_state_changed');
+        if (intent.status === 'delete_unknown') {
+          return { state: 'delete_unknown', sendNow: false };
+        }
+        return beginStallDelete.run(nowMs, attemptId, normalizedHash).changes === 1
+          ? { state: 'delete_unknown', sendNow: true }
+          : held('retirement_conflict');
+      });
+    },
+    // An external coordinator must first prove the exact stopped torrent is
+    // absent and its staging leaf empty. This only retires a previously saved
+    // wrong-installment attempt that never crossed Negev's start boundary.
+    retirePrestartMismatch({ attemptId, hash, nowMs }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs)) {
+        throw new TypeError('Invalid prestart mismatch retirement');
+      }
+      return transact(() => {
+        const row = findAttempt.get(attemptId);
+        if (!row) return held('attempt_missing');
+        const normalizedHash = hash.toLowerCase();
+        if (row.expected_hash !== normalizedHash ||
+            row.torrent_hash !== normalizedHash) return held('torrent_conflict');
+        if (findPrestartMismatchRetirement.get(attemptId)) {
+          return { state: 'retired_prestart_mismatch' };
+        }
+        if (row.status !== 'torrent_observed' || findStart.get(attemptId) ||
+            findRelease.get(attemptId) || findRejection.get(attemptId) ||
+            findRetirement.get(attemptId) ||
+            (handoffTable.get() && db.prepare(
+              'SELECT 1 FROM handoff_intents WHERE attempt_id=?').get(attemptId)) ||
+            (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='completion_checks'").get() &&
+              db.prepare('SELECT 1 FROM completion_checks WHERE attempt_id=?').get(attemptId))) {
+          return held('prestart_state_changed');
+        }
+        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='start_checks'").get() ||
+            !db.prepare(`SELECT 1 FROM start_checks WHERE attempt_id=? AND
+              state='held' AND reason='related_installment_mismatch'`).get(attemptId)) {
+          return held('mismatch_not_recorded');
+        }
+        const intent = findStallIntent.get(attemptId);
+        if (intent?.torrent_hash !== normalizedHash ||
+            intent.status !== 'delete_unknown') {
+          return held('retirement_not_requested');
+        }
+        if (nowMs < row.updated_ms) return held('time_before_last_transition');
+        insertRetirement.run(attemptId, normalizedHash, 'file_wrong_identity', nowMs);
+        insertPrestartMismatchRetirement.run(attemptId, nowMs);
+        deactivateClaims.run(attemptId);
+        touchAttempt.run(nowMs, attemptId);
+        return { state: 'retired_prestart_mismatch' };
       });
     },
     // Wrong AniDB identity is a terminal result for this exact candidate.
@@ -609,6 +718,7 @@ export function openAcquisitionLedger(dbPath) {
         if (!row) return held('attempt_missing');
         if (findRelease.get(attemptId)) return held('candidate_released');
         if (findRejection.get(attemptId)) return held('candidate_rejected');
+        if (findStallIntent.get(attemptId)) return held('retirement_requested');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const normalizedHash = hash.toLowerCase();
         const normalizedDigest = manifestDigest.toLowerCase();
@@ -641,6 +751,8 @@ export function openAcquisitionLedger(dbPath) {
         ...(row.evidence_policy === 'first_time_permissive'
           ? { evidencePolicy: row.evidence_policy } : {}),
         status: findRelease.get(attemptId) ? 'released_pre_dispatch' :
+          findPrestartMismatchRetirement.get(attemptId)
+            ? 'retired_prestart_mismatch' :
           findRetirement.get(attemptId)?.reason === 'stalled_download'
             ? 'retired_stalled' :
             findRetirement.get(attemptId) ? 'retired_rejected' :
