@@ -511,7 +511,7 @@ function loadRequests({ silent = false } = {}) {
   void loadRequestView('watching', false, silent);
   void loadRequestView('history', false, silent);
 }
-setInterval(() => {
+function refreshVisibleRequests() {
   if (!state.user || state.routePage !== 'requests') return;
   refreshRequestStatusAges();
   if (document.hidden) return;
@@ -519,7 +519,9 @@ setInterval(() => {
     void loadRequestView('watching', false, true);
     void refreshExpandedHistory();
   } else loadRequests({ silent: true });
-}, 60_000);
+}
+setInterval(refreshVisibleRequests, 60_000);
+document.addEventListener('visibilitychange', refreshVisibleRequests);
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??
     state.searchItems.get(item.anidbId)?.adult };

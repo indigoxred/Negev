@@ -184,14 +184,6 @@ test('title and library controls recover from pending and failed reads without d
         assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
       const base = `http://127.0.0.1:${server.address().port}`;
-      await send('Page.addScriptToEvaluateOnNewDocument', { source: `
-        Object.defineProperty(document, 'hidden', { configurable: true,
-          get: () => false });
-        const originalInterval = window.setInterval;
-        window.setInterval = (callback, ms, ...args) => {
-          if (ms === 60000) { window.__requestTick = callback; return 1; }
-          return originalInterval(callback, ms, ...args);
-        };` });
       await send('Page.navigate', { url: `${base}/#/title/1` });
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
@@ -264,15 +256,13 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Pending title')"), true);
       assert.equal(await evaluate("document.querySelector('#more-requests').hidden"), true);
       proofReady = true;
-      assert.equal(await evaluate('document.hidden'), false,
-        'the simulated foreground request tab must be visible');
-      assert.equal(await evaluate('typeof window.__requestTick'), 'function');
-      await evaluate('window.__requestTick()');
+      await evaluate("Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange'))");
+      assert.equal(await evaluate('document.hidden'), false);
       await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), true);
       assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
       newHistoryRequest = true;
-      await evaluate('window.__requestTick()');
+      await evaluate("document.dispatchEvent(new Event('visibilitychange'))");
       await until("document.querySelector('#request-list')?.textContent.includes('New request')");
       assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), false);
@@ -325,7 +315,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#request-list')?.textContent.includes('Downloading')");
       await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
-        window.__requestTick()`);
+        document.dispatchEvent(new Event('visibilitychange'))`);
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
       transferObservedMs = null;
       holdWatchingRequests = true;
