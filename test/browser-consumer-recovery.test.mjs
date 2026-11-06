@@ -33,6 +33,7 @@ test('title and library controls recover from pending and failed reads without d
     let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
+    let transferObservedMs = null;
     let holdWatchingRequests = true;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
@@ -112,9 +113,14 @@ test('title and library controls recover from pending and failed reads without d
               oneTimeAcquisitionComplete: true } } :
           { id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
             episodeIds: [11], monitorFuture: false, watchClosed: true,
-            progress: { state: 'saved', targetCount: 1,
+            progress: { state: transferObservedMs === null ? 'saved' :
+              'download_unverified', targetCount: 1,
               publicAvailability: proofReady ? 'verified_recently' : 'unverified',
-              publicVerifiedTargets: proofReady ? 1 : 0 } }] : [],
+              publicVerifiedTargets: proofReady ? 1 : 0,
+              ...(transferObservedMs === null ? {} : { transfer: {
+                progressBasisPoints: 3750, etaSeconds: 120,
+                speedBytesPerSecond: 512, transferState: 'active',
+                observedMs: transferObservedMs } }) } }] : [],
         nextBeforeId: history && !older ? 7 : null });
       } else {
         const file = path === '/' ? 'index.html' : path.slice(1);
@@ -172,6 +178,12 @@ test('title and library controls recover from pending and failed reads without d
         assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
       const base = `http://127.0.0.1:${server.address().port}`;
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+        const originalInterval = window.setInterval;
+        window.setInterval = (callback, ms, ...args) => {
+          if (ms === 60000) { window.__requestTick = callback; return 1; }
+          return originalInterval(callback, ms, ...args);
+        };` });
       await send('Page.navigate', { url: `${base}/#/title/1` });
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
@@ -284,6 +296,16 @@ test('title and library controls recover from pending and failed reads without d
       await wait(100);
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#watch-list')?.textContent.includes('No Airing shows')");
+      proofReady = false;
+      transferObservedMs = Date.now();
+      await evaluate("location.hash = '#/library'");
+      await until("!document.querySelector('#view-library').hidden");
+      await evaluate("location.hash = '#/requests'");
+      await until("document.querySelector('#request-list')?.textContent.includes('Downloading')");
+      await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
+        window.__requestTick()`);
+      await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
+      transferObservedMs = null;
       holdWatchingRequests = true;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");
@@ -311,6 +333,7 @@ test('title and library controls recover from pending and failed reads without d
       socket?.close();
       child.kill();
       await closed;
+      server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       await rm(profile, { recursive: true, force: true,
         maxRetries: 5, retryDelay: 100 });

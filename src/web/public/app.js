@@ -17,6 +17,7 @@ const state = { csrf: null, user: null, selected: null,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null, routePage: null,
+  requestHistoryExpanded: false,
   discoverLoaded: false, showAdult: true, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
@@ -180,6 +181,7 @@ function showSession(data) {
     byId('detail').replaceChildren(element('p',
       'Select a result to see its details.', 'muted'));
     state.nextBeforeId = { watching: null, history: null };
+    state.requestHistoryExpanded = false;
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
@@ -238,6 +240,7 @@ function clearWorkspace() {
   state.routePage = null;
   state.discoverLoaded = false;
   state.nextBeforeId = { watching: null, history: null };
+  state.requestHistoryExpanded = false;
   nextReviewAttemptId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
@@ -281,7 +284,7 @@ async function refreshSession() {
     return false;
   }
 }
-async function loadRequestView(view, append = false) {
+async function loadRequestView(view, append = false, silent = false) {
   if (!state.user) return;
   const session = sessionResponses.current();
   const responseEpoch = requestResponses[view];
@@ -290,7 +293,7 @@ async function loadRequestView(view, append = false) {
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
-  if (!append) {
+  if (!append && !silent) {
     state.nextBeforeId[view] = null;
     more.hidden = true;
     list.replaceChildren(element('p', watching ? 'Loading watches…' : 'Loading requests…', 'muted'));
@@ -301,7 +304,12 @@ async function loadRequestView(view, append = false) {
     const page = await api(`/api/requests?view=${view}${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
         !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId) return;
-    if (!append) list.replaceChildren();
+    if (!append) {
+      list.replaceChildren();
+      state.nextBeforeId[view] = null;
+      more.hidden = true;
+      if (!watching) state.requestHistoryExpanded = false;
+    }
     if (!append && page.items.length === 0) {
       list.append(element('p', watching ? 'No Airing shows are being watched.' :
         'No finished or one-time requests yet. Search for an anime to begin.', 'muted'));
@@ -332,10 +340,8 @@ async function loadRequestView(view, append = false) {
         { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
       const status = element('div', undefined,
         `request-status status-${presentation.group}`);
-      status.append(element('strong', presentation.stage, 'request-stage'),
-        element('span', presentation.detail, 'request-detail'));
-      if (presentation.note) status.append(element('span', presentation.note,
-        'request-note'));
+      status.negevRequest = item;
+      renderRequestStatus(status, presentation);
       row.append(heading, status);
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
@@ -401,13 +407,14 @@ async function loadRequestView(view, append = false) {
       else requestGroupRows(list, presentation.group).append(row);
     }
     state.nextBeforeId[view] = page.nextBeforeId;
+    if (append && !watching) state.requestHistoryExpanded = true;
     more.hidden = state.nextBeforeId[view] === null;
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
         responseEpoch.isCurrent(listRequest) && state.user?.id === userId) {
-      if (!append) list.replaceChildren(element('p',
+      if (!append && !silent) list.replaceChildren(element('p',
         'Could not load requests. Select Refresh to try again.', 'error'));
-      message(error.message, true);
+      if (!silent) message(error.message, true);
     }
   }
 }
@@ -431,11 +438,31 @@ function requestGroupRows(list, group) {
   }
   return section.lastElementChild;
 }
-function loadRequests() {
-  if (!state.user) return;
-  void loadRequestView('watching');
-  void loadRequestView('history');
+function renderRequestStatus(status, presentation) {
+  status.className = `request-status status-${presentation.group}`;
+  status.replaceChildren(element('strong', presentation.stage, 'request-stage'),
+    element('span', presentation.detail, 'request-detail'));
+  if (presentation.note) status.append(element('span', presentation.note,
+    'request-note'));
 }
+function refreshRequestStatusAges() {
+  for (const status of document.querySelectorAll('.request-status')) {
+    const item = status.negevRequest;
+    if (!item?.progress?.transfer) continue;
+    renderRequestStatus(status, requestPresentation(item.progress, item.kind,
+      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed }));
+  }
+}
+function loadRequests({ silent = false } = {}) {
+  if (!state.user) return;
+  void loadRequestView('watching', false, silent);
+  void loadRequestView('history', false, silent);
+}
+setInterval(() => {
+  if (!state.user || state.routePage !== 'requests' || document.hidden) return;
+  refreshRequestStatusAges();
+  if (!state.requestHistoryExpanded) loadRequests({ silent: true });
+}, 60_000);
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??
     state.searchItems.get(item.anidbId)?.adult };

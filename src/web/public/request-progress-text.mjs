@@ -80,7 +80,8 @@ export function requestPresentation(progress, kind,
         note: progress.identityCheckPending ?
           'Another downloaded file still needs identity checking.' :
           progress.identityRetirementPending ?
-            'Another release is being checked.' : '' };
+            'Another release is being checked.' :
+            measuredDownload()?.detail ?? '' };
       case 'private_copy_recorded':
       case 'import_unverified': return { stage: 'Adding to the library',
         detail: 'The downloaded files were checked; Plex playback is not confirmed yet.',

@@ -97,6 +97,11 @@ test('a measured transfer is request-scoped, durable, and expires before it can 
       assert.equal(expired.read(1).transfer, undefined);
       assert.equal(recent.read(other.requestId).transfer, undefined);
       assert.equal(recent.read(999), null);
+      assert.equal(ctx.acquisitions.requestStalledRetirement({
+        attemptId: ctx.attemptIds[0], hash: ctx.hashes[0],
+        nowMs: 1_001 }).state, 'retirement_requested');
+      assert.equal(recent.read(1).transfer, undefined,
+        'a retirement intent invalidates the old download snapshot');
     } finally { recent.close(); expired.close(); }
   });
 });

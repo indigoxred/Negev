@@ -58,12 +58,14 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
         LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
         LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
         LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
+        LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
         WHERE a.request_id=? AND a.status='torrent_observed'
           AND c.state='held' AND c.reason='incomplete'
           AND c.progress_bp IS NOT NULL
           AND c.checked_ms>? AND c.checked_ms<=?
           AND h.attempt_id IS NULL AND j.attempt_id IS NULL
           AND t.attempt_id IS NULL AND x.attempt_id IS NULL
+          AND si.attempt_id IS NULL
         ORDER BY c.checked_ms DESC,a.id DESC LIMIT 1`);
     }
     const checkedMs = now();

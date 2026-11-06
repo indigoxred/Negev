@@ -32,6 +32,9 @@ test('recent measured transfer reports its state and a qualified download ETA on
   assert.equal(requestPresentation({ ...base, state: 'download_unverified',
     transfer }, 'series', { nowMs: 1_000 + 16 * 60_000 }).stage,
   'Checking download status');
+  assert.equal(requestPresentation({ ...base, state: 'partial_private_copy',
+    privateVerifiedTargets: 3, transfer }, 'series',
+  { nowMs: 1_000 }).note.includes('37.5% downloaded'), true);
 });
 
 test('exact public proof gives clear partial and complete coverage', () => {
