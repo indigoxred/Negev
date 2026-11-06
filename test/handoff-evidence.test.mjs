@@ -33,3 +33,38 @@ test('unsafe, duplicate, and over-budget handoff evidence holds', () => {
       { state: 'held', reason: 'invalid_handoff_evidence' });
   }
 });
+
+test('provisional handoff gets a distinct durable manifest without a fabricated AniDB file ID', () => {
+  const videos = [
+    { name: first.name, size: first.size, ed2k: first.ed2k,
+      episodeIds: first.episodeIds },
+    { name: second.name, size: second.size, ed2k: second.ed2k,
+      episodeIds: second.episodeIds },
+  ];
+  const candidate = evaluateHandoffEvidence({ ...input,
+    identity: 'provisional', files: [...videos].reverse() });
+  assert.equal(candidate.state, 'valid');
+  assert.equal(candidate.manifest.version, 2);
+  assert.equal(candidate.manifest.identity, 'provisional');
+  assert.equal(candidate.manifest.videos[0].anidbFileId, undefined);
+  const restored = evaluateHandoffEvidence({ ...candidate.manifest,
+    files: candidate.manifest.videos });
+  assert.deepEqual(restored, candidate);
+  assert.notEqual(candidate.digest, evaluateHandoffEvidence(input).digest);
+});
+
+test('provisional handoff refuses exact IDs and unsafe episode evidence', () => {
+  const provisional = { ...input, identity: 'provisional',
+    files: [{ name: first.name, size: first.size, ed2k: first.ed2k,
+      episodeIds: [1001] }] };
+  for (const change of [
+    { files: [first] },
+    { files: [{ ...provisional.files[0], episodeIds: [1001, 1001] }] },
+    { files: [{ ...provisional.files[0], ed2k: 'bad' }] },
+    { files: [{ ...provisional.files[0], name: '../01.mkv' }] },
+    { identity: 'unknown' },
+  ]) {
+    assert.deepEqual(evaluateHandoffEvidence({ ...provisional, ...change }),
+      { state: 'held', reason: 'invalid_handoff_evidence' });
+  }
+});
