@@ -453,15 +453,47 @@ function refreshRequestStatusAges() {
       { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed }));
   }
 }
+async function refreshExpandedHistory() {
+  const session = sessionResponses.current();
+  const epoch = requestResponses.history.invalidate();
+  const userId = state.user?.id;
+  try {
+    const page = await api('/api/requests?view=history&limit=50');
+    if (!sessionResponses.isCurrent(session) ||
+        !requestResponses.history.isCurrent(epoch) ||
+        state.user?.id !== userId || !state.requestHistoryExpanded) return;
+    const latest = new Map(page.items.map((item) => [item.id, item]));
+    const list = byId('request-list');
+    for (const status of list.querySelectorAll('.request-status')) {
+      const item = latest.get(status.negevRequest?.id);
+      if (!item) continue;
+      status.negevRequest = item;
+      const presentation = requestPresentation(item.progress, item.kind,
+        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      renderRequestStatus(status, presentation);
+      const row = status.closest('.request-row');
+      if (row && row.parentElement !== requestGroupRows(list, presentation.group)) {
+        requestGroupRows(list, presentation.group).append(row);
+      }
+    }
+    for (const group of list.querySelectorAll('[data-request-group]')) {
+      if (!group.querySelector('.request-row')) group.remove();
+    }
+  } catch { /* Keep loaded history and its retry control on a failed poll. */ }
+}
 function loadRequests({ silent = false } = {}) {
   if (!state.user) return;
   void loadRequestView('watching', false, silent);
   void loadRequestView('history', false, silent);
 }
 setInterval(() => {
-  if (!state.user || state.routePage !== 'requests' || document.hidden) return;
+  if (!state.user || state.routePage !== 'requests') return;
   refreshRequestStatusAges();
-  if (!state.requestHistoryExpanded) loadRequests({ silent: true });
+  if (document.hidden) return;
+  if (state.requestHistoryExpanded) {
+    void loadRequestView('watching', false, true);
+    void refreshExpandedHistory();
+  } else loadRequests({ silent: true });
 }, 60_000);
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??

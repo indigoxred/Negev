@@ -179,6 +179,8 @@ test('title and library controls recover from pending and failed reads without d
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+        Object.defineProperty(document, 'hidden', { configurable: true,
+          get: () => false });
         const originalInterval = window.setInterval;
         window.setInterval = (callback, ms, ...args) => {
           if (ms === 60000) { window.__requestTick = callback; return 1; }
@@ -245,7 +247,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(pageTwoReads, 2);
       assert.equal(await evaluate("document.querySelectorAll('#library-list .poster-card').length"), 2);
       const libraryReadsBeforeReturn = firstLibraryReads;
-      proofReady = true;
+      proofReady = false;
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#request-list')?.textContent.includes('Pending title')");
       await evaluate("document.querySelector('#more-requests').click()");
@@ -255,6 +257,11 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list [data-request-group=completed]')?.textContent.includes('Older completed title')"), true);
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Pending title')"), true);
       assert.equal(await evaluate("document.querySelector('#more-requests').hidden"), true);
+      proofReady = true;
+      await evaluate('window.__requestTick()');
+      await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), true);
+      assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
       await evaluate("location.hash = '#/library'");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
