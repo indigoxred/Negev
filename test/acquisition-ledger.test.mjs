@@ -6,6 +6,7 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openStartQueue } from '../src/acquisition/start-queue.mjs';
 
 async function withLedger(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-attempts-'));
@@ -26,6 +27,84 @@ async function withLedger(run) {
 }
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
+
+test('a proven absent pre-start related-installment mismatch releases only its claims', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    const queue = openStartQueue(dbPath);
+    try {
+      const hash = 'a'.repeat(40);
+      const claim = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001, 1002], nowMs: 200 });
+      ledger.bindPreparedTorrent({ attemptId: claim.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.recordFilePlan({ attemptId: claim.attemptId, hash,
+        plannedFiles: [
+          { name: '01.mkv', size: 1000, episodeIds: [1001] },
+          { name: '02.mkv', size: 1000, episodeIds: [1002] },
+        ], nowMs: 202 });
+      ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+      ledger.recordTorrent({ attemptId: claim.attemptId, hash, nowMs: 204 });
+      assert.deepEqual(ledger.retirePrestartMismatch({ attemptId: claim.attemptId,
+        hash, nowMs: 205 }), { state: 'held', reason: 'mismatch_not_recorded' });
+      assert.deepEqual(ledger.requestPrestartMismatchRetirement({
+        attemptId: claim.attemptId, hash, nowMs: 205 }),
+      { state: 'held', reason: 'mismatch_not_recorded' });
+      const next = queue.claimNext({ nowMs: 205 });
+      queue.recordResult({ attemptId: next.attemptId, version: next.version,
+        state: 'held', reason: 'related_installment_mismatch', checkedMs: 206 });
+      assert.deepEqual(ledger.retirePrestartMismatch({ attemptId: claim.attemptId,
+        hash, nowMs: 207 }),
+      { state: 'held', reason: 'retirement_not_requested' });
+      assert.deepEqual(ledger.requestPrestartMismatchRetirement({
+        attemptId: claim.attemptId, hash, nowMs: 207 }),
+      { state: 'retirement_requested' });
+      assert.deepEqual(ledger.beginStart({ attemptId: claim.attemptId,
+        hash, manifestDigest: 'b'.repeat(64), nowMs: 208 }),
+      { state: 'held', reason: 'retirement_requested' });
+      assert.deepEqual(ledger.beginPrestartMismatchDelete({
+        attemptId: claim.attemptId, hash, nowMs: 208 }),
+      { state: 'delete_unknown', sendNow: true });
+      assert.deepEqual(ledger.retirePrestartMismatch({ attemptId: claim.attemptId,
+        hash: 'b'.repeat(40), nowMs: 209 }),
+      { state: 'held', reason: 'torrent_conflict' });
+      assert.deepEqual(ledger.retirePrestartMismatch({ attemptId: claim.attemptId,
+        hash, nowMs: 209 }), { state: 'retired_prestart_mismatch' });
+      assert.equal(ledger.getAttempt(claim.attemptId).status,
+        'retired_prestart_mismatch');
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 210 }),
+      { state: 'held', reason: 'candidate_retired' });
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'correct-installment' },
+        episodeIds: [1001, 1002], nowMs: 211 }).state, 'reserved');
+    } finally { queue.close(); ledger.close(); }
+  }));
+
+test('a started attempt cannot enter the prestart mismatch deletion path', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    const queue = openStartQueue(dbPath);
+    try {
+      const hash = 'a'.repeat(40);
+      const claim = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      ledger.bindPreparedTorrent({ attemptId: claim.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 202 });
+      ledger.recordTorrent({ attemptId: claim.attemptId, hash, nowMs: 203 });
+      ledger.beginStart({ attemptId: claim.attemptId, hash,
+        manifestDigest: 'b'.repeat(64), nowMs: 204 });
+      assert.equal(ledger.requestStalledRetirement({ attemptId: claim.attemptId,
+        hash, nowMs: 205 }).state, 'retirement_requested');
+      assert.deepEqual(ledger.requestPrestartMismatchRetirement({
+        attemptId: claim.attemptId, hash, nowMs: 206 }),
+      { state: 'held', reason: 'prestart_state_changed' });
+      assert.deepEqual(ledger.beginPrestartMismatchDelete({
+        attemptId: claim.attemptId, hash, nowMs: 207 }),
+      { state: 'held', reason: 'prestart_state_changed' });
+    } finally { queue.close(); ledger.close(); }
+  }));
 
 test('active-claim preview skips other releases but preserves unfinished replay', async () =>
   withLedger(async ({ dbPath, firstId }) => {

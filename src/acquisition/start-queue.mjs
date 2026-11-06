@@ -41,10 +41,12 @@ export function openStartQueue(dbPath) {
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     LEFT JOIN start_checks c ON c.attempt_id=a.id
     WHERE a.status IN ('dispatch_unknown','torrent_observed') AND
       s.attempt_id IS NULL AND
       x.attempt_id IS NULL AND j.attempt_id IS NULL AND t.attempt_id IS NULL AND
+      si.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
@@ -67,9 +69,10 @@ export function openStartQueue(dbPath) {
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state='held' AND c.next_due_ms IS NULL
       AND s.attempt_id IS NULL AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL
+      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;

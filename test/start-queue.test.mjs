@@ -59,6 +59,19 @@ test('one stopped torrent holds while later stopped torrents advance', async () 
       ctx.ids[0].attemptId);
   }));
 
+test('a prestart retirement intent removes that attempt from start retries', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'held',
+      reason: 'related_installment_mismatch', checkedMs: 1_001 });
+    const { attemptId, hash } = ctx.ids[0];
+    assert.equal(ctx.acquisitions.requestPrestartMismatchRetirement({
+      attemptId, hash, nowMs: 1_002 }).state, 'retirement_requested');
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_801_001 }).attemptId,
+      ctx.ids[1].attemptId);
+  }));
+
 test('a saved uncertain add is selected for exact stopped-torrent recovery', async () =>
   fixture(async (ctx) => {
     const request = ctx.requests.submit({ requesterId: 1,
