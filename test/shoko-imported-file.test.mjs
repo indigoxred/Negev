@@ -44,6 +44,17 @@ test('returns release identity without deciding whether it matches the request',
         start: 0, end: 100 }] } });
 });
 
+test('does not relabel a Shoko release that points at another episode', async () => {
+  const result = await readShokoImportedFile({ ...options,
+    fetchImpl: async () => response({ ...file, Release: { ProviderName: 'User',
+      ID: null, IsCorrupted: false, CrossReferences: [{
+        AnidbAnimeID: 999, AnidbEpisodeID: 888,
+        PercentageStart: 0, PercentageEnd: 100 }] } }) });
+  assert.equal(result.state, 'imported_recognized');
+  assert.deepEqual(result.release.crossReferences, [{ animeId: 999,
+    episodeId: 888, start: 0, end: 100 }]);
+});
+
 test('refuses conflicting bytes or malformed release evidence', async () => {
   for (const body of [
     { ...file, Size: 901 },
