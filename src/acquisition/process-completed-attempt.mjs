@@ -26,7 +26,8 @@ export async function processCompletedAttempt({
       typeof shoko?.apiKey !== 'string') {
     throw new TypeError('Invalid completed-attempt providers');
   }
-  return prepareRecordedHandoff({
+  let transfer = null;
+  const result = await prepareRecordedHandoff({
     requests, acquisitions, handoffs, attemptId,
     stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, nowMs, readPacer,
     ed2kMode,
@@ -44,11 +45,14 @@ export async function processCompletedAttempt({
         scopedFetch = renewed.fetchImpl;
       }
       return observeTorrentCompletion({ baseUrl: qbittorrent.baseUrl,
-        sessionId, expected, fetchImpl: scopedFetch });
+        sessionId, expected, fetchImpl: scopedFetch,
+        onTransfer: (snapshot) => { transfer = snapshot; } });
     },
     lookup: ({ ed2k, size }) => previewAniDbRelease({
       baseUrl: shoko.baseUrl, providerId: shoko.providerId,
       apiKey: shoko.apiKey, ed2k, size, fetchImpl: shokoFetchImpl,
     }),
   });
+  return result?.state === 'held' && result.reason === 'incomplete' && transfer
+    ? { ...result, transfer } : result;
 }

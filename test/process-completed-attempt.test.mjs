@@ -168,11 +168,17 @@ test('incomplete torrent holds before reading staged bytes or Shoko', async () =
         if (new URL(url).pathname.endsWith('/info')) {
           const body = JSON.parse(await response.text());
           body[0].progress = 0.5;
+          body[0].state = 'downloading';
+          body[0].amount_left = 5;
+          body[0].eta = 120;
+          body[0].dlspeed = 512;
           return { status: 200, text: async () => JSON.stringify(body) };
         }
         return response;
       } });
-    assert.deepEqual(result, { state: 'held', reason: 'incomplete' });
+    assert.deepEqual(result, { state: 'held', reason: 'incomplete',
+      transfer: { progressBasisPoints: 5000, etaSeconds: 120,
+        speedBytesPerSecond: 512, transferState: 'active' } });
     assert.equal(calls.some((call) => call.path.endsWith('/Preview/By-Release')), false);
     assert.equal(handoffs.getHandoff(attemptId), null);
   });

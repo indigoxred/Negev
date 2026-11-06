@@ -9,6 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // AniDB byte check; it does not permit an import by itself.
 export async function observeTorrentCompletion({
   baseUrl, sessionId, expected, fetchImpl = fetch, timeoutMs = 10_000,
+  onTransfer,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -18,6 +19,7 @@ export async function observeTorrentCompletion({
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
       typeof expected.category !== 'string' || !expected.category ||
       typeof expected.savePath !== 'string' || !expected.savePath.startsWith('/') ||
+      (onTransfer !== undefined && typeof onTransfer !== 'function') ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid qBittorrent observation configuration');
   }
@@ -81,17 +83,39 @@ export async function observeTorrentCompletion({
       files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
   const beforeCompletion = evaluateCompletion({ torrent: before, files, expected });
   const afterCompletion = evaluateCompletion({ torrent: after, files: filesAfter, expected });
-  if (before.hash !== after.hash || before.category !== after.category ||
-      before.save_path !== after.save_path ||
+  const sameOwner = before.hash === after.hash &&
+    before.category === expected.category && after.category === expected.category &&
+    before.save_path === expected.savePath && after.save_path === expected.savePath &&
+    before.auto_tmm === false && after.auto_tmm === false &&
+    before.force_start === false && after.force_start === false;
+  if (sameOwner && onTransfer &&
+      ['downloading', 'forcedDL', 'stalledDL', 'queuedDL', 'pausedDL'].includes(after.state) &&
+      Number.isFinite(after.progress) && after.progress >= 0 && after.progress < 1 &&
+      Number.isSafeInteger(after.amount_left) && after.amount_left >= 0) {
+    const eta = Number.isSafeInteger(after.eta) && after.eta > 0 &&
+      after.eta <= 7 * 24 * 60 * 60 ? after.eta : null;
+    const speed = Number.isSafeInteger(after.dlspeed) && after.dlspeed >= 0 &&
+      after.dlspeed <= 10 * 1024 ** 3 ? after.dlspeed : null;
+    const transferState = ['downloading', 'forcedDL'].includes(after.state)
+      ? 'active' : after.state === 'stalledDL' ? 'stalled' :
+        after.state === 'queuedDL' ? 'queued' : 'paused';
+    try { onTransfer({ progressBasisPoints: Math.floor(after.progress * 10_000),
+      etaSeconds: eta, speedBytesPerSecond: speed, transferState }); }
+    catch { /* Display telemetry must never authorize or block an import. */ }
+  }
+  if (!sameOwner ||
       (before.state !== after.state &&
         (beforeCompletion.state !== 'complete' || afterCompletion.state !== 'complete')) ||
       before.progress !== after.progress || before.amount_left !== after.amount_left ||
       before.auto_tmm !== after.auto_tmm || before.force_start !== after.force_start) {
-    return held('torrent_changed');
+    return held(sameOwner && beforeCompletion.reason === 'incomplete' &&
+      afterCompletion.reason === 'incomplete' ? 'incomplete' : 'torrent_changed');
   }
   const fingerprint = (list) => JSON.stringify(list.map((file) => [
     file.index, file.name, file.size, file.priority, file.progress, file.is_seed,
   ]));
-  if (fingerprint(files) !== fingerprint(filesAfter)) return held('manifest_changed');
+  if (fingerprint(files) !== fingerprint(filesAfter)) return held(
+    beforeCompletion.reason === 'incomplete' &&
+      afterCompletion.reason === 'incomplete' ? 'incomplete' : 'manifest_changed');
   return afterCompletion;
 }

@@ -47,6 +47,28 @@ test('missing torrent, changed state and selected unsafe files hold', async () =
   { state: 'held', reason: 'manifest_changed' });
 });
 
+test('reports only a bounded exact-owner transfer observation while the torrent changes', async () => {
+  const snapshots = [];
+  const moving = { ...torrent, state: 'downloading', progress: 0.375,
+    amount_left: 625, eta: 120, dlspeed: 512 };
+  const later = { ...moving, progress: 0.4, amount_left: 600,
+    eta: 110, dlspeed: 640 };
+  const respond = (items) => async () => ({ status: 200,
+    text: async () => JSON.stringify(items.shift()) });
+  const result = await observeTorrentCompletion({ ...config,
+    onTransfer: (snapshot) => snapshots.push(snapshot),
+    fetchImpl: respond([[moving], properties, files, [later], properties, files]) });
+  assert.deepEqual(result, { state: 'held', reason: 'incomplete' });
+  assert.deepEqual(snapshots, [{ progressBasisPoints: 4000,
+    etaSeconds: 110, speedBytesPerSecond: 640, transferState: 'active' }]);
+  snapshots.length = 0;
+  await observeTorrentCompletion({ ...config,
+    onTransfer: (snapshot) => snapshots.push(snapshot),
+    fetchImpl: respond([[{ ...moving, category: 'other' }], properties,
+      files, [{ ...later, category: 'other' }], properties, files]) });
+  assert.deepEqual(snapshots, []);
+});
+
 test('completed seeding state may change while the exact file evidence stays stable', async () => {
   const respond = (items) => async () => ({ status: 200,
     text: async () => JSON.stringify(items.shift()) });
