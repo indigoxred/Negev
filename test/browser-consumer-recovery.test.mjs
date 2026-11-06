@@ -181,7 +181,7 @@ test('title and library controls recover from pending and failed reads without d
           if (await evaluate(expression)) return;
           await wait(100);
         }
-        assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
+        assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.addScriptToEvaluateOnNewDocument', { source: `
@@ -264,6 +264,9 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Pending title')"), true);
       assert.equal(await evaluate("document.querySelector('#more-requests').hidden"), true);
       proofReady = true;
+      assert.equal(await evaluate('document.hidden'), false,
+        'the simulated foreground request tab must be visible');
+      assert.equal(await evaluate('typeof window.__requestTick'), 'function');
       await evaluate('window.__requestTick()');
       await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), true);
