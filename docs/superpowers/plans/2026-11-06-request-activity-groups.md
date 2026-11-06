@@ -8,7 +8,7 @@
 
 **Tech Stack:** Vanilla JavaScript, Node 24 tests, Chromium browser fixture.
 
-**Spec:** `C:/Users/red/Downloads/Negev_WebUI_Product_and_Design_Brief.md`, sections 5.5 and 6.
+**Spec:** Approved Negev consumer WebUI brief, sections 5.5 and 6.
 
 ## Global Constraints
 
@@ -48,7 +48,7 @@
 - [x] Add a browser case that loads a second history page, switches tabs, and checks rows and the older-page control.
 - [x] Run it and observe any failure. The append path already passed; the added sign-out and held-Watching cases exposed two separate failures.
 - [x] Correct the sign-out response boundary and load history independently of a pending Watching read.
-- [ ] Run both isolated browser tests and the full Linux Node suite; commit.
+- [x] Run both isolated browser tests and the full Linux Node suite; commit. GitHub Test run 42144662988 passed on the reviewed source head.
 
 Ruling: A pending Watching read must not delay the History view. The two owner-scoped GETs now run concurrently; if this is wrong, the cost is one extra simultaneous read on route entry, within the existing two-request bound.
 
