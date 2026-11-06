@@ -41,9 +41,10 @@ jobs:
       - name: Test tagged source
         run: |
           pnpm install --frozen-lockfile
-          node --test --test-skip-pattern='browser completes successful login and registration submit transitions|title and library controls recover from pending and failed reads without duplicate writes'
+          node --test --test-skip-pattern='browser completes successful login and registration submit transitions|title and library controls recover from pending and failed reads without duplicate writes|signed-in consumer routes render real shell with search, library and requests'
           node --test test/browser-auth-submit.test.mjs
           node --test test/browser-consumer-recovery.test.mjs
+          node --test test/browser-consumer-shell.test.mjs
       - name: Audit production dependencies
         run: pnpm audit --prod --audit-level high
       - name: Set up Docker Buildx
