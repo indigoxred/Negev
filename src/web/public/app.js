@@ -127,7 +127,7 @@ function renderRoute() {
   } else if (page === 'airing') {
     if (!state.airingLoaded) void loadAiring();
     const choice = seasonChoice(route);
-    const key = `${choice.year}-${choice.season}-${choice.after}`;
+    const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}`;
     if (state.seasonalRouteKey !== key) {
       state.seasonalRouteKey = key;
       void loadSeasonal(choice);
@@ -661,13 +661,14 @@ async function loadLibrary(append = false, continuation = null) {
 }
 function seasonChoice(route) {
   if (route.year && route.season) return { year: route.year,
-    season: route.season, after: route.after ?? 0 };
+    season: route.season, after: route.after ?? 0,
+    kind: route.kind ?? 'all', tag: route.tag ?? '' };
   const date = new Date();
   return { year: date.getUTCFullYear(),
     season: ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)],
-    after: 0 };
+    after: 0, kind: 'all', tag: '' };
 }
-async function loadSeasonal({ year, season, after }) {
+async function loadSeasonal({ year, season, after, kind, tag }) {
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
   const userId = state.user?.id;
@@ -675,6 +676,8 @@ async function loadSeasonal({ year, season, after }) {
   const notice = byId('season-state');
   byId('season-year').value = String(year);
   byId('season-name').value = season;
+  byId('season-kind').value = kind;
+  byId('season-tag').value = tag;
   byId('season-previous').hidden = true;
   byId('season-next').hidden = true;
   notice.textContent = `Loading ${season.toLowerCase()} ${year}…`;
@@ -682,6 +685,8 @@ async function loadSeasonal({ year, season, after }) {
   try {
     const params = new URLSearchParams({ year: String(year), season });
     if (after) params.set('after', String(after));
+    if (kind !== 'all') params.set('kind', kind);
+    if (tag) params.set('tag', tag);
     const page = await api(`/api/seasons?${params}`);
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
@@ -717,11 +722,11 @@ async function loadSeasonal({ year, season, after }) {
     const previous = byId('season-previous');
     previous.hidden = after === 0;
     previous.onclick = () => { location.hash = seasonRoute(year, season,
-      Math.max(0, after - 12)); };
+      Math.max(0, after - 12), { kind, tag }); };
     const next = byId('season-next');
     next.hidden = page.nextAfter === null;
     next.onclick = () => { location.hash = seasonRoute(year, season,
-      page.nextAfter); };
+      page.nextAfter, { kind, tag }); };
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
@@ -732,9 +737,12 @@ byId('season-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const year = Number(byId('season-year').value);
   const season = byId('season-name').value;
+  const kind = byId('season-kind').value;
+  const tag = byId('season-tag').value;
   if (!Number.isSafeInteger(year) || year < 1900 || year > 2100) return;
-  const route = seasonRoute(year, season);
-  if (location.hash === route) void loadSeasonal({ year, season, after: 0 });
+  const route = seasonRoute(year, season, 0, { kind, tag });
+  if (location.hash === route) void loadSeasonal({ year, season,
+    after: 0, kind, tag });
   else location.hash = route;
 });
 async function loadAiring() {

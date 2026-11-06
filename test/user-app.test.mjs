@@ -42,6 +42,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const observed = [];
   const discovered = [];
   const previewed = [];
+  const seasonalInputs = [];
   let acquisitionState = 'disabled';
   const knownTitles = new Set([1234, 1235]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
@@ -63,14 +64,15 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
         scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] }),
-    listSeasonalTitles: async ({ year, season, after, limit }) => ({
-      state: 'ready', year, season, sourceDate: '2026-11-05',
-      items: [{ anidbId: 1234, title: 'Example series',
-        type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
-        libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
-      nextAfter: null,
-      requestedPage: { after, limit },
-    }),
+    listSeasonalTitles: async ({ year, season, after, limit, kind, tag }) => {
+      seasonalInputs.push({ year, season, after, limit, kind, tag });
+      return { state: 'ready', year, season, sourceDate: '2026-11-05',
+        items: [{ anidbId: 1234, title: 'Example series',
+          type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
+        nextAfter: null,
+        requestedPage: { after, limit } };
+    },
     readPoster: async ({ uid }) => uid === '123e4567-e89b-42d3-a456-426614174000'
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([1, 2, 3]) }
       : { state: 'unavailable' },
@@ -226,6 +228,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       nextAfter: null });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&admin=true',
+      headers: { cookie } })).statusCode, 400);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL&kind=movies&tag=action',
+      headers: { cookie } })).statusCode, 200);
+    assert.deepEqual(seasonalInputs.at(-1), { year: 2026, season: 'FALL',
+      after: 0, limit: 12, kind: 'movies', tag: 'action' });
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL&tag=%0A',
       headers: { cookie } })).statusCode, 400);
     const review = await app.inject({ method: 'GET',
       url: '/api/admin/review', headers: { cookie } });
