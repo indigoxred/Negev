@@ -316,6 +316,7 @@ async function loadRequestView(view, append = false, silent = false) {
     }
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
+      row.dataset.recentPage = String(!append);
       row.append(posterImage(item));
       const heading = element('div');
       const targetCount = item.episodeIds.length;
@@ -409,6 +410,18 @@ async function loadRequestView(view, append = false, silent = false) {
     state.nextBeforeId[view] = page.nextBeforeId;
     if (append && !watching) state.requestHistoryExpanded = true;
     more.hidden = state.nextBeforeId[view] === null;
+    if (watching && state.requestHistoryExpanded) {
+      const watched = new Set(page.items.map((item) => item.id));
+      const history = byId('request-list');
+      for (const status of history.querySelectorAll('.request-status')) {
+        if (watched.has(status.negevRequest?.id)) {
+          status.closest('.request-row')?.remove();
+        }
+      }
+      for (const group of history.querySelectorAll('[data-request-group]')) {
+        if (!group.querySelector('.request-row')) group.remove();
+      }
+    }
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
         responseEpoch.isCurrent(listRequest) && state.user?.id === userId) {
@@ -464,6 +477,18 @@ async function refreshExpandedHistory() {
         state.user?.id !== userId || !state.requestHistoryExpanded) return;
     const latest = new Map(page.items.map((item) => [item.id, item]));
     const list = byId('request-list');
+    const priorTop = [...list.querySelectorAll('.request-row[data-recent-page="true"]')]
+      .map((row) => row.querySelector('.request-status')?.negevRequest?.id)
+      .sort((a, b) => b - a);
+    const currentTop = page.items.slice(0, 20).map((item) => item.id)
+      .sort((a, b) => b - a);
+    if (priorTop.length !== currentTop.length ||
+        priorTop.some((id, index) => id !== currentTop[index])) {
+      // A new request or a history/watch move changes membership. Rebuild the
+      // newest page rather than leave a duplicate or hide the new request.
+      void loadRequestView('history', false, true);
+      return;
+    }
     for (const status of list.querySelectorAll('.request-status')) {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;

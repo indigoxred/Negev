@@ -34,6 +34,7 @@ test('title and library controls recover from pending and failed reads without d
     let olderRequestReads = 0;
     let proofReady = false;
     let transferObservedMs = null;
+    let newHistoryRequest = false;
     let holdWatchingRequests = true;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
@@ -106,7 +107,12 @@ test('title and library controls recover from pending and failed reads without d
         const older = url.searchParams.get('beforeId') === '7';
         if (history && older) olderRequestReads++;
         json(response, { items: history
-          ? [older ? { id: 6, anidbId: 2, title: 'Older completed title',
+          ? [...(!older && newHistoryRequest ? [{ id: 8, anidbId: 3,
+            title: 'New request', kind: 'movie', episodeIds: [31],
+            monitorFuture: false, watchClosed: false,
+            progress: { state: 'saved', targetCount: 1,
+              publicAvailability: 'unverified' } }] : []),
+          older ? { id: 6, anidbId: 2, title: 'Older completed title',
             kind: 'movie', episodeIds: [21], monitorFuture: false,
             watchClosed: false, progress: { state: 'saved', targetCount: 1,
               publicAvailability: 'unverified', publicVerifiedTargets: 0,
@@ -262,6 +268,12 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), true);
       assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
+      newHistoryRequest = true;
+      await evaluate('window.__requestTick()');
+      await until("document.querySelector('#request-list')?.textContent.includes('New request')");
+      assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), false);
+      newHistoryRequest = false;
       await evaluate("location.hash = '#/library'");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
