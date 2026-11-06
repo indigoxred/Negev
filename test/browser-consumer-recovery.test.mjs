@@ -26,6 +26,12 @@ test('title and library controls recover from pending and failed reads without d
     let heldDetailResponse = null;
     let failedTitleReads = 0;
     let pageTwoReads = 0;
+    let firstLibraryReads = 0;
+    let searchReads = 0;
+    let requestReads = 0;
+    let proofReady = false;
+    let holdWatchingRequests = false;
+    const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
       response.writeHead(status, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify(data));
@@ -59,15 +65,40 @@ test('title and library controls recover from pending and failed reads without d
         failedTitleReads === 1 ? 503 : 200);
       } else if (path === '/api/library') {
         if (url.searchParams.has('afterAnidbId')) pageTwoReads++;
+        else firstLibraryReads++;
         if (pageTwoReads === 1 && url.searchParams.has('afterAnidbId')) {
           json(response, { error: 'temporarily unavailable' }, 503);
         } else {
           json(response, { state: 'current_proofs', items: [{
             anidbId: url.searchParams.has('afterAnidbId') ? 2 : 1,
-            title: url.searchParams.has('afterAnidbId') ? 'Second title' : 'First title',
+            title: url.searchParams.has('afterAnidbId') ? 'Second title' :
+              proofReady ? 'Updated title' : 'First title',
             verifiedEpisodeCount: 1 }],
           nextAfterAnidbId: url.searchParams.has('afterAnidbId') ? null : 1 });
         }
+      } else if (path === '/api/catalogue/search') {
+        searchReads++;
+        json(response, { state: 'results', page: 1, total: 1,
+          catalogueSource: 'test', items: [{ anidbId: 1, title: 'Pending title',
+          kind: 'movie', libraryPresence: proofReady
+            ? { state: 'in_library', verifiedEpisodeCount: 1 }
+            : { state: 'unknown', verifiedEpisodeCount: 0 } }] });
+      } else if (path === '/api/requests') {
+        requestReads++;
+        if (url.searchParams.get('view') === 'watching' && holdWatchingRequests) {
+          response.writeHead(200, { 'Content-Type': 'application/json',
+            'Cache-Control': 'no-store' });
+          response.flushHeaders();
+          heldWatchingResponses.push(response);
+          return;
+        }
+        json(response, { items: url.searchParams.get('view') === 'history'
+          ? [{ id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
+            episodeIds: [11], monitorFuture: false, watchClosed: true,
+            progress: { state: 'saved', targetCount: 1,
+              publicAvailability: proofReady ? 'verified_recently' : 'unverified',
+              publicVerifiedTargets: proofReady ? 1 : 0 } }] : [],
+        nextBeforeId: null });
       } else {
         const file = path === '/' ? 'index.html' : path.slice(1);
         if (!assets.has(file)) { response.writeHead(404); response.end(); return; }
@@ -175,8 +206,50 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#library-list')?.textContent.includes('Second title')");
       assert.equal(pageTwoReads, 2);
       assert.equal(await evaluate("document.querySelectorAll('#library-list .poster-card').length"), 2);
+      const libraryReadsBeforeReturn = firstLibraryReads;
+      proofReady = true;
+      await evaluate("location.hash = '#/requests'");
+      await until("document.querySelector('#request-list')?.textContent.includes('Pending title')");
+      await evaluate("location.hash = '#/library'");
+      await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
+      assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
+        'returning to Library must read current proof instead of keeping its old cards');
+      const requestReadsBeforeReturn = requestReads;
+      await evaluate("location.hash = '#/requests'");
+      await until("document.querySelector('#request-list')?.textContent.includes('checked playable in Plex recently')");
+      assert.ok(requestReads > requestReadsBeforeReturn,
+        'returning to Requests must read the changed request progress');
+      await evaluate("location.hash = '#/discover?q=Pending'");
+      await until("document.querySelector('#results')?.textContent.includes('In library')");
+      const searchReadsBeforeReturn = searchReads;
+      proofReady = false;
+      await evaluate("location.hash = '#/requests'");
+      await until("!document.querySelector('#view-requests').hidden");
+      await evaluate("location.hash = '#/discover?q=Pending'");
+      await until("document.querySelector('#results')?.textContent.includes('Availability not checked')");
+      assert.ok(searchReads > searchReadsBeforeReturn,
+        'returning to the same search must revalidate the availability badge');
+      holdWatchingRequests = true;
+      await evaluate("location.hash = '#/library'");
+      await until("!document.querySelector('#view-library').hidden");
+      await evaluate("location.hash = '#/requests'");
+      await until("document.querySelector('#watch-list')?.textContent.includes('Loading watches')");
+      assert.equal(heldWatchingResponses.length, 1);
+      assert.equal(await evaluate("document.querySelector('#refresh-requests').dispatchEvent(new MouseEvent('click', { bubbles: true }))"), true);
+      for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 2; attempt++) {
+        await wait(100);
+      }
+      assert.equal(heldWatchingResponses.length, 2);
+      holdWatchingRequests = false;
+      heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
+      await wait(100);
+      heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
+      await until("document.querySelector('#watch-list')?.textContent.includes('No Airing shows')");
     } finally {
       if (heldDetailResponse) json(heldDetailResponse, { state: 'pending' });
+      for (const response of heldWatchingResponses) {
+        response.end(JSON.stringify({ items: [], nextBeforeId: null }));
+      }
       socket?.close();
       child.kill();
       await closed;

@@ -16,11 +16,17 @@ const state = { csrf: null, user: null, selected: null,
   titleChecks: false, acquisitionState: 'disabled', searchToken: 0,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
-  seasonalRouteKey: null,
+  seasonalRouteKey: null, routePage: null,
   discoverLoaded: false, showAdult: true, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
-const requestResponses = createResponseEpoch();
+const requestResponses = {
+  watching: createResponseEpoch(), history: createResponseEpoch(),
+};
+function invalidateRequestResponses() {
+  requestResponses.watching.invalidate();
+  requestResponses.history.invalidate();
+}
 const reviewResponses = createResponseEpoch();
 const detailResponses = createResponseEpoch();
 const libraryResponses = createResponseEpoch();
@@ -82,6 +88,8 @@ function renderRoute() {
   const route = parseConsumerRoute(location.hash);
   const page = route.page === 'admin' && state.user.role !== 'admin'
     ? 'discover' : route.page;
+  const returning = state.routePage !== null && state.routePage !== page;
+  state.routePage = page;
   for (const name of ['discover', 'airing', 'library', 'requests', 'title', 'admin']) {
     byId(`view-${name}`).hidden = name !== page;
   }
@@ -107,11 +115,14 @@ function renderRoute() {
     byId('query').value = route.query;
     byId('discover-shelves').hidden = route.query.length >= 2;
     if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
-    if (route.query.length >= 2 && route.query !== state.lastSearchQuery) {
+    if (route.query.length >= 2 &&
+        (returning || route.query !== state.lastSearchQuery)) {
       byId('search-form').requestSubmit();
     }
-  } else if (page === 'library' && !state.libraryLoaded) {
+  } else if (page === 'library' && (returning || !state.libraryLoaded)) {
     void loadLibrary();
+  } else if (page === 'requests' && returning) {
+    void loadRequests();
   } else if (page === 'airing') {
     if (!state.airingLoaded) void loadAiring();
     const choice = seasonChoice(route);
@@ -154,7 +165,7 @@ async function api(url, options = {}) {
 function showSession(data) {
   if (state.user?.id !== data.user.id) {
     sessionResponses.invalidate();
-    requestResponses.invalidate();
+    invalidateRequestResponses();
     reviewResponses.invalidate();
     detailResponses.invalidate();
     libraryResponses.invalidate();
@@ -173,6 +184,7 @@ function showSession(data) {
     state.libraryAfter = null;
     state.airingLoaded = false;
     state.seasonalRouteKey = null;
+    state.routePage = null;
     state.discoverLoaded = false;
     nextReviewAttemptId = null;
   }
@@ -203,7 +215,7 @@ function showSession(data) {
 }
 function clearWorkspace() {
   sessionResponses.invalidate();
-  requestResponses.invalidate();
+  invalidateRequestResponses();
   reviewResponses.invalidate();
   detailResponses.invalidate();
   libraryResponses.invalidate();
@@ -223,6 +235,7 @@ function clearWorkspace() {
   state.libraryAfter = null;
   state.airingLoaded = false;
   state.seasonalRouteKey = null;
+  state.routePage = null;
   state.discoverLoaded = false;
   state.nextBeforeId = { watching: null, history: null };
   nextReviewAttemptId = null;
@@ -270,7 +283,8 @@ async function refreshSession() {
 }
 async function loadRequestView(view, append = false) {
   const session = sessionResponses.current();
-  const listRequest = requestResponses.invalidate();
+  const responseEpoch = requestResponses[view];
+  const listRequest = responseEpoch.invalidate();
   const userId = state.user?.id;
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
@@ -285,7 +299,7 @@ async function loadRequestView(view, append = false) {
   try {
     const page = await api(`/api/requests?view=${view}${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
-        !requestResponses.isCurrent(listRequest) || state.user?.id !== userId) return;
+        !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
     if (!append && page.items.length === 0) {
       list.append(element('p', watching ? 'No Airing shows are being watched.' :
@@ -380,7 +394,7 @@ async function loadRequestView(view, append = false) {
     more.hidden = state.nextBeforeId[view] === null;
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
-        requestResponses.isCurrent(listRequest) && state.user?.id === userId) {
+        responseEpoch.isCurrent(listRequest) && state.user?.id === userId) {
       if (!append) list.replaceChildren(element('p',
         'Could not load requests. Select Refresh to try again.', 'error'));
       message(error.message, true);
