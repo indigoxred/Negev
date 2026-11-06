@@ -17,6 +17,7 @@ const state = { csrf: null, user: null, selected: null,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null, routePage: null,
+  requestHistoryExpanded: false,
   discoverLoaded: false, showAdult: true, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
@@ -180,6 +181,7 @@ function showSession(data) {
     byId('detail').replaceChildren(element('p',
       'Select a result to see its details.', 'muted'));
     state.nextBeforeId = { watching: null, history: null };
+    state.requestHistoryExpanded = false;
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
@@ -238,6 +240,7 @@ function clearWorkspace() {
   state.routePage = null;
   state.discoverLoaded = false;
   state.nextBeforeId = { watching: null, history: null };
+  state.requestHistoryExpanded = false;
   nextReviewAttemptId = null;
   state.releaseSearch = false;
   state.detailLoad = false;
@@ -281,7 +284,7 @@ async function refreshSession() {
     return false;
   }
 }
-async function loadRequestView(view, append = false) {
+async function loadRequestView(view, append = false, silent = false) {
   if (!state.user) return;
   const session = sessionResponses.current();
   const responseEpoch = requestResponses[view];
@@ -290,7 +293,7 @@ async function loadRequestView(view, append = false) {
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
-  if (!append) {
+  if (!append && !silent) {
     state.nextBeforeId[view] = null;
     more.hidden = true;
     list.replaceChildren(element('p', watching ? 'Loading watches…' : 'Loading requests…', 'muted'));
@@ -301,13 +304,19 @@ async function loadRequestView(view, append = false) {
     const page = await api(`/api/requests?view=${view}${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
         !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId) return;
-    if (!append) list.replaceChildren();
+    if (!append) {
+      list.replaceChildren();
+      state.nextBeforeId[view] = null;
+      more.hidden = true;
+      if (!watching) state.requestHistoryExpanded = false;
+    }
     if (!append && page.items.length === 0) {
       list.append(element('p', watching ? 'No Airing shows are being watched.' :
         'No finished or one-time requests yet. Search for an anime to begin.', 'muted'));
     }
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
+      row.dataset.recentPage = String(!append);
       row.append(posterImage(item));
       const heading = element('div');
       const targetCount = item.episodeIds.length;
@@ -332,10 +341,8 @@ async function loadRequestView(view, append = false) {
         { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
       const status = element('div', undefined,
         `request-status status-${presentation.group}`);
-      status.append(element('strong', presentation.stage, 'request-stage'),
-        element('span', presentation.detail, 'request-detail'));
-      if (presentation.note) status.append(element('span', presentation.note,
-        'request-note'));
+      status.negevRequest = item;
+      renderRequestStatus(status, presentation);
       row.append(heading, status);
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
@@ -401,13 +408,26 @@ async function loadRequestView(view, append = false) {
       else requestGroupRows(list, presentation.group).append(row);
     }
     state.nextBeforeId[view] = page.nextBeforeId;
+    if (append && !watching) state.requestHistoryExpanded = true;
     more.hidden = state.nextBeforeId[view] === null;
+    if (watching && state.requestHistoryExpanded) {
+      const watched = new Set(page.items.map((item) => item.id));
+      const history = byId('request-list');
+      for (const status of history.querySelectorAll('.request-status')) {
+        if (watched.has(status.negevRequest?.id)) {
+          status.closest('.request-row')?.remove();
+        }
+      }
+      for (const group of history.querySelectorAll('[data-request-group]')) {
+        if (!group.querySelector('.request-row')) group.remove();
+      }
+    }
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
         responseEpoch.isCurrent(listRequest) && state.user?.id === userId) {
-      if (!append) list.replaceChildren(element('p',
+      if (!append && !silent) list.replaceChildren(element('p',
         'Could not load requests. Select Refresh to try again.', 'error'));
-      message(error.message, true);
+      if (!silent) message(error.message, true);
     }
   }
 }
@@ -431,11 +451,77 @@ function requestGroupRows(list, group) {
   }
   return section.lastElementChild;
 }
-function loadRequests() {
-  if (!state.user) return;
-  void loadRequestView('watching');
-  void loadRequestView('history');
+function renderRequestStatus(status, presentation) {
+  status.className = `request-status status-${presentation.group}`;
+  status.replaceChildren(element('strong', presentation.stage, 'request-stage'),
+    element('span', presentation.detail, 'request-detail'));
+  if (presentation.note) status.append(element('span', presentation.note,
+    'request-note'));
 }
+function refreshRequestStatusAges() {
+  for (const status of document.querySelectorAll('.request-status')) {
+    const item = status.negevRequest;
+    if (!item?.progress?.transfer) continue;
+    renderRequestStatus(status, requestPresentation(item.progress, item.kind,
+      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed }));
+  }
+}
+async function refreshExpandedHistory() {
+  const session = sessionResponses.current();
+  const epoch = requestResponses.history.invalidate();
+  const userId = state.user?.id;
+  try {
+    const page = await api('/api/requests?view=history&limit=50');
+    if (!sessionResponses.isCurrent(session) ||
+        !requestResponses.history.isCurrent(epoch) ||
+        state.user?.id !== userId || !state.requestHistoryExpanded) return;
+    const latest = new Map(page.items.map((item) => [item.id, item]));
+    const list = byId('request-list');
+    const priorTop = [...list.querySelectorAll('.request-row[data-recent-page="true"]')]
+      .map((row) => row.querySelector('.request-status')?.negevRequest?.id)
+      .sort((a, b) => b - a);
+    const currentTop = page.items.slice(0, 20).map((item) => item.id)
+      .sort((a, b) => b - a);
+    if (priorTop.length !== currentTop.length ||
+        priorTop.some((id, index) => id !== currentTop[index])) {
+      // A new request or a history/watch move changes membership. Rebuild the
+      // newest page rather than leave a duplicate or hide the new request.
+      void loadRequestView('history', false, true);
+      return;
+    }
+    for (const status of list.querySelectorAll('.request-status')) {
+      const item = latest.get(status.negevRequest?.id);
+      if (!item) continue;
+      status.negevRequest = item;
+      const presentation = requestPresentation(item.progress, item.kind,
+        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      renderRequestStatus(status, presentation);
+      const row = status.closest('.request-row');
+      if (row && row.parentElement !== requestGroupRows(list, presentation.group)) {
+        requestGroupRows(list, presentation.group).append(row);
+      }
+    }
+    for (const group of list.querySelectorAll('[data-request-group]')) {
+      if (!group.querySelector('.request-row')) group.remove();
+    }
+  } catch { /* Keep loaded history and its retry control on a failed poll. */ }
+}
+function loadRequests({ silent = false } = {}) {
+  if (!state.user) return;
+  void loadRequestView('watching', false, silent);
+  void loadRequestView('history', false, silent);
+}
+function refreshVisibleRequests() {
+  if (!state.user || state.routePage !== 'requests') return;
+  refreshRequestStatusAges();
+  if (document.hidden) return;
+  if (state.requestHistoryExpanded) {
+    void loadRequestView('watching', false, true);
+    void refreshExpandedHistory();
+  } else loadRequests({ silent: true });
+}
+setInterval(refreshVisibleRequests, 60_000);
+document.addEventListener('visibilitychange', refreshVisibleRequests);
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??
     state.searchItems.get(item.anidbId)?.adult };

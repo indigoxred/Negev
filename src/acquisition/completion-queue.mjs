@@ -4,6 +4,17 @@ const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const reasonPattern = /^[a-z][a-z0-9_]{0,79}$/;
+const validTransfer = (value) => value &&
+  Number.isSafeInteger(value.progressBasisPoints) &&
+  value.progressBasisPoints >= 0 && value.progressBasisPoints < 10_000 &&
+  (value.etaSeconds === null ||
+    (Number.isSafeInteger(value.etaSeconds) && value.etaSeconds > 0 &&
+      value.etaSeconds <= 7 * 24 * 60 * 60)) &&
+  (value.speedBytesPerSecond === null ||
+    (Number.isSafeInteger(value.speedBytesPerSecond) &&
+      value.speedBytesPerSecond >= 0 &&
+      value.speedBytesPerSecond <= 10 * 1024 ** 3)) &&
+  ['active', 'stalled', 'queued', 'paused'].includes(value.transferState);
 const RETRY_MS = 30 * 60_000;
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
 const INCONCLUSIVE_RETRY_MS = [RETRY_MS, 2 * 60 * 60_000,
@@ -40,12 +51,28 @@ export function openCompletionQueue(dbPath) {
       reason TEXT,
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0),
-      inconclusive_count INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0)
+      inconclusive_count INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0),
+      progress_bp INTEGER CHECK(progress_bp>=0 AND progress_bp<10000),
+      eta_sec INTEGER CHECK(eta_sec>0 AND eta_sec<=604800),
+      speed_bps INTEGER CHECK(speed_bps>=0 AND speed_bps<=10737418240),
+      transfer_state TEXT CHECK(transfer_state IN
+        ('active','stalled','queued','paused'))
     ) STRICT`);
     if (!db.prepare('PRAGMA table_info(completion_checks)').all()
       .some((column) => column.name === 'inconclusive_count')) {
       db.exec(`ALTER TABLE completion_checks ADD COLUMN inconclusive_count
         INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0)`);
+    }
+    for (const [name, definition] of [
+      ['progress_bp', 'INTEGER CHECK(progress_bp>=0 AND progress_bp<10000)'],
+      ['eta_sec', 'INTEGER CHECK(eta_sec>0 AND eta_sec<=604800)'],
+      ['speed_bps', 'INTEGER CHECK(speed_bps>=0 AND speed_bps<=10737418240)'],
+      ['transfer_state', "TEXT CHECK(transfer_state IN ('active','stalled','queued','paused'))"],
+    ]) {
+      if (!db.prepare('PRAGMA table_info(completion_checks)').all()
+        .some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE completion_checks ADD COLUMN ${name} ${definition}`);
+      }
     }
     db.exec('INSERT INTO completion_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
@@ -71,12 +98,14 @@ export function openCompletionQueue(dbPath) {
   const wrap = db.prepare('UPDATE completion_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO completion_checks(attempt_id,pass,state,reason,checked_ms,next_due_ms)
     VALUES (?,?,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL`);
+    pass=excluded.pass,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,
+    progress_bp=NULL,eta_sec=NULL,speed_bps=NULL,transfer_state=NULL`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,pass,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM completion_checks WHERE attempt_id=?`);
   const save = db.prepare(`UPDATE completion_checks SET
-      state=?,reason=?,checked_ms=?,next_due_ms=?,inconclusive_count=?
+      state=?,reason=?,checked_ms=?,next_due_ms=?,inconclusive_count=?,
+      progress_bp=?,eta_sec=?,speed_bps=?,transfer_state=?
     WHERE attempt_id=? AND pass=? AND state IS NULL`);
   const lookupCount = db.prepare(`SELECT inconclusive_count AS count
     FROM completion_checks WHERE attempt_id=? AND pass=? AND state IS NULL`);
@@ -128,11 +157,14 @@ export function openCompletionQueue(dbPath) {
         return { state: 'claimed', attemptId: row.id, pass: position.pass };
       });
     },
-    recordResult({ attemptId, pass, state, reason = null, checkedMs }) {
+    recordResult({ attemptId, pass, state, reason = null, checkedMs,
+      transfer = null }) {
       if (!validId(attemptId) || !validId(pass) ||
           !['held', 'handoff_prepared', 'rejected_held'].includes(state) ||
           (state === 'held' ? typeof reason !== 'string' || !reasonPattern.test(reason) :
-            reason !== null) || !validTime(checkedMs)) {
+            reason !== null) || !validTime(checkedMs) ||
+          (transfer !== null && (state !== 'held' || reason !== 'incomplete' ||
+            !validTransfer(transfer)))) {
         throw new TypeError('Invalid completion result');
       }
       return transact(() => {
@@ -155,7 +187,11 @@ export function openCompletionQueue(dbPath) {
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
         return save.run(state, reason, checkedMs,
           state === 'held' ? checkedMs + delay : null,
-          inconclusiveCount, attemptId, pass).changes === 1
+          inconclusiveCount, transfer?.progressBasisPoints ?? null,
+          transfer?.etaSeconds ?? null,
+          transfer?.speedBytesPerSecond ?? null,
+          transfer?.transferState ?? null,
+          attemptId, pass).changes === 1
           ? { state: 'recorded' } : held('stale_claim');
       });
     },
@@ -235,7 +271,9 @@ export function createCompletionWorker({ queue, processAttempt, now = Date.now }
           const saved = queue.recordResult({ attemptId: claim.attemptId,
             pass: claim.pass, state: savedState,
             reason: savedState === 'held' ? reason ?? 'worker_unavailable' : null,
-            checkedMs: now() });
+            checkedMs: now(),
+            transfer: savedState === 'held' && reason === 'incomplete'
+              ? result?.transfer ?? null : null });
           if (saved.state !== 'recorded') return held('queue_unavailable');
         } catch { return held('queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,

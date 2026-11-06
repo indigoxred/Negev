@@ -1,7 +1,7 @@
 // The primary member view separates a short stage from its evidence. It never
 // infers a live transfer or delivery ETA from an old qBittorrent start intent.
 export function requestPresentation(progress, kind,
-  { monitorFuture = false, watchClosed = false } = {}) {
+  { monitorFuture = false, watchClosed = false, nowMs = Date.now() } = {}) {
   const unavailable = { stage: 'Status unavailable',
     detail: 'Negev could not check this request right now.',
     note: '', group: 'active' };
@@ -23,6 +23,33 @@ export function requestPresentation(progress, kind,
     ? progress.publicVerifiedTargets : 0;
   const complete = progress.targetCount > 0 && publicCount === progress.targetCount;
   const targetName = kind === 'movie' ? 'film parts' : 'episodes';
+  const rawTransfer = progress.transfer;
+  const transfer = rawTransfer &&
+    Number.isSafeInteger(nowMs) && nowMs >= 0 &&
+    Number.isSafeInteger(rawTransfer.observedMs) &&
+    rawTransfer.observedMs <= nowMs &&
+    nowMs - rawTransfer.observedMs <= 15 * 60_000 &&
+    Number.isSafeInteger(rawTransfer.progressBasisPoints) &&
+    rawTransfer.progressBasisPoints >= 0 && rawTransfer.progressBasisPoints < 10_000 &&
+    ['active', 'stalled', 'queued', 'paused'].includes(rawTransfer.transferState)
+    ? rawTransfer : null;
+  const measuredDownload = () => {
+    if (!transfer) return null;
+    const percent = Number((transfer.progressBasisPoints / 100).toFixed(1));
+    const age = Math.floor((nowMs - transfer.observedMs) / 60_000);
+    const checked = age === 0 ? 'Checked just now.' :
+      `Checked ${age} minute${age === 1 ? '' : 's'} ago.`;
+    const eta = transfer.transferState === 'active' &&
+      Number.isSafeInteger(transfer.etaSeconds) &&
+      transfer.etaSeconds > 0 && transfer.etaSeconds <= 7 * 24 * 60 * 60
+      ? ` Download estimate: about ${Math.ceil(transfer.etaSeconds / 60)} ` +
+        `minute${Math.ceil(transfer.etaSeconds / 60) === 1 ? '' : 's'} remaining.`
+      : '';
+    return { stage: { active: 'Downloading', stalled: 'Waiting for peers',
+      queued: 'Download queued', paused: 'Download paused' }[transfer.transferState],
+    detail: `One release is ${percent}% downloaded.${eta} ${checked}`,
+    note: '' };
+  };
   const acquisition = (() => {
     switch (progress.state) {
       case 'saved': return { stage: watching && progress.targetCount === 0
@@ -38,7 +65,8 @@ export function requestPresentation(progress, kind,
         detail: 'The release check could not finish yet.', note: '' };
       case 'torrent_stopped': return { stage: 'Download not started',
         detail: 'A release was selected but its transfer has not begun.', note: '' };
-      case 'download_unverified': return { stage: 'Checking download status',
+      case 'download_unverified': return measuredDownload() ??
+        { stage: 'Checking download status',
         detail: 'Negev has requested a download but has not confirmed its current progress.',
         note: '' };
       case 'release_identity_unverified': return { stage: 'Checking the download',
@@ -52,7 +80,8 @@ export function requestPresentation(progress, kind,
         note: progress.identityCheckPending ?
           'Another downloaded file still needs identity checking.' :
           progress.identityRetirementPending ?
-            'Another release is being checked.' : '' };
+            'Another release is being checked.' :
+            measuredDownload()?.detail ?? '' };
       case 'private_copy_recorded':
       case 'import_unverified': return { stage: 'Adding to the library',
         detail: 'The downloaded files were checked; Plex playback is not confirmed yet.',
@@ -76,7 +105,8 @@ export function requestPresentation(progress, kind,
     detail: `${publicCount} of ${progress.targetCount} requested ${targetName} playable in Plex.`,
     note: attentionNote || (progress.oneTimeAcquisitionComplete === true
       ? `Completed earlier; the other ${targetName} are not confirmed playable recently.`
-      : progress.state === 'saved' ? '' : acquisition.stage),
+      : progress.state === 'saved' ? '' :
+        acquisition.stage === 'Downloading' ? acquisition.detail : acquisition.stage),
     group: attention ? 'attention' : watching ? 'watching' :
       progress.oneTimeAcquisitionComplete === true ? 'completed' : 'active' };
   if (progress.oneTimeAcquisitionComplete === true) return {

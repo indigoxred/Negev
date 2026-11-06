@@ -33,6 +33,8 @@ test('title and library controls recover from pending and failed reads without d
     let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
+    let transferObservedMs = null;
+    let newHistoryRequest = false;
     let holdWatchingRequests = true;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
@@ -105,16 +107,26 @@ test('title and library controls recover from pending and failed reads without d
         const older = url.searchParams.get('beforeId') === '7';
         if (history && older) olderRequestReads++;
         json(response, { items: history
-          ? [older ? { id: 6, anidbId: 2, title: 'Older completed title',
+          ? [...(!older && newHistoryRequest ? [{ id: 8, anidbId: 3,
+            title: 'New request', kind: 'movie', episodeIds: [31],
+            monitorFuture: false, watchClosed: false,
+            progress: { state: 'saved', targetCount: 1,
+              publicAvailability: 'unverified' } }] : []),
+          older ? { id: 6, anidbId: 2, title: 'Older completed title',
             kind: 'movie', episodeIds: [21], monitorFuture: false,
             watchClosed: false, progress: { state: 'saved', targetCount: 1,
               publicAvailability: 'unverified', publicVerifiedTargets: 0,
               oneTimeAcquisitionComplete: true } } :
           { id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
             episodeIds: [11], monitorFuture: false, watchClosed: true,
-            progress: { state: 'saved', targetCount: 1,
+            progress: { state: transferObservedMs === null ? 'saved' :
+              'download_unverified', targetCount: 1,
               publicAvailability: proofReady ? 'verified_recently' : 'unverified',
-              publicVerifiedTargets: proofReady ? 1 : 0 } }] : [],
+              publicVerifiedTargets: proofReady ? 1 : 0,
+              ...(transferObservedMs === null ? {} : { transfer: {
+                progressBasisPoints: 3750, etaSeconds: 120,
+                speedBytesPerSecond: 512, transferState: 'active',
+                observedMs: transferObservedMs } }) } }] : [],
         nextBeforeId: history && !older ? 7 : null });
       } else {
         const file = path === '/' ? 'index.html' : path.slice(1);
@@ -169,7 +181,7 @@ test('title and library controls recover from pending and failed reads without d
           if (await evaluate(expression)) return;
           await wait(100);
         }
-        assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
+        assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
@@ -233,7 +245,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(pageTwoReads, 2);
       assert.equal(await evaluate("document.querySelectorAll('#library-list .poster-card').length"), 2);
       const libraryReadsBeforeReturn = firstLibraryReads;
-      proofReady = true;
+      proofReady = false;
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#request-list')?.textContent.includes('Pending title')");
       await evaluate("document.querySelector('#more-requests').click()");
@@ -243,6 +255,18 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list [data-request-group=completed]')?.textContent.includes('Older completed title')"), true);
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Pending title')"), true);
       assert.equal(await evaluate("document.querySelector('#more-requests').hidden"), true);
+      proofReady = true;
+      await evaluate("Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); document.dispatchEvent(new Event('visibilitychange'))");
+      assert.equal(await evaluate('document.hidden'), false);
+      await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), true);
+      assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
+      newHistoryRequest = true;
+      await evaluate("document.dispatchEvent(new Event('visibilitychange'))");
+      await until("document.querySelector('#request-list')?.textContent.includes('New request')");
+      assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), false);
+      newHistoryRequest = false;
       await evaluate("location.hash = '#/library'");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
@@ -284,6 +308,16 @@ test('title and library controls recover from pending and failed reads without d
       await wait(100);
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#watch-list')?.textContent.includes('No Airing shows')");
+      proofReady = false;
+      transferObservedMs = Date.now();
+      await evaluate("location.hash = '#/library'");
+      await until("!document.querySelector('#view-library').hidden");
+      await evaluate("location.hash = '#/requests'");
+      await until("document.querySelector('#request-list')?.textContent.includes('Downloading')");
+      await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
+        document.dispatchEvent(new Event('visibilitychange'))`);
+      await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
+      transferObservedMs = null;
       holdWatchingRequests = true;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");
@@ -311,6 +345,7 @@ test('title and library controls recover from pending and failed reads without d
       socket?.close();
       child.kill();
       await closed;
+      server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
       await rm(profile, { recursive: true, force: true,
         maxRetries: 5, retryDelay: 100 });

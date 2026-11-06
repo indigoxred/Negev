@@ -2,8 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 // Read-only journal summary for a request page. It never infers Plex playback
 // from a torrent, a Shoko import intent, or a private handoff record.
-export function openRequestProgress(dbPath) {
-  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
+export function openRequestProgress(dbPath, { now = Date.now } = {}) {
+  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
+      typeof now !== 'function') {
     throw new TypeError('Durable request database path required');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -40,6 +41,39 @@ export function openRequestProgress(dbPath) {
   let interruptedRequest;
   let scheduledRetry;
   let inconclusiveFileCheck;
+  let transferCheck;
+  const recentTransfer = (requestId) => {
+    if (!transferCheck) {
+      if (!hasCompletionChecks.get() ||
+          !db.prepare('PRAGMA table_info(completion_checks)').all()
+            .some((column) => column.name === 'progress_bp')) return null;
+      transferCheck = db.prepare(`SELECT c.progress_bp AS progressBasisPoints,
+          c.eta_sec AS etaSeconds,c.speed_bps AS speedBytesPerSecond,
+          c.transfer_state AS transferState,
+          c.checked_ms AS observedMs
+        FROM completion_checks c
+        JOIN acquisition_attempts a ON a.id=c.attempt_id
+        JOIN acquisition_starts s ON s.attempt_id=a.id
+        LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+        LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
+        LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
+        LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
+        LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
+        WHERE a.request_id=? AND a.status='torrent_observed'
+          AND c.state='held' AND c.reason='incomplete'
+          AND c.progress_bp IS NOT NULL
+          AND c.checked_ms>? AND c.checked_ms<=?
+          AND h.attempt_id IS NULL AND j.attempt_id IS NULL
+          AND t.attempt_id IS NULL AND x.attempt_id IS NULL
+          AND si.attempt_id IS NULL
+        ORDER BY c.checked_ms DESC,a.id DESC LIMIT 1`);
+    }
+    const checkedMs = now();
+    if (!Number.isSafeInteger(checkedMs) || checkedMs < 0) return null;
+    const row = transferCheck.get(requestId, checkedMs - 15 * 60_000,
+      checkedMs);
+    return row ? { ...row } : null;
+  };
   const fileIdentityState = (requestId) => {
     if (!inconclusiveFileCheck) {
       if (!hasCompletionChecks.get()) return null;
@@ -130,9 +164,11 @@ export function openRequestProgress(dbPath) {
         state = retryScheduled(requestId)
           ? 'release_check_retrying' : 'torrent_unverified';
       } else if (active.length > 0) state = 'release_preparing';
+      const transfer = recentTransfer(requestId);
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
         reviewRequired, publicAvailability: 'unverified',
+        ...(transfer ? { transfer } : {}),
         ...(state === 'partial_private_copy' && identityState === 'retrying'
           ? { identityCheckPending: true } : {}),
         ...(state === 'partial_private_copy' && identityState === 'retiring'

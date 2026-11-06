@@ -10,6 +10,7 @@ import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openCompletionQueue, createCompletionWorker } from '../src/acquisition/completion-queue.mjs';
 import { createPipelineScheduler } from '../src/acquisition/acquisition-pipeline-scheduler.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
+import { openRequestProgress } from '../src/requests/request-progress.mjs';
 
 async function fixture(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-completion-queue-'));
@@ -71,6 +72,37 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
       { state: 'pass_complete', pass: 2 });
     assert.deepEqual(ctx.queue.claimNext({ nowMs: 301_000 }),
       { state: 'claimed', attemptId: ctx.attemptIds[0], pass: 3 });
+  });
+});
+
+test('a measured transfer is request-scoped, durable, and expires before it can look live', async () => {
+  await fixture(async (ctx) => {
+    const other = ctx.requests.submit({ requesterId: 2,
+      requestKey: 'other', nowMs: 500,
+      intent: { state: 'ready', anidbId: 99, kind: 'movie',
+        monitorFuture: false, episodeIds: [9999] } });
+    const worker = createCompletionWorker({ queue: ctx.queue, now: () => 1_000,
+      processAttempt: async () => ({ state: 'held', reason: 'incomplete',
+        transfer: { progressBasisPoints: 3750, etaSeconds: 120,
+          speedBytesPerSecond: 512, transferState: 'active' } }) });
+    assert.equal((await worker.runOnce()).state, 'processed');
+    ctx.reopen();
+    const recent = openRequestProgress(ctx.dbPath, { now: () => 1_000 });
+    const expired = openRequestProgress(ctx.dbPath, { now: () => 1_000 + 16 * 60_000 });
+    try {
+      assert.deepEqual(recent.read(1).transfer, {
+        progressBasisPoints: 3750, etaSeconds: 120,
+        speedBytesPerSecond: 512, transferState: 'active',
+        observedMs: 1_000 });
+      assert.equal(expired.read(1).transfer, undefined);
+      assert.equal(recent.read(other.requestId).transfer, undefined);
+      assert.equal(recent.read(999), null);
+      assert.equal(ctx.acquisitions.requestStalledRetirement({
+        attemptId: ctx.attemptIds[0], hash: ctx.hashes[0],
+        nowMs: 1_001 }).state, 'retirement_requested');
+      assert.equal(recent.read(1).transfer, undefined,
+        'a retirement intent invalidates the old download snapshot');
+    } finally { recent.close(); expired.close(); }
   });
 });
 
