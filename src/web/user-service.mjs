@@ -43,6 +43,8 @@ import { createShokoFullReconciliation } from
   '../availability/shoko-full-reconciliation.mjs';
 import { createPlexAvailabilityService } from
   '../availability/plex-availability-service.mjs';
+import { plexWebItemUrl, readPlexMachineIdentifier } from
+  '../availability/plex-web-link.mjs';
 import { readShokoFileCandidate } from '../availability/shoko-file-candidate.mjs';
 import { openDirectAvailabilityQueue, createDirectAvailabilityWorker,
   createFileAvailabilityWorker } from
@@ -167,6 +169,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let directAvailability;
   let titleChecks;
   let plexObserver;
+  let plexMachineId = null;
+  let plexIdentityCheckedMs = null;
+  let plexIdentityRead = null;
   let fileCursor;
   let fileProofs;
   try {
@@ -193,8 +198,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
-    if (plex) plexObserver = createPlexAvailabilityService({ dbPath,
-      shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
+    if (plex) {
+      plexObserver = createPlexAvailabilityService({ dbPath,
+        shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
+    }
     if (fileBackfill) {
       // Resume the saved sweep and bounded proofs after restart. Accepted
       // Shoko/Plex changes withdraw only the affected exact proof rows.
@@ -494,7 +501,23 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const detail = await metadata.run(() => loadDetail(input));
         if (!plexObserver || detail?.state !== 'details' ||
             !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
+        const card = fileProofs?.getCurrentTitleCard({ anidbId: detail.anidbId });
+        if (card && !plexMachineId &&
+            (plexIdentityCheckedMs === null ||
+              now() - plexIdentityCheckedMs >= 3_600_000)) {
+          if (!plexIdentityRead) {
+            plexIdentityCheckedMs = now();
+            plexIdentityRead = readPlexMachineIdentifier({
+              baseUrl: plex.plexBaseUrl, token: plex.plexToken, fetchImpl })
+              .then((id) => { plexMachineId = id; return id; })
+              .finally(() => { plexIdentityRead = null; });
+          }
+          await plexIdentityRead;
+        }
+        const plexUrl = plexWebItemUrl({ machineId: plexMachineId,
+          ratingKey: card?.ratingKey });
         return { ...detail,
+          ...(plexUrl ? { plexUrl } : {}),
           libraryPresence: publicPresenceForTitle(detail.anidbId, now()),
           episodes: detail.episodes.map((episode) => {
           const target = { anidbId: detail.anidbId,

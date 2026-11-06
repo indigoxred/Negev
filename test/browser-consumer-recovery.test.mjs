@@ -59,6 +59,8 @@ test('title and library controls recover from pending and failed reads without d
         titleReads++;
         json(response, detailReady ? { state: 'details', anidbId: 1,
           title: 'Pending title', kind: 'movie', page: 1, total: 1, nextPage: null,
+          plexUrl: 'https://app.plex.tv/desktop/#!/server/' + 'a'.repeat(40) +
+            '/details?key=%2Flibrary%2Fmetadata%2F502',
           episodes: [{ id: 11, number: 1, type: 'Episode', title: 'Film' }] } :
           { state: 'detail_pending', anidbId: 1, title: 'Pending title' });
       } else if (path === '/api/catalogue/1/load-detail' && request.method === 'POST') {
@@ -201,6 +203,8 @@ test('title and library controls recover from pending and failed reads without d
       detailReady = true;
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
+      assert.equal(await evaluate("document.querySelector('#detail a[data-plex-link]')?.textContent"),
+        'Open in Plex');
       assert.equal(detailPosts, 1, 'ready state must use GET, not repeat hydration POST');
       detailReady = false;
       await evaluate("location.hash = '#/discover'");

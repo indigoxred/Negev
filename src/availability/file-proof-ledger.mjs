@@ -65,6 +65,12 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     FROM file_availability_proofs
     WHERE anidb_id>? AND verified_ms>? AND verified_ms<=?
     GROUP BY anidb_id ORDER BY anidb_id LIMIT ?`);
+  const currentTitleCard = db.prepare(`SELECT library_id AS libraryId,
+      rating_key AS ratingKey
+    FROM file_availability_proofs
+    WHERE anidb_id=? AND verified_ms>? AND verified_ms<=?
+    ORDER BY (presentation='exact') DESC,verified_ms DESC,
+      library_id,rating_key LIMIT 1`);
   let sourceStillCurrent;
   return {
     observe({ anidbId, episodeId, proof, checkedMs } = {}) {
@@ -162,6 +168,15 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       const rows = positiveForAnime.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
+    },
+    getCurrentTitleCard({ anidbId } = {}) {
+      if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      const nowMs = now();
+      if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
+      const card = currentTitleCard.get(anidbId,
+        nowMs - positiveLifetimeMs, nowMs);
+      return card ? { libraryId: card.libraryId,
+        ratingKey: card.ratingKey } : null;
     },
     listCurrentTitles({ afterAnidbId = 0, limit = 20 } = {}) {
       const nowMs = now();
