@@ -432,12 +432,8 @@ function requestGroupRows(list, group) {
   return section.lastElementChild;
 }
 async function loadRequests() {
-  const session = sessionResponses.current();
-  const userId = state.user?.id;
-  if (!Number.isSafeInteger(userId)) return;
-  await loadRequestView('watching');
-  if (!sessionResponses.isCurrent(session) || state.user?.id !== userId) return;
-  await loadRequestView('history');
+  if (!state.user) return;
+  await Promise.all([loadRequestView('watching'), loadRequestView('history')]);
 }
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??

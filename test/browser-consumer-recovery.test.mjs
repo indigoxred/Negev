@@ -29,6 +29,7 @@ test('title and library controls recover from pending and failed reads without d
     let firstLibraryReads = 0;
     let searchReads = 0;
     let requestReads = 0;
+    let historyReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
     let holdWatchingRequests = false;
@@ -96,6 +97,7 @@ test('title and library controls recover from pending and failed reads without d
           return;
         }
         const history = url.searchParams.get('view') === 'history';
+        if (history) historyReads++;
         const older = url.searchParams.get('beforeId') === '7';
         if (history && older) olderRequestReads++;
         json(response, { items: history
@@ -248,11 +250,17 @@ test('title and library controls recover from pending and failed reads without d
       assert.ok(searchReads > searchReadsBeforeReturn,
         'returning to the same search must revalidate the availability badge');
       holdWatchingRequests = true;
+      const historyBeforeHeldWatch = historyReads;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#watch-list')?.textContent.includes('Loading watches')");
       assert.equal(heldWatchingResponses.length, 1);
+      for (let attempt = 0; attempt < 80 && historyReads === historyBeforeHeldWatch; attempt++) {
+        await wait(100);
+      }
+      assert.ok(historyReads > historyBeforeHeldWatch,
+        'history must load even while the separate Watching read is pending');
       assert.equal(await evaluate("document.querySelector('#refresh-requests').dispatchEvent(new MouseEvent('click', { bubbles: true }))"), true);
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 2; attempt++) {
         await wait(100);
