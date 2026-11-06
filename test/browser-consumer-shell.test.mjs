@@ -176,10 +176,20 @@ test('signed-in consumer routes render real shell with search, library and reque
       }
       if (path === '/api/requests') {
         response.setHeader('Content-Type', 'application/json');
-        response.end(JSON.stringify({ items: path.includes('never') ? [] : [{
+        response.end(JSON.stringify({ items: [{
           id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie',
           episodeIds: [10], monitorFuture: false, watchClosed: false,
           progress: { state: 'saved', targetCount: 1,
+            publicAvailability: 'unverified', publicVerifiedTargets: 0 },
+        }, {
+          id: 2, anidbId: 9589, title: 'The Garden of Words', kind: 'movie',
+          episodeIds: [11], monitorFuture: false, watchClosed: false,
+          progress: { state: 'saved', targetCount: 1,
+            publicAvailability: 'verified_recently', publicVerifiedTargets: 1 },
+        }, {
+          id: 3, anidbId: 7, title: 'A title needing help', kind: 'series',
+          episodeIds: [12], monitorFuture: false, watchClosed: false,
+          progress: { state: 'review_needed', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }], nextBeforeId: null }));
         return;
@@ -333,6 +343,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /My requests/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);
       assert.match(requests, /No download is confirmed in progress/);
+      assert.match(requests, /data-request-group="attention">(?:(?!<\/section>)[\s\S])*A title needing help/);
+      assert.match(requests, /data-request-group="active">(?:(?!<\/section>)[\s\S])*Pale Cocoon/);
+      assert.match(requests, /data-request-group="completed">(?:(?!<\/section>)[\s\S])*The Garden of Words/);
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await rm(dir, { recursive: true, force: true,

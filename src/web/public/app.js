@@ -271,8 +271,8 @@ async function refreshSession() {
     const data = await api('/api/session');
     if (!sessionResponses.isCurrent(started)) return;
     showSession(data);
-    await loadRequests();
-    if (data.user.role === 'admin') await loadOperationalReview();
+    loadRequests();
+    if (data.user.role === 'admin') void loadOperationalReview();
     return true;
   } catch (error) {
     if (!sessionResponses.isCurrent(started)) return false;
@@ -282,6 +282,7 @@ async function refreshSession() {
   }
 }
 async function loadRequestView(view, append = false) {
+  if (!state.user) return;
   const session = sessionResponses.current();
   const responseEpoch = requestResponses[view];
   const listRequest = responseEpoch.invalidate();
@@ -396,7 +397,8 @@ async function loadRequestView(view, append = false) {
         advanced.append(element('summary', 'Advanced release tools'), button, candidates);
         row.append(advanced);
       }
-      list.append(row);
+      if (watching) list.append(row);
+      else requestGroupRows(list, presentation.group).append(row);
     }
     state.nextBeforeId[view] = page.nextBeforeId;
     more.hidden = state.nextBeforeId[view] === null;
@@ -409,9 +411,30 @@ async function loadRequestView(view, append = false) {
     }
   }
 }
-async function loadRequests() {
-  await loadRequestView('watching');
-  await loadRequestView('history');
+const historyGroupOrder = ['attention', 'active', 'completed'];
+const historyGroupTitles = {
+  attention: 'Needs attention', active: 'Active', completed: 'Completed',
+};
+function requestGroupRows(list, group) {
+  const category = historyGroupOrder.includes(group) ? group : 'active';
+  let section = [...list.children].find((child) =>
+    child.dataset.requestGroup === category);
+  if (!section) {
+    section = element('section', undefined, 'request-group');
+    section.dataset.requestGroup = category;
+    section.append(element('h3', historyGroupTitles[category]),
+      element('div', undefined, 'request-group-rows'));
+    const next = [...list.children].find((child) =>
+      historyGroupOrder.indexOf(child.dataset.requestGroup) >
+      historyGroupOrder.indexOf(category));
+    list.insertBefore(section, next ?? null);
+  }
+  return section.lastElementChild;
+}
+function loadRequests() {
+  if (!state.user) return;
+  void loadRequestView('watching');
+  void loadRequestView('history');
 }
 function discoveryCard(item, note, badge, available = false) {
   const entry = { ...item, adult: item.adult ??
@@ -1187,7 +1210,7 @@ async function showDetail(item, franchise = null) {
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
             message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${currentAcquisitionNotice()}`);
-            await loadRequests();
+            loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
         });
@@ -1217,7 +1240,7 @@ async function showDetail(item, franchise = null) {
                 episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
             requestKeys.saved(scope);
             message(`Request #${saved.requestId} saved for film entry ${episode.number}. ${currentAcquisitionNotice()}`);
-            await loadRequests();
+            loadRequests();
           } catch (error) { message(error.message, true); }
           finally { requesting = false; updateSelection(); }
         });
@@ -1268,7 +1291,7 @@ async function showDetail(item, franchise = null) {
         }) });
         requestKeys.saved(scope);
         message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
-        await loadRequests();
+        loadRequests();
       } catch (error) { message(error.message, true); }
       finally { button.disabled = false; }
     });

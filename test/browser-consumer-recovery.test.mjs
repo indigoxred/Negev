@@ -29,8 +29,11 @@ test('title and library controls recover from pending and failed reads without d
     let firstLibraryReads = 0;
     let searchReads = 0;
     let requestReads = 0;
+    let historyReads = 0;
+    let operationalReads = 0;
+    let olderRequestReads = 0;
     let proofReady = false;
-    let holdWatchingRequests = false;
+    let holdWatchingRequests = true;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
       response.writeHead(status, { 'Content-Type': 'application/json' });
@@ -45,6 +48,11 @@ test('title and library controls recover from pending and failed reads without d
         json(response, { user: { id: 1, username: 'Owner', role: 'admin',
           adultAllowed: true }, csrfToken: 'test', capabilities: {
           detailLoad: true, acquisitionState: 'disabled' } });
+      } else if (path === '/api/logout') {
+        json(response, { state: 'signed_out' });
+      } else if (path === '/api/admin/review') {
+        operationalReads++;
+        json(response, { items: [], nextAfterAttemptId: null });
       } else if (path === '/api/catalogue/1' && request.method === 'GET') {
         titleReads++;
         json(response, detailReady ? { state: 'details', anidbId: 1,
@@ -92,13 +100,22 @@ test('title and library controls recover from pending and failed reads without d
           heldWatchingResponses.push(response);
           return;
         }
-        json(response, { items: url.searchParams.get('view') === 'history'
-          ? [{ id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
+        const history = url.searchParams.get('view') === 'history';
+        if (history) historyReads++;
+        const older = url.searchParams.get('beforeId') === '7';
+        if (history && older) olderRequestReads++;
+        json(response, { items: history
+          ? [older ? { id: 6, anidbId: 2, title: 'Older completed title',
+            kind: 'movie', episodeIds: [21], monitorFuture: false,
+            watchClosed: false, progress: { state: 'saved', targetCount: 1,
+              publicAvailability: 'unverified', publicVerifiedTargets: 0,
+              oneTimeAcquisitionComplete: true } } :
+          { id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
             episodeIds: [11], monitorFuture: false, watchClosed: true,
             progress: { state: 'saved', targetCount: 1,
               publicAvailability: proofReady ? 'verified_recently' : 'unverified',
               publicVerifiedTargets: proofReady ? 1 : 0 } }] : [],
-        nextBeforeId: null });
+        nextBeforeId: history && !older ? 7 : null });
       } else {
         const file = path === '/' ? 'index.html' : path.slice(1);
         if (!assets.has(file)) { response.writeHead(404); response.end(); return; }
@@ -156,6 +173,15 @@ test('title and library controls recover from pending and failed reads without d
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
+      for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
+        await wait(100);
+      }
+      assert.equal(heldWatchingResponses.length, 1);
+      assert.ok(historyReads > 0, 'History starts while Watching is pending');
+      assert.ok(operationalReads > 0,
+        'owner review starts while Watching is pending');
+      holdWatchingRequests = false;
+      heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#detail')?.textContent.includes('Load details')");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Load details').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Check again')");
@@ -210,6 +236,13 @@ test('title and library controls recover from pending and failed reads without d
       proofReady = true;
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#request-list')?.textContent.includes('Pending title')");
+      await evaluate("document.querySelector('#more-requests').click()");
+      await until("document.querySelector('#request-list')?.textContent.includes('Older completed title')");
+      assert.equal(olderRequestReads, 1);
+      assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
+      assert.equal(await evaluate("document.querySelector('#request-list [data-request-group=completed]')?.textContent.includes('Older completed title')"), true);
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Pending title')"), true);
+      assert.equal(await evaluate("document.querySelector('#more-requests').hidden"), true);
       await evaluate("location.hash = '#/library'");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
@@ -230,11 +263,17 @@ test('title and library controls recover from pending and failed reads without d
       assert.ok(searchReads > searchReadsBeforeReturn,
         'returning to the same search must revalidate the availability badge');
       holdWatchingRequests = true;
+      const historyBeforeHeldWatch = historyReads;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#watch-list')?.textContent.includes('Loading watches')");
       assert.equal(heldWatchingResponses.length, 1);
+      for (let attempt = 0; attempt < 80 && historyReads === historyBeforeHeldWatch; attempt++) {
+        await wait(100);
+      }
+      assert.ok(historyReads > historyBeforeHeldWatch,
+        'history must load even while the separate Watching read is pending');
       assert.equal(await evaluate("document.querySelector('#refresh-requests').dispatchEvent(new MouseEvent('click', { bubbles: true }))"), true);
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 2; attempt++) {
         await wait(100);
@@ -245,6 +284,25 @@ test('title and library controls recover from pending and failed reads without d
       await wait(100);
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#watch-list')?.textContent.includes('No Airing shows')");
+      holdWatchingRequests = true;
+      await evaluate("location.hash = '#/library'");
+      await until("!document.querySelector('#view-library').hidden");
+      await evaluate("location.hash = '#/requests'");
+      for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
+        await wait(100);
+      }
+      assert.equal(heldWatchingResponses.length, 1);
+      await evaluate("document.querySelector('#signout').click()");
+      await until("document.querySelector('#workspace').hidden");
+      heldWatchingResponses.shift().end(JSON.stringify({ items: [{
+        id: 9, anidbId: 1, title: 'Prior account watch', kind: 'series',
+        episodeIds: [11], monitorFuture: true, watchClosed: false,
+        progress: { state: 'saved', targetCount: 1,
+          publicAvailability: 'unverified' },
+      }], nextBeforeId: null }));
+      await wait(100);
+      assert.equal(await evaluate("document.querySelector('#request-list').children.length"), 0);
+      assert.equal(await evaluate("document.querySelector('#watch-list').children.length"), 0);
     } finally {
       if (heldDetailResponse) json(heldDetailResponse, { state: 'pending' });
       for (const response of heldWatchingResponses) {
