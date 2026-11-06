@@ -179,7 +179,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ items: path.includes('never') ? [] : [{
           id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie',
           episodeIds: [10], monitorFuture: false, watchClosed: false,
-          progress: { state: 'requested' },
+          progress: { state: 'saved', targetCount: 1,
+            publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }], nextBeforeId: null }));
         return;
       }
@@ -330,6 +331,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
       assert.match(requests, /My requests/);
+      assert.match(requests, /class="request-stage">Requested<\/strong>/);
+      assert.match(requests, /No download is confirmed in progress/);
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await rm(dir, { recursive: true, force: true,

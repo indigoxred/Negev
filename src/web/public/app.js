@@ -1,7 +1,7 @@
 import { createRequestKeyStore } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
-import { progressText } from './request-progress-text.mjs';
+import { requestPresentation } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
@@ -327,7 +327,15 @@ async function loadRequestView(view, append = false) {
           element('small', `AniDB ${item.anidbId} · Request #${item.id}`));
         heading.append(technical);
       }
-      row.append(heading, element('span', progressText(item.progress, item.kind), 'request-status'));
+      const presentation = requestPresentation(item.progress, item.kind,
+        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      const status = element('div', undefined,
+        `request-status status-${presentation.group}`);
+      status.append(element('strong', presentation.stage, 'request-stage'),
+        element('span', presentation.detail, 'request-detail'));
+      if (presentation.note) status.append(element('span', presentation.note,
+        'request-note'));
+      row.append(heading, status);
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
         const candidates = element('div', undefined, 'candidate-list');

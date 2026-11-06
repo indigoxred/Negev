@@ -216,7 +216,7 @@ test('title and library controls recover from pending and failed reads without d
         'returning to Library must read current proof instead of keeping its old cards');
       const requestReadsBeforeReturn = requestReads;
       await evaluate("location.hash = '#/requests'");
-      await until("document.querySelector('#request-list')?.textContent.includes('checked playable in Plex recently')");
+      await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch') && document.querySelector('#request-list')?.textContent.includes('film is playable in Plex')");
       assert.ok(requestReads > requestReadsBeforeReturn,
         'returning to Requests must read the changed request progress');
       await evaluate("location.hash = '#/discover?q=Pending'");
