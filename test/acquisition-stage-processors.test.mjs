@@ -72,6 +72,8 @@ test('missing safety providers are rejected before any work', () => {
   assert.deepEqual(calls, []);
   assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
     readPublicCoverage: undefined }), TypeError);
+  assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
+    allowProvisionalHandoff: 'yes' }), TypeError);
 });
 
 test('recent exact public coverage avoids the indexer in the wired request stage', async () => {

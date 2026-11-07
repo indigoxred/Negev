@@ -8,6 +8,7 @@ import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
+import { readShokoImportedFile } from '../identity/shoko-imported-file.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -27,7 +28,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
-  firstTimePolicy = 'strict' } = {}) {
+  firstTimePolicy = 'strict', allowProvisionalHandoff = false } = {}) {
   const episode = publicSections?.episode;
   const movie = publicSections?.movie;
   if (typeof requests?.getRequest !== 'function' ||
@@ -43,6 +44,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       [...episode, ...movie].some((id) => !validId(id)) ||
       new Set([...episode, ...movie]).size !== episode.length + movie.length ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
+      typeof allowProvisionalHandoff !== 'boolean' ||
       typeof prowlarr?.baseUrl !== 'string' ||
       typeof prowlarr?.apiKey !== 'string' ||
       !Array.isArray(prowlarr?.indexerIds) ||
@@ -149,7 +151,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl, renewQbittorrent,
         readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
-        nowMs: now(), ed2kMode });
+        nowMs: now(), ed2kMode,
+        allowProvisional: allowProvisionalHandoff });
     },
     async processPublish({ attemptId } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
@@ -165,6 +168,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
         holdingRoot, importRoot, lookup, readPacer, ed2kMode,
+        readShokoHash: ({ ed2k, size }) => readShokoImportedFile({
+          baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, ed2k, size,
+          fetchImpl: providerFetchImpl }),
         verifyHandoffMounts, nowMs: now() });
     },
   };
