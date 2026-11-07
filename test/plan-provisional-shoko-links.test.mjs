@@ -51,6 +51,12 @@ test('a wrong pack title or one unrelated Shoko file holds all link plans', () =
       ed2k: 'C'.repeat(32) }] }).state, 'links_ready');
 });
 
+test('a missing AniDB detail holds a provisional plan even if an alias matches', () => {
+  assert.deepEqual(planProvisionalShokoLinks({ ...input,
+    detail: null, aliases: ['Example'] }),
+  { state: 'held', reason: 'catalogue_title_unavailable' });
+});
+
 test('a file Shoko already matched needs no User link while its neighbour does', () => {
   const recognized = { ...observedFiles[0], state: 'imported_recognized',
     locations: [], release: { providerName: 'AniDB', isCorrupted: false,

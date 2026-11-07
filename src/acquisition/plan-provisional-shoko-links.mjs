@@ -50,6 +50,9 @@ export function planProvisionalShokoLinks({ handoff, attempt, request, detail,
   if (!Array.isArray(aliases) || aliases.length > 10) {
     return held('catalogue_title_unavailable');
   }
+  if (typeof detail?.title !== 'string' || !detail.title.trim()) {
+    return held('catalogue_title_unavailable');
+  }
   const trustedTitle = trustedReleaseQueries(detail?.title, aliases).find((title) =>
     matchesTrustedReleaseTitle(attempt.candidateTitle, title));
   if (!trustedTitle) return held('release_title_mismatch');
