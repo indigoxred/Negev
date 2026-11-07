@@ -333,8 +333,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
-      assert.match(detail, /Check whole title in Plex/);
-      assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
+      assert.match(detail, /Check film availability/);
+      assert.match(detail, /Check film availability[\s\S]*Episode and Special options/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /2 film entries verified playable in Plex/);
       assert.match(alternateFilm, /Choose one film entry/);
