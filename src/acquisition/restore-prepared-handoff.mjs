@@ -3,9 +3,8 @@ import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
-// Recover the input to the existing publisher from the durable journal after
-// a restart. This recreates a claim only; the publisher must still recheck the
-// private tree, every video against AniDB, and every subtitle before a rename.
+// Recover a claim from the durable journal after a restart. The publisher
+// still rechecks the private tree, every video's bytes, and every subtitle.
 export function restorePreparedHandoff({ attemptId, handoff } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !['prepared', 'publish_unknown', 'published_observed'].includes(handoff?.status) ||
@@ -18,6 +17,7 @@ export function restorePreparedHandoff({ attemptId, handoff } = {}) {
   }
   const manifest = handoff.manifest;
   const evidence = evaluateHandoffEvidence({
+    identity: manifest?.identity, version: manifest?.version,
     anidbId: manifest?.anidbId, torrentHash: manifest?.torrentHash,
     files: manifest?.videos, subtitles: manifest?.subtitles,
   });
@@ -33,6 +33,8 @@ export function restorePreparedHandoff({ attemptId, handoff } = {}) {
     holdingPath: handoff.holdingPath,
     torrentHash: evidence.manifest.torrentHash,
     anidbId: evidence.manifest.anidbId,
+    ...(evidence.manifest.identity === 'provisional'
+      ? { identity: 'provisional' } : {}),
     evidenceDigest: evidence.digest,
     files: evidence.manifest.videos,
     subtitles: evidence.manifest.subtitles };

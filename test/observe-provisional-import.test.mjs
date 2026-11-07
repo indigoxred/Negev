@@ -1,0 +1,144 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
+import { observeProvisionalImport, observeProvisionalPlacement } from '../src/acquisition/observe-provisional-import.mjs';
+
+const evidence = evaluateHandoffEvidence({ identity: 'provisional',
+  torrentHash: 'a'.repeat(40), anidbId: 42,
+  files: [{ name: '05.mkv', size: 900, ed2k: 'A'.repeat(32),
+    episodeIds: [1005] }], subtitles: [] });
+const handoff = { status: 'published_observed', evidenceDigest: evidence.digest,
+  manifest: evidence.manifest };
+const unrecognized = { state: 'imported_unrecognized', fileId: 19711,
+  ed2k: 'A'.repeat(32), size: 900 };
+const recognized = { ...unrecognized, state: 'imported_recognized',
+  release: { providerName: 'AniDB', id: 'anidb://sample',
+    isCorrupted: false, crossReferences: [{ animeId: 42,
+      episodeId: 1005, start: 0, end: 100 }] } };
+
+test('Shoko may still be hashing after a provisional publish', async () => {
+  assert.deepEqual(await observeProvisionalImport({ handoff,
+    readImportedFile: async () => ({ state: 'not_imported' }) }),
+  { state: 'awaiting_shoko' });
+});
+
+test('an exact imported file with no release waits for separate link evidence', async () => {
+  let input;
+  assert.deepEqual(await observeProvisionalImport({ handoff,
+    readImportedFile: async (query) => { input = query; return unrecognized; } }),
+  { state: 'awaiting_shoko_link', fileId: 19711 });
+  assert.deepEqual(input, { ed2k: 'A'.repeat(32), size: 900 });
+});
+
+test('a later correct Shoko match records identity, not Plex availability', async () => {
+  assert.deepEqual(await observeProvisionalImport({ handoff,
+    readImportedFile: async () => recognized }),
+  { state: 'shoko_files_identified', fileIds: [19711] });
+});
+
+test('a combined provisional file passes only when Shoko proves both full episodes', async () => {
+  const pair = evaluateHandoffEvidence({ identity: 'provisional',
+    torrentHash: 'a'.repeat(40), anidbId: 42, subtitles: [],
+    files: [{ name: '05-06.mkv', size: 900, ed2k: 'A'.repeat(32),
+      episodeIds: [1005, 1006] }] });
+  const combined = { status: 'published_observed', manifest: pair.manifest,
+    evidenceDigest: pair.digest };
+  const refs = [1005, 1006].map((episodeId) => ({ animeId: 42,
+    episodeId, start: 0, end: 100 }));
+  const observed = { ...recognized, release: { ...recognized.release,
+    crossReferences: refs } };
+  assert.deepEqual(await observeProvisionalImport({ handoff: combined,
+    readImportedFile: async () => observed }),
+  { state: 'shoko_files_identified', fileIds: [19711] });
+  for (const crossReferences of [
+    [refs[0]],
+    [refs[0], { ...refs[1], end: 50 }],
+    [refs[0], { ...refs[1], episodeId: 1007 }],
+  ]) {
+    assert.deepEqual(await observeProvisionalImport({ handoff: combined,
+      readImportedFile: async () => ({ ...observed,
+        release: { ...observed.release, crossReferences } }) }),
+    { state: 'held', reason: 'shoko_identity_conflict' });
+  }
+});
+
+test('conflicting, partial, or corrupt Shoko releases hold automatically', async () => {
+  for (const release of [
+    undefined,
+    { ...recognized.release, crossReferences: [{ animeId: 42,
+      episodeId: 1006, start: 0, end: 100 }] },
+    { ...recognized.release, crossReferences: [{ animeId: 42,
+      episodeId: 1005, start: 0, end: 50 }] },
+    { ...recognized.release, isCorrupted: true },
+  ]) {
+    assert.deepEqual(await observeProvisionalImport({ handoff,
+      readImportedFile: async () => ({ ...recognized, release }) }),
+    { state: 'held', reason: 'shoko_identity_conflict' });
+  }
+});
+
+test('damaged journal or changed Shoko hash cannot prove import', async () => {
+  assert.deepEqual(await observeProvisionalImport({ handoff: {
+    ...handoff, evidenceDigest: 'b'.repeat(64) },
+  readImportedFile: async () => recognized }),
+  { state: 'held', reason: 'handoff_evidence_mismatch' });
+  assert.deepEqual(await observeProvisionalImport({ handoff,
+    readImportedFile: async () => ({ ...unrecognized, size: 901 }) }),
+  { state: 'held', reason: 'shoko_file_changed' });
+});
+
+test('provisional placement requires an accessible final-library path for the same file', async () => {
+  const withLocations = { ...recognized, locations: [
+    { managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: true },
+  ] };
+  let query;
+  assert.deepEqual(await observeProvisionalPlacement({ handoff,
+    libraryRoot: '/pure/Anime', readImportedFile: async (value) => {
+      query = value;
+      return withLocations;
+    } }), { state: 'shoko_library_location_reported', fileIds: [19711] });
+  assert.equal(query.includeAbsolutePaths, true);
+  for (const locations of [
+    [{ managedFolderId: 2, path: '/pure/Anime-old/05.mkv', accessible: true }],
+    [{ managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: false }],
+    [{ managedFolderId: 1, path: '/pure/Import/05.mkv', accessible: true }],
+  ]) {
+    assert.deepEqual(await observeProvisionalPlacement({ handoff,
+      libraryRoot: '/pure/Anime', readImportedFile: async () =>
+        ({ ...withLocations, locations }) }),
+    { state: 'awaiting_shoko_placement', fileId: 19711 });
+  }
+});
+
+test('a two-episode pack waits for both Shoko files and recognizes both exact links', async () => {
+  const packEvidence = evaluateHandoffEvidence({ identity: 'provisional',
+    torrentHash: 'a'.repeat(40), anidbId: 42, subtitles: [], files: [
+      { name: '05.mkv', size: 900, ed2k: 'A'.repeat(32), episodeIds: [1005] },
+      { name: '06.mkv', size: 901, ed2k: 'B'.repeat(32), episodeIds: [1006] },
+    ] });
+  const pack = { status: 'published_observed',
+    manifest: packEvidence.manifest, evidenceDigest: packEvidence.digest };
+  const second = { state: 'imported_recognized', fileId: 19712,
+    ed2k: 'B'.repeat(32), size: 901,
+    release: { ...recognized.release, crossReferences: [{ animeId: 42,
+      episodeId: 1006, start: 0, end: 100 }] } };
+  const lookup = (value) => value.ed2k === recognized.ed2k ? recognized : second;
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => value.ed2k === second.ed2k
+      ? { state: 'not_imported' } : lookup(value) }),
+  { state: 'awaiting_shoko' });
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => value.ed2k === second.ed2k
+      ? { ...second, state: 'imported_unrecognized' } : lookup(value) }),
+  { state: 'awaiting_shoko_link', fileId: 19712 });
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => lookup(value) }),
+  { state: 'shoko_files_identified', fileIds: [19711, 19712] });
+  assert.deepEqual(await observeProvisionalPlacement({ handoff: pack,
+    libraryRoot: '/pure/Anime', readImportedFile: async (value) => ({
+      ...lookup(value), locations: [{ managedFolderId: 2,
+        path: value.ed2k === second.ed2k
+          ? '/pure/Import/06.mkv' : '/pure/Anime/Show/05.mkv',
+        accessible: true }] }) }),
+  { state: 'awaiting_shoko_placement', fileId: 19712 });
+});

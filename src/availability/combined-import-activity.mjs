@@ -9,7 +9,13 @@ export function combineImportActivity(manual, automated, withFingerprint = false
   if (manual?.state === 'unavailable' || automated?.state === 'unavailable' ||
       !manual?.state || !automated?.state) return { state: 'unavailable' };
   if (manual.state === 'busy' || automated.state === 'busy') {
-    return { state: 'busy' };
+    // Keep one source's reason for the admin diagnostic. If both sources are
+    // busy, a single reason would incorrectly imply which one holds Import.
+    const source = manual.state === 'busy' && automated.state !== 'busy'
+      ? manual : automated.state === 'busy' && manual.state !== 'busy'
+        ? automated : null;
+    return { state: 'busy',
+      ...(typeof source?.reason === 'string' ? { reason: source.reason } : {}) };
   }
   if (manual.state !== 'quiet_observed') return { state: manual.state };
   if (automated.state !== 'quiet_observed') return { state: automated.state };

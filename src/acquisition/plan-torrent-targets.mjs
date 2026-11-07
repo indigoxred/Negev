@@ -9,7 +9,7 @@ const titleTokens = (value) => typeof value === 'string'
     .replace(/&/g, ' and ').replace(/×/g, ' x ')
     .match(/[\p{L}\p{N}]+/gu) ?? [] : [];
 // A search hit may be unrelated despite matching episode numbers. This is
-// provisional title evidence; completed bytes still need exact AniDB proof.
+// provisional title evidence; completed bytes need hash, Shoko and Plex checks.
 export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
   const release = titleTokens(releaseTitle);
   return titles.some((title) => {

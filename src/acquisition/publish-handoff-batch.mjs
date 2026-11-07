@@ -5,12 +5,23 @@ import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import { checkProvisionalHashesAbsent } from './provisional-preexistence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const admitted = (result, file) => result?.isCorrupted === false &&
   Array.isArray(result.coverage) && result.coverage.length === file.episodeIds.length &&
   file.episodeIds.every((episodeId) => result.coverage.some((range) =>
     range.episodeId === episodeId && range.start === 0 && range.end === 100));
+const provisionalManifest = (manifest) => manifest.identity === 'provisional' &&
+  manifest.version === 2 && manifest.videos.length > 0;
+const matchesVideo = (result, file, manifest) => {
+  if (result?.ed2k !== file.ed2k || result.size !== file.size) return false;
+  if (manifest.identity === 'provisional') {
+    return result.state === 'hash_verified' && result.reason === 'lookup_inconclusive' ||
+      result.state === 'identity_verified' && admitted(result, file);
+  }
+  return result.state === 'identity_verified' && result.fileId === file.anidbFileId;
+};
 
 function within(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -101,10 +112,11 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
     let result;
     try { result = await verifyVideo({ root: destination, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer, ed2kMode }); }
+      lookup, readPacer: pacer, ed2kMode,
+      allowProvisional: evidence.manifest.identity === 'provisional' }); }
     catch { return held('publish_outcome_unknown'); }
-    if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
-        result.ed2k !== file.ed2k || result.size !== file.size || !admitted(result, file)) {
+    if (!matchesVideo(result, file, evidence.manifest) ||
+        (evidence.manifest.identity !== 'provisional' && !admitted(result, file))) {
       return held('publish_outcome_unknown');
     }
   }
@@ -141,7 +153,7 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename, verifyHandoffMounts, ed2kMode,
+  renamePrepared = rename, verifyHandoffMounts, ed2kMode, readShokoHash,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -150,6 +162,7 @@ export async function publishPreparedHandoff({
       typeof ledger?.markPublishedObserved !== 'function' ||
       typeof lookup !== 'function' || typeof verifyVideo !== 'function' ||
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
+      (readShokoHash !== undefined && typeof readShokoHash !== 'function') ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
       (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
@@ -163,6 +176,8 @@ export async function publishPreparedHandoff({
   if (evidence.state !== 'valid' || evidence.digest !== prepared.evidenceDigest) {
     return held('handoff_evidence_mismatch');
   }
+  if (evidence.manifest.identity === 'provisional' &&
+      !provisionalManifest(evidence.manifest)) return held('handoff_evidence_mismatch');
   const mountReady = async () => {
     if (!verifyHandoffMounts) return true;
     try {
@@ -225,17 +240,19 @@ export async function publishPreparedHandoff({
     let result;
     try { result = await verifyVideo({ root: holdingPath, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer, ed2kMode }); }
+      lookup, readPacer: pacer, ed2kMode,
+      allowProvisional: evidence.manifest.identity === 'provisional' }); }
     catch { return held('identity_unavailable'); }
     if (result?.state === 'held' &&
         ['provider_unavailable', 'lookup_inconclusive'].includes(result.reason)) {
       return held('identity_unavailable');
     }
-    if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
-        result.ed2k !== file.ed2k || result.size !== file.size) {
+    if (!matchesVideo(result, file, evidence.manifest)) {
       return held('identity_changed');
     }
-    if (!admitted(result, file)) return held('import_admission_failed');
+    if (evidence.manifest.identity !== 'provisional' && !admitted(result, file)) {
+      return held('import_admission_failed');
+    }
   }
   for (const file of evidence.manifest.subtitles) {
     let result;
@@ -254,6 +271,12 @@ export async function publishPreparedHandoff({
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
+  if (evidence.manifest.identity === 'provisional') {
+    if (!readShokoHash) return held('shoko_preexistence_unverified');
+    const absent = await checkProvisionalHashesAbsent({
+      videos: evidence.manifest.videos, readShokoHash });
+    if (absent.state !== 'all_absent') return absent;
+  }
   if (!await mountReady()) return held('handoff_mount_unavailable');
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||

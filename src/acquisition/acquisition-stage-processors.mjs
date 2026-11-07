@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { createAcquisitionRequestProcessor } from './acquisition-request-processor.mjs';
 import { submitMissingCandidate } from './submit-missing-candidate.mjs';
 import { processRecordedStart } from './process-recorded-start.mjs';
@@ -8,7 +9,12 @@ import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
+import { readShokoImportedFile } from '../identity/shoko-imported-file.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
+import { processProvisionalShokoLinkAttempt } from
+  './process-provisional-shoko-link-attempt.mjs';
+import { previewShokoImportedRelease } from '../identity/shoko-auto-preview.mjs';
+import { saveShokoUserRelease } from '../identity/shoko-user-release.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -27,7 +33,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
-  firstTimePolicy = 'strict' } = {}) {
+  firstTimePolicy = 'strict', allowProvisionalHandoff = false,
+  provisionalLinkEnabled = false, shokoSourcePath,
+  processProvisionalLink = processProvisionalShokoLinkAttempt } = {}) {
   const episode = publicSections?.episode;
   const movie = publicSections?.movie;
   if (typeof requests?.getRequest !== 'function' ||
@@ -43,6 +51,15 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       [...episode, ...movie].some((id) => !validId(id)) ||
       new Set([...episode, ...movie]).size !== episode.length + movie.length ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
+      typeof allowProvisionalHandoff !== 'boolean' ||
+      typeof provisionalLinkEnabled !== 'boolean' ||
+      typeof processProvisionalLink !== 'function' ||
+      (provisionalLinkEnabled && (!allowProvisionalHandoff ||
+        typeof shokoSourcePath !== 'string' ||
+        !path.posix.isAbsolute(shokoSourcePath) ||
+        shokoSourcePath === '/' ||
+        path.posix.normalize(shokoSourcePath) !== shokoSourcePath ||
+        /[\0\r\n\\]/.test(shokoSourcePath))) ||
       typeof prowlarr?.baseUrl !== 'string' ||
       typeof prowlarr?.apiKey !== 'string' ||
       !Array.isArray(prowlarr?.indexerIds) ||
@@ -149,7 +166,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl, renewQbittorrent,
         readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
-        nowMs: now(), ed2kMode });
+        nowMs: now(), ed2kMode,
+        allowProvisional: allowProvisionalHandoff });
     },
     async processPublish({ attemptId } = {}) {
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
@@ -165,7 +183,32 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
         holdingRoot, importRoot, lookup, readPacer, ed2kMode,
+        readShokoHash: ({ ed2k, size }) => readShokoImportedFile({
+          baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, ed2k, size,
+          fetchImpl: providerFetchImpl }),
         verifyHandoffMounts, nowMs: now() });
     },
+    ...(provisionalLinkEnabled ? {
+      async processLink({ attemptId } = {}) {
+        if (!await handoffMountReady()) return held('handoff_mount_unavailable');
+        return processProvisionalLink({ attemptId,
+          shokoImportRoot: path.posix.join(shokoSourcePath, 'Negev'),
+          readHandoff: (id) => handoffs.getHandoff(id),
+          readAttempt: (id) => acquisitions.getAttempt(id),
+          readRequest: (id) => requests.getRequest(id),
+          loadDetail, readRelatedTitles: relatedTitleReader,
+          readImportedFile: ({ ed2k, size, includeAbsolutePaths }) =>
+            readShokoImportedFile({ baseUrl: shoko.baseUrl,
+              apiKey: shoko.apiKey, ed2k, size, includeAbsolutePaths,
+              fetchImpl: providerFetchImpl }),
+          previewRelease: (fileId) => previewShokoImportedRelease({
+            baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId,
+            fetchImpl: providerFetchImpl }),
+          saveRelease: (fileId, body) => saveShokoUserRelease({
+            baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId, body,
+            fetchImpl: providerFetchImpl }),
+          nowMs: now() });
+      },
+    } : {}),
   };
 }

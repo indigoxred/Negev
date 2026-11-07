@@ -4,6 +4,8 @@ import { prepareRecordedHandoff } from './prepare-recorded-handoff.mjs';
 
 // Explicit, one-attempt tick. It binds the durable file plan to qBittorrent's
 // completed manifest, then verifies actual bytes with Shoko's AniDB provider.
+// The opt-in provisional path retains hashed bytes when that lookup is
+// inconclusive; it does not claim Shoko recognition or public availability.
 // Success only means a private holding copy was journaled; it never publishes
 // into Shoko Import or claims public Plex availability.
 export async function processCompletedAttempt({
@@ -13,10 +15,12 @@ export async function processCompletedAttempt({
   renewQbittorrent,
   readPacer,
   ed2kMode,
+  allowProvisional = false,
   verifyHandoffMounts,
   verifyStagingRoot,
 }) {
-  if (typeof fetchImpl !== 'function' ||
+  if (typeof allowProvisional !== 'boolean' ||
+      typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
       (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       typeof qbittorrent?.baseUrl !== 'string' ||
@@ -30,7 +34,7 @@ export async function processCompletedAttempt({
   const result = await prepareRecordedHandoff({
     requests, acquisitions, handoffs, attemptId,
     stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, nowMs, readPacer,
-    ed2kMode,
+    ed2kMode, allowProvisional,
     verifyHandoffMounts,
     verifyStagingRoot,
     observe: async ({ expected, phase }) => {

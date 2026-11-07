@@ -1,4 +1,5 @@
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import { observeProvisionalImport, observeProvisionalPlacement } from './observe-provisional-import.mjs';
 import path from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -71,8 +72,12 @@ async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
     fileIds: manifest.videos.map((file) => observed.get(file.anidbFileId)) };
 }
 
-export async function observeHandoffImport({ handoff, readEpisode } = {}) {
+export async function observeHandoffImport({ handoff, readEpisode,
+  readImportedFile } = {}) {
   if (handoff?.status !== 'published_observed') return held('publish_not_observed');
+  if (handoff.manifest?.identity === 'provisional') {
+    return observeProvisionalImport({ handoff, readImportedFile });
+  }
   return inspectExactShokoFiles({ handoff, readEpisode });
 }
 
@@ -80,13 +85,16 @@ export async function observeHandoffImport({ handoff, readEpisode } = {}) {
 // file while it is still in Import. Plex card and playback proof remain later
 // observations; this result does not claim either one.
 export async function observeHandoffPlacement({ handoff, readEpisode,
-  libraryRoot } = {}) {
+  readImportedFile, libraryRoot } = {}) {
   if (typeof libraryRoot !== 'string' || !path.posix.isAbsolute(libraryRoot) ||
       libraryRoot === '/' || path.posix.normalize(libraryRoot) !== libraryRoot ||
       /[\0\r\n\\]/.test(libraryRoot)) {
     throw new TypeError('Invalid Shoko library root');
   }
   if (handoff?.status !== 'published_observed') return held('publish_not_observed');
+  if (handoff.manifest?.identity === 'provisional') {
+    return observeProvisionalPlacement({ handoff, readImportedFile, libraryRoot });
+  }
   const observed = await inspectExactShokoFiles({ handoff, readEpisode, libraryRoot });
   return observed.state === 'shoko_files_identified'
     ? { state: 'shoko_library_location_reported', fileIds: observed.fileIds }

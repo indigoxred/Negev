@@ -42,6 +42,26 @@ test('one paced clock reconciles first and visits all four stages without overla
   assert.equal(calls.at(-1), 'close');
 });
 
+test('an opt-in Shoko link stage runs independently before later download stages', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickLinks: async () => { calls.push('links'); return { state: 'idle' }; },
+    tickPublish: async () => { calls.push('publish'); return { state: 'idle' }; },
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickStarts: async () => { calls.push('start'); return { state: 'idle' }; },
+    tickRequests: async () => { calls.push('request'); return { state: 'idle' }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  for (let i = 0; i < 5; i++) await timer.advance();
+  assert.deepEqual(calls, ['links', 'publish', 'completion', 'start', 'request']);
+  await scheduler.stop();
+});
+
 test('shutdown drains an active stage and never starts another stage', async () => {
   const timer = clock();
   let release;

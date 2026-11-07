@@ -13,14 +13,15 @@ export async function verifyStagedBatch({
   lookup, verify = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
   maxTotalBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
-  ed2kMode,
+  ed2kMode, allowProvisional = false,
 }) {
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedTorrent?.hash) ||
       typeof observe !== 'function' || typeof lookup !== 'function' ||
       typeof verify !== 'function' || typeof verifySubtitle !== 'function' ||
       !Number.isSafeInteger(maxTotalBytes) ||
-      maxTotalBytes < 1 || maxTotalBytes > 1024 ** 4) {
+      maxTotalBytes < 1 || maxTotalBytes > 1024 ** 4 ||
+      typeof allowProvisional !== 'boolean') {
     throw new TypeError('Invalid staged batch configuration');
   }
   if (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') {
@@ -91,13 +92,24 @@ export async function verifyStagedBatch({
 
   const verified = [];
   const fileIds = new Set();
+  let provisional = false;
   for (const file of selected) {
     let result;
     try {
       result = await verify({ root, relativePath: file.name,
         expected: { animeId: request.anidbId, episodeIds: plannedByName.get(file.name).episodeIds },
-        lookup, readPacer: pacer, ed2kMode });
+        lookup, readPacer: pacer, ed2kMode, allowProvisional });
     } catch { return held('file_unavailable'); }
+    if (allowProvisional && result?.state === 'hash_verified' &&
+        result.reason === 'lookup_inconclusive') {
+      const plannedEpisodes = plannedByName.get(file.name).episodeIds;
+      if (result.size !== file.size ||
+          !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
+      provisional = true;
+      verified.push({ name: file.name, episodeIds: [...plannedEpisodes],
+        ed2k: result.ed2k, size: result.size });
+      continue;
+    }
     if (result?.state !== 'identity_verified') {
       return held(result?.reason === 'wrong_identity' ? 'file_wrong_identity' :
         `file_${result?.reason ?? 'unavailable'}`);
@@ -149,9 +161,12 @@ export async function verifyStagedBatch({
   if (signature(first) === null || signature(first) !== signature(final)) {
     return held('torrent_changed_after_hash');
   }
-  return { state: 'batch_identity_verified', torrentHash: expectedTorrent.hash.toLowerCase(),
+  return { state: provisional ? 'batch_provisional' : 'batch_identity_verified',
+    ...(provisional ? { identity: 'provisional' } : {}),
+    torrentHash: expectedTorrent.hash.toLowerCase(),
     anidbId: request.anidbId,
-    files: verified,
+    files: provisional ? verified.map(({ anidbFileId: _registeredId, ...file }) => file)
+      : verified,
     subtitles: verifiedSubtitles,
     handoffReady: false };
 }

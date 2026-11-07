@@ -11,7 +11,7 @@ import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-hand
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
 async function withBatch(run, { videoBytes = Buffer.from('abc'),
-  ed2kMode } = {}) {
+  ed2kMode, provisional = false, episodeIds = [1001] } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
   const stagingRoot = path.join(root, 'staging');
   const holdingRoot = path.join(root, 'holding');
@@ -22,11 +22,12 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
     const subtitle = Buffer.from('hello');
     await writeFile(path.join(stagingRoot, '01.mkv'), video);
     await writeFile(path.join(stagingRoot, '01.en.srt'), subtitle);
-    const verified = { state: 'batch_identity_verified', handoffReady: false,
+    const verified = { state: provisional ? 'batch_provisional' : 'batch_identity_verified',
+      ...(provisional ? { identity: 'provisional' } : {}), handoffReady: false,
       torrentHash: 'a'.repeat(40), anidbId: 42,
       files: [{ name: '01.mkv', size: video.length,
         ed2k: ed2kBuffer(video, { mode: ed2kMode ?? 'edonkey' }),
-        anidbFileId: 51, episodeIds: [1001] }],
+        ...(!provisional ? { anidbFileId: 51 } : {}), episodeIds }],
       subtitles: [{ index: 1, name: '01.en.srt', size: subtitle.length,
         sha256: (await import('node:crypto')).createHash('sha256').update(subtitle)
           .digest('hex').toUpperCase() }] };
@@ -56,6 +57,7 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
         percentageStart: null, percentageEnd: null }],
     } });
     await run({ prepared, ledger, lookup, holdingRoot, importRoot,
+      ...(provisional ? { readShokoHash: async () => ({ state: 'not_imported' }) } : {}),
       video, subtitle, publishName, getBegins: () => begins,
       getObservations: () => observations });
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -268,6 +270,129 @@ test('restart reconstruction rejects a damaged journal before publication', asyn
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
+
+test('restart reconstruction retains every file in a provisional Completed pack', () => {
+  const evidence = evaluateHandoffEvidence({ identity: 'provisional',
+    anidbId: 42, torrentHash: 'a'.repeat(40), subtitles: [], files: [
+      { name: '01.mkv', size: 3, ed2k: 'A'.repeat(32), episodeIds: [1001] },
+      { name: '02.mkv', size: 3, ed2k: 'B'.repeat(32), episodeIds: [1002] },
+    ] });
+  const handoff = { status: 'prepared',
+    holdingPath: path.join(tmpdir(), 'private-provisional'),
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-7-${evidence.digest.slice(0, 16)}` };
+  const result = restorePreparedHandoff({ attemptId: 7, handoff });
+  assert.equal(result.state, 'handoff_prepared');
+  assert.deepEqual(result.files.map((file) => file.episodeIds),
+    [[1001], [1002]]);
+});
+
+test('restart reconstruction retains a provisional combined-episode file', () => {
+  const evidence = evaluateHandoffEvidence({ identity: 'provisional',
+    anidbId: 42, torrentHash: 'a'.repeat(40), subtitles: [],
+    files: [{ name: '01-02.mkv', size: 3,
+      ed2k: 'A'.repeat(32), episodeIds: [1001, 1002] }] });
+  const handoff = { status: 'prepared',
+    holdingPath: path.join(tmpdir(), 'private-provisional-pair'),
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-7-${evidence.digest.slice(0, 16)}` };
+  const result = restorePreparedHandoff({ attemptId: 7, handoff });
+  assert.equal(result.state, 'handoff_prepared');
+  assert.deepEqual(result.files[0].episodeIds, [1001, 1002]);
+});
+
+test('a provisional copy rechecks bytes before a watched-folder publish intent', async () =>
+  withBatch(async (sample) => {
+    assert.deepEqual(await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async () => { throw Error('simulated rename failure'); },
+      attemptId: 1, nowMs: 500 }),
+    { state: 'held', reason: 'publish_outcome_unknown' });
+    assert.equal(sample.getBegins(), 1);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('a conflicting AniDB result never publishes a provisional copy', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async (hash) => {
+        const preview = await sample.lookup(hash);
+        preview.release.crossReferences[0].anidbEpisodeID = 9999;
+        return preview;
+      }, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'held', reason: 'identity_changed' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('provisional publish requires proof Shoko does not already own those bytes', async () =>
+  withBatch(async (sample) => {
+    for (const readShokoHash of [undefined,
+      async () => ({ state: 'imported_unrecognized', fileId: 9001 })]) {
+      const result = await processRecordedHandoff({ ...sample,
+        readShokoHash, lookup: async () => ({ status: 204 }),
+        attemptId: 1, nowMs: 500 });
+      assert.equal(result.state, 'held');
+      assert.equal(sample.getBegins(), 0);
+      assert.deepEqual(await readdir(sample.importRoot), []);
+    }
+  }, { provisional: true }));
+
+test('changed provisional bytes never create a publish intent', async () =>
+  withBatch(async (sample) => {
+    await writeFile(path.join(sample.prepared.holdingPath, '01.mkv'), 'bad');
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+    assert.equal(result.state, 'held');
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('an uncertain provisional publish reconciles only identical destination bytes', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    assert.deepEqual(await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 }),
+    { state: 'published_observed', destination });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+  }, { provisional: true }));
+
+test('a provisional handoff records watched-folder exposure without claiming import', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      }, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed',
+      destination: path.join(sample.importRoot, sample.publishName) });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+    assert.deepEqual(await readFile(path.join(result.destination, '01.mkv')),
+      sample.video);
+  }, { provisional: true }));
+
+test('a combined provisional file can enter Shoko Source without claiming episode coverage', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      }, attemptId: 1, nowMs: 500 });
+    assert.equal(result.state, 'published_observed');
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+  }, { provisional: true, episodeIds: [1001, 1002] }));
 
 test('recorded publisher holds before provider work when its journal is missing', async () =>
   withBatch(async (sample) => {

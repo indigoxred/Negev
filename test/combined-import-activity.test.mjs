@@ -23,3 +23,12 @@ test('two quiet Shoko sources must both be stable and retain scoped pending keys
   assert.deepEqual(combineImportActivity(manual, automated),
     { state: 'quiet_observed' });
 });
+
+test('a single busy source retains its safe diagnostic reason', () => {
+  const quiet = { state: 'quiet_observed', fingerprint: fp('a') };
+  const automated = { state: 'busy', reason: 'active_or_unknown_sidecar' };
+  assert.deepEqual(combineImportActivity(quiet, automated), automated);
+  assert.deepEqual(combineImportActivity(automated, quiet), automated);
+  assert.deepEqual(combineImportActivity(automated,
+    { state: 'busy', reason: 'unrecognized_import_video' }), { state: 'busy' });
+});

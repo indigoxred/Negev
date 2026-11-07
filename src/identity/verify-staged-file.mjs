@@ -12,7 +12,7 @@ const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts'
 export async function verifyStagedFile({
   root, relativePath, expected, lookup, maxFileBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
-  ed2kMode,
+  ed2kMode, allowProvisional = false,
 }) {
   if (!Number.isSafeInteger(maxFileBytes) || maxFileBytes < 1 || maxFileBytes > 1024 ** 4) {
     throw new TypeError('Invalid staged file byte budget');
@@ -22,6 +22,9 @@ export async function verifyStagedFile({
   }
   if (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) {
     throw new TypeError('Invalid Shoko ED2K mode');
+  }
+  if (typeof allowProvisional !== 'boolean') {
+    throw new TypeError('Invalid provisional identity option');
   }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
@@ -96,6 +99,15 @@ export async function verifyStagedFile({
   } catch { return held('file_changed_or_unavailable'); }
 
   const decision = evaluatePreview(preview, { ...expected, ...hash });
+  if (allowProvisional && decision.state === 'held' &&
+      decision.reason === 'lookup_inconclusive' &&
+      Number.isSafeInteger(expected?.animeId) && expected.animeId > 0 &&
+      Array.isArray(expected.episodeIds) && expected.episodeIds.length > 0 &&
+      expected.episodeIds.length <= 50 &&
+      expected.episodeIds.every((id) => Number.isSafeInteger(id) && id > 0) &&
+      new Set(expected.episodeIds).size === expected.episodeIds.length) {
+    return { state: 'hash_verified', reason: 'lookup_inconclusive', ...hash };
+  }
   if (decision.state !== 'accepted') return decision;
   return { state: 'identity_verified', fileId: decision.fileId,
     coverage: decision.coverage,

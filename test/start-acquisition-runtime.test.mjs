@@ -68,6 +68,24 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
   assert.equal(calls[2], 'source');
 });
 
+test('private provisional pilot passes the verified Shoko path and explicit opt-in', async () => {
+  let opened;
+  await startAcquisitionRuntime({
+    config: { acquisitionRuntime: true,
+      acquisition: { ...acquisition, provisionalFallback: true },
+      shokoBaseUrl: 'http://shoko.internal:8111/',
+      qbitSidecar: { baseUrl: 'http://qbit.internal:8080' } },
+    shokoApiKey: 'synthetic',
+    service: { openAcquisitionWorkers: (input) => {
+      opened = input;
+      return { start: async () => ({ state: 'reconciled' }) };
+    } },
+    verifySource: async () => ({ state: 'verified_shoko_source' }),
+  });
+  assert.equal(opened.provisionalFallback, true);
+  assert.equal(opened.shokoSourcePath, '/negev/source');
+});
+
 test('unverified Shoko source holds before creating a watched import child', async () => {
   let childCalls = 0;
   let gate;
