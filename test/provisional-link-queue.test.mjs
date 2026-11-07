@@ -45,6 +45,28 @@ test('a Shoko-native wait is durable and does not block a later provisional file
     assert.equal(ctx.queue.claimNext({ nowMs: 601_000 }).attemptId, 1);
   }));
 
+test('a Shoko fallback wait retries after Shoko can identify the file', async () =>
+  fixture(async (ctx) => {
+    let matched = false;
+    let time = 1_000;
+    const processAttempt = async ({ attemptId }) =>
+      attemptId === 1 && !matched
+        ? { state: 'held', reason: 'shoko_fallback_pending' }
+        : { state: 'shoko_files_identified', fileIds: [20] };
+    const worker = createProvisionalLinkWorker({ queue: ctx.queue,
+      now: () => time, processAttempt });
+    assert.equal((await worker.runOnce()).attemptId, 1);
+    assert.equal(ctx.queue.getResult(1).nextDueMs, 601_000);
+    assert.equal((await worker.runOnce()).attemptId, 2);
+    ctx.reopen();
+    matched = true;
+    time = 601_000;
+    const restarted = createProvisionalLinkWorker({ queue: ctx.queue,
+      now: () => time, processAttempt });
+    assert.equal((await restarted.runOnce()).attemptId, 1);
+    assert.equal(ctx.queue.getResult(1).state, 'shoko_files_identified');
+  }));
+
 test('an interrupted claim is recovered for re-observation after restart', async () =>
   fixture(async (ctx) => {
     assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, 1);

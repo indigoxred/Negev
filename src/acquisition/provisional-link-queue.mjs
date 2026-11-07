@@ -8,6 +8,7 @@ const validReason = (value) => typeof value === 'string' &&
 const RETRY_MS = new Map([
   ['shoko_import_pending', 10 * 60_000],
   ['shoko_native_match_pending', 10 * 60_000],
+  ['shoko_fallback_pending', 10 * 60_000],
   ['shoko_link_evidence_unavailable', 10 * 60_000],
   ['shoko_preview_unavailable', 10 * 60_000],
   ['shoko_file_changed', 10 * 60_000],
