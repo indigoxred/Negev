@@ -12,6 +12,15 @@ const manifest = { version: 1,
 const withEvidence = (manifest) => ({ status: 'published_observed', manifest,
   evidenceDigest: evaluateHandoffEvidence({ ...manifest, files: manifest.videos }).digest });
 const row = withEvidence(manifest);
+const provisionalInput = { version: 2, identity: 'provisional',
+  anidbId: 42, torrentHash: 'b'.repeat(40),
+  videos: [{ name: '05.mkv', size: 123, ed2k: 'A'.repeat(32),
+    episodeIds: [1005] }], subtitles: [] };
+const provisionalEvidence = evaluateHandoffEvidence({ ...provisionalInput,
+  files: provisionalInput.videos });
+const provisionalRow = { status: 'published_observed',
+  manifest: provisionalEvidence.manifest,
+  evidenceDigest: provisionalEvidence.digest };
 const observed = (fileId, episodeIds) => ({ fileId: fileId + 1000,
   anidbFileId: fileId, ed2k: 'A'.repeat(32), size: 123,
   anidbId: 42, episodeIds,
@@ -28,6 +37,16 @@ test('each exact claimed video must be identified in Shoko before import is obse
     } });
   assert.deepEqual(calls, [[42, 1001], [42, 1002]]);
   assert.deepEqual(result, { state: 'shoko_files_identified', fileIds: [1800, 1801] });
+});
+
+test('provisional handoff observes exact imported bytes without a registered file ID', async () => {
+  let readEpisodeCalled = false;
+  assert.deepEqual(await observeHandoffImport({ handoff: provisionalRow,
+    readEpisode: async () => { readEpisodeCalled = true; },
+    readImportedFile: async () => ({ state: 'imported_unrecognized',
+      fileId: 19711, ed2k: 'A'.repeat(32), size: 123 }) }),
+  { state: 'awaiting_shoko_link', fileId: 19711 });
+  assert.equal(readEpisodeCalled, false);
 });
 
 test('library placement requires every exact Shoko file to have an accessible final-library path', async () => {
