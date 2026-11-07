@@ -6,9 +6,12 @@ const validSid = validQbittorrentSessionId;
 // Refresh before qBittorrent's default one-hour WebUI session lifetime.
 // A configured shorter lifetime still follows the existing 403/backoff path.
 const MAX_SESSION_AGE_MS = 30 * 60_000;
+const SID_RECOVERY_DELAY_MS = 60_000;
+const SID_RECOVERY_WINDOW_MS = 30 * 60_000;
 
-// One session for the paced acquisition runtime. A bad password or a 403
-// latches until restart so worker ticks cannot trigger qBittorrent's IP ban.
+// One session for the paced acquisition runtime. Bad credentials latch until
+// restart. One rejected authenticated SID gets a paced recovery; repeated
+// rejection uses the full backoff to avoid a qBittorrent login storm.
 // A caller must invalidate an exact SID after an authenticated API rejection.
 export function createQbittorrentSessionGate({ baseUrl, username, password,
   login = loginQbittorrent, now = Date.now,
@@ -26,6 +29,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
   let pending;
   let rejectedReason = null;
   let retryAtMs = null;
+  let lastFastRecoveryAtMs = null;
   const clock = () => {
     const value = now();
     if (!Number.isSafeInteger(value) || value < 0) {
@@ -93,7 +97,15 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
       }
       sessionId = null;
       authenticatedAtMs = null;
-      retryAtMs = clock() + retryDelayMs;
+      const currentMs = clock();
+      // One lost SID can be an ordinary WebUI session eviction. Reauthenticate
+      // once after a pause; a second rejection in the window uses the full
+      // backoff so a persistent 403 cannot generate a login loop or IP ban.
+      const fastRecovery = lastFastRecoveryAtMs === null ||
+        currentMs - lastFastRecoveryAtMs >= SID_RECOVERY_WINDOW_MS;
+      if (fastRecovery) lastFastRecoveryAtMs = currentMs;
+      retryAtMs = currentMs + (fastRecovery ?
+        SID_RECOVERY_DELAY_MS : retryDelayMs);
       if (!Number.isSafeInteger(retryAtMs)) retryAtMs = Number.MAX_SAFE_INTEGER;
       return { state: 'invalidated' };
     },
