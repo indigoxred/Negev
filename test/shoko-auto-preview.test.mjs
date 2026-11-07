@@ -36,6 +36,22 @@ test('no provider match is inconclusive and a provider error remains unavailable
   { state: 'unavailable', reason: 'http_503' });
 });
 
+test('a named Shoko fallback provider can be previewed without enabling it globally', async () => {
+  let calledUrl;
+  const providerId = 'ad205cd9-5452-49bc-9862-d6a021123abc';
+  const result = await previewShokoImportedRelease({ ...options, providerIds: [providerId],
+    fetchImpl: async (url) => {
+      calledUrl = new URL(url);
+      return response(204);
+    } });
+  assert.equal(calledUrl.searchParams.get('strict'), 'true');
+  assert.equal(calledUrl.searchParams.get('providerIDs'), providerId);
+  assert.deepEqual(result, { state: 'no_match' });
+  await assert.rejects(previewShokoImportedRelease({ ...options,
+    providerIds: ['not-a-provider-id'], fetchImpl: async () => response(204) }),
+  TypeError);
+});
+
 test('a malformed provider result is never interpreted as a safe match', async () => {
   assert.deepEqual(await previewShokoImportedRelease({ ...options,
     fetchImpl: async () => response(200, { ProviderName: 'AniDB',

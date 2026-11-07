@@ -1,12 +1,13 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const unavailable = (reason) => ({ state: 'unavailable', reason });
+const PROVIDER_ID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
-// Shoko's AutoPreview endpoint runs the enabled release providers with
-// saveRelease:false. It can consult external providers but does not save or
-// replace the file's current release. A later writer must re-read the file.
+// Shoko's AutoPreview endpoint runs enabled providers by default, or only the
+// explicitly named providers. It does not save or replace the current release.
+// A later writer must re-read the file.
 export async function previewShokoImportedRelease({ baseUrl, apiKey, fileId,
-  fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
+  providerIds, fetchImpl = fetch, timeoutMs = 15_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); }
   catch { throw new TypeError('Invalid Shoko URL'); }
@@ -14,11 +15,21 @@ export async function previewShokoImportedRelease({ baseUrl, apiKey, fileId,
       base.password || base.search || base.hash ||
       typeof apiKey !== 'string' || !apiKey ||
       !Number.isSafeInteger(fileId) || fileId < 1 ||
+      (providerIds !== undefined && (!Array.isArray(providerIds) ||
+        providerIds.length < 1 || providerIds.length > 5 ||
+        providerIds.some((id) => typeof id !== 'string' ||
+          !PROVIDER_ID.test(id)) ||
+        new Set(providerIds.map((id) => id.toLowerCase())).size !==
+          providerIds.length)) ||
       typeof fetchImpl !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid Shoko auto-preview request');
   }
   const url = new URL(`/api/v3/ReleaseInfo/File/${fileId}/AutoPreview`, base);
+  if (providerIds !== undefined) {
+    url.searchParams.set('strict', 'true');
+    url.searchParams.set('providerIDs', providerIds.join(','));
+  }
   let response;
   try {
     response = await fetchImpl(url, { method: 'POST', redirect: 'manual',

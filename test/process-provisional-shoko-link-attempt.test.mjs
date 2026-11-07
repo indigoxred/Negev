@@ -39,6 +39,7 @@ test('worker links exact owned Shoko bytes, then observes identity without claim
   let reads = 0;
   let writes = 0;
   const result = await processProvisionalShokoLinkAttempt({ ...base,
+    allowUserLink: true,
     readImportedFile: async () => (++reads >= 4 ? recognized : unrecognized),
     previewRelease: async () => ({ state: 'no_match' }),
     saveRelease: async (fileId, body) => {
@@ -65,6 +66,16 @@ test('holds a newly imported or undated file while Shoko may still match it', as
     assert.equal(previews, 0);
     assert.equal(writes, 0);
   }
+});
+
+test('an older unrecognized file does not receive a synthesized User link by default', async () => {
+  let writes = 0;
+  const result = await processProvisionalShokoLinkAttempt({ ...base,
+    readImportedFile: async () => unrecognized,
+    previewRelease: async () => ({ state: 'no_match' }),
+    saveRelease: async () => { writes++; return { state: 'saved' }; } });
+  assert.deepEqual(result, { state: 'held', reason: 'shoko_fallback_pending' });
+  assert.equal(writes, 0);
 });
 
 test('wrong saved release title or Shoko file does not save a link', async () => {

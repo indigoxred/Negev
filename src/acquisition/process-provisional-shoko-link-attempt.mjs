@@ -11,10 +11,11 @@ export async function processProvisionalShokoLinkAttempt({ attemptId,
   shokoImportRoot, readHandoff, readAttempt, readRequest, loadDetail,
   readAliases = async () => [], readRelatedTitles, readImportedFile,
   previewRelease, saveRelease, nowMs = Date.now(),
-  minNativeWaitMs = 30 * 60_000 } = {}) {
+  minNativeWaitMs = 30 * 60_000, allowUserLink = false } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       !Number.isSafeInteger(minNativeWaitMs) || minNativeWaitMs < 60_000 ||
+      typeof allowUserLink !== 'boolean' ||
       [readHandoff, readAttempt, readRequest, loadDetail, readAliases,
         readRelatedTitles, readImportedFile, previewRelease, saveRelease]
         .some((fn) => typeof fn !== 'function')) {
@@ -55,6 +56,12 @@ export async function processProvisionalShokoLinkAttempt({ attemptId,
         nowMs - observed.importedAtMs < minNativeWaitMs) {
       return held('shoko_native_match_pending');
     }
+  }
+  // A filename-derived User release is not the routine fallback. The
+  // installed Shoko Offline Importer can supply provider identity, but its
+  // automatic rules must be verified separately before enabling this path.
+  if (planned.links.length > 0 && !allowUserLink) {
+    return held('shoko_fallback_pending');
   }
   for (const link of planned.links) {
     const result = await commitProvisionalShokoLink({ plan: link,
