@@ -31,6 +31,21 @@ test('404 means Shoko has not yet indexed those exact bytes', async () => {
     fetchImpl: async () => response({}, 404) }), { state: 'not_imported' });
 });
 
+test('preserves Shoko import time for a conservative native-match wait', async () => {
+  const result = await readShokoImportedFile({ ...options,
+    fetchImpl: async () => response({ ...file,
+      Imported: '2026-11-07T10:00:00.1234567+11:00' }) });
+  assert.equal(result.importedAtMs,
+    Date.parse('2026-11-07T10:00:00.123+11:00'));
+});
+
+test('rejects an import time without an explicit timezone', async () => {
+  const result = await readShokoImportedFile({ ...options,
+    fetchImpl: async () => response({ ...file,
+      Imported: '2026-11-07T10:00:00' }) });
+  assert.deepEqual(result, { state: 'unavailable', reason: 'invalid_response' });
+});
+
 test('optional location proof reads only accessible Shoko paths for the same file', async () => {
   let include;
   const result = await readShokoImportedFile({ ...options,

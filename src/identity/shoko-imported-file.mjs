@@ -1,6 +1,7 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const ED2K = /^[0-9A-F]{32}$/;
+const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const unavailable = (reason) => ({ state: 'unavailable', reason });
 
 // Observe the exact bytes after Shoko has had an opportunity to import and
@@ -41,6 +42,14 @@ export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
         hash?.Type === 'ED2K' && hash.Value === ed2k)) {
     return unavailable('invalid_response');
   }
+  // Shoko may expose a file before its release providers finish. Preserve
+  // its own import time so a later link operation can wait conservatively.
+  const importedAtMs = raw.Imported == null ? null : Date.parse(raw.Imported);
+  if (raw.Imported != null && (typeof raw.Imported !== 'string' ||
+      !EXPLICIT_TIMEZONE.test(raw.Imported) ||
+      !Number.isSafeInteger(importedAtMs))) {
+    return unavailable('invalid_response');
+  }
   let locations;
   if (includeAbsolutePaths) {
     if (!Array.isArray(raw.Locations) || raw.Locations.length > 100 ||
@@ -64,6 +73,7 @@ export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
     }));
   }
   const identity = { fileId: raw.ID, ed2k, size,
+    ...(importedAtMs == null ? {} : { importedAtMs }),
     ...(includeAbsolutePaths ? { locations } : {}) };
   if (raw.Release === undefined || raw.Release === null) {
     return { state: 'imported_unrecognized', ...identity };
