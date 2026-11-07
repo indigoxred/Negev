@@ -78,6 +78,22 @@ test('an older unrecognized file does not receive a synthesized User link by def
   assert.equal(writes, 0);
 });
 
+test('a later exact Shoko provider match advances the held file without a Negev link write', async () => {
+  let current = unrecognized;
+  let writes = 0;
+  const providers = { ...base,
+    readImportedFile: async () => current,
+    previewRelease: async () => ({ state: 'no_match' }),
+    saveRelease: async () => { writes++; return { state: 'saved' }; } };
+  assert.deepEqual(await processProvisionalShokoLinkAttempt(providers),
+    { state: 'held', reason: 'shoko_fallback_pending' });
+  current = { ...recognized, release: { ...recognized.release,
+    providerName: 'Offline Importer' } };
+  assert.deepEqual(await processProvisionalShokoLinkAttempt(providers),
+    { state: 'shoko_files_identified', fileIds: [19711] });
+  assert.equal(writes, 0);
+});
+
 test('wrong saved release title or Shoko file does not save a link', async () => {
   for (const changed of [
     { readAttempt: () => ({ ...attempt,
