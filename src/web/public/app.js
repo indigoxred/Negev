@@ -5,7 +5,7 @@ import { requestPresentation } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
-import { summarizeSeasonAvailability } from './season-availability-presentation.mjs';
+import { summarizeSeasonAvailability, summarizeFilmAvailability } from './season-availability-presentation.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
 
@@ -1141,6 +1141,8 @@ async function showDetail(item, franchise = null) {
     if (pager) {
       const season = summarizeSeasonAvailability({ kind: data.kind,
         episodes: pager.episodes, nextPage: pager.nextPage });
+      const film = summarizeFilmAvailability({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage });
       const savedCount = data.libraryPresence?.state === 'in_library' &&
         Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
         data.libraryPresence.verifiedEpisodeCount > 0
@@ -1148,7 +1150,11 @@ async function showDetail(item, franchise = null) {
       const pageCount = pager.episodes.filter((episode) =>
         episode.availability === 'available').length;
       const verified = Math.max(savedCount, pageCount);
-      panel.append(element('p', season?.completeList && season.total > 0
+      panel.append(element('p', film?.available
+        ? `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`
+        : film && film.total > 0
+          ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
+        : season?.completeList && season.total > 0
         ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
         : season && season.total > 0
           ? `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`
@@ -1157,7 +1163,8 @@ async function showDetail(item, franchise = null) {
           ? `film entr${verified === 1 ? 'y' : 'ies'}`
           : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
         : 'Current Plex availability has not been verified for this title.',
-      season?.verified > 0 || verified > 0 ? 'presence available' : 'presence unknown'));
+      film?.available || season?.verified > 0 ||
+        (!film && verified > 0) ? 'presence available' : 'presence unknown'));
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
@@ -1277,8 +1284,7 @@ async function showDetail(item, franchise = null) {
       });
       check.append(label, button, result);
       if (state.titleChecks) {
-        const checkTitle = element('button', data.kind === 'series'
-          ? 'Check season availability' : 'Check film availability');
+        const checkTitle = element('button', 'Recheck unknown entries in background');
         const progress = element('p', '', 'muted');
         const url = `/api/catalogue/${item.anidbId}/title-check`;
         let pollTimer;
@@ -1319,10 +1325,15 @@ async function showDetail(item, franchise = null) {
           } catch (error) { message(error.message, true); }
           finally { checkTitle.disabled = false; }
         });
-        const summary = element('div', undefined, 'title-check-summary');
-        summary.append(checkTitle, progress);
+        const summary = element('details', undefined, 'title-check-summary');
+        summary.append(element('summary', 'Detailed availability recheck'),
+          element('p', 'Current verified availability is shown above. A full recheck may take several minutes and does not block requests.', 'muted'),
+          checkTitle, progress);
         panel.append(summary);
-        void showProgress();
+        summary.addEventListener('toggle', () => {
+          if (summary.open) void showProgress();
+          else if (pollTimer) clearTimeout(pollTimer);
+        });
       }
       if (data.kind === 'series' && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected episode');
