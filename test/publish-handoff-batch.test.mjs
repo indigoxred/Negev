@@ -269,6 +269,24 @@ test('restart reconstruction rejects a damaged journal before publication', asyn
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
 
+test('a provisional private copy cannot publish through the exact AniDB path', async () =>
+  withBatch(async (sample) => {
+    const exact = sample.ledger.getHandoff();
+    const provisional = evaluateHandoffEvidence({ identity: 'provisional',
+      anidbId: exact.manifest.anidbId,
+      torrentHash: exact.manifest.torrentHash,
+      files: exact.manifest.videos.map(({ anidbFileId, ...file }) => file),
+      subtitles: exact.manifest.subtitles });
+    const row = { ...exact, manifest: provisional.manifest,
+      evidenceDigest: provisional.digest,
+      publishName: `negev-1-${provisional.digest.slice(0, 16)}` };
+    assert.deepEqual(await processRecordedHandoff({ ...sample,
+      ledger: { getHandoff: () => row }, attemptId: 1, nowMs: 500 }),
+    { state: 'held', reason: 'handoff_evidence_mismatch' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }));
+
 test('recorded publisher holds before provider work when its journal is missing', async () =>
   withBatch(async (sample) => {
     const result = await processRecordedHandoff({ ...sample,
