@@ -21,7 +21,7 @@ async function fixture(run) {
   db.close();
   let queue = openProvisionalLinkQueue(dbPath);
   try {
-    await run({ get queue() { return queue; },
+    await run({ dbPath, get queue() { return queue; },
       reopen() { queue.close(); queue = openProvisionalLinkQueue(dbPath); } });
   } finally {
     queue.close();
@@ -65,6 +65,28 @@ test('a Shoko fallback wait retries after Shoko can identify the file', async ()
       now: () => time, processAttempt });
     assert.equal((await restarted.runOnce()).attemptId, 1);
     assert.equal(ctx.queue.getResult(1).state, 'shoko_files_identified');
+  }));
+
+test('later provisional handoffs get a turn while two older files keep waiting', async () =>
+  fixture(async (ctx) => {
+    const db = new DatabaseSync(ctx.dbPath);
+    db.prepare(`UPDATE handoff_intents SET manifest_json=? WHERE attempt_id=3`)
+      .run('{"identity":"provisional"}');
+    db.close();
+    let time = 60_000;
+    const visited = [];
+    const worker = createProvisionalLinkWorker({ queue: ctx.queue,
+      now: () => time, processAttempt: async ({ attemptId }) => {
+        visited.push(attemptId);
+        return attemptId === 3
+          ? { state: 'shoko_files_identified', fileIds: [30] }
+          : { state: 'held', reason: 'shoko_fallback_pending' };
+      } });
+    for (let tick = 0; tick < 3; tick++, time += 5 * 60_000) {
+      await worker.runOnce();
+    }
+    assert.deepEqual(visited, [1, 2, 3]);
+    assert.equal(ctx.queue.getResult(3).state, 'shoko_files_identified');
   }));
 
 test('an interrupted claim is recovered for re-observation after restart', async () =>

@@ -50,7 +50,9 @@ export function openProvisionalLinkQueue(dbPath) {
         THEN json_extract(h.manifest_json,'$.identity') ELSE NULL END
         ='provisional' AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
-    ORDER BY h.attempt_id LIMIT 1`);
+    -- Never-checked handoffs go first; among retries, serve the oldest
+    -- completed check. A short retry delay must not starve later imports.
+    ORDER BY (c.checked_ms IS NOT NULL), c.checked_ms, h.attempt_id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO provisional_link_checks
     (attempt_id,version,state,reason,checked_ms,next_due_ms)
     VALUES (?,1,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
