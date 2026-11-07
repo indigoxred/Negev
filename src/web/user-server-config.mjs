@@ -340,6 +340,21 @@ export function parseUserServerConfig(env) {
   }
   const port = Number(rawPort);
   if (port > 65_535) throw new TypeError('Invalid user server port');
+  const localOrigin = env.NEGEV_LOCAL_ORIGIN ?? null;
+  if (localOrigin !== null) {
+    const local = baseUrl(localOrigin, 'local origin');
+    const octets = local.hostname.split('.');
+    const privateLan = octets.length === 4 && octets.every((part) =>
+      /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255) &&
+      (Number(octets[0]) === 10 ||
+        (Number(octets[0]) === 172 && Number(octets[1]) >= 16 &&
+          Number(octets[1]) <= 31) ||
+        (Number(octets[0]) === 192 && Number(octets[1]) === 168));
+    if (!exposed || host !== '0.0.0.0' || local.protocol !== 'http:' ||
+        !privateLan || local.port !== String(port)) {
+      throw new TypeError('Local origin needs the exposed private LAN listener');
+    }
+  }
   const plex = plexConfig(env, dataDir);
   const prowlarr = prowlarrConfig(env, dataDir);
   const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
@@ -424,5 +439,6 @@ export function parseUserServerConfig(env) {
     prowlarr, qbitSidecar,
     plexIndex: env.NEGEV_PLEX_INDEX === '1',
     plexIndexIntervalMs: Number(rawPlexIndexInterval ?? 60_000), publicOrigin,
+    localOrigin,
     secureCookies: exposed, host, port };
 }

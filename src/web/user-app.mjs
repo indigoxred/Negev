@@ -19,10 +19,19 @@ const constantEqual = (a, b) => {
   const right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
 };
+const privateLanHost = (hostname) => {
+  const octets = hostname.split('.');
+  if (octets.length !== 4 || octets.some((part) =>
+    !/^(?:0|[1-9]\d{0,2})$/.test(part) || Number(part) > 255)) return false;
+  const [first, second] = octets.map(Number);
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+};
 
 // Account-backed HTTP boundary. Acquisition and availability are injected
 // separately; no browser can supply a requester ID or torrent URL.
-export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
+export async function buildUserApp({ accounts, sessionKey, publicOrigin,
+  localOrigin = null, secureCookies = true,
   now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
   readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
@@ -34,8 +43,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   publicAvailabilityConfigured = false } = {}) {
-  let origin;
+  let origin, local;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
+  if (localOrigin !== null) {
+    try { local = new URL(localOrigin); }
+    catch { throw new TypeError('Invalid local origin'); }
+  }
   if (typeof accounts?.authenticate !== 'function' ||
       typeof accounts?.registerInvite !== 'function' ||
       typeof accounts?.getSessionUser !== 'function' ||
@@ -49,6 +62,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       (!secureCookies && !(origin.protocol === 'http:' &&
         ['localhost', '127.0.0.1'].includes(origin.hostname))) ||
       (secureCookies && origin.protocol !== 'https:') ||
+      (localOrigin !== null && (!secureCookies ||
+        localOrigin !== local.origin || local.protocol !== 'http:' ||
+        !privateLanHost(local.hostname) || local.pathname !== '/' ||
+        local.search || local.hash || local.username || local.password)) ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
       typeof readRequest !== 'function' ||
       typeof confirmKnownTitle !== 'function' ||
@@ -58,15 +75,25 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   }
 
   const app = Fastify({ logger: false, bodyLimit: 16 * 1024, trustProxy: false });
-  await app.register(secureSession, { key: sessionKey,
+  const primarySession = { key: sessionKey,
+    ...(local ? { sessionName: 'session' } : {}),
     cookieName: secureCookies ? '__Host-negev' : 'negev-local-session',
     expiry: 24 * 60 * 60,
     cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: secureCookies,
-      maxAge: 24 * 60 * 60 } });
+      maxAge: 24 * 60 * 60 } };
+  await app.register(secureSession, local ? [primarySession,
+    { key: sessionKey, sessionName: 'lanSession',
+      cookieName: 'negev-lan-session', expiry: 24 * 60 * 60,
+      cookie: { path: '/', httpOnly: true, sameSite: 'strict',
+        secure: false, maxAge: 24 * 60 * 60 } }] : primarySession);
+  const sessionFor = (request) => local && request.headers.host === local.host &&
+    (request.headers.origin === localOrigin ||
+      (!request.headers.origin && request.cookies?.['negev-lan-session']))
+    ? request.lanSession : request.session;
   const peerRateKey = (request) => normalizeIP(request.ip, 64);
   const accountRateKey = (request) => {
     let userId;
-    try { userId = request.session?.get('userId'); }
+    try { userId = sessionFor(request)?.get('userId'); }
     catch { /* An invalid session keeps the peer-level limit. */ }
     return Number.isSafeInteger(userId) && userId > 0
       ? `account:${userId}` : `peer:${peerRateKey(request)}`;
@@ -98,19 +125,23 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
-    if (request.headers.origin !== publicOrigin) {
+    if (request.headers.origin !== publicOrigin &&
+        !(local && request.headers.origin === localOrigin &&
+          request.headers.host === local.host)) {
       return reply.code(403).send({ error: 'Origin rejected' });
     }
   };
   const requireUser = async (request, reply) => {
     const user = accounts.getSessionUser({
-      userId: request.session.get('userId'), version: request.session.get('version'),
+      userId: sessionFor(request).get('userId'),
+      version: sessionFor(request).get('version'),
     });
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
     request.negevUser = user;
   };
   const requireCsrf = async (request, reply) => {
-    if (!constantEqual(request.headers['x-negev-csrf'], request.session.get('csrfToken'))) {
+    if (!constantEqual(request.headers['x-negev-csrf'],
+      sessionFor(request).get('csrfToken'))) {
       return reply.code(403).send({ error: 'Request token rejected' });
     }
   };
@@ -186,10 +217,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         .send({ error: 'Authentication busy; retry shortly' });
     }
     if (!user) return reply.code(401).send({ error: 'Invalid login' });
-    request.session.regenerate();
-    request.session.set('userId', user.id);
-    request.session.set('version', user.sessionVersion);
-    request.session.set('csrfToken', randomBytes(32).toString('hex'));
+    const session = sessionFor(request);
+    session.regenerate();
+    session.set('userId', user.id);
+    session.set('version', user.sessionVersion);
+    session.set('csrfToken', randomBytes(32).toString('hex'));
     return { user: { id: user.id, username: user.username, role: user.role,
       adultAllowed: user.adultAllowed } };
   });
@@ -202,7 +234,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       'reconciliation_failed', 'stopping', 'stopped']
       .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role, adultAllowed },
-      csrfToken: request.session.get('csrfToken'),
+      csrfToken: sessionFor(request).get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
@@ -674,7 +706,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   });
   app.post('/api/logout', { preHandler: writeGuards }, async (request, reply) => {
     accounts.revokeSessions({ userId: request.negevUser.id });
-    request.session.delete();
+    sessionFor(request).delete();
     return reply.code(204).send();
   });
   app.post('/api/invitations', { preHandler: writeGuards }, async (request, reply) => {

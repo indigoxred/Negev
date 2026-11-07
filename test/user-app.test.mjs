@@ -36,6 +36,47 @@ test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', a
   } finally { await app.close(); }
 });
 
+test('an exposed review instance keeps HTTPS and LAN HTTP sessions separate', async () => {
+  const publicOrigin = 'https://anime.negev.red';
+  const localOrigin = 'http://192.168.50.138:17116';
+  const user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = {
+    authenticate: async () => user, registerInvite: async () => null,
+    getSessionUser: ({ userId, version }) => userId === 1 && version === 1
+      ? user : null,
+    createInvite: () => null, revokeSessions: () => false,
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin, localOrigin, secureCookies: true,
+    submitRequest: async () => null, readRequest: () => null });
+  try {
+    const login = (site) => app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: site, host: new URL(site).host },
+      payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const publicLogin = await login(publicOrigin);
+    assert.equal(publicLogin.statusCode, 200);
+    assert.match(publicLogin.headers['set-cookie'], /^__Host-negev=/);
+    assert.match(publicLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    const localLogin = await login(localOrigin);
+    assert.equal(localLogin.statusCode, 200);
+    assert.match(localLogin.headers['set-cookie'], /^negev-lan-session=/);
+    assert.doesNotMatch(localLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    for (const [site, response] of [[publicOrigin, publicLogin],
+      [localOrigin, localLogin]]) {
+      const session = await app.inject({ method: 'GET', url: '/api/session',
+        headers: { host: new URL(site).host,
+          cookie: response.headers['set-cookie'] } });
+      assert.equal(session.statusCode, 200);
+      assert.equal(session.json().user.username, 'Owner');
+    }
+    const cross = await app.inject({ method: 'POST', url: '/api/logout',
+      headers: { host: new URL(localOrigin).host, origin: publicOrigin,
+        cookie: localLogin.headers['set-cookie'] } });
+    assert.equal(cross.statusCode, 401);
+  } finally { await app.close(); }
+});
+
 test('busy password verification is retryable for sign-in and invited registration', async () => {
   const accounts = {
     authenticate: async () => ({ state: 'busy' }),
