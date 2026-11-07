@@ -56,6 +56,7 @@ export function openAcquisitionLedger(dbPath) {
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
       indexer_id INTEGER NOT NULL CHECK(indexer_id > 0),
       candidate_digest TEXT NOT NULL,
+      candidate_title TEXT,
       status TEXT NOT NULL CHECK(status IN ('reserved','dispatch_unknown','torrent_observed')),
       evidence_policy TEXT NOT NULL DEFAULT 'strict' CHECK(evidence_policy IN ('strict','first_time_permissive')),
       expected_hash TEXT,
@@ -73,6 +74,10 @@ export function openAcquisitionLedger(dbPath) {
     if (!db.prepare('PRAGMA table_info(acquisition_attempts)').all()
       .some((column) => column.name === 'evidence_policy')) {
       db.exec("ALTER TABLE acquisition_attempts ADD COLUMN evidence_policy TEXT NOT NULL DEFAULT 'strict' CHECK(evidence_policy IN ('strict','first_time_permissive'))");
+    }
+    if (!db.prepare('PRAGMA table_info(acquisition_attempts)').all()
+      .some((column) => column.name === 'candidate_title')) {
+      db.exec('ALTER TABLE acquisition_attempts ADD COLUMN candidate_title TEXT');
     }
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS acquisition_expected_hash
       ON acquisition_attempts(expected_hash) WHERE expected_hash IS NOT NULL`);
@@ -139,7 +144,7 @@ export function openAcquisitionLedger(dbPath) {
   const requestedEpisode = db.prepare(`SELECT 1 AS present FROM request_targets rt
     JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
-  const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
+  const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy,candidate_title FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
   const busyTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? AND active=1');
   const historicalTarget = db.prepare(`SELECT claim.attempt_id
     FROM acquisition_target_claims claim
@@ -149,10 +154,10 @@ export function openAcquisitionLedger(dbPath) {
       AND released.attempt_id IS NULL AND retired.attempt_id IS NULL LIMIT 1`);
   const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
-    (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
-    VALUES (?,?,?,?,'reserved',?,?,?)`);
+    (request_id,anidb_id,indexer_id,candidate_digest,candidate_title,status,evidence_policy,created_ms,updated_ms)
+    VALUES (?,?,?,?,?,'reserved',?,?,?)`);
   const claimTarget = db.prepare('INSERT INTO acquisition_target_claims(attempt_id,anidb_id,episode_id) VALUES (?,?,?)');
-  const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,expected_hash,torrent_hash,created_ms,updated_ms
+  const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,candidate_title,status,evidence_policy,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
   const activeAttemptEpisodes = db.prepare(`SELECT episode_id FROM acquisition_target_claims
@@ -284,6 +289,10 @@ export function openAcquisitionLedger(dbPath) {
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
           !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
+          (candidate.title !== undefined &&
+            (typeof candidate.title !== 'string' ||
+              candidate.title.length < 1 || candidate.title.length > 500 ||
+              /[\0-\x1f\x7f]/.test(candidate.title))) ||
           !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > 50 ||
           episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
@@ -302,6 +311,7 @@ export function openAcquisitionLedger(dbPath) {
         if (existing && findRetirement.get(existing.id)) return held('candidate_retired');
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           existing.evidence_policy === evidencePolicy &&
+          existing.candidate_title === (candidate.title ?? null) &&
           JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
           JSON.stringify([...episodeIds].sort((a, b) => a - b))
           ? { state: 'existing', attemptId: existing.id, status: existing.status }
@@ -312,7 +322,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         if (episodeIds.some((id) => busyTarget.get(request.anidb_id, id))) return held('target_busy');
         const id = Number(insertAttempt.run(requestId, request.anidb_id, candidate.indexerId,
-          digest, evidencePolicy, nowMs, nowMs).lastInsertRowid);
+          digest, candidate.title ?? null, evidencePolicy, nowMs, nowMs).lastInsertRowid);
         for (const episodeId of episodeIds) claimTarget.run(id, request.anidb_id, episodeId);
         return { state: 'reserved', attemptId: id };
       });
@@ -620,7 +630,8 @@ export function openAcquisitionLedger(dbPath) {
         if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         const digest = createHash('sha256').update(candidate.guid).digest('hex');
-        if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest) {
+        if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest ||
+            row.candidate_title !== (candidate.title ?? null)) {
           return held('candidate_mismatch');
         }
         const normalizedHash = hash.toLowerCase();
@@ -748,6 +759,7 @@ export function openAcquisitionLedger(dbPath) {
       const rejection = row ? findRejection.get(attemptId) : null;
       return row ? { id: row.id, requestId: row.request_id, anidbId: row.anidb_id,
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
+        ...(row.candidate_title === null ? {} : { candidateTitle: row.candidate_title }),
         ...(row.evidence_policy === 'first_time_permissive'
           ? { evidencePolicy: row.evidence_policy } : {}),
         status: findRelease.get(attemptId) ? 'released_pre_dispatch' :

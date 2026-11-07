@@ -28,6 +28,30 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('a chosen release title survives restart for later Shoko fallback checks', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    const selected = { indexerId: 7, guid: 'episode-1-release',
+      title: '[SubsPlease] Example - 01 (1080p)' };
+    try {
+      const claim = ledger.reserve({ requestId: firstId, candidate: selected,
+        episodeIds: [1001], nowMs: 200 });
+      assert.equal(claim.state, 'reserved');
+      ledger.close();
+      ledger = openAcquisitionLedger(dbPath);
+      assert.equal(ledger.getAttempt(claim.attemptId).candidateTitle,
+        selected.title);
+      assert.deepEqual(ledger.bindPreparedTorrent({ attemptId: claim.attemptId,
+        candidate: { ...selected, title: '[Wrong] Other - 01' },
+        hash: 'a'.repeat(40), nowMs: 201 }),
+      { state: 'held', reason: 'candidate_mismatch' });
+      assert.deepEqual(ledger.reserve({ requestId: firstId,
+        candidate: { ...selected, title: '[Wrong] Other - 01' },
+        episodeIds: [1001], nowMs: 201 }),
+      { state: 'held', reason: 'candidate_claimed' });
+    } finally { ledger.close(); }
+  }));
+
 test('a proven absent pre-start related-installment mismatch releases only its claims', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
