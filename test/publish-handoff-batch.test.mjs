@@ -11,7 +11,7 @@ import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-hand
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
 async function withBatch(run, { videoBytes = Buffer.from('abc'),
-  ed2kMode } = {}) {
+  ed2kMode, provisional = false } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
   const stagingRoot = path.join(root, 'staging');
   const holdingRoot = path.join(root, 'holding');
@@ -22,11 +22,12 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
     const subtitle = Buffer.from('hello');
     await writeFile(path.join(stagingRoot, '01.mkv'), video);
     await writeFile(path.join(stagingRoot, '01.en.srt'), subtitle);
-    const verified = { state: 'batch_identity_verified', handoffReady: false,
+    const verified = { state: provisional ? 'batch_provisional' : 'batch_identity_verified',
+      ...(provisional ? { identity: 'provisional' } : {}), handoffReady: false,
       torrentHash: 'a'.repeat(40), anidbId: 42,
       files: [{ name: '01.mkv', size: video.length,
         ed2k: ed2kBuffer(video, { mode: ed2kMode ?? 'edonkey' }),
-        anidbFileId: 51, episodeIds: [1001] }],
+        ...(!provisional ? { anidbFileId: 51 } : {}), episodeIds: [1001] }],
       subtitles: [{ index: 1, name: '01.en.srt', size: subtitle.length,
         sha256: (await import('node:crypto')).createHash('sha256').update(subtitle)
           .digest('hex').toUpperCase() }] };
@@ -269,23 +270,70 @@ test('restart reconstruction rejects a damaged journal before publication', asyn
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
 
-test('a provisional private copy cannot publish through the exact AniDB path', async () =>
+test('a provisional copy rechecks bytes before a watched-folder publish intent', async () =>
   withBatch(async (sample) => {
-    const exact = sample.ledger.getHandoff();
-    const provisional = evaluateHandoffEvidence({ identity: 'provisional',
-      anidbId: exact.manifest.anidbId,
-      torrentHash: exact.manifest.torrentHash,
-      files: exact.manifest.videos.map(({ anidbFileId, ...file }) => file),
-      subtitles: exact.manifest.subtitles });
-    const row = { ...exact, manifest: provisional.manifest,
-      evidenceDigest: provisional.digest,
-      publishName: `negev-1-${provisional.digest.slice(0, 16)}` };
     assert.deepEqual(await processRecordedHandoff({ ...sample,
-      ledger: { getHandoff: () => row }, attemptId: 1, nowMs: 500 }),
-    { state: 'held', reason: 'handoff_evidence_mismatch' });
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async () => { throw Error('simulated rename failure'); },
+      attemptId: 1, nowMs: 500 }),
+    { state: 'held', reason: 'publish_outcome_unknown' });
+    assert.equal(sample.getBegins(), 1);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('a conflicting AniDB result never publishes a provisional copy', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async (hash) => {
+        const preview = await sample.lookup(hash);
+        preview.release.crossReferences[0].anidbEpisodeID = 9999;
+        return preview;
+      }, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'held', reason: 'identity_changed' });
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
-  }));
+  }, { provisional: true }));
+
+test('changed provisional bytes never create a publish intent', async () =>
+  withBatch(async (sample) => {
+    await writeFile(path.join(sample.prepared.holdingPath, '01.mkv'), 'bad');
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+    assert.equal(result.state, 'held');
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('an uncertain provisional publish reconciles only identical destination bytes', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    assert.deepEqual(await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 }),
+    { state: 'published_observed', destination });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+  }, { provisional: true }));
+
+test('a provisional handoff records watched-folder exposure without claiming import', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      }, attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed',
+      destination: path.join(sample.importRoot, sample.publishName) });
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+    assert.deepEqual(await readFile(path.join(result.destination, '01.mkv')),
+      sample.video);
+  }, { provisional: true }));
 
 test('recorded publisher holds before provider work when its journal is missing', async () =>
   withBatch(async (sample) => {
