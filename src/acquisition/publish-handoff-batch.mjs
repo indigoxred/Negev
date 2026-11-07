@@ -153,7 +153,7 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename, verifyHandoffMounts, ed2kMode,
+  renamePrepared = rename, verifyHandoffMounts, ed2kMode, readShokoHash,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -162,6 +162,7 @@ export async function publishPreparedHandoff({
       typeof ledger?.markPublishedObserved !== 'function' ||
       typeof lookup !== 'function' || typeof verifyVideo !== 'function' ||
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
+      (readShokoHash !== undefined && typeof readShokoHash !== 'function') ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
       (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
@@ -270,6 +271,18 @@ export async function publishPreparedHandoff({
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
+  if (evidence.manifest.identity === 'provisional') {
+    if (!readShokoHash) return held('shoko_preexistence_unverified');
+    let prior;
+    try {
+      const file = evidence.manifest.videos[0];
+      prior = await readShokoHash({ ed2k: file.ed2k, size: file.size });
+    } catch { return held('shoko_preexistence_unverified'); }
+    if (prior?.state !== 'not_imported') {
+      return held(prior?.state?.startsWith('imported_')
+        ? 'shoko_file_preexisting' : 'shoko_preexistence_unverified');
+    }
+  }
   if (!await mountReady()) return held('handoff_mount_unavailable');
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||

@@ -57,6 +57,7 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
         percentageStart: null, percentageEnd: null }],
     } });
     await run({ prepared, ledger, lookup, holdingRoot, importRoot,
+      ...(provisional ? { readShokoHash: async () => ({ state: 'not_imported' }) } : {}),
       video, subtitle, publishName, getBegins: () => begins,
       getObservations: () => observations });
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -292,6 +293,19 @@ test('a conflicting AniDB result never publishes a provisional copy', async () =
     assert.deepEqual(result, { state: 'held', reason: 'identity_changed' });
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { provisional: true }));
+
+test('provisional publish requires proof Shoko does not already own those bytes', async () =>
+  withBatch(async (sample) => {
+    for (const readShokoHash of [undefined,
+      async () => ({ state: 'imported_unrecognized', fileId: 9001 })]) {
+      const result = await processRecordedHandoff({ ...sample,
+        readShokoHash, lookup: async () => ({ status: 204 }),
+        attemptId: 1, nowMs: 500 });
+      assert.equal(result.state, 'held');
+      assert.equal(sample.getBegins(), 0);
+      assert.deepEqual(await readdir(sample.importRoot), []);
+    }
   }, { provisional: true }));
 
 test('changed provisional bytes never create a publish intent', async () =>
