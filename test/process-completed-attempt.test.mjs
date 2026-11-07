@@ -96,6 +96,20 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
   });
 });
 
+test('an opt-in inconclusive lookup journals provisional holding without Shoko exposure', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, attemptId, config, ...stores } = context;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, importRoot, ...config, allowProvisional: true,
+      shokoFetchImpl: async () => ({ status: 204,
+        text: async () => '' }) });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    assert.equal(result.identity, 'provisional');
+    assert.equal(handoffs.getHandoff(attemptId).manifest.identity, 'provisional');
+    assert.deepEqual(await readdir(importRoot), []);
+  });
+});
+
 test('native boundary mode survives completion through verified private copy', async () => {
   await fixture(async (context) => {
     const { handoffs, importRoot, attemptId, config, ...stores } = context;
