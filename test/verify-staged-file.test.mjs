@@ -141,6 +141,39 @@ test('holds a staged file when the provider is unavailable', async () => {
   });
 });
 
+test('an explicit provisional check retains stable bytes when AniDB has no file result', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    const lookup = async () => ({ status: 204 });
+    assert.deepEqual(await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup }), { state: 'held', reason: 'lookup_inconclusive' });
+    assert.deepEqual(await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup, allowProvisional: true }),
+    { state: 'hash_verified', reason: 'lookup_inconclusive', ed2k, size: 3 });
+  });
+});
+
+test('a provisional check never turns a wrong AniDB identity into a hash-only pass', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    const preview = matchingPreview({ size: 3 });
+    preview.release.crossReferences[0].anidbEpisodeID = 9000;
+    assert.deepEqual(await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup: async () => preview, allowProvisional: true }),
+    { state: 'rejected', reason: 'wrong_identity' });
+  });
+});
+
+test('a provisional check cannot attach stable bytes to an invalid episode target', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    assert.deepEqual(await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected: { animeId: 42, episodeIds: [] },
+      lookup: async () => ({ status: 204 }), allowProvisional: true }),
+    { state: 'held', reason: 'lookup_inconclusive' });
+  });
+});
+
 test('rejects an over-budget staged file before hashing or provider lookup', async () => {
   await withStage(async (root) => {
     await writeFile(path.join(root, 'episode.mkv'), 'abc');
