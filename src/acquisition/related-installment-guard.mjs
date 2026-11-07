@@ -4,7 +4,8 @@ const held = (reason) => ({ state: 'held', reason });
 
 // A title can be the prefix of a separately listed sequel or side story.
 // Direct AniDB relations provide conservative negative evidence before any
-// bytes are downloaded; completed bytes still require exact AniDB proof.
+// bytes are downloaded; an unregistered-file fallback must repeat this check
+// against current Shoko relations before it considers a User release link.
 export function checkRelatedInstallment({ anidbId, requestedTitle, related,
   releaseTitle, fileNames = [] } = {}) {
   if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
