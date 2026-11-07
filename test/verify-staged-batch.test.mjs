@@ -80,6 +80,35 @@ test('one reserved episode subset can verify without acquiring the whole request
   assert.deepEqual(result.files[0].episodeIds, [1002]);
 });
 
+test('one explicit AniDB miss can form a provisional batch after torrent recheck', async () => {
+  const phases = [];
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]], allowProvisional: true,
+    observe: async ({ phase }) => { phases.push(phase);
+      return { state: 'complete', files: [files[0]] }; },
+    verify: async ({ allowProvisional }) => {
+      assert.equal(allowProvisional, true);
+      return { state: 'hash_verified', reason: 'lookup_inconclusive',
+        ed2k: 'B'.repeat(32), size: 3 };
+    }, lookup: async () => null,
+  });
+  assert.equal(result.state, 'batch_provisional');
+  assert.equal(result.identity, 'provisional');
+  assert.deepEqual(result.files, [{ name: files[0].name, size: 3,
+    ed2k: 'B'.repeat(32), episodeIds: [1001] }]);
+  assert.deepEqual(phases, ['before_hash', 'after_hash']);
+});
+
+test('an AniDB miss in a multi-file pack remains held for later matching', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt,
+    expectedTorrent, plannedFiles, allowProvisional: true,
+    observe: async () => ({ state: 'complete', files }),
+    verify: async () => ({ state: 'hash_verified', reason: 'lookup_inconclusive',
+      ed2k: 'B'.repeat(32), size: 3 }), lookup: async () => null });
+  assert.deepEqual(result, { state: 'held', reason: 'provisional_batch_ambiguous' });
+});
+
 test('one two-episode video requires exact full AniDB coverage for both targets', async () => {
   const pairedFiles = [{ index: 0, name: 'Show/01-02.mkv', size: 3 }];
   const pairedPlan = [{ name: pairedFiles[0].name, episodeIds: [1001, 1002] }];
