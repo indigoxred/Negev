@@ -94,7 +94,7 @@ async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer,
   await chmod(destinationPath, 0o644);
 }
 
-// Copies exact AniDB-verified videos and bounded hashed subtitles to private holding.
+// Copies verified bytes and bounded hashed subtitles to private holding.
 // This never publishes a file into Shoko Import or changes the source torrent.
 export async function prepareHandoffBatch({
   stagingRoot, holdingRoot, importRoot, verified,
@@ -113,7 +113,12 @@ export async function prepareHandoffBatch({
         typeof verifyHandoffMounts !== 'function')) {
     throw new TypeError('Invalid handoff preparation configuration');
   }
-  if (verified?.state !== 'batch_identity_verified' || verified.handoffReady !== false) {
+  const provisional = verified?.state === 'batch_provisional' &&
+    verified.identity === 'provisional' && verified.files?.length === 1 &&
+    verified.files[0]?.episodeIds?.length === 1;
+  if ((!provisional && verified?.state !== 'batch_identity_verified') ||
+      (verified.state === 'batch_identity_verified' && verified.identity !== undefined) ||
+      verified.handoffReady !== false) {
     return held('invalid_verified_batch');
   }
   const evidence = evaluateHandoffEvidence(verified, { maxVideoBytes: maxTotalBytes });
@@ -157,6 +162,7 @@ export async function prepareHandoffBatch({
     }
     return { state: 'handoff_prepared', holdingPath,
       torrentHash: verified.torrentHash.toLowerCase(), anidbId: verified.anidbId,
+      ...(provisional ? { identity: 'provisional' } : {}),
       evidenceDigest: evidence.digest,
       files: verified.files.map((file) => ({ ...file, episodeIds: [...file.episodeIds] })),
       subtitles: verified.subtitles.map((file) => ({ ...file })),

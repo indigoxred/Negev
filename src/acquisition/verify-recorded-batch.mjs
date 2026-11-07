@@ -8,7 +8,7 @@ const held = (reason) => ({ state: 'held', reason });
 // before hashing. A caller may supply observers, but cannot replace that plan.
 export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
   stagingHostPath, qbitStagingRoot, observe, lookup, verify, verifySubtitle, readPacer,
-  ed2kMode }) {
+  ed2kMode, allowProvisional = false }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       typeof stagingHostPath !== 'string' || !path.isAbsolute(stagingHostPath) ||
       path.resolve(stagingHostPath) !== stagingHostPath ||
@@ -34,5 +34,5 @@ export async function verifyRecordedBatch({ requests, acquisitions, attemptId,
       savePath: stagingSavePath(attempt.torrentHash,
         { saveRoot: qbitStagingRoot }) },
     plannedFiles, observe, lookup, verify, verifySubtitle, readPacer,
-    ed2kMode });
+    ed2kMode, allowProvisional });
 }

@@ -84,6 +84,64 @@ test('recorded exact batch is copied privately and journaled once, without publi
   }
 });
 
+test('explicit provisional attempt is copied and journaled without publishing', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-provisional-handoff-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const torrentHash = 'a'.repeat(40);
+  const stagingHostPath = path.join(root, 'staging');
+  const stagingRoot = path.join(stagingHostPath, torrentHash);
+  const holdingRoot = path.join(root, 'holding');
+  const importRoot = path.join(root, 'import');
+  const { mkdir } = await import('node:fs/promises');
+  await Promise.all([stagingRoot, holdingRoot, importRoot].map((dir) =>
+    mkdir(dir, { recursive: true })));
+  const name = '05.mkv';
+  const source = path.join(stagingRoot, name);
+  await writeFile(source, 'unregistered episode');
+  const hash = await ed2kFile(source);
+  const requests = openRequestLedger(dbPath);
+  const request = requests.submit({ requesterId: 1, requestKey: 'airing-e5',
+    nowMs: 100, intent: { state: 'ready', anidbId: 42, kind: 'series',
+      monitorFuture: true, episodeIds: [1005] } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const candidate = { indexerId: 7, guid: 'airing-e5' };
+  const attempt = acquisitions.reserve({ requestId: request.requestId,
+    candidate, episodeIds: [1005], nowMs: 200 });
+  acquisitions.bindPreparedTorrent({ attemptId: attempt.attemptId,
+    candidate, hash: torrentHash, nowMs: 201 });
+  acquisitions.recordFilePlan({ attemptId: attempt.attemptId,
+    hash: torrentHash, plannedFiles: [{ name, size: hash.size,
+      episodeIds: [1005] }], nowMs: 202 });
+  acquisitions.beginDispatch({ attemptId: attempt.attemptId, nowMs: 203 });
+  acquisitions.recordTorrent({ attemptId: attempt.attemptId,
+    hash: torrentHash, nowMs: 204 });
+  acquisitions.beginStart({ attemptId: attempt.attemptId,
+    hash: torrentHash, manifestDigest: 'b'.repeat(64), nowMs: 205 });
+  const handoffs = openHandoffLedger(dbPath);
+  try {
+    const result = await prepareRecordedHandoff({ requests, acquisitions,
+      handoffs, attemptId: attempt.attemptId, stagingHostPath, holdingRoot,
+      importRoot, allowProvisional: true, nowMs: 206,
+      observe: async () => ({ state: 'complete', files: [
+        { index: 0, name, size: hash.size }], subtitles: [] }),
+      lookup: async () => null,
+      verify: async ({ allowProvisional }) => {
+        assert.equal(allowProvisional, true);
+        return { state: 'hash_verified', reason: 'lookup_inconclusive',
+          ed2k: hash.ed2k, size: hash.size };
+      }, readPacer: { afterBytes: async () => {} } });
+    assert.equal(result.state, 'handoff_prepared');
+    assert.equal(result.identity, 'provisional');
+    assert.equal(handoffs.getHandoff(attempt.attemptId).manifest.version, 2);
+    assert.deepEqual(await readFile(path.join(result.holdingPath, name)),
+      await readFile(source));
+    assert.deepEqual(await readdir(importRoot), []);
+  } finally {
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('only a confirmed wrong identity records a terminal hold; outage keeps the attempt retryable', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-rejected-handoff-'));
   const dbPath = path.join(root, 'state.sqlite');

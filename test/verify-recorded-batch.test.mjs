@@ -69,6 +69,20 @@ test('restart verification uses the stored file plan and exact target', async ()
     assert.deepEqual(result.files[0].episodeIds, [1001]);
   }));
 
+test('explicit provisional verification recovers the stored single-episode plan', async () =>
+  withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {
+    const result = await verifyRecordedBatch({ ...options({ requests,
+      acquisitions, attemptId, observe: async () => complete,
+      verify: async ({ expected, allowProvisional }) => {
+        assert.deepEqual(expected, { animeId: 42, episodeIds: [1001] });
+        assert.equal(allowProvisional, true);
+        return { state: 'hash_verified', reason: 'lookup_inconclusive',
+          ed2k: 'A'.repeat(32), size: 1000 };
+      } }), allowProvisional: true });
+    assert.equal(result.state, 'batch_provisional');
+    assert.deepEqual(result.files[0].episodeIds, [1001]);
+  }));
+
 test('missing durable plan or start intent holds before observing bytes', async () => {
   for (const variant of [{ plan: false }, { started: false }]) {
     await withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {

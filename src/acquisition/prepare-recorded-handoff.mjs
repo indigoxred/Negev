@@ -11,6 +11,7 @@ export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, observe, lookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
+  allowProvisional = false,
   verifyHandoffMounts,
   verifyStagingRoot,
 }) {
@@ -23,13 +24,15 @@ export async function prepareRecordedHandoff({
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
     stagingHostPath, qbitStagingRoot, observe, lookup, verify, verifySubtitle, readPacer,
-    ed2kMode });
+    ed2kMode, allowProvisional });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);
     return acquisitions.recordTerminalRejection({ attemptId,
       hash: attempt.torrentHash, reason: verified.reason, nowMs });
   }
-  if (verified.state !== 'batch_identity_verified') return verified;
+  if (!['batch_identity_verified', 'batch_provisional'].includes(verified.state)) {
+    return verified;
+  }
   if (verifyStagingRoot) {
     try {
       const result = await verifyStagingRoot();

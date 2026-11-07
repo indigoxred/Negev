@@ -146,3 +146,49 @@ test('prepared handoff cannot substitute another episode under a valid torrent c
     } finally { ledger.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('one provisional handoff is journaled distinctly and survives restart', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-handoff-provisional-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const hash = 'a'.repeat(40);
+  const details = { identity: 'provisional', anidbId: 42, torrentHash: hash,
+    files: [{ name: '01.mkv', size: 3, ed2k: 'A'.repeat(32),
+      episodeIds: [1001] }], subtitles: [] };
+  const evidence = evaluateHandoffEvidence(details);
+  const candidate = { indexerId: 7, guid: 'unregistered-episode' };
+  try {
+    const requests = openRequestLedger(dbPath);
+    const request = requests.submit({ requesterId: 1, requestKey: 'provisional',
+      nowMs: 100, intent: { state: 'ready', anidbId: 42, kind: 'series',
+        monitorFuture: false, episodeIds: [1001] } });
+    requests.close();
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const attempt = acquisitions.reserve({ requestId: request.requestId,
+      candidate, episodeIds: [1001], nowMs: 200 });
+    acquisitions.bindPreparedTorrent({ attemptId: attempt.attemptId,
+      candidate, hash, nowMs: 201 });
+    acquisitions.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
+    acquisitions.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
+    acquisitions.beginStart({ attemptId: attempt.attemptId, hash,
+      manifestDigest: 'c'.repeat(64), nowMs: 204 });
+    acquisitions.close();
+    const prepared = { state: 'handoff_prepared', publishReady: false,
+      holdingPath: path.join(root, 'private-holding'),
+      evidenceDigest: evidence.digest, ...details };
+    const ledger = openHandoffLedger(dbPath);
+    let saved;
+    try {
+      saved = ledger.recordPrepared({ attemptId: attempt.attemptId,
+        prepared, nowMs: 205 });
+      assert.equal(saved.state, 'prepared');
+      assert.equal(ledger.getHandoff(attempt.attemptId).manifest.version, 2);
+    } finally { ledger.close(); }
+    const restarted = openHandoffLedger(dbPath);
+    try {
+      assert.deepEqual(restarted.getHandoff(attempt.attemptId).manifest,
+        evidence.manifest);
+      assert.deepEqual(restarted.recordPrepared({ attemptId: attempt.attemptId,
+        prepared, nowMs: 206 }), saved);
+    } finally { restarted.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});

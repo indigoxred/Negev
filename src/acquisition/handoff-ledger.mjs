@@ -87,7 +87,8 @@ export function openHandoffLedger(dbPath) {
     if (typeof row?.manifest_json !== 'string') return null;
     try {
       const manifest = JSON.parse(row.manifest_json);
-      const evidence = evaluateHandoffEvidence({ anidbId: manifest.anidbId,
+      const evidence = evaluateHandoffEvidence({ identity: manifest.identity,
+        version: manifest.version, anidbId: manifest.anidbId,
         torrentHash: manifest.torrentHash, files: manifest.videos,
         subtitles: manifest.subtitles });
       return evidence.state === 'valid' && evidence.digest === row.evidence_digest &&
