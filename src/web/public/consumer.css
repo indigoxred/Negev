@@ -38,6 +38,7 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 .title-detail>.presence{font-size:14px;line-height:1.5}
 .detail-display:empty{display:none}.detail-display p{margin:0 0 9px}.detail-facts,.detail-alias{font-size:13px;color:var(--muted)}.detail-description{max-width:660px;color:#d2d6dc;font-size:14px;line-height:1.6}.detail-tags{display:flex;gap:6px;flex-wrap:wrap}.detail-tags span{border:1px solid #4b5360;border-radius:20px;padding:4px 9px;color:#d7dce3;font-size:11px}
 .title-detail .related-trigger{justify-self:start;width:auto;min-height:0;padding:8px 0;background:none;border:0;box-shadow:none}
+.film-request-choice{display:grid;gap:10px;max-width:430px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.film-request-choice[hidden]{display:none}.film-request-choice label{display:grid;gap:8px;font-size:13px;font-weight:700}.film-request-choice select{width:100%;min-height:42px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);color:var(--text)}.film-request-choice .muted{margin:0;font-size:12px}
 .source-credit{max-width:1344px}.source-credit a{color:var(--accent)}
 #library-list.poster-grid>p,#library-list.poster-grid>.text-link{grid-column:1/-1}#library-list.poster-grid>.text-link{justify-self:start}
 #airing-list.poster-grid>p{grid-column:1/-1}#airing-state{margin:0 0 18px;font-size:13px}

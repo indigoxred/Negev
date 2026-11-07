@@ -340,7 +340,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
-      assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /Choose the film version or part/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
       assert.match(requests, /Cancel request/);

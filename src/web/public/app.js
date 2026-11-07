@@ -1235,6 +1235,7 @@ async function showDetail(item, franchise = null) {
     });
     panel.append(relatedButton, relatedList);
     if (!pager) return;
+    let filmChoiceSelect = null;
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
@@ -1266,6 +1267,9 @@ async function showDetail(item, franchise = null) {
           const option = element('option', optionText(episode));
           option.value = String(episode.id);
           select.append(option);
+          if (filmChoiceSelect && episode.type === 'Episode') {
+            filmChoiceSelect.append(option.cloneNode(true));
+          }
         }
       };
       const updateOption = (episodeId, availability, presentation) => {
@@ -1446,20 +1450,52 @@ async function showDetail(item, franchise = null) {
     if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
     panel.append(element('p', data.kind === 'movie'
-      ? (data.total > 1
-        ? 'AniDB lists multiple film entries, which may be alternate editions or parts. Choose one exact entry under Episodes & availability; each entry is requested separately.'
-        : 'A film request includes the main film, not extras or trailers.')
+      ? 'A film request includes one main film entry, not extras or trailers.'
       : 'A series request includes regular episodes. Request Specials individually above.',
     'muted'));
-    if (data.kind === 'movie' && data.total > 1) return;
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
+    const filmEntries = data.kind === 'movie'
+      ? pager.episodes.filter((episode) => episode.type === 'Episode') : [];
+    const needsFilmChoice = data.kind === 'movie' &&
+      (filmEntries.length !== 1 || pager.nextPage !== null);
+    let filmChoice;
+    if (needsFilmChoice) {
+      filmChoice = element('div', undefined, 'film-request-choice');
+      filmChoice.hidden = true;
+      const label = element('label', 'Choose the film version or part');
+      filmChoiceSelect = element('select');
+      const placeholder = element('option', 'Select a main film entry');
+      placeholder.value = '';
+      filmChoiceSelect.append(placeholder);
+      for (const episode of filmEntries) {
+        const option = element('option', `Episode ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
+        option.value = String(episode.id);
+        filmChoiceSelect.append(option);
+      }
+      label.append(filmChoiceSelect);
+      filmChoice.append(label);
+      if (pager.nextPage !== null) filmChoice.append(element('p',
+        'More film entries may be listed under Episode and Special options below.', 'muted'));
+      panel.insertBefore(filmChoice, relatedButton);
+    }
     button.addEventListener('click', async () => {
+      if (needsFilmChoice && !filmChoiceSelect.value) {
+        filmChoice.hidden = false;
+        filmChoice.append(button);
+        button.textContent = 'Request selected film';
+        filmChoiceSelect.focus();
+        return;
+      }
       button.disabled = true;
-      const scope = { userId: state.user.id, anidbId: item.anidbId };
+      const selectedFilmId = needsFilmChoice ? Number(filmChoiceSelect.value) : null;
+      const scope = { userId: state.user.id, anidbId: item.anidbId,
+        ...(selectedFilmId ? { selection: `film-entry-${selectedFilmId}` } : {}) };
       const requestKey = requestKeys.pending(scope);
       try {
         const saved = await api('/api/requests', { method: 'POST', body: JSON.stringify({
-          anidbId: item.anidbId, scope: 'installment', requestKey,
+          anidbId: item.anidbId,
+          scope: selectedFilmId ? 'episodes' : 'installment',
+          ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
         }) });
         requestKeys.saved(scope);
         message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
