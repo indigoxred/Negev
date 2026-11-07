@@ -95,6 +95,7 @@ export function searchAniDbTitleIndex(index, { query, page = 1,
     return { state: 'invalid_query' };
   }
   const needle = term.toLocaleLowerCase('en');
+  const words = needle.match(/[\p{L}\p{N}]+/gu) ?? [];
   const matches = [];
   for (const entry of index.values()) {
     let rank = Infinity;
@@ -102,6 +103,21 @@ export function searchAniDbTitleIndex(index, { query, page = 1,
       if (alias === needle) rank = 0;
       else if (alias.startsWith(needle)) rank = Math.min(rank, 1);
       else if (alias.includes(needle)) rank = Math.min(rank, 2);
+      else if (words.length > 1) {
+        const tokens = alias.match(/[\p{L}\p{N}]+/gu) ?? [];
+        if (words.every((word) => tokens.some((token) => token.startsWith(word)))) {
+          let cursor = 0;
+          const ordered = words.every((word) => {
+            const next = tokens.findIndex((token, index) =>
+              index >= cursor && token.startsWith(word));
+            if (next < 0) return false;
+            cursor = next + 1;
+            return true;
+          });
+          rank = Math.min(rank, ordered
+            ? tokens[0].startsWith(words[0]) ? 3 : 4 : 5);
+        }
+      }
     }
     if (rank < Infinity) matches.push({ entry, rank });
   }

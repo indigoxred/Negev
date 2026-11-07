@@ -5,6 +5,7 @@ import { requestPresentation } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
+import { summarizeSeasonAvailability } from './season-availability-presentation.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
 
@@ -115,6 +116,7 @@ function renderRoute() {
   if (page === 'discover') {
     byId('query').value = route.query;
     byId('discover-shelves').hidden = route.query.length >= 2;
+    byId('search-results-section').hidden = route.query.length < 2;
     if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
     if (route.query.length >= 2 &&
         (returning || route.query !== state.lastSearchQuery)) {
@@ -976,6 +978,7 @@ byId('search-form').addEventListener('submit', async (event) => {
   if (location.hash !== route) location.hash = route;
   const token = ++state.searchToken;
   const results = byId('results');
+  byId('search-results-section').hidden = false;
   results.replaceChildren(element('p', 'Searching…', 'muted'));
   const appendItems = (items) => {
     for (const item of items) {
@@ -1136,6 +1139,8 @@ async function showDetail(item, franchise = null) {
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
     if (pager) {
+      const season = summarizeSeasonAvailability({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage });
       const savedCount = data.libraryPresence?.state === 'in_library' &&
         Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
         data.libraryPresence.verifiedEpisodeCount > 0
@@ -1143,12 +1148,16 @@ async function showDetail(item, franchise = null) {
       const pageCount = pager.episodes.filter((episode) =>
         episode.availability === 'available').length;
       const verified = Math.max(savedCount, pageCount);
-      panel.append(element('p', verified > 0
+      panel.append(element('p', season?.completeList && season.total > 0
+        ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
+        : season && season.total > 0
+          ? `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`
+        : verified > 0
         ? `${verified} ${data.kind === 'movie'
           ? `film entr${verified === 1 ? 'y' : 'ies'}`
           : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
         : 'Current Plex availability has not been verified for this title.',
-      verified > 0 ? 'presence available' : 'presence unknown'));
+      season?.verified > 0 || verified > 0 ? 'presence available' : 'presence unknown'));
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
@@ -1163,7 +1172,7 @@ async function showDetail(item, franchise = null) {
       relatedList.replaceChildren(element('p',
         family.status().state === 'no_cached_links'
           ? 'Shoko has no related titles cached for this installment. Other installments may still exist; search by title to find them.'
-          : 'Verified Shoko relationships. Other installments may exist; each title has its own request.',
+          : 'Related AniDB titles. Other installments may exist; each title has its own request.',
         'muted'));
       for (const installment of family.items()) {
         const open = element('button', `${installment.title}${installment.relation ? ` · ${installment.relation}` : ''}`);
@@ -1268,7 +1277,8 @@ async function showDetail(item, franchise = null) {
       });
       check.append(label, button, result);
       if (state.titleChecks) {
-        const checkTitle = element('button', 'Check whole title in Plex');
+        const checkTitle = element('button', data.kind === 'series'
+          ? 'Check season availability' : 'Check film availability');
         const progress = element('p', '', 'muted');
         const url = `/api/catalogue/${item.anidbId}/title-check`;
         let pollTimer;
@@ -1377,7 +1387,7 @@ async function showDetail(item, franchise = null) {
         check.append(requestSelected);
       }
       const advanced = element('details', undefined, 'episode-tools');
-      advanced.append(element('summary', 'Episodes & availability'), check);
+      advanced.append(element('summary', 'Episode and Special options'), check);
       panel.append(advanced);
       if (pager.nextPage !== null) {
         const more = element('button', 'Show more episodes');

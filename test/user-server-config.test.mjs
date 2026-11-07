@@ -307,6 +307,16 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parsed.titleCheck, false);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_TITLE_CHECK: '1' }).titleCheck, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_GUID_PROBE: '1',
+    NEGEV_TITLE_CHECK: '1' }).titleCheck, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_GUID_PROBE: '1',
+    NEGEV_TITLE_CHECK: '1', NEGEV_DIRECT_ACTIVE_DELAY_MS: '10000' })
+    .directActiveDelayMs, 10_000);
+  const proofReader = parseUserServerConfig({ ...plex,
+    NEGEV_FILE_PROOF_READ: '1',
+    NEGEV_FILE_PROOF_LIFETIME_MS: String(24 * 60 * 60_000) });
+  assert.equal(proofReader.fileBackfill, false);
+  assert.equal(proofReader.fileProofLifetimeMs, 24 * 60 * 60_000);
   assert.equal(parsed.plex.guidProbe, false);
   assert.equal(parseUserServerConfig({ ...plex,
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
