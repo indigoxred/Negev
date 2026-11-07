@@ -418,6 +418,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
+      cancelRequest: (input) => requests.cancelRequest(input),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);

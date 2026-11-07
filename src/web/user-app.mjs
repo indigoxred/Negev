@@ -32,7 +32,7 @@ const privateLanHost = (hostname) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   localOrigin = null, secureCookies = true,
-  now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
+  now = Date.now, submitRequest, cancelRequest, readRequest, listRequests, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
   readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
@@ -780,6 +780,28 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({ error: 'Invalid history page' });
     }
     return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view });
+  });
+  app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const requestId = Number(request.params.id);
+    if (!Number.isSafeInteger(requestId) || requestId < 1 ||
+        !allowedBody(request.body, []) || Object.keys(request.body).length !== 0) {
+      return reply.code(400).send({ error: 'Invalid cancellation' });
+    }
+    const existing = readRequest(requestId);
+    if (!existing || existing.requesterId !== request.negevUser.id) {
+      return reply.code(404).send({ error: 'Request not found' });
+    }
+    if (typeof cancelRequest !== 'function') {
+      return reply.code(503).send({ error: 'Cancellation unavailable' });
+    }
+    const result = cancelRequest({ requesterId: request.negevUser.id,
+      requestId, nowMs: now() });
+    if (result.state === 'cancelled') return result;
+    return reply.code(result.reason === 'request_not_found' ? 404 : 409).send({
+      error: result.reason === 'acquisition_started'
+        ? 'Download processing has already begun; this request cannot be cancelled here yet.'
+        : 'Request cannot be cancelled', reason: result.reason });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

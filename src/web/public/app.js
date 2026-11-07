@@ -339,13 +339,29 @@ async function loadRequestView(view, append = false, silent = false) {
           element('small', `AniDB ${item.anidbId} · Request #${item.id}`));
         heading.append(technical);
       }
-      const presentation = requestPresentation(item.progress, item.kind,
-        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      const presentation = requestItemPresentation(item);
       const status = element('div', undefined,
         `request-status status-${presentation.group}`);
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
       row.append(heading, status);
+      if (item.status === 'held') {
+        const cancel = element('button', 'Cancel request', 'quiet');
+        cancel.type = 'button';
+        cancel.addEventListener('click', async () => {
+          cancel.disabled = true;
+          try {
+            await api(`/api/requests/${item.id}/cancel`, {
+              method: 'POST', body: JSON.stringify({}) });
+            message('Request cancelled. Existing files have not been removed.');
+            loadRequests();
+          } catch (error) {
+            message(error.message, true);
+            cancel.disabled = false;
+          }
+        });
+        heading.append(cancel);
+      }
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
         const candidates = element('div', undefined, 'candidate-list');
@@ -460,12 +476,18 @@ function renderRequestStatus(status, presentation) {
   if (presentation.note) status.append(element('span', presentation.note,
     'request-note'));
 }
+function requestItemPresentation(item) {
+  return item.status === 'cancelled'
+    ? { stage: 'Cancelled', detail: 'No further downloads or episode monitoring.',
+      note: 'Existing files remain in your library.', group: 'completed' }
+    : requestPresentation(item.progress, item.kind,
+      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+}
 function refreshRequestStatusAges() {
   for (const status of document.querySelectorAll('.request-status')) {
     const item = status.negevRequest;
     if (!item?.progress?.transfer) continue;
-    renderRequestStatus(status, requestPresentation(item.progress, item.kind,
-      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed }));
+    renderRequestStatus(status, requestItemPresentation(item));
   }
 }
 async function refreshExpandedHistory() {
@@ -495,8 +517,7 @@ async function refreshExpandedHistory() {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
       status.negevRequest = item;
-      const presentation = requestPresentation(item.progress, item.kind,
-        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      const presentation = requestItemPresentation(item);
       renderRequestStatus(status, presentation);
       const row = status.closest('.request-row');
       if (row && row.parentElement !== requestGroupRows(list, presentation.group)) {

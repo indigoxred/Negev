@@ -178,7 +178,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/requests') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
-          id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie',
+          id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
           episodeIds: [10], monitorFuture: false, watchClosed: false,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
@@ -343,6 +343,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
+      assert.match(requests, /Cancel request/);
       assert.match(requests, /My requests/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);
       assert.match(requests, /No download is confirmed in progress/);

@@ -54,7 +54,7 @@ export function openAcquisitionRequestQueue(dbPath) {
   const next = db.prepare(`SELECT r.id,COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
-    WHERE r.id>? AND r.status='held' AND
+    WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
