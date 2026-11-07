@@ -31,6 +31,40 @@ test('404 means Shoko has not yet indexed those exact bytes', async () => {
     fetchImpl: async () => response({}, 404) }), { state: 'not_imported' });
 });
 
+test('optional location proof reads only accessible Shoko paths for the same file', async () => {
+  let include;
+  const result = await readShokoImportedFile({ ...options,
+    includeAbsolutePaths: true, fetchImpl: async (url) => {
+      include = new URL(url).searchParams.get('include');
+      return response({ ...file, Locations: [
+        { ID: 1, FileID: 19711, ManagedFolderID: 1,
+          AbsolutePath: '/pure/Import/05.mkv', IsAccessible: true },
+        { ID: 2, FileID: 19711, ManagedFolderID: 2,
+          AbsolutePath: '/pure/Anime/Show/05.mkv', IsAccessible: true },
+      ] });
+    } });
+  assert.equal(include, 'XRefs,ReleaseInfo,AbsolutePaths');
+  assert.deepEqual(result.locations, [
+    { managedFolderId: 1, path: '/pure/Import/05.mkv', accessible: true },
+    { managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: true },
+  ]);
+});
+
+test('an unavailable duplicate location does not hide a valid final copy', async () => {
+  const result = await readShokoImportedFile({ ...options,
+    includeAbsolutePaths: true, fetchImpl: async () => response({ ...file,
+      Locations: [
+        { ID: 1, FileID: 19711, ManagedFolderID: 1,
+          IsAccessible: false },
+        { ID: 2, FileID: 19711, ManagedFolderID: 2,
+          AbsolutePath: '/pure/Anime/Show/05.mkv', IsAccessible: true },
+      ] }) });
+  assert.deepEqual(result.locations, [
+    { managedFolderId: 1, path: null, accessible: false },
+    { managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: true },
+  ]);
+});
+
 test('returns release identity without deciding whether it matches the request', async () => {
   const result = await readShokoImportedFile({ ...options,
     fetchImpl: async () => response({ ...file, Release: { ProviderName: 'AniDB',

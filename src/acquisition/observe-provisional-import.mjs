@@ -1,4 +1,5 @@
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import path from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -41,4 +42,41 @@ export async function observeProvisionalImport({ handoff, readImportedFile } = {
     return held('shoko_identity_conflict');
   }
   return { state: 'shoko_files_identified', fileIds: [observed.fileId] };
+}
+
+// Shoko recognition and final-library placement are separate observations.
+// This uses the same hash lookup and requires an accessible location below
+// the configured final library, without treating the Import path as success.
+export async function observeProvisionalPlacement({ handoff, readImportedFile,
+  libraryRoot } = {}) {
+  if (typeof readImportedFile !== 'function' ||
+      typeof libraryRoot !== 'string' || !path.posix.isAbsolute(libraryRoot) ||
+      libraryRoot === '/' || path.posix.normalize(libraryRoot) !== libraryRoot ||
+      /[\0\r\n\\]/.test(libraryRoot)) {
+    throw new TypeError('Invalid provisional Shoko placement');
+  }
+  let observed;
+  const identity = await observeProvisionalImport({ handoff,
+    readImportedFile: async (query) => {
+      observed = await readImportedFile({ ...query, includeAbsolutePaths: true });
+      return observed;
+    } });
+  if (identity.state !== 'shoko_files_identified') return identity;
+  if (!Array.isArray(observed.locations) || observed.locations.length > 100 ||
+      observed.locations.some((location) =>
+        (location?.path !== null && typeof location?.path !== 'string') ||
+        (location?.accessible === true && !location.path) ||
+        typeof location.accessible !== 'boolean' ||
+        !Number.isSafeInteger(location.managedFolderId) ||
+        location.managedFolderId < 1)) return held('shoko_location_unavailable');
+  const placed = observed.locations.some((location) => {
+    if (!location.accessible || !path.posix.isAbsolute(location.path) ||
+        path.posix.normalize(location.path) !== location.path) return false;
+    const relative = path.posix.relative(libraryRoot, location.path);
+    return relative !== '' && relative !== '..' &&
+      !relative.startsWith('../') && !path.posix.isAbsolute(relative);
+  });
+  return placed
+    ? { state: 'shoko_library_location_reported', fileIds: identity.fileIds }
+    : { state: 'awaiting_shoko_placement', fileId: identity.fileIds[0] };
 }

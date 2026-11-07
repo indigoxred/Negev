@@ -7,7 +7,7 @@ const unavailable = (reason) => ({ state: 'unavailable', reason });
 // recognize them. A release here is evidence to assess, not an instruction
 // to overwrite it or a claim of public Plex availability.
 export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
-  fetchImpl = fetch, timeoutMs = 15_000 }) {
+  includeAbsolutePaths = false, fetchImpl = fetch, timeoutMs = 15_000 }) {
   let base;
   try { base = new URL(baseUrl); }
   catch { throw new TypeError('Invalid Shoko URL'); }
@@ -15,6 +15,7 @@ export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
       base.password || base.search || base.hash ||
       typeof apiKey !== 'string' || !apiKey || !ED2K.test(ed2k) ||
       !Number.isSafeInteger(size) || size < 1 ||
+      typeof includeAbsolutePaths !== 'boolean' ||
       typeof fetchImpl !== 'function' || !Number.isSafeInteger(timeoutMs) ||
       timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid Shoko imported-file lookup');
@@ -22,7 +23,8 @@ export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
   const url = new URL('/api/v3/File/Hash/ED2K', base);
   url.searchParams.set('hash', ed2k);
   url.searchParams.set('size', String(size));
-  url.searchParams.set('include', 'XRefs,ReleaseInfo');
+  url.searchParams.set('include', includeAbsolutePaths
+    ? 'XRefs,ReleaseInfo,AbsolutePaths' : 'XRefs,ReleaseInfo');
   let response;
   try {
     response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
@@ -39,7 +41,30 @@ export async function readShokoImportedFile({ baseUrl, apiKey, ed2k, size,
         hash?.Type === 'ED2K' && hash.Value === ed2k)) {
     return unavailable('invalid_response');
   }
-  const identity = { fileId: raw.ID, ed2k, size };
+  let locations;
+  if (includeAbsolutePaths) {
+    if (!Array.isArray(raw.Locations) || raw.Locations.length > 100 ||
+        raw.Locations.some((location) =>
+          !Number.isSafeInteger(location?.ID) || location.ID < 1 ||
+          location.FileID !== raw.ID ||
+          !Number.isSafeInteger(location.ManagedFolderID) ||
+          location.ManagedFolderID < 1 ||
+          typeof location.IsAccessible !== 'boolean' ||
+          (location.IsAccessible
+            ? typeof location.AbsolutePath !== 'string' ||
+              !location.AbsolutePath || /[\0\r\n]/.test(location.AbsolutePath)
+            : location.AbsolutePath != null &&
+              (typeof location.AbsolutePath !== 'string' ||
+                /[\0\r\n]/.test(location.AbsolutePath))))) {
+      return unavailable('invalid_response');
+    }
+    locations = raw.Locations.map((location) => ({
+      managedFolderId: location.ManagedFolderID,
+      path: location.AbsolutePath ?? null, accessible: location.IsAccessible,
+    }));
+  }
+  const identity = { fileId: raw.ID, ed2k, size,
+    ...(includeAbsolutePaths ? { locations } : {}) };
   if (raw.Release === undefined || raw.Release === null) {
     return { state: 'imported_unrecognized', ...identity };
   }

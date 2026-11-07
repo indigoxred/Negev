@@ -49,6 +49,20 @@ test('provisional handoff observes exact imported bytes without a registered fil
   assert.equal(readEpisodeCalled, false);
 });
 
+test('the common placement observer routes provisional files by exact Shoko location', async () => {
+  assert.deepEqual(await observeHandoffPlacement({ handoff: provisionalRow,
+    libraryRoot: '/pure/Anime', readImportedFile: async () => ({
+      state: 'imported_recognized', fileId: 19711,
+      ed2k: 'A'.repeat(32), size: 123,
+      release: { providerName: 'AniDB', isCorrupted: false,
+        crossReferences: [{ animeId: 42, episodeId: 1005,
+          start: 0, end: 100 }] },
+      locations: [{ managedFolderId: 2,
+        path: '/pure/Anime/Show/05.mkv', accessible: true }],
+    }) }),
+  { state: 'shoko_library_location_reported', fileIds: [19711] });
+});
+
 test('library placement requires every exact Shoko file to have an accessible final-library path', async () => {
   const readEpisode = async ({ episodeId }) => ({ state: 'ok', complete: true,
     files: [{ ...observed(episodeId === 1001 ? 800 : 801, [episodeId]),

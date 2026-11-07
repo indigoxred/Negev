@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
-import { observeProvisionalImport } from '../src/acquisition/observe-provisional-import.mjs';
+import { observeProvisionalImport, observeProvisionalPlacement } from '../src/acquisition/observe-provisional-import.mjs';
 
 const evidence = evaluateHandoffEvidence({ identity: 'provisional',
   torrentHash: 'a'.repeat(40), anidbId: 42,
@@ -59,4 +59,27 @@ test('damaged journal or changed Shoko hash cannot prove import', async () => {
   assert.deepEqual(await observeProvisionalImport({ handoff,
     readImportedFile: async () => ({ ...unrecognized, size: 901 }) }),
   { state: 'held', reason: 'shoko_file_changed' });
+});
+
+test('provisional placement requires an accessible final-library path for the same file', async () => {
+  const withLocations = { ...recognized, locations: [
+    { managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: true },
+  ] };
+  let query;
+  assert.deepEqual(await observeProvisionalPlacement({ handoff,
+    libraryRoot: '/pure/Anime', readImportedFile: async (value) => {
+      query = value;
+      return withLocations;
+    } }), { state: 'shoko_library_location_reported', fileIds: [19711] });
+  assert.equal(query.includeAbsolutePaths, true);
+  for (const locations of [
+    [{ managedFolderId: 2, path: '/pure/Anime-old/05.mkv', accessible: true }],
+    [{ managedFolderId: 2, path: '/pure/Anime/Show/05.mkv', accessible: false }],
+    [{ managedFolderId: 1, path: '/pure/Import/05.mkv', accessible: true }],
+  ]) {
+    assert.deepEqual(await observeProvisionalPlacement({ handoff,
+      libraryRoot: '/pure/Anime', readImportedFile: async () =>
+        ({ ...withLocations, locations }) }),
+    { state: 'awaiting_shoko_placement', fileId: 19711 });
+  }
 });
