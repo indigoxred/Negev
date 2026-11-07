@@ -32,7 +32,7 @@ test('Negev may plan an owned, unrecognized episode using its saved release and 
   assert.deepEqual(planProvisionalShokoLink(input), {
     state: 'link_ready', fileId: 19711, anidbId: 42,
     episodeId: 1005, ed2k: 'A'.repeat(32), size: 900,
-    evidenceDigest: evidence.digest,
+    evidenceDigest: evidence.digest, ownedPath,
   });
 });
 

@@ -80,5 +80,5 @@ export function planProvisionalShokoLink({ handoff, attempt, request, detail,
   return { state: 'link_ready', fileId: observed.fileId,
     anidbId: manifest.anidbId, episodeId: file.episodeIds[0],
     ed2k: file.ed2k, size: file.size,
-    evidenceDigest: evidence.digest };
+    evidenceDigest: evidence.digest, ownedPath: expectedPath };
 }
