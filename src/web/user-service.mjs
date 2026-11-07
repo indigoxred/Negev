@@ -22,7 +22,8 @@ import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
 import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
-import { readAniDbRelatedTitles as readArchiveRelatedTitles } from
+import { readAniDbRelatedTitles as readArchiveRelatedTitles,
+  preferDisplayRelations } from
   '../catalogue/anidb-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
@@ -87,7 +88,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   shokoImportRoot = null, shokoImportFolderId = null,
   acquisitionImportParent = null, acquisitionImportFolderId = null,
   qbitSidecarObserver = null,
-  sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
+  sessionKey, publicOrigin, localOrigin = null,
+  secureCookies = true, shokoHydration = false,
   titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
   fileBackfillFilesPerTick = 1,
   shokoRecent = false, shokoInventoryHints = false, anidbTitleDump = false,
@@ -106,6 +108,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
       typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
       typeof fileBackfill !== 'boolean' ||
+      (fileProofLifetimeMs !== null && (!plex ||
+        !Number.isSafeInteger(fileProofLifetimeMs) ||
+        fileProofLifetimeMs < 30 * 60_000 ||
+        fileProofLifetimeMs > 7 * 24 * 60 * 60_000)) ||
       !Number.isSafeInteger(fileBackfillFilesPerTick) ||
       fileBackfillFilesPerTick < 1 || fileBackfillFilesPerTick > 10 ||
       (fileBackfill && (!plex || !shokoInventoryHints ||
@@ -206,6 +212,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       // Resume the saved sweep and bounded proofs after restart. Accepted
       // Shoko/Plex changes withdraw only the affected exact proof rows.
       fileCursor = openFileBackfillCursor(dbPath);
+    }
+    if (plex && fileProofLifetimeMs !== null) {
       fileProofs = openFileProofLedger(dbPath, {
         positiveLifetimeMs: fileProofLifetimeMs, now });
     }
@@ -403,12 +411,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
         verifiedEpisodeCount: ids.size };
     };
-    const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
+    const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
+      localOrigin, secureCookies,
       readImportActivity,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
+      cancelRequest: (input) => requests.cancelRequest(input),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);
@@ -492,10 +502,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
         }));
         if (local?.state === 'related_titles' && local.items.length > 0) return local;
-        if (local?.state === 'held' || local?.state === 'busy') return local;
         const archive = await readArchiveRelatedTitles({ anidbId, fetchImpl,
           titleForId: (id) => titleSource?.getTitle(id) ?? null });
-        return archive.state === 'related_titles' ? archive : local;
+        return preferDisplayRelations(local, archive);
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await metadata.run(() => loadDetail(input));

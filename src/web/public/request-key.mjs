@@ -2,7 +2,8 @@ const slot = ({ userId, anidbId, selection = 'installment' }) => {
   if (![userId, anidbId].every((id) => Number.isSafeInteger(id) && id > 0)) {
     throw new TypeError('Invalid request key scope');
   }
-  if (selection !== 'installment' && !/^episode-[1-9]\d*$/.test(selection)) {
+  if (selection !== 'installment' &&
+      !/^(?:episode|film-entry)-[1-9]\d*$/.test(selection)) {
     throw new TypeError('Invalid request key selection');
   }
   return `negev-request-${userId}-${anidbId}-${selection}`;

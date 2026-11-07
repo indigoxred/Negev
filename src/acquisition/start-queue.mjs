@@ -36,7 +36,7 @@ export function openStartQueue(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
@@ -64,7 +64,7 @@ export function openStartQueue(dbPath) {
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId,
     c.reason,c.checked_ms AS checkedMs FROM start_checks c
     JOIN acquisition_attempts a ON a.id=c.attempt_id
-    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id

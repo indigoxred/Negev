@@ -37,6 +37,40 @@ test('an exact request and targets survive restart in a held state', async () =>
   } finally { second.close(); }
 }));
 
+test('an owner can cancel an untouched request without deleting history or shared targets', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'cancel-me', intent,
+      nowMs: 1_000 });
+    assert.deepEqual(ledger.cancelRequest({ requesterId: 8, requestId: saved.requestId,
+      nowMs: 2_000 }), { state: 'held', reason: 'request_not_found' });
+    assert.deepEqual(ledger.cancelRequest({ requesterId: 7, requestId: saved.requestId,
+      nowMs: 2_000 }), { state: 'cancelled', requestId: saved.requestId });
+    assert.equal(ledger.getRequest(saved.requestId).status, 'cancelled');
+    assert.equal(ledger.listActiveAirings({}).length, 0);
+    assert.equal(ledger.listRequests({ requesterId: 7, view: 'watching' }).items.length, 0);
+    assert.equal(ledger.listRequests({ requesterId: 7, view: 'history' }).items[0].status,
+      'cancelled');
+    assert.equal(ledger.countRequests(), 1);
+    assert.equal(ledger.countTargets(), 2);
+  } finally { ledger.close(); }
+}));
+
+test('a request with an acquisition attempt cannot be falsely cancelled', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const saved = ledger.submit({ requesterId: 7, requestKey: 'started', intent,
+      nowMs: 1_000 });
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE acquisition_attempts (request_id INTEGER NOT NULL)');
+    db.prepare('INSERT INTO acquisition_attempts(request_id) VALUES (?)').run(saved.requestId);
+    db.close();
+    assert.deepEqual(ledger.cancelRequest({ requesterId: 7, requestId: saved.requestId,
+      nowMs: 2_000 }), { state: 'held', reason: 'acquisition_started' });
+    assert.equal(ledger.getRequest(saved.requestId).status, 'held');
+  } finally { ledger.close(); }
+}));
+
 test('verified title survives restart and a legacy request remains readable', async () => withPath(async (dbPath) => {
   const first = openRequestLedger(dbPath);
   const named = first.submit({ requesterId: 7, requestKey: 'named',

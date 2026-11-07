@@ -5,6 +5,7 @@ import { requestPresentation } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
+import { summarizeSeasonAvailability, summarizeFilmAvailability } from './season-availability-presentation.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
 
@@ -115,6 +116,7 @@ function renderRoute() {
   if (page === 'discover') {
     byId('query').value = route.query;
     byId('discover-shelves').hidden = route.query.length >= 2;
+    byId('search-results-section').hidden = route.query.length < 2;
     if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
     if (route.query.length >= 2 &&
         (returning || route.query !== state.lastSearchQuery)) {
@@ -337,13 +339,29 @@ async function loadRequestView(view, append = false, silent = false) {
           element('small', `AniDB ${item.anidbId} · Request #${item.id}`));
         heading.append(technical);
       }
-      const presentation = requestPresentation(item.progress, item.kind,
-        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      const presentation = requestItemPresentation(item);
       const status = element('div', undefined,
         `request-status status-${presentation.group}`);
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
       row.append(heading, status);
+      if (item.status === 'held') {
+        const cancel = element('button', 'Cancel request', 'quiet');
+        cancel.type = 'button';
+        cancel.addEventListener('click', async () => {
+          cancel.disabled = true;
+          try {
+            await api(`/api/requests/${item.id}/cancel`, {
+              method: 'POST', body: JSON.stringify({}) });
+            message('Request cancelled. Existing files have not been removed.');
+            loadRequests();
+          } catch (error) {
+            message(error.message, true);
+            cancel.disabled = false;
+          }
+        });
+        heading.append(cancel);
+      }
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
         const candidates = element('div', undefined, 'candidate-list');
@@ -458,12 +476,18 @@ function renderRequestStatus(status, presentation) {
   if (presentation.note) status.append(element('span', presentation.note,
     'request-note'));
 }
+function requestItemPresentation(item) {
+  return item.status === 'cancelled'
+    ? { stage: 'Cancelled', detail: 'No further downloads or episode monitoring.',
+      note: 'Existing files remain in your library.', group: 'completed' }
+    : requestPresentation(item.progress, item.kind,
+      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+}
 function refreshRequestStatusAges() {
   for (const status of document.querySelectorAll('.request-status')) {
     const item = status.negevRequest;
     if (!item?.progress?.transfer) continue;
-    renderRequestStatus(status, requestPresentation(item.progress, item.kind,
-      { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed }));
+    renderRequestStatus(status, requestItemPresentation(item));
   }
 }
 async function refreshExpandedHistory() {
@@ -493,8 +517,7 @@ async function refreshExpandedHistory() {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
       status.negevRequest = item;
-      const presentation = requestPresentation(item.progress, item.kind,
-        { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
+      const presentation = requestItemPresentation(item);
       renderRequestStatus(status, presentation);
       const row = status.closest('.request-row');
       if (row && row.parentElement !== requestGroupRows(list, presentation.group)) {
@@ -976,6 +999,7 @@ byId('search-form').addEventListener('submit', async (event) => {
   if (location.hash !== route) location.hash = route;
   const token = ++state.searchToken;
   const results = byId('results');
+  byId('search-results-section').hidden = false;
   results.replaceChildren(element('p', 'Searching…', 'muted'));
   const appendItems = (items) => {
     for (const item of items) {
@@ -1136,6 +1160,10 @@ async function showDetail(item, franchise = null) {
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
     if (pager) {
+      const season = summarizeSeasonAvailability({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage });
+      const film = summarizeFilmAvailability({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage });
       const savedCount = data.libraryPresence?.state === 'in_library' &&
         Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
         data.libraryPresence.verifiedEpisodeCount > 0
@@ -1143,12 +1171,21 @@ async function showDetail(item, franchise = null) {
       const pageCount = pager.episodes.filter((episode) =>
         episode.availability === 'available').length;
       const verified = Math.max(savedCount, pageCount);
-      panel.append(element('p', verified > 0
+      panel.append(element('p', film?.available
+        ? `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`
+        : film && film.total > 0
+          ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
+        : season?.completeList && season.total > 0
+        ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
+        : season && season.total > 0
+          ? `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`
+        : verified > 0
         ? `${verified} ${data.kind === 'movie'
           ? `film entr${verified === 1 ? 'y' : 'ies'}`
           : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
         : 'Current Plex availability has not been verified for this title.',
-      verified > 0 ? 'presence available' : 'presence unknown'));
+      film?.available || season?.verified > 0 ||
+        (!film && verified > 0) ? 'presence available' : 'presence unknown'));
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
@@ -1163,7 +1200,7 @@ async function showDetail(item, franchise = null) {
       relatedList.replaceChildren(element('p',
         family.status().state === 'no_cached_links'
           ? 'Shoko has no related titles cached for this installment. Other installments may still exist; search by title to find them.'
-          : 'Verified Shoko relationships. Other installments may exist; each title has its own request.',
+          : 'Related AniDB titles. Other installments may exist; each title has its own request.',
         'muted'));
       for (const installment of family.items()) {
         const open = element('button', `${installment.title}${installment.relation ? ` · ${installment.relation}` : ''}`);
@@ -1268,7 +1305,7 @@ async function showDetail(item, franchise = null) {
       });
       check.append(label, button, result);
       if (state.titleChecks) {
-        const checkTitle = element('button', 'Check whole title in Plex');
+        const checkTitle = element('button', 'Recheck unknown entries in background');
         const progress = element('p', '', 'muted');
         const url = `/api/catalogue/${item.anidbId}/title-check`;
         let pollTimer;
@@ -1309,10 +1346,15 @@ async function showDetail(item, franchise = null) {
           } catch (error) { message(error.message, true); }
           finally { checkTitle.disabled = false; }
         });
-        const summary = element('div', undefined, 'title-check-summary');
-        summary.append(checkTitle, progress);
+        const summary = element('details', undefined, 'title-check-summary');
+        summary.append(element('summary', 'Detailed availability recheck'),
+          element('p', 'Current verified availability is shown above. A full recheck may take several minutes and does not block requests.', 'muted'),
+          checkTitle, progress);
         panel.append(summary);
-        void showProgress();
+        summary.addEventListener('toggle', () => {
+          if (summary.open) void showProgress();
+          else if (pollTimer) clearTimeout(pollTimer);
+        });
       }
       if (data.kind === 'series' && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected episode');
@@ -1377,7 +1419,7 @@ async function showDetail(item, franchise = null) {
         check.append(requestSelected);
       }
       const advanced = element('details', undefined, 'episode-tools');
-      advanced.append(element('summary', 'Episodes & availability'), check);
+      advanced.append(element('summary', 'Episode and Special options'), check);
       panel.append(advanced);
       if (pager.nextPage !== null) {
         const more = element('button', 'Show more episodes');

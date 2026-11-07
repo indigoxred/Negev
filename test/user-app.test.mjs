@@ -10,6 +10,37 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('request cancellation is owner scoped and CSRF protected', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const calls = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: (id) => id === 2
+      ? { id: 2, requesterId: 8 } : { id, requesterId: 7 },
+    cancelRequest: (input) => { calls.push(input); return { state: 'cancelled', requestId: input.requestId }; } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers: { cookie, origin }, payload: {} })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/2/cancel',
+      headers, payload: {} })).statusCode, 404);
+    const cancelled = await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers, payload: {} });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.deepEqual(calls, [{ requesterId: 7, requestId: 1, nowMs: expectTime(calls[0]?.nowMs) }]);
+  } finally { await app.close(); }
+});
+
+function expectTime(value) { assert.ok(Number.isSafeInteger(value) && value >= 0); return value; }
+
 test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', async () => {
   const publicOrigin = 'https://negev.example.test';
   const accounts = {
@@ -33,6 +64,47 @@ test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', a
     assert.match(login.headers['set-cookie'], /^__Host-negev=/);
     assert.match(login.headers['set-cookie'], /; Secure(?:;|$)/i);
     assert.match(login.headers['set-cookie'], /; HttpOnly(?:;|$)/i);
+  } finally { await app.close(); }
+});
+
+test('an exposed review instance keeps HTTPS and LAN HTTP sessions separate', async () => {
+  const publicOrigin = 'https://anime.negev.red';
+  const localOrigin = 'http://192.168.50.138:17116';
+  const user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = {
+    authenticate: async () => user, registerInvite: async () => null,
+    getSessionUser: ({ userId, version }) => userId === 1 && version === 1
+      ? user : null,
+    createInvite: () => null, revokeSessions: () => false,
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin, localOrigin, secureCookies: true,
+    submitRequest: async () => null, readRequest: () => null });
+  try {
+    const login = (site) => app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: site, host: new URL(site).host },
+      payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const publicLogin = await login(publicOrigin);
+    assert.equal(publicLogin.statusCode, 200);
+    assert.match(publicLogin.headers['set-cookie'], /^__Host-negev=/);
+    assert.match(publicLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    const localLogin = await login(localOrigin);
+    assert.equal(localLogin.statusCode, 200);
+    assert.match(localLogin.headers['set-cookie'], /^negev-lan-session=/);
+    assert.doesNotMatch(localLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    for (const [site, response] of [[publicOrigin, publicLogin],
+      [localOrigin, localLogin]]) {
+      const session = await app.inject({ method: 'GET', url: '/api/session',
+        headers: { host: new URL(site).host,
+          cookie: response.headers['set-cookie'] } });
+      assert.equal(session.statusCode, 200);
+      assert.equal(session.json().user.username, 'Owner');
+    }
+    const cross = await app.inject({ method: 'POST', url: '/api/logout',
+      headers: { host: new URL(localOrigin).host, origin: publicOrigin,
+        cookie: localLogin.headers['set-cookie'] } });
+    assert.equal(cross.statusCode, 401);
   } finally { await app.close(); }
 });
 
