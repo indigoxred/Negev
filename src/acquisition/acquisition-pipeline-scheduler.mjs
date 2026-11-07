@@ -1,6 +1,5 @@
-const stages = ['tickPublish', 'tickCompletions', 'tickStarts', 'tickRequests'];
 const hasReviewHolds = (result) => [result?.requests, result?.starts,
-  result?.completions, result?.publishes]
+  result?.completions, result?.publishes, result?.links]
   .some((queue) => Array.isArray(queue?.held) && queue.held.length > 0);
 
 // One paced clock for the four durable acquisition stages. Each queue is
@@ -12,6 +11,9 @@ export function createPipelineScheduler({ pipeline,
   failureDelayMs = 5 * 60_000,
   now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  const stages = [...(typeof pipeline?.tickLinks === 'function'
+    ? ['tickLinks'] : []),
+  'tickPublish', 'tickCompletions', 'tickStarts', 'tickRequests'];
   if (typeof pipeline?.initialize !== 'function' ||
       typeof pipeline.close !== 'function' ||
       stages.some((name) => typeof pipeline[name] !== 'function') ||

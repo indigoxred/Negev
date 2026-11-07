@@ -45,6 +45,33 @@ test('pipeline never invokes a download processor while qBittorrent authenticati
   }
 });
 
+test('private Shoko link stage is opt-in and reconciles before its first tick', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-links-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async () => ({ state: 'held', reason: 'not_expected' }),
+    processStart: async () => ({ state: 'held', reason: 'not_expected' }),
+    processCompletion: async () => ({ state: 'held', reason: 'not_expected' }),
+    processPublish: async () => ({ state: 'held', reason: 'not_expected' }),
+    processLink: async () => ({ state: 'held', reason: 'not_expected' }),
+    now: () => 1_000 });
+  try {
+    assert.deepEqual(await pipeline.tickLinks(),
+      { state: 'held', reason: 'reconciliation_required' });
+    const recovery = await pipeline.initialize();
+    assert.deepEqual(recovery.links.held, []);
+    assert.deepEqual(await pipeline.tickLinks(), { state: 'idle' });
+  } finally {
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('restart reconciliation precedes worker ticks and later requests advance', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-'));
   const dbPath = path.join(dir, 'state.sqlite');
