@@ -76,6 +76,30 @@ test('missing safety providers are rejected before any work', () => {
     allowProvisionalHandoff: 'yes' }), TypeError);
 });
 
+test('provisional Shoko linking is absent by default and needs explicit guarded roots', async () => {
+  const calls = [];
+  assert.equal(createAcquisitionStageProcessors(options(calls)).processLink,
+    undefined);
+  assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
+    provisionalLinkEnabled: true, shokoSourcePath: '/pure/Import' }), TypeError);
+  assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
+    provisionalLinkEnabled: true, allowProvisionalHandoff: true,
+    shokoSourcePath: '../Import' }), TypeError);
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    provisionalLinkEnabled: true, allowProvisionalHandoff: true,
+    shokoSourcePath: '/pure/Import',
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    processProvisionalLink: async (input) => {
+      calls.push(input);
+      return { state: 'held', reason: 'shoko_import_pending' };
+    } });
+  assert.equal(typeof stages.processLink, 'function');
+  assert.deepEqual(await stages.processLink({ attemptId: 7 }),
+    { state: 'held', reason: 'shoko_import_pending' });
+  assert.equal(calls[0].shokoImportRoot, '/pure/Import/Negev');
+  assert.equal(calls[0].attemptId, 7);
+});
+
 test('recent exact public coverage avoids the indexer in the wired request stage', async () => {
   const calls = [];
   const stages = createAcquisitionStageProcessors({ ...options(calls),
