@@ -5,6 +5,7 @@ import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import { checkProvisionalHashesAbsent } from './provisional-preexistence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const admitted = (result, file) => result?.isCorrupted === false &&
@@ -12,8 +13,8 @@ const admitted = (result, file) => result?.isCorrupted === false &&
   file.episodeIds.every((episodeId) => result.coverage.some((range) =>
     range.episodeId === episodeId && range.start === 0 && range.end === 100));
 const provisionalManifest = (manifest) => manifest.identity === 'provisional' &&
-  manifest.version === 2 && manifest.videos.length === 1 &&
-  manifest.videos[0].episodeIds.length === 1;
+  manifest.version === 2 && manifest.videos.length > 0 &&
+  manifest.videos.every((file) => file.episodeIds.length === 1);
 const matchesVideo = (result, file, manifest) => {
   if (result?.ed2k !== file.ed2k || result.size !== file.size) return false;
   if (manifest.identity === 'provisional') {
@@ -273,15 +274,9 @@ export async function publishPreparedHandoff({
   } catch { return held('manifest_changed'); }
   if (evidence.manifest.identity === 'provisional') {
     if (!readShokoHash) return held('shoko_preexistence_unverified');
-    let prior;
-    try {
-      const file = evidence.manifest.videos[0];
-      prior = await readShokoHash({ ed2k: file.ed2k, size: file.size });
-    } catch { return held('shoko_preexistence_unverified'); }
-    if (prior?.state !== 'not_imported') {
-      return held(prior?.state?.startsWith('imported_')
-        ? 'shoko_file_preexisting' : 'shoko_preexistence_unverified');
-    }
+    const absent = await checkProvisionalHashesAbsent({
+      videos: evidence.manifest.videos, readShokoHash });
+    if (absent.state !== 'all_absent') return absent;
   }
   if (!await mountReady()) return held('handoff_mount_unavailable');
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });

@@ -83,3 +83,36 @@ test('provisional placement requires an accessible final-library path for the sa
     { state: 'awaiting_shoko_placement', fileId: 19711 });
   }
 });
+
+test('a two-episode pack waits for both Shoko files and recognizes both exact links', async () => {
+  const packEvidence = evaluateHandoffEvidence({ identity: 'provisional',
+    torrentHash: 'a'.repeat(40), anidbId: 42, subtitles: [], files: [
+      { name: '05.mkv', size: 900, ed2k: 'A'.repeat(32), episodeIds: [1005] },
+      { name: '06.mkv', size: 901, ed2k: 'B'.repeat(32), episodeIds: [1006] },
+    ] });
+  const pack = { status: 'published_observed',
+    manifest: packEvidence.manifest, evidenceDigest: packEvidence.digest };
+  const second = { state: 'imported_recognized', fileId: 19712,
+    ed2k: 'B'.repeat(32), size: 901,
+    release: { ...recognized.release, crossReferences: [{ animeId: 42,
+      episodeId: 1006, start: 0, end: 100 }] } };
+  const lookup = (value) => value.ed2k === recognized.ed2k ? recognized : second;
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => value.ed2k === second.ed2k
+      ? { state: 'not_imported' } : lookup(value) }),
+  { state: 'awaiting_shoko' });
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => value.ed2k === second.ed2k
+      ? { ...second, state: 'imported_unrecognized' } : lookup(value) }),
+  { state: 'awaiting_shoko_link', fileId: 19712 });
+  assert.deepEqual(await observeProvisionalImport({ handoff: pack,
+    readImportedFile: async (value) => lookup(value) }),
+  { state: 'shoko_files_identified', fileIds: [19711, 19712] });
+  assert.deepEqual(await observeProvisionalPlacement({ handoff: pack,
+    libraryRoot: '/pure/Anime', readImportedFile: async (value) => ({
+      ...lookup(value), locations: [{ managedFolderId: 2,
+        path: value.ed2k === second.ed2k
+          ? '/pure/Import/06.mkv' : '/pure/Anime/Show/05.mkv',
+        accessible: true }] }) }),
+  { state: 'awaiting_shoko_placement', fileId: 19712 });
+});

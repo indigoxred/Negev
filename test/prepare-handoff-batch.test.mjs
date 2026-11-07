@@ -82,6 +82,25 @@ test('a provisional single episode is copied privately with no fabricated file I
     assert.deepEqual(await readdir(roots.importRoot), []);
   }));
 
+test('a provisional Completed pack copies every verified episode privately', async () =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    const second = { name: 'Show/02.mkv', size: bytes.length,
+      ed2k: file.ed2k, episodeIds: [1002] };
+    await Promise.all([file.name, second.name].map((name) =>
+      writeFile(path.join(roots.stagingRoot, name), bytes)));
+    const provisional = { ...verified, state: 'batch_provisional',
+      identity: 'provisional', files: [
+        { name: file.name, size: file.size, ed2k: file.ed2k,
+          episodeIds: [1001] }, second] };
+    const result = await prepareHandoffBatch({ ...roots, verified: provisional,
+      readPacer: { afterBytes: async () => {} } });
+    assert.equal(result.state, 'handoff_prepared');
+    assert.deepEqual(result.files.map((item) => item.episodeIds),
+      [[1001], [1002]]);
+    assert.deepEqual(await readdir(roots.importRoot), []);
+  }));
+
 test('wrong source bytes cannot prepare a handoff and never reach Import', async () =>
   withRoots(async (roots) => {
     await mkdir(path.join(roots.stagingRoot, 'Show'));

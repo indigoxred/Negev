@@ -103,8 +103,7 @@ export async function verifyStagedBatch({
     if (allowProvisional && result?.state === 'hash_verified' &&
         result.reason === 'lookup_inconclusive') {
       const plannedEpisodes = plannedByName.get(file.name).episodeIds;
-      if (selected.length !== 1 || attempt.episodeIds.length !== 1 ||
-          plannedEpisodes.length !== 1) return held('provisional_batch_ambiguous');
+      if (plannedEpisodes.length !== 1) return held('provisional_file_ambiguous');
       if (result.size !== file.size ||
           !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
       provisional = true;
@@ -167,7 +166,8 @@ export async function verifyStagedBatch({
     ...(provisional ? { identity: 'provisional' } : {}),
     torrentHash: expectedTorrent.hash.toLowerCase(),
     anidbId: request.anidbId,
-    files: verified,
+    files: provisional ? verified.map(({ anidbFileId: _registeredId, ...file }) => file)
+      : verified,
     subtitles: verifiedSubtitles,
     handoffReady: false };
 }

@@ -271,6 +271,23 @@ test('restart reconstruction rejects a damaged journal before publication', asyn
     assert.deepEqual(await readdir(sample.importRoot), []);
   }));
 
+test('restart reconstruction retains every file in a provisional Completed pack', () => {
+  const evidence = evaluateHandoffEvidence({ identity: 'provisional',
+    anidbId: 42, torrentHash: 'a'.repeat(40), subtitles: [], files: [
+      { name: '01.mkv', size: 3, ed2k: 'A'.repeat(32), episodeIds: [1001] },
+      { name: '02.mkv', size: 3, ed2k: 'B'.repeat(32), episodeIds: [1002] },
+    ] });
+  const handoff = { status: 'prepared',
+    holdingPath: path.join(tmpdir(), 'private-provisional'),
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-7-${evidence.digest.slice(0, 16)}` };
+  const result = restorePreparedHandoff({ attemptId: 7, handoff });
+  assert.equal(result.state, 'handoff_prepared');
+  assert.deepEqual(result.files.map((file) => file.episodeIds),
+    [[1001], [1002]]);
+});
+
 test('a provisional copy rechecks bytes before a watched-folder publish intent', async () =>
   withBatch(async (sample) => {
     assert.deepEqual(await processRecordedHandoff({ ...sample,

@@ -100,13 +100,29 @@ test('one explicit AniDB miss can form a provisional batch after torrent recheck
   assert.deepEqual(phases, ['before_hash', 'after_hash']);
 });
 
-test('an AniDB miss in a multi-file pack remains held for later matching', async () => {
+test('two inconclusive files retain their distinct planned episode identities', async () => {
   const result = await verifyStagedBatch({ root: '/staging', request, attempt,
     expectedTorrent, plannedFiles, allowProvisional: true,
     observe: async () => ({ state: 'complete', files }),
     verify: async () => ({ state: 'hash_verified', reason: 'lookup_inconclusive',
       ed2k: 'B'.repeat(32), size: 3 }), lookup: async () => null });
-  assert.deepEqual(result, { state: 'held', reason: 'provisional_batch_ambiguous' });
+  assert.equal(result.state, 'batch_provisional');
+  assert.deepEqual(result.files.map((file) => file.episodeIds), [[1001], [1002]]);
+});
+
+test('mixed registered and inconclusive files retain one provisional batch', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt,
+    expectedTorrent, plannedFiles, allowProvisional: true,
+    observe: async () => ({ state: 'complete', files }),
+    verify: async ({ relativePath }) => relativePath.endsWith('01.mkv')
+      ? { state: 'identity_verified', isCorrupted: false, fileId: 51,
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+        ed2k: 'B'.repeat(32), size: 3 }
+      : { state: 'hash_verified', reason: 'lookup_inconclusive',
+        ed2k: 'C'.repeat(32), size: 3 }, lookup: async () => null });
+  assert.equal(result.state, 'batch_provisional');
+  assert.deepEqual(result.files.map((file) => file.episodeIds), [[1001], [1002]]);
+  assert.ok(result.files.every((file) => !Object.hasOwn(file, 'anidbFileId')));
 });
 
 test('one two-episode video requires exact full AniDB coverage for both targets', async () => {

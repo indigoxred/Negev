@@ -23,7 +23,7 @@ export function restorePreparedHandoff({ attemptId, handoff } = {}) {
   });
   if (evidence.state !== 'valid' ||
       (manifest?.identity === 'provisional' &&
-        (manifest.videos.length !== 1 || manifest.videos[0].episodeIds.length !== 1)) ||
+        manifest.videos.some((file) => file.episodeIds.length !== 1)) ||
       JSON.stringify(manifest) !== JSON.stringify(evidence.manifest) ||
       evidence.digest !== handoff.evidenceDigest ||
       evidence.manifest.torrentHash !== handoff.torrentHash ||

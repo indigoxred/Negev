@@ -114,8 +114,10 @@ export async function prepareHandoffBatch({
     throw new TypeError('Invalid handoff preparation configuration');
   }
   const provisional = verified?.state === 'batch_provisional' &&
-    verified.identity === 'provisional' && verified.files?.length === 1 &&
-    verified.files[0]?.episodeIds?.length === 1;
+    verified.identity === 'provisional' &&
+    Array.isArray(verified.files) && verified.files.length > 0 &&
+    verified.files.every((file) => file?.episodeIds?.length === 1 &&
+      !Object.hasOwn(file, 'anidbFileId'));
   if ((!provisional && verified?.state !== 'batch_identity_verified') ||
       (verified.state === 'batch_identity_verified' && verified.identity !== undefined) ||
       verified.handoffReady !== false) {
