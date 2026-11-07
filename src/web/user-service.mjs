@@ -754,7 +754,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
         qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
         verifyStagingRoot, verifyShokoSource, realpathImpl,
-        shokoProviderId, readPacer } = {}) {
+        shokoProviderId, readPacer, provisionalFallback = false,
+        shokoSourcePath } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
         }
@@ -777,6 +778,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         if (!prowlarr || !plexObserver || !readImportActivity ||
             typeof verifyShokoSource !== 'function' ||
+            typeof provisionalFallback !== 'boolean' ||
+            (provisionalFallback && (typeof shokoSourcePath !== 'string' ||
+              !shokoSourcePath.startsWith('/'))) ||
             !Array.isArray(plex?.sourcePolicy) ||
             !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
               .test(shokoProviderId)) {
@@ -789,6 +793,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           realpathImpl, readPacer, fetchImpl, now,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },
+          ...(provisionalFallback ? {
+            allowProvisionalHandoff: true,
+            provisionalLinkEnabled: true, shokoSourcePath } : {}),
           publicSections: plex.publicSections, prowlarr,
           firstTimePolicy: 'single_uncertain_attempt',
           readPublicCoverage: ({ anidbId, episodeIds }) => {

@@ -171,6 +171,13 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     shokoSourcePath: '/negev/source', shokoSourceFolderId: 2,
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
   });
+  assert.deepEqual(parseUserServerConfig({ ...configured,
+    NEGEV_PROVISIONAL_SHOKO_PILOT: '1' }).acquisition,
+  { ...parsed.acquisition, provisionalFallback: true });
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_PROVISIONAL_SHOKO_PILOT: '1' }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...configured,
+    NEGEV_PROVISIONAL_SHOKO_PILOT: 'yes' }), TypeError);
   for (const change of [
     { NEGEV_PROWLARR_DISCOVERY: '0' },
     { NEGEV_SHOKO_EVENTS: '0' },

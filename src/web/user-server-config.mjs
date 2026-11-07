@@ -211,6 +211,14 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Invalid acquisition runtime flag');
   }
   const acquisitionRuntime = env.NEGEV_ACQUISITION_RUNTIME === '1';
+  if (env.NEGEV_PROVISIONAL_SHOKO_PILOT != null &&
+      !['0', '1'].includes(env.NEGEV_PROVISIONAL_SHOKO_PILOT)) {
+    throw new TypeError('Invalid provisional Shoko pilot flag');
+  }
+  const provisionalFallback = env.NEGEV_PROVISIONAL_SHOKO_PILOT === '1';
+  if (provisionalFallback && !acquisitionRuntime) {
+    throw new TypeError('Provisional Shoko pilot requires acquisition runtime');
+  }
   const dataDir = env.NEGEV_DATA_DIR;
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir) ||
       path.normalize(dataDir) !== dataDir || dataDir.includes('\0')) {
@@ -325,6 +333,9 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Invalid user exposure flag');
   }
   const exposed = env.NEGEV_EXPOSE_USERS === '1';
+  if (provisionalFallback && exposed) {
+    throw new TypeError('Provisional Shoko pilot is private only');
+  }
   // A tunnel running in the same network namespace can reach loopback. Keep
   // the HTTPS origin and secure cookie without opening a second LAN listener.
   if (host !== '127.0.0.1' && !(host === '0.0.0.0' && exposed)) {
@@ -397,7 +408,8 @@ export function parseUserServerConfig(env) {
     acquisition = { stagingHostPath, qbitStagingRoot, holdingRoot,
       importRoot: path.join(acquisitionImportParent, 'Negev'),
       shokoSourcePath, shokoSourceFolderId: acquisitionImportFolderId,
-      shokoProviderId };
+      shokoProviderId,
+      ...(provisionalFallback ? { provisionalFallback: true } : {}) };
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
   }

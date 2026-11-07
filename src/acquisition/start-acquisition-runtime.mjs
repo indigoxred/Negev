@@ -28,6 +28,8 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
     stagingHostPath: a.stagingHostPath, qbitStagingRoot: a.qbitStagingRoot,
     holdingRoot: a.holdingRoot,
     importRoot: a.importRoot,
+    ...(a.provisionalFallback === true ? {
+      provisionalFallback: true, shokoSourcePath: a.shokoSourcePath } : {}),
     verifyShokoSource,
     verifyStagingRoot: async () => {
       const source = await verifyShokoSource();
