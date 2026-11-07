@@ -105,7 +105,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs'].map((name) =>
+    'consumer-route.mjs', 'season-availability-presentation.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -123,6 +123,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[9]],
     ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[10]],
     ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
+    ['/season-availability-presentation.mjs',
+      'text/javascript; charset=utf-8', pages[12]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&
