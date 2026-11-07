@@ -18,7 +18,8 @@ const assets = new Map([
   ...['request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs'].map((name) => [`/${name}`, [name, 'text/javascript']]),
+    'consumer-route.mjs', 'season-availability-presentation.mjs']
+    .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
 const dump = async (url, profile, captureName, viewport = '1440,900') => new Promise((resolve, reject) => {
