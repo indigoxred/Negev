@@ -24,7 +24,6 @@ export function planProvisionalShokoLinks({ handoff, attempt, request, detail,
       evidence.state !== 'valid' || evidence.digest !== handoff.evidenceDigest ||
       JSON.stringify(evidence.manifest) !== JSON.stringify(manifest) ||
       manifest.identity !== 'provisional' ||
-      manifest.videos.some((file) => file.episodeIds.length !== 1) ||
       !validId(attempt?.id) || attempt.status !== 'torrent_observed' ||
       attempt.requestId !== request?.id ||
       attempt.anidbId !== manifest.anidbId ||
@@ -87,13 +86,17 @@ export function planProvisionalShokoLinks({ handoff, attempt, request, detail,
     if (observed.state === 'imported_recognized') {
       const refs = observed.release?.crossReferences;
       if (observed.release?.isCorrupted !== false || !Array.isArray(refs) ||
-          refs.length !== 1 || refs[0]?.animeId !== manifest.anidbId ||
-          refs[0]?.episodeId !== file.episodeIds[0] ||
-          refs[0]?.start !== 0 || refs[0]?.end !== 100) {
+          refs.length !== file.episodeIds.length ||
+          !file.episodeIds.every((episodeId) => refs.some((ref) =>
+            ref?.animeId === manifest.anidbId &&
+            ref.episodeId === episodeId && ref.start === 0 && ref.end === 100))) {
         return held('shoko_identity_conflict');
       }
       continue;
     }
+    // Only Shoko can assign multi-episode coverage. Retry its native match
+    // later; never synthesize a combined release from the torrent name.
+    if (file.episodeIds.length !== 1) return held('shoko_native_match_pending');
     if (observed.state !== 'imported_unrecognized' ||
         !Array.isArray(observed.locations) || observed.locations.length > 100) {
       return held('shoko_file_unverified');

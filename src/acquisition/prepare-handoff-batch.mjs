@@ -116,7 +116,8 @@ export async function prepareHandoffBatch({
   const provisional = verified?.state === 'batch_provisional' &&
     verified.identity === 'provisional' &&
     Array.isArray(verified.files) && verified.files.length > 0 &&
-    verified.files.every((file) => file?.episodeIds?.length === 1 &&
+    verified.files.every((file) => Array.isArray(file?.episodeIds) &&
+      file.episodeIds.length > 0 &&
       !Object.hasOwn(file, 'anidbFileId'));
   if ((!provisional && verified?.state !== 'batch_identity_verified') ||
       (verified.state === 'batch_identity_verified' && verified.identity !== undefined) ||

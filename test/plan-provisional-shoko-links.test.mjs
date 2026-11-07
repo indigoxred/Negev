@@ -66,3 +66,26 @@ test('a file Shoko already matched needs no User link while its neighbour does',
       crossReferences: [{ animeId: 99, episodeId: 1001,
         start: 0, end: 100 }] } }, observedFiles[1]] }).state, 'held');
 });
+
+test('a combined episode file relies on Shoko recognition and never plans a guessed link', () => {
+  const combinedEvidence = evaluateHandoffEvidence({ identity: 'provisional',
+    anidbId: 42, torrentHash: 'a'.repeat(40), subtitles: [],
+    files: [{ name: 'Show/01-02.mkv', size: 900,
+      ed2k: 'A'.repeat(32), episodeIds: [1001, 1002] }] });
+  const combinedName = `negev-7-${combinedEvidence.digest.slice(0, 16)}`;
+  const combinedInput = { ...input,
+    handoff: { status: 'published_observed', manifest: combinedEvidence.manifest,
+      evidenceDigest: combinedEvidence.digest, publishName: combinedName },
+    observedFiles: [{ ...observedFiles[0],
+      locations: [{ managedFolderId: 1, accessible: true,
+        path: `${root}/${combinedName}/Show/01-02.mkv` }] }] };
+  assert.deepEqual(planProvisionalShokoLinks(combinedInput),
+    { state: 'held', reason: 'shoko_native_match_pending' });
+  const recognized = { ...combinedInput.observedFiles[0],
+    state: 'imported_recognized', release: { providerName: 'Offline Importer',
+      isCorrupted: false, crossReferences: [1001, 1002].map((episodeId) =>
+        ({ animeId: 42, episodeId, start: 0, end: 100 })) } };
+  assert.deepEqual(planProvisionalShokoLinks({ ...combinedInput,
+    observedFiles: [recognized] }),
+  { state: 'links_ready', links: [], identifiedFileIds: [19711] });
+});

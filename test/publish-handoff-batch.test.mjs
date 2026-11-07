@@ -11,7 +11,7 @@ import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-hand
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
 async function withBatch(run, { videoBytes = Buffer.from('abc'),
-  ed2kMode, provisional = false } = {}) {
+  ed2kMode, provisional = false, episodeIds = [1001] } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
   const stagingRoot = path.join(root, 'staging');
   const holdingRoot = path.join(root, 'holding');
@@ -27,7 +27,7 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
       torrentHash: 'a'.repeat(40), anidbId: 42,
       files: [{ name: '01.mkv', size: video.length,
         ed2k: ed2kBuffer(video, { mode: ed2kMode ?? 'edonkey' }),
-        ...(!provisional ? { anidbFileId: 51 } : {}), episodeIds: [1001] }],
+        ...(!provisional ? { anidbFileId: 51 } : {}), episodeIds }],
       subtitles: [{ index: 1, name: '01.en.srt', size: subtitle.length,
         sha256: (await import('node:crypto')).createHash('sha256').update(subtitle)
           .digest('hex').toUpperCase() }] };
@@ -288,6 +288,21 @@ test('restart reconstruction retains every file in a provisional Completed pack'
     [[1001], [1002]]);
 });
 
+test('restart reconstruction retains a provisional combined-episode file', () => {
+  const evidence = evaluateHandoffEvidence({ identity: 'provisional',
+    anidbId: 42, torrentHash: 'a'.repeat(40), subtitles: [],
+    files: [{ name: '01-02.mkv', size: 3,
+      ed2k: 'A'.repeat(32), episodeIds: [1001, 1002] }] });
+  const handoff = { status: 'prepared',
+    holdingPath: path.join(tmpdir(), 'private-provisional-pair'),
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-7-${evidence.digest.slice(0, 16)}` };
+  const result = restorePreparedHandoff({ attemptId: 7, handoff });
+  assert.equal(result.state, 'handoff_prepared');
+  assert.deepEqual(result.files[0].episodeIds, [1001, 1002]);
+});
+
 test('a provisional copy rechecks bytes before a watched-folder publish intent', async () =>
   withBatch(async (sample) => {
     assert.deepEqual(await processRecordedHandoff({ ...sample,
@@ -365,6 +380,19 @@ test('a provisional handoff records watched-folder exposure without claiming imp
     assert.deepEqual(await readFile(path.join(result.destination, '01.mkv')),
       sample.video);
   }, { provisional: true }));
+
+test('a combined provisional file can enter Shoko Source without claiming episode coverage', async () =>
+  withBatch(async (sample) => {
+    const result = await processRecordedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }),
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      }, attemptId: 1, nowMs: 500 });
+    assert.equal(result.state, 'published_observed');
+    assert.equal(sample.getBegins(), 1);
+    assert.equal(sample.getObservations(), 1);
+  }, { provisional: true, episodeIds: [1001, 1002] }));
 
 test('recorded publisher holds before provider work when its journal is missing', async () =>
   withBatch(async (sample) => {

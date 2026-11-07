@@ -36,6 +36,32 @@ test('a later correct Shoko match records identity, not Plex availability', asyn
   { state: 'shoko_files_identified', fileIds: [19711] });
 });
 
+test('a combined provisional file passes only when Shoko proves both full episodes', async () => {
+  const pair = evaluateHandoffEvidence({ identity: 'provisional',
+    torrentHash: 'a'.repeat(40), anidbId: 42, subtitles: [],
+    files: [{ name: '05-06.mkv', size: 900, ed2k: 'A'.repeat(32),
+      episodeIds: [1005, 1006] }] });
+  const combined = { status: 'published_observed', manifest: pair.manifest,
+    evidenceDigest: pair.digest };
+  const refs = [1005, 1006].map((episodeId) => ({ animeId: 42,
+    episodeId, start: 0, end: 100 }));
+  const observed = { ...recognized, release: { ...recognized.release,
+    crossReferences: refs } };
+  assert.deepEqual(await observeProvisionalImport({ handoff: combined,
+    readImportedFile: async () => observed }),
+  { state: 'shoko_files_identified', fileIds: [19711] });
+  for (const crossReferences of [
+    [refs[0]],
+    [refs[0], { ...refs[1], end: 50 }],
+    [refs[0], { ...refs[1], episodeId: 1007 }],
+  ]) {
+    assert.deepEqual(await observeProvisionalImport({ handoff: combined,
+      readImportedFile: async () => ({ ...observed,
+        release: { ...observed.release, crossReferences } }) }),
+    { state: 'held', reason: 'shoko_identity_conflict' });
+  }
+});
+
 test('conflicting, partial, or corrupt Shoko releases hold automatically', async () => {
   for (const release of [
     undefined,

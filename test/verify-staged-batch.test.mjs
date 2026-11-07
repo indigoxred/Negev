@@ -149,6 +149,18 @@ test('one two-episode video requires exact full AniDB coverage for both targets'
   assert.deepEqual(partial, { state: 'held', reason: 'partial_or_unproved_episode' });
 });
 
+test('a two-episode video with inconclusive AniDB lookup stays provisional for Shoko', async () => {
+  const combined = [{ index: 0, name: 'Show/01-02.mkv', size: 3 }];
+  const result = await verifyStagedBatch({ root: '/staging', request, attempt,
+    expectedTorrent, plannedFiles: [{ name: combined[0].name,
+      episodeIds: [1001, 1002] }], allowProvisional: true,
+    observe: async () => ({ state: 'complete', files: combined }),
+    verify: async () => ({ state: 'hash_verified', reason: 'lookup_inconclusive',
+      ed2k: 'B'.repeat(32), size: 3 }), lookup: async () => null });
+  assert.equal(result.state, 'batch_provisional');
+  assert.deepEqual(result.files[0].episodeIds, [1001, 1002]);
+});
+
 test('one release in a 501-episode installment verifies only its claimed target', async () => {
   const largeRequest = { ...request,
     episodeIds: Array.from({ length: 501 }, (_, index) => 2000 + index) };

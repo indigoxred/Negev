@@ -15,8 +15,7 @@ export async function observeProvisionalImport({ handoff, readImportedFile } = {
     subtitles: manifest?.subtitles });
   if (evidence.state !== 'valid' || evidence.digest !== handoff.evidenceDigest ||
       JSON.stringify(evidence.manifest) !== JSON.stringify(manifest) ||
-      manifest.identity !== 'provisional' ||
-      manifest.videos.some((file) => file.episodeIds.length !== 1)) {
+      manifest.identity !== 'provisional') {
     return held('handoff_evidence_mismatch');
   }
   const fileIds = [];
@@ -42,9 +41,10 @@ export async function observeProvisionalImport({ handoff, readImportedFile } = {
     }
     const refs = observed.release?.crossReferences;
     if (observed.release?.isCorrupted !== false || !Array.isArray(refs) ||
-        refs.length !== 1 || refs[0]?.animeId !== manifest.anidbId ||
-        refs[0]?.episodeId !== file.episodeIds[0] ||
-        refs[0]?.start !== 0 || refs[0]?.end !== 100) {
+        refs.length !== file.episodeIds.length ||
+        !file.episodeIds.every((episodeId) => refs.some((ref) =>
+          ref?.animeId === manifest.anidbId &&
+          ref.episodeId === episodeId && ref.start === 0 && ref.end === 100))) {
       return held('shoko_identity_conflict');
     }
   }

@@ -22,8 +22,6 @@ export function restorePreparedHandoff({ attemptId, handoff } = {}) {
     files: manifest?.videos, subtitles: manifest?.subtitles,
   });
   if (evidence.state !== 'valid' ||
-      (manifest?.identity === 'provisional' &&
-        manifest.videos.some((file) => file.episodeIds.length !== 1)) ||
       JSON.stringify(manifest) !== JSON.stringify(evidence.manifest) ||
       evidence.digest !== handoff.evidenceDigest ||
       evidence.manifest.torrentHash !== handoff.torrentHash ||

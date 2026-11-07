@@ -103,7 +103,6 @@ export async function verifyStagedBatch({
     if (allowProvisional && result?.state === 'hash_verified' &&
         result.reason === 'lookup_inconclusive') {
       const plannedEpisodes = plannedByName.get(file.name).episodeIds;
-      if (plannedEpisodes.length !== 1) return held('provisional_file_ambiguous');
       if (result.size !== file.size ||
           !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
       provisional = true;

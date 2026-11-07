@@ -13,8 +13,7 @@ const admitted = (result, file) => result?.isCorrupted === false &&
   file.episodeIds.every((episodeId) => result.coverage.some((range) =>
     range.episodeId === episodeId && range.start === 0 && range.end === 100));
 const provisionalManifest = (manifest) => manifest.identity === 'provisional' &&
-  manifest.version === 2 && manifest.videos.length > 0 &&
-  manifest.videos.every((file) => file.episodeIds.length === 1);
+  manifest.version === 2 && manifest.videos.length > 0;
 const matchesVideo = (result, file, manifest) => {
   if (result?.ed2k !== file.ed2k || result.size !== file.size) return false;
   if (manifest.identity === 'provisional') {

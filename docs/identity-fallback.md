@@ -1,5 +1,7 @@
 # Shoko-first identity fallback
 
+For combined-episode files, an inconclusive AniDB lookup may also stay provisional. Only Shoko's later full coverage of every planned episode on that same file can confirm the match. If it remains unrecognized, retry native recognition; never create a combined link from the torrent name.
+
 Negev prefers Shoko's exact AniDB file result. An inconclusive lookup is not a wrong-file verdict and must not retire or replace a completed download. This policy follows the owner's November 2026 clarification: AniDB registration helps recognition but is not a requirement for every encode, especially while a show is airing.
 
 For a completed candidate, retain the qBittorrent manifest, selected file names, file sizes and hashes. If exact AniDB file identity is unavailable, use the request's AniDB anime and episode targets, the selected release's episode claim, and Shoko's catalogue identities to decide whether a limited Shoko handoff is plausible. A title string alone is insufficient. Keep the provisional state distinct from an exact-file match. Before publishing, recheck the torrent, file bytes, target scope and private mounts; never silently reuse an exact-release manifest for a provisional one.
