@@ -6,7 +6,7 @@ import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
-  installmentRequestState } from './season-availability-presentation.mjs';
+  installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { detailRefreshDelay, detailHydrationFollowup } from './detail-refresh.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
@@ -1420,6 +1420,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (!pager) return;
     let filmChoiceSelect = null;
     let refreshRequestAction = () => {};
+    let refreshSelectedRequestAction = () => {};
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
@@ -1466,6 +1467,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           option.textContent = optionText(episode);
           refreshAvailabilitySummary();
           refreshRequestAction();
+          refreshSelectedRequestAction();
         }
       };
       appendOptions(pager.episodes);
@@ -1531,19 +1533,21 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       if (chooseFilmEntry && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected film entry');
         let requesting = false;
-        const filmAlreadyAvailable = summarizeFilmAvailability({ kind: data.kind,
-          episodes: pager.episodes, nextPage: pager.nextPage })?.available === true;
+        const selectedFilmState = () => filmEntryRequestState({
+          episodes: pager.episodes, nextPage: pager.nextPage,
+          selectedId: Number(select.value),
+        });
         const updateSelection = () => {
-          const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-          requestSelected.disabled = requesting || episode?.type !== 'Episode' ||
-            episode.availability === 'available' || filmAlreadyAvailable;
+          requestSelected.disabled = requesting ||
+            selectedFilmState() !== 'requestable';
         };
+        refreshSelectedRequestAction = updateSelection;
         select.addEventListener('change', updateSelection);
         updateSelection();
         requestSelected.addEventListener('click', async () => {
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-          if (requesting || filmAlreadyAvailable || episode?.type !== 'Episode' ||
-              episode.availability === 'available') return;
+          if (requesting || selectedFilmState() !== 'requestable' ||
+              episode?.type !== 'Episode') return;
           const scope = { userId: state.user.id, anidbId: item.anidbId,
             selection: `film-entry-${episode.id}` };
           requesting = true;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
-  installmentRequestState } from
+  installmentRequestState, filmEntryRequestState } from
   '../src/web/public/season-availability-presentation.mjs';
 
 test('season summary counts regular episodes, not trailers or Specials', () => {
@@ -44,4 +44,18 @@ test('verified complete installments are not offered as new requests', () => {
     episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable');
   assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
     episodes: [{ type: 'Episode', availability: 'unknown' }] }), 'requestable');
+});
+
+test('a newly verified film entry closes the alternate-entry request action', () => {
+  const episodes = [
+    { id: 71, type: 'Episode', availability: 'unknown' },
+    { id: 72, type: 'Episode', availability: 'unknown' },
+  ];
+  const input = { episodes, nextPage: null, selectedId: 72 };
+  assert.equal(filmEntryRequestState(input), 'requestable');
+  episodes[0].availability = 'available';
+  assert.equal(filmEntryRequestState(input), 'already_available');
+  episodes[0].availability = 'unknown';
+  episodes[1].availability = 'available';
+  assert.equal(filmEntryRequestState(input), 'already_available');
 });
