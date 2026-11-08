@@ -218,7 +218,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("location.hash = '#/title/1'");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       assert.equal(await evaluate("document.querySelector('#detail a[data-plex-link]')?.textContent"),
-        'Open in Plex');
+        undefined, 'title details do not add an optional Plex link');
       assert.equal(detailPosts, 1, 'ready state must use GET, not repeat hydration POST');
       detailReady = false;
       await evaluate("location.hash = '#/discover'");

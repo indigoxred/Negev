@@ -1214,16 +1214,6 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.replaceChildren(detailArt,
       element('h1', data.title || item.title, 'detail-title'));
     panel.append(displaySummary);
-    if (typeof data.plexUrl === 'string' &&
-        /^https:\/\/app\.plex\.tv\/desktop\/#\!\/server\/[a-f0-9]{40}\/details\?key=%2Flibrary%2Fmetadata%2F[1-9][0-9]*$/i
-          .test(data.plexUrl)) {
-      const openPlex = element('a', 'Open in Plex', 'text-link');
-      openPlex.href = data.plexUrl;
-      openPlex.target = '_blank';
-      openPlex.rel = 'noopener noreferrer';
-      openPlex.dataset.plexLink = '';
-      panel.append(openPlex);
-    }
     void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
