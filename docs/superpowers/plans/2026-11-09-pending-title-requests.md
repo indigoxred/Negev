@@ -62,4 +62,4 @@
 - [x] Confirm failure and implement the consumer flow.
 - [x] Rerun focused checks and commit.
 - [x] Verify a slow cold title saves inside five seconds in the isolated account-service test with acquisition disabled.
-- [ ] Verify restart and resolution in isolated Docker before release or deployment.
+- [ ] Verify the isolated Docker image boots with the preparation route and acquisition disabled; the Linux test job covers synthetic cold-title resolution and restart.

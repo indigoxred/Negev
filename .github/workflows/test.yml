@@ -81,6 +81,13 @@ jobs:
               !Array.isArray((await requests.json()).items)) {
             throw new Error('Image request list failed');
           }
+          const preparations = await fetch(`${base}/api/request-preparations`, {
+            headers: { Cookie: cookie },
+          });
+          if (preparations.status !== 200 ||
+              !Array.isArray((await preparations.json()).items)) {
+            throw new Error('Image preparation list failed');
+          }
           NODE
               docker stop negev-user-ci
               exit 0
