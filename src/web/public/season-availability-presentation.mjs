@@ -15,9 +15,11 @@ export function summarizeFilmAvailability({ kind, episodes, nextPage }) {
     completeList: nextPage === null, available: verified > 0 };
 }
 
-export function installmentRequestState({ kind, episodes, nextPage }) {
+export function installmentRequestState({ kind, episodes, nextPage,
+  monitorFuture = false }) {
   if (kind === 'movie') return summarizeFilmAvailability({ kind, episodes, nextPage })?.available
     ? 'already_available' : 'requestable';
+  if (monitorFuture === true) return 'requestable';
   const season = summarizeSeasonAvailability({ kind, episodes, nextPage });
   return season?.completeList && season.total > 0 && season.verified === season.total
     ? 'already_available' : 'requestable';

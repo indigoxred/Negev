@@ -278,9 +278,9 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 42,
           title: 'Example Series', kind: 'series', restricted: false,
-          page: 1, total: 1, nextPage: null,
+          page: 1, total: 1, nextPage: null, monitorFuture: true,
           episodes: [{ id: 4201, number: 1, type: 'Episode', title: 'First',
-            availability: 'unknown' }] }));
+            availability: 'available' }] }));
         return;
       }
       if (path === '/api/catalogue/4158/display') {
@@ -377,6 +377,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'series-detail'));
       assert.match(seriesDetail, /Choose a season or installment/);
       assert.match(seriesDetail, /class="installment-choice"/);
+      assert.match(seriesDetail, /Watch future episodes/);
+      assert.doesNotMatch(seriesDetail, /Already available/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);

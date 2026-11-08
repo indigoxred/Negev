@@ -9,7 +9,7 @@ import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mj
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
-import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
+import { createHeldRequestSubmitter, requestReleaseState } from '../requests/submit-held-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
@@ -530,8 +530,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await loadFastDetail(input);
-        if (!plexObserver || detail?.state !== 'details' ||
-            !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
+        if (detail?.state !== 'details' || !Array.isArray(detail.episodes) ||
+            detail.episodes.length > 100) return detail;
+        const requestMode = detail.nextPage === null && detail.complete === true
+          ? { monitorFuture: requestReleaseState(detail, today()) === 'airing' }
+          : {};
+        if (!plexObserver) return { ...detail, ...requestMode };
         const card = fileProofs?.getCurrentTitleCard({ anidbId: detail.anidbId });
         if (card && !plexMachineId &&
             (plexIdentityCheckedMs === null ||
@@ -547,7 +551,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         const plexUrl = plexWebItemUrl({ machineId: plexMachineId,
           ratingKey: card?.ratingKey });
-        return { ...detail,
+        return { ...detail, ...requestMode,
           ...(plexUrl ? { plexUrl } : {}),
           libraryPresence: publicPresenceForTitle(detail.anidbId, now()),
           episodes: detail.episodes.map((episode) => {

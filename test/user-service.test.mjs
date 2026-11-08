@@ -278,6 +278,7 @@ test('a newly searched title can use exact public AniDB episodes before Shoko ca
     assert.equal(detail.statusCode, 200, detail.body);
     assert.deepEqual(detail.json().episodes.map((episode) => episode.id),
       [316607, 316608]);
+    assert.equal(detail.json().monitorFuture, false);
     const requested = await service.app.inject({ method: 'POST',
       url: '/api/requests', headers: auth(cookie, csrf),
       payload: { anidbId: 19586, scope: 'installment', requestKey: 'new-anime' } });
@@ -455,6 +456,10 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       url: '/api/catalogue/search?q=Example', headers: { cookie } });
     assert.equal(search.statusCode, 200, search.body);
     assert.equal(search.json().items[0].anidbId, 1234);
+    const airingDetail = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/1234', headers: { cookie } });
+    assert.equal(airingDetail.statusCode, 200, airingDetail.body);
+    assert.equal(airingDetail.json().monitorFuture, true);
     const beforeHydration = methods.length;
     const disabledHydration = await service.app.inject({ method: 'POST',
       url: '/api/catalogue/1234/load-detail', headers: auth(cookie, csrf),
