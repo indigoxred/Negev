@@ -75,7 +75,7 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
           signal: AbortSignal.timeout(Math.max(1, timeoutMs - (Date.now() - started))),
         });
         if (response.status === 200) return {
-          value: parseRecord(await readBoundedJson(response, 2_000_000), anidbId),
+          value: parseRecord(await readBoundedJson(response, 4_000_000), anidbId),
           transient: false };
         if (attempt === 0 && (response.status === 429 || response.status >= 500) &&
             Date.now() - started + 200 < timeoutMs) {
