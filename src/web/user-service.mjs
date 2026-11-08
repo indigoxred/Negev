@@ -521,8 +521,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return readDisplayRelations({
           readLocal: () => metadata.run(() => readAniDbRelatedTitles({
             baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
+            timeoutMs: 4_000,
           })),
           readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
+            timeoutMs: 4_000,
             titleForId: (id) => titleSource?.getTitle(id) ?? null }),
         });
       },
