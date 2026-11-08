@@ -684,13 +684,15 @@ async function loadLibrary(append = false, continuation = null) {
   }
 }
 function seasonChoice(route) {
-  if (route.year && route.season) return { year: route.year,
+  if (route.year !== undefined && route.season) return { year: route.year,
     season: route.season, after: route.after ?? 0,
     kind: route.kind ?? 'all', tag: route.tag ?? '' };
-  const date = new Date();
-  return { year: date.getUTCFullYear(),
-    season: ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)],
-    after: 0, kind: 'all', tag: '' };
+  return { year: 0, season: 'ALL', after: 0, kind: 'all', tag: '' };
+}
+for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
+  const option = element('option', String(year));
+  option.value = String(year);
+  byId('season-year').append(option);
 }
 function renderSeasonGenres(availableTags, selected) {
   const choices = byId('season-tags');
@@ -726,7 +728,9 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
   byId('season-kind').value = kind;
   byId('season-previous').hidden = true;
   byId('season-next').hidden = true;
-  notice.textContent = `Loading ${season.toLowerCase()} ${year}…`;
+  notice.textContent = year === 0 && season === 'ALL'
+    ? 'Loading the anime catalogue…'
+    : `Loading ${season === 'ALL' ? 'all seasons' : season.toLowerCase()} ${year || 'across all years'}…`;
   list.replaceChildren();
   try {
     const params = new URLSearchParams({ year: String(year), season });
@@ -742,10 +746,10 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
     }
     renderSeasonGenres(page.availableTags ?? [], tag);
     notice.textContent = page.state === 'stale'
-      ? `Showing a saved season list from ${page.sourceDate}; source refresh is unavailable.`
+      ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
-        ? `Season list updated ${page.sourceDate}. Some title details could not be checked; try again later.`
-        : `Season list updated ${page.sourceDate}. Sorted by title; local availability is checked separately.`;
+        ? `Catalogue updated ${page.sourceDate}. Some title details could not be checked; try again later.`
+        : `Catalogue updated ${page.sourceDate}. Newest seasons first; local availability is checked separately.`;
     if (page.items.length === 0) list.append(element('p',
       'No verified titles on this page. Search may find titles missing from the season map.',
       'empty-state'));
@@ -787,7 +791,7 @@ byId('season-form').addEventListener('submit', (event) => {
   const kind = byId('season-kind').value;
   const tag = [...byId('season-tags').querySelectorAll('input:checked')]
     .map((input) => input.value).join(',');
-  if (!Number.isSafeInteger(year) || year < 1900 || year > 2100) return;
+  if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100)) return;
   const route = seasonRoute(year, season, 0, { kind, tag });
   if (location.hash === route) void loadSeasonal({ year, season,
     after: 0, kind, tag });
@@ -802,7 +806,9 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
     notice.textContent = 'Loading ongoing titles…';
     list.replaceChildren();
   }
-  const { year, season } = seasonChoice({});
+  const date = new Date();
+  const year = date.getUTCFullYear();
+  const season = ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)];
   const params = new URLSearchParams({ year: String(year), season,
     status: 'ongoing' });
   if (after) params.set('after', String(after));

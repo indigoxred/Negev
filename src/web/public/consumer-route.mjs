@@ -19,14 +19,14 @@ export function parseConsumerRoute(hash) {
   if (path === 'discover' && search && new URLSearchParams(search).has('year')) {
     const params = new URLSearchParams(search);
     if ([...params.keys()].some((key) => !['year', 'season', 'after', 'kind', 'tag'].includes(key)) ||
-        !/^\d{4}$/.test(params.get('year') ?? '') ||
-        !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(params.get('season')) ||
+        !/^(0|\d{4})$/.test(params.get('year') ?? '') ||
+        !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(params.get('season')) ||
         params.has('after') && !/^(0|[1-9]\d*)$/.test(params.get('after')) ||
         !validKind(params.get('kind') ?? 'all') ||
         !validTag(params.get('tag') ?? '')) return home();
     const year = Number(params.get('year'));
     const after = Number(params.get('after') ?? '0');
-    return year >= 1900 && year <= 2100 && Number.isSafeInteger(after) &&
+    return (year === 0 || year >= 1900 && year <= 2100) && Number.isSafeInteger(after) &&
       after <= 100_000 ? { page: 'discover', anidbId: null, query: '',
         year, season: params.get('season'), after,
         ...(params.has('kind') ? { kind: params.get('kind') } : {}),
@@ -42,8 +42,8 @@ export function parseConsumerRoute(hash) {
 
 export function seasonRoute(year, season, after = 0,
   { kind = 'all', tag = '' } = {}) {
-  if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
-      !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(season) ||
+  if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
+      !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(season) ||
       !Number.isSafeInteger(after) || after < 0 || after > 100_000 ||
       !validKind(kind) || !validTag(tag)) {
     throw new TypeError('Invalid seasonal route');

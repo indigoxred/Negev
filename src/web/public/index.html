@@ -64,11 +64,12 @@
           <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
         </section>
         <section class="section" aria-labelledby="season-title">
-          <div class="section-head"><div><h2 id="season-title">Browse by season and genre</h2>
-            <p>Choose any year and season in the catalogue. Search can find titles missing from the season map.</p></div></div>
+          <div class="section-head"><div><h2 id="season-title">Browse the catalogue</h2>
+            <p>Explore all years or narrow by season, format and genres. Search can find titles missing from this map.</p></div></div>
           <form id="season-form" class="season-controls">
-            <label>Year <input id="season-year" name="year" type="number" min="1900" max="2100" step="1" required></label>
+            <label>Year <select id="season-year" name="year"><option value="0">All years</option></select></label>
             <label>Season <select id="season-name" name="season">
+              <option value="ALL">All seasons</option>
               <option value="WINTER">Winter</option><option value="SPRING">Spring</option>
               <option value="SUMMER">Summer</option><option value="FALL">Fall</option>
             </select></label>

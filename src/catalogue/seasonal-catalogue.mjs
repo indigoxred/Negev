@@ -8,6 +8,8 @@ const MAX_MAP_BYTES = 60_000_000;
 const MAX_DETAIL_BYTES = 128_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const seasons = new Set(['WINTER', 'SPRING', 'SUMMER', 'FALL']);
+const browseSeasons = new Set(['ALL', ...seasons]);
+const seasonOrder = new Map(['WINTER', 'SPRING', 'SUMMER', 'FALL'].map((value, index) => [value, index]));
 const kinds = new Set(['all', 'series', 'movies']);
 const statuses = new Set(['all', 'ongoing']);
 const validTag = (value) => typeof value === 'string' &&
@@ -136,7 +138,23 @@ async function parseMap(response) {
     groups.set(key, entries.filter((entry) => !duplicate.has(entry.anidbId))
       .sort((a, b) => a.title.localeCompare(b.title) || a.anidbId - b.anidbId));
   }
-  return { sourceDate, groups };
+  const seenArchiveIds = new Set();
+  const allEntries = [...groups.entries()]
+    .sort(([left], [right]) => {
+      const [leftYear, leftSeason] = left.split('-');
+      const [rightYear, rightSeason] = right.split('-');
+      return Number(rightYear) - Number(leftYear) ||
+        seasonOrder.get(rightSeason) - seasonOrder.get(leftSeason);
+    })
+    .flatMap(([key, entries]) => {
+      const [year, season] = key.split('-');
+      return entries.map((entry) => ({ ...entry, year: Number(year), season }));
+    }).filter((entry) => {
+      if (seenArchiveIds.has(entry.anidbId)) return false;
+      seenArchiveIds.add(entry.anidbId);
+      return true;
+    });
+  return { sourceDate, groups, allEntries };
 }
 
 // Presentation data only. The acquisition and availability pipelines do not
@@ -205,8 +223,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   }
   return { async read({ year, season, after = 0, limit = 12,
     kind = 'all', tag = '', status = 'all' } = {}) {
-    if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
-        !seasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
+    if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
+        !browseSeasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
         !kinds.has(kind) || !validTags(tag) || !statuses.has(status)) {
       throw new TypeError('Invalid season page');
@@ -215,7 +233,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     const mapState = await loadMap(time);
     if (mapState === 'unavailable') return { state: 'unavailable' };
-    const seasonEntries = cached.groups.get(`${year}-${season}`) ?? [];
+    const seasonEntries = year === 0 || season === 'ALL'
+      ? cached.allEntries.filter((entry) =>
+        (year === 0 || entry.year === year) &&
+        (season === 'ALL' || entry.season === season))
+      : cached.groups.get(`${year}-${season}`) ?? [];
     const availableTags = [...new Set(seasonEntries.flatMap((entry) => entry.tags))]
       .sort((a, b) => a.localeCompare(b));
     const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];

@@ -37,6 +37,9 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   assert.equal(second.nextAfter, null);
   assert.equal(calls.filter((url) => url.endsWith('/api/v1/map')).length, 1);
   assert.equal(calls.some((url) => url.endsWith('/4') || url.endsWith('/5')), false);
+  const archive = await reader.read({ year: 0, season: 'ALL', limit: 4 });
+  assert.deepEqual(archive.items.map((item) => item.anidbId), [1, 2, 3, 6]);
+  assert.equal(archive.nextAfter, null);
 });
 
 test('unknown restriction never displays a seasonal card and visibly marks partial data', async () => {

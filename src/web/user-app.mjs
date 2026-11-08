@@ -327,9 +327,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store');
     const query = request.query;
     if (Object.keys(query).some((key) => !['year', 'season', 'after', 'kind', 'tag', 'status'].includes(key)) ||
-        typeof query.year !== 'string' || !/^\d{4}$/.test(query.year) ||
+        typeof query.year !== 'string' || !/^(0|\d{4})$/.test(query.year) ||
         typeof query.season !== 'string' ||
-        !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
+        !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
         !['all', 'series', 'movies'].includes(query.kind ?? 'all') ||
         !['all', 'ongoing'].includes(query.status ?? 'all') ||
         (query.tag !== undefined && (typeof query.tag !== 'string' ||
@@ -342,7 +342,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     const year = Number(query.year);
     const after = Number(query.after ?? '0');
-    if (year < 1900 || year > 2100 || !Number.isSafeInteger(after) ||
+    if (year !== 0 && (year < 1900 || year > 2100) || !Number.isSafeInteger(after) ||
         after > 100_000) return reply.code(400).send({ error: 'Invalid season page' });
     if (typeof listSeasonalTitles !== 'function') {
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });

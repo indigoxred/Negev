@@ -28,6 +28,9 @@ test('search query survives reload and Back/Forward without permitting arbitrary
 });
 
 test('season and page survive reload and Back/Forward without accepting arbitrary filters', () => {
+  assert.deepEqual(parseConsumerRoute(seasonRoute(0, 'ALL')),
+    { page: 'discover', anidbId: null, query: '', year: 0,
+      season: 'ALL', after: 0 });
   const route = seasonRoute(2026, 'FALL', 12);
   assert.equal(route, '#/discover?year=2026&season=FALL&after=12');
   assert.deepEqual(parseConsumerRoute(route), { page: 'discover', anidbId: null,

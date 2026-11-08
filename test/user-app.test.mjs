@@ -339,6 +339,10 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).status, 'ongoing');
     assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).year, 0);
+    assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&tag=%0A',
       headers: { cookie } })).statusCode, 400);
     const review = await app.inject({ method: 'GET',
