@@ -44,6 +44,26 @@ test('a recently verified whole installment is held before a duplicate request i
   assert.equal(saved, 0);
 });
 
+test('a fully aired and available series without an end date is not watched again', async () => {
+  let saved = 0;
+  const detail = { state: 'details', anidbId: 44, title: 'Completed installment',
+    kind: 'series', restricted: false, complete: true, page: 1, total: 2,
+    nextPage: null, airDate: '2026-10-01', endDate: null,
+    episodeCount: 2, episodes: [1, 2].map((number) => ({
+      id: 300 + number, number, type: 'Episode', title: `Episode ${number}`,
+      airDate: `2026-10-0${number}` })) };
+  const submit = createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true, loadDetail: async () => detail,
+    recentlyAvailable: async () => true,
+    ledger: { findSubmission: () => null, submit: () => { saved++; } },
+    now: () => 1, today: () => '2026-11-08',
+  });
+  assert.deepEqual(await submit({ requesterId: 1, anidbId: 44,
+    scope: 'installment', requestKey: 'already-here' }),
+  { state: 'held', reason: 'already_available' });
+  assert.equal(saved, 0);
+});
+
 test('a partial installment request saves only episodes without recent playable proof', async () => {
   const detail = { state: 'details', anidbId: 42, title: 'Three episode show',
     kind: 'series', restricted: false, complete: true, page: 1, total: 3,

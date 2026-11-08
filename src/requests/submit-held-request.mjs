@@ -11,7 +11,7 @@ export function requestReleaseState(detail, currentDate) {
   const release = inferReleaseState({ ...detail, today: currentDate });
   if (!['airing', 'completed'].includes(release.state)) return release.state;
   return detail.kind === 'series' && release.state === 'completed' &&
-    (detail.endDate == null || !hasStatedRegularEpisodes(detail))
+    !hasStatedRegularEpisodes(detail)
     ? 'airing' : release.state;
 }
 
