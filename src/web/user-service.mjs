@@ -401,26 +401,29 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }),
       }),
     });
+    // Observe both roots in one reserved metadata turn. Background readers
+    // cannot repeatedly split this first-time absence fence with busy results.
     const readImportActivity = shokoImportRoot !== null &&
-      shokoImportFolderId !== null ? async (withFingerprint = false, target = null) => {
-        const manual = await metadata.run(() => readShokoImportActivity({
-          baseUrl: shokoBaseUrl,
-          apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
-          managedFolderId: shokoImportFolderId, withFingerprint,
-          ...(qbitSidecarObserver === null ? {} : {
-            readSidecarTorrent: qbitSidecarObserver.readTorrent,
-            qbitImportSavePath: qbitSidecarObserver.importSavePath }) }));
-        if (acquisitionImportParent === null) return manual;
-        const automated = await metadata.run(() => readShokoImportActivity({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fetchImpl,
-          importRoot: acquisitionImportParent,
-          managedFolderId: acquisitionImportFolderId, withFingerprint,
-          ...(target === null ? {} : { target,
-            ownedSubtree: 'Negev',
-            getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
-        }));
-        return combineImportActivity(manual, automated, withFingerprint);
-      } : null;
+      shokoImportFolderId !== null ? (withFingerprint = false, target = null) =>
+        metadata.runReserved(async () => {
+          const manual = await readShokoImportActivity({
+            baseUrl: shokoBaseUrl,
+            apiKey: shokoApiKey, fetchImpl, importRoot: shokoImportRoot,
+            managedFolderId: shokoImportFolderId, withFingerprint,
+            ...(qbitSidecarObserver === null ? {} : {
+              readSidecarTorrent: qbitSidecarObserver.readTorrent,
+              qbitImportSavePath: qbitSidecarObserver.importSavePath }) });
+          if (acquisitionImportParent === null) return manual;
+          const automated = await readShokoImportActivity({
+            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fetchImpl,
+            importRoot: acquisitionImportParent,
+            managedFolderId: acquisitionImportFolderId, withFingerprint,
+            ...(target === null ? {} : { target,
+              ownedSubtree: 'Negev',
+              getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
+          });
+          return combineImportActivity(manual, automated, withFingerprint);
+        }) : null;
     let acquisitionRuntime;
     const publicPresenceForTitle = (anidbId, checkedMs) => {
       const ids = plexObserver ? new Set([
