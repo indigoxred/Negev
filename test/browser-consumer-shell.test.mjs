@@ -283,6 +283,19 @@ test('signed-in consumer routes render real shell with search, library and reque
           tags: ['Science fiction'] }));
         return;
       }
+      if (path === '/api/catalogue/19847/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 19847,
+          title: 'FX Senshi Kurumi-chan', englishTitle: null, type: 'TV Series',
+          startYear: 2026, startDate: '2026-10-01', endDate: null,
+          episodeCount: 12, description: 'A new anime description.', tags: [] }));
+        return;
+      }
+      if (path === '/api/catalogue/19847') {
+        response.writeHead(429, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Too Many Requests' }));
+        return;
+      }
       const asset = assets.get(path);
       if (!asset) { response.writeHead(404); response.end(); return; }
       try {
@@ -350,6 +363,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
+      const throttledDetail = await dump(`${base}/#/title/19847`,
+        join(dir, 'throttled-detail'));
+      assert.match(throttledDetail, /A new anime description/);
+      assert.match(throttledDetail, /Episode details are temporarily unavailable/);
+      assert.match(throttledDetail, /Try again/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);

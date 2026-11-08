@@ -1584,8 +1584,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const retry = element('button', 'Try again');
     retry.type = 'button';
     retry.addEventListener('click', () => { void showDetail(item, franchise); });
-    panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'), retry);
-    message(error.message, true);
+    const unavailable = element('p', error.status === 429
+      ? 'Episode details are temporarily unavailable because the server is busy. The title information above is still available; try again shortly.'
+      : 'Episode details are temporarily unavailable. Try again to load request options.',
+    'muted');
+    panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
+      displaySummary, unavailable, retry);
+    if (state.showAdult && state.user?.adultAllowed !== false) {
+      void displayRead.then((display) => renderDisplay(display, item.title));
+    }
   }
 }
 void refreshSession();
