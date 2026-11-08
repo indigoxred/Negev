@@ -34,7 +34,7 @@
 - [x] Write failing restart, idempotency, conflict, cancellation and due-order tests.
 - [x] Run the focused test and confirm failure.
 - [x] Implement strict transactional operations and rerun the test.
-- [ ] Commit the independently tested ledger.
+- [x] Commit the independently tested ledger.
 
 ### Task 2: Exact resolver
 
@@ -42,9 +42,9 @@
 
 **Interface:** `runOnce()` processes one due intent. It calls the existing exact submitter with the saved account, title and key, then records the normal request ID, a bounded retry, or a terminal result.
 
-- [ ] Write failing Completed, Airing, outage, fully available, restart and cancellation cases.
-- [ ] Confirm failure, implement without indexer/qBittorrent calls, and rerun.
-- [ ] Commit.
+- [x] Write failing Completed, Airing, outage, fully available, restart and cancellation cases.
+- [x] Confirm failure, implement without indexer/qBittorrent calls, and rerun.
+- [x] Commit.
 
 ### Task 3: Authenticated route and history
 
