@@ -340,7 +340,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
       assert.equal(mobile.franchise.posterCards, 1);
-      assert.equal(mobile.franchise.next, 'Explore next related title');
+      assert.equal(mobile.franchise.next, 'Try related titles again');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');

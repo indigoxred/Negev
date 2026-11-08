@@ -1301,7 +1301,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const renderFamily = () => {
       relatedList.replaceChildren(element('p',
         family.status().state === 'no_cached_links'
-          ? 'Shoko has no related titles cached for this installment. Other installments may still exist; search by title to find them.'
+          ? 'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.'
           : 'Related AniDB titles. Other installments may exist; each title has its own request.',
         'muted'));
       for (const installment of family.items().filter((entry) => entry.anidbId !== item.anidbId)) {
@@ -1328,6 +1328,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       syncInstallmentChoice();
     };
     if (franchise) renderFamily();
+    else {
+      relatedList.append(element('p', 'Finding related titles…', 'muted'));
+      relatedButton.textContent = 'Finding related titles…';
+      relatedButton.disabled = true;
+    }
     let relatedLoading = false;
     const loadRelated = async () => {
       const next = family.next();
@@ -1340,8 +1345,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (isCurrentDetail()) renderFamily();
       } catch {
         if (isCurrentDetail()) {
-          relatedList.append(element('p',
-            'Related titles could not be loaded now. You can still search for another installment by name.', 'muted'));
+          const error = element('p',
+            'Related titles could not be loaded now. You can still search for another installment by name.',
+            'muted related-error');
+          if (relatedList.querySelector('.related-card')) {
+            relatedList.querySelector('.related-error')?.remove();
+            relatedList.append(error);
+          } else relatedList.replaceChildren(error);
+          relatedButton.textContent = 'Try related titles again';
           relatedButton.disabled = false;
         }
       } finally { relatedLoading = false; }

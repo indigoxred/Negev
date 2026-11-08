@@ -554,7 +554,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return { ...result, requestable: false };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const id = Number(request.params.id);
     if (!Number.isSafeInteger(id) || id < 1 ||
