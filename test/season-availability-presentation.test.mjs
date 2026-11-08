@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { summarizeSeasonAvailability, summarizeFilmAvailability } from
+import { summarizeSeasonAvailability, summarizeFilmAvailability,
+  installmentRequestState } from
   '../src/web/public/season-availability-presentation.mjs';
 
 test('season summary counts regular episodes, not trailers or Specials', () => {
@@ -27,4 +28,16 @@ test('a film is available from a verified main entry without counting extras', (
       { type: 'Trailer', availability: 'available' },
       { type: 'Special', availability: 'available' },
     ] }), { verified: 1, total: 2, completeList: true, available: true });
+});
+
+test('verified complete installments are not offered as new requests', () => {
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
+    episodes: [{ type: 'Episode', availability: 'available' },
+      { type: 'Special', availability: 'unknown' }] }), 'already_available');
+  assert.equal(installmentRequestState({ kind: 'movie', nextPage: null,
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'already_available');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
+    episodes: [{ type: 'Episode', availability: 'unknown' }] }), 'requestable');
 });

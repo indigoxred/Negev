@@ -343,6 +343,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const submitRequest = createHeldRequestSubmitter({
       titleRegistry, confirmKnownTitle, loadDetail, ledger: requests, now, today,
+      recentlyAvailable: ({ anidbId, episodeId }) => {
+        const target = { anidbId, episodeId, nowMs: now() };
+        return episodeDisplayAvailability({
+          direct: directAvailability.getStatus(target).state,
+          title: titleChecks?.getTargetStatus(target).state,
+          file: fileProofs?.getCurrent(target),
+        }).availability === 'available';
+      },
     });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();

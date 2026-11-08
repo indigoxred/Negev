@@ -105,7 +105,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs', 'season-availability-presentation.mjs'].map((name) =>
+    'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'detail-refresh.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -125,6 +126,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
     ['/season-availability-presentation.mjs',
       'text/javascript; charset=utf-8', pages[12]],
+    ['/detail-refresh.mjs', 'text/javascript; charset=utf-8', pages[13]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&
@@ -505,6 +507,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     const display = await readDisplayMetadata({ anidbId });
     if (display?.state !== 'display' || display.anidbId !== anidbId ||
+        typeof display.restricted !== 'boolean' ||
         typeof display.title !== 'string' || !display.title.trim() ||
         display.title.length > 500 ||
         ![display.englishTitle, display.type, display.description].every((value) =>
@@ -514,9 +517,18 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         display.startYear !== null &&
           (!Number.isSafeInteger(display.startYear) ||
             display.startYear < 1800 || display.startYear > 2200) ||
+        ![display.startDate, display.endDate].every((value) =>
+          value === null || typeof value === 'string' &&
+            /^\d{4}-\d{2}-\d{2}$/.test(value)) ||
+        display.episodeCount !== null &&
+          (!Number.isSafeInteger(display.episodeCount) ||
+            display.episodeCount < 0 || display.episodeCount > 10_000) ||
         !Array.isArray(display.tags) || display.tags.length > 8 ||
         display.tags.some((tag) => typeof tag !== 'string' || tag.length > 80)) {
       return reply.code(503).send({ error: 'Display details unavailable' });
+    }
+    if (!request.negevUser.adultAllowed && display.restricted) {
+      return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
     return display;
   });
@@ -771,6 +783,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
       return reply.code(202).send(result);
+    }
+    if (result.reason === 'already_available') {
+      return reply.code(409).send({ error: 'Already available in Negev’s Library',
+        state: 'held', reason: result.reason });
     }
     return reply.code(result.reason === 'invalid_request' ? 400 : 409).send(result);
   });

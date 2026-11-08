@@ -179,9 +179,15 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readCataloguePoster: async ({ anidbId }) => anidbId === 1234
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([0xff, 0xd8, 0xff]) }
       : { state: 'unavailable' },
-    readDisplayMetadata: async ({ anidbId }) => anidbId === 1234
-      ? { state: 'display', anidbId, title: 'Example series',
+    readDisplayMetadata: async ({ anidbId }) => anidbId === 1235
+      ? { state: 'display', anidbId, title: 'Adult series', restricted: true,
         englishTitle: null, type: 'TV Series', startYear: 2026,
+        startDate: null, endDate: null, episodeCount: null,
+        description: 'Private adult description.', tags: [] }
+      : anidbId === 1234
+      ? { state: 'display', anidbId, title: 'Example series',
+        restricted: false, englishTitle: null, type: 'TV Series', startYear: 2026,
+        startDate: null, endDate: null, episodeCount: null,
         description: 'A story about a test.', tags: ['Adventure'] }
       : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
@@ -522,6 +528,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { anidbId: 1235, scope: 'installment', requestKey: 'adult-denied' } });
     assert.equal(deniedAdult.statusCode, 403, deniedAdult.body);
     assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235',
+      headers: { cookie: friendCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235/display',
       headers: { cookie: friendCookie } })).statusCode, 403);
     const allowedOrdinary = await app.inject({ method: 'POST', url: '/api/requests',
       headers: { cookie: friendCookie, origin,

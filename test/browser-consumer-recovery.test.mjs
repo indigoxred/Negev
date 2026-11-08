@@ -15,12 +15,13 @@ const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
   'request-progress-text.mjs', 'response-epoch.mjs', 'franchise-explorer.mjs',
   'acquisition-notice.mjs', 'consumer-route.mjs',
-  'season-availability-presentation.mjs']);
+  'season-availability-presentation.mjs', 'detail-refresh.mjs']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
     let titleReads = 0;
+    let firstTitleResponse = null;
     let detailPosts = 0;
     let detailReady = false;
     let holdNextDetailPost = false;
@@ -58,6 +59,7 @@ test('title and library controls recover from pending and failed reads without d
         json(response, { items: [], nextAfterAttemptId: null });
       } else if (path === '/api/catalogue/1' && request.method === 'GET') {
         titleReads++;
+        if (titleReads === 1) { firstTitleResponse = response; return; }
         json(response, detailReady ? { state: 'details', anidbId: 1,
           title: 'Pending title', kind: 'movie', page: 1, total: 1, nextPage: null,
           plexUrl: 'https://app.plex.tv/desktop/#!/server/' + 'a'.repeat(40) +
@@ -70,6 +72,10 @@ test('title and library controls recover from pending and failed reads without d
           holdNextDetailPost = false;
           heldDetailResponse = response;
         } else json(response, { state: 'pending' });
+      } else if (path === '/api/catalogue/1/display') {
+        json(response, { state: 'display', anidbId: 1, title: 'Pending title',
+          englishTitle: null, type: 'TV Series', startYear: 2026,
+          description: 'The catalogue summary is already ready.', tags: [] });
       } else if (path === '/api/catalogue/2') {
         failedTitleReads++;
         json(response, failedTitleReads === 1 ? { error: 'temporarily unavailable' } :
@@ -188,6 +194,10 @@ test('title and library controls recover from pending and failed reads without d
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
+      await until("document.querySelector('#detail')?.textContent.includes('The catalogue summary is already ready.')");
+      json(firstTitleResponse, { state: 'detail_pending', anidbId: 1,
+        title: 'Pending title' });
+      firstTitleResponse = null;
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
       }
@@ -198,9 +208,13 @@ test('title and library controls recover from pending and failed reads without d
       holdWatchingRequests = false;
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
       await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
+      await until("document.querySelector('#detail')?.textContent.includes('The catalogue summary is already ready.')");
       for (let attempt = 0; attempt < 80 && detailPosts < 1; attempt++) await wait(100);
       assert.equal(detailPosts, 1);
       detailReady = true;
+      await evaluate("location.hash = '#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash = '#/title/1'");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       assert.equal(await evaluate("document.querySelector('#detail a[data-plex-link]')?.textContent"),
         'Open in Plex');
@@ -218,9 +232,12 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
       assert.equal(detailPosts, 2, 'an in-flight hydration POST must not be duplicated');
       assert.ok(heldDetailResponse);
-      json(heldDetailResponse, { state: 'pending' });
+      json(heldDetailResponse, { state: 'detail_ready' });
       heldDetailResponse = null;
       detailReady = true;
+      await evaluate("location.hash = '#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash = '#/title/1'");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       const beforeReentry = titleReads;
       await evaluate("location.hash = '#/discover'");
@@ -340,6 +357,8 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list').children.length"), 0);
       assert.equal(await evaluate("document.querySelector('#watch-list').children.length"), 0);
     } finally {
+      if (firstTitleResponse) json(firstTitleResponse, { state: 'detail_pending',
+        anidbId: 1 });
       if (heldDetailResponse) json(heldDetailResponse, { state: 'pending' });
       for (const response of heldWatchingResponses) {
         response.end(JSON.stringify({ items: [], nextBeforeId: null }));

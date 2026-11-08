@@ -18,7 +18,8 @@ const assets = new Map([
   ...['request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs', 'season-availability-presentation.mjs']
+    'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'detail-refresh.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
@@ -141,6 +142,7 @@ async function inspectMobile(url, profile, width = 390) {
     await wait(300);
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({listed: document.querySelector('.related-list')?.textContent,
+        posterCards: document.querySelectorAll('.related-list .related-card img').length,
         next: document.querySelector('.related-trigger')?.textContent})`,
     });
     return { ...result.value, menu: menu.result.value,
@@ -276,7 +278,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
           title: 'Pale Cocoon', englishTitle: null, type: 'OVA',
-          startYear: 2005, description: 'A quiet archive and a lost world.',
+          startYear: 2005, startDate: '2005-12-10', endDate: '2005-12-10',
+          episodeCount: 1, description: 'A quiet archive and a lost world.',
           tags: ['Science fiction'] }));
         return;
       }
@@ -311,8 +314,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
-      assert.equal(mobile.franchise.before, 'Explore franchise');
-      assert.match(mobile.franchise.listed, /The Garden of Words · SideStory/);
+      assert.equal(mobile.franchise.before, 'Explore next related title');
+      assert.match(mobile.franchise.listed, /The Garden of Words/);
+      assert.match(mobile.franchise.listed, /SideStory/);
+      assert.equal(mobile.franchise.posterCards, 1);
       assert.equal(mobile.franchise.next, 'Explore next related title');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
@@ -341,6 +346,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
+      assert.match(detail, /Listed episodes/);
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
@@ -349,7 +355,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
-      assert.match(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /<button class="primary" disabled="">Already available<\/button>/);
       assert.match(alternateFilm, /Choose the film version or part/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);

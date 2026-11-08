@@ -14,3 +14,11 @@ export function summarizeFilmAvailability({ kind, episodes, nextPage }) {
   return { verified, total: main.length,
     completeList: nextPage === null, available: verified > 0 };
 }
+
+export function installmentRequestState({ kind, episodes, nextPage }) {
+  if (kind === 'movie') return summarizeFilmAvailability({ kind, episodes, nextPage })?.available
+    ? 'already_available' : 'requestable';
+  const season = summarizeSeasonAvailability({ kind, episodes, nextPage });
+  return season?.completeList && season.total > 0 && season.verified === season.total
+    ? 'already_available' : 'requestable';
+}
