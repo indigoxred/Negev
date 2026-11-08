@@ -24,3 +24,11 @@ export function installmentRequestState({ kind, episodes, nextPage,
   return season?.completeList && season.total > 0 && season.verified === season.total
     ? 'already_available' : 'requestable';
 }
+
+export function filmEntryRequestState({ episodes, nextPage, selectedId }) {
+  if (installmentRequestState({ kind: 'movie', episodes, nextPage }) ===
+      'already_available') return 'already_available';
+  const selected = episodes?.find((episode) => episode.id === selectedId);
+  return selected?.type === 'Episode' && selected.availability !== 'available'
+    ? 'requestable' : 'entry_unavailable';
+}
