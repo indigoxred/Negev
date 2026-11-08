@@ -49,7 +49,7 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
             (typeof data.title_english !== 'string' || data.title_english.length > 500) ||
           data.description !== null && data.description !== undefined &&
             (typeof data.description !== 'string' || data.description.length > 12_000) ||
-          !Array.isArray(data.tags) || data.tags.length > 100) return unavailable();
+          !Array.isArray(data.tags) || data.tags.length > 500) return unavailable();
       const tags = data.tags.map((tag) => tag?.name);
       if (tags.some((tag) => typeof tag !== 'string' || !tag.trim() ||
           tag.length > 80)) return unavailable();
