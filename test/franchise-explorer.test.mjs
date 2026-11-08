@@ -61,3 +61,15 @@ test('a related installment carries only a bounded positive library count', () =
       relation: 'Sequel', libraryPresence: { state: 'in_library',
         verifiedEpisodeCount: -1 } }] }));
 });
+
+test('one unavailable related title does not block later franchise expansion', () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'First', relation: 'Prequel' },
+      { anidbId: 30, title: 'Second', relation: 'Sequel' }] });
+  assert.equal(view.next().anidbId, 20);
+  view.skip(20);
+  assert.equal(view.next().anidbId, 30);
+  assert.deepEqual(view.items().map((item) => item.anidbId), [10, 20, 30]);
+  assert.throws(() => view.skip(999));
+});
