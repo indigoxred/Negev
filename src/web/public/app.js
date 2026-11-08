@@ -1285,19 +1285,22 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    let refreshAvailabilitySummary = () => {};
     if (pager) {
-      const season = summarizeSeasonAvailability({ kind: data.kind,
-        episodes: pager.episodes, nextPage: pager.nextPage });
-      const film = summarizeFilmAvailability({ kind: data.kind,
-        episodes: pager.episodes, nextPage: pager.nextPage });
       const savedCount = data.libraryPresence?.state === 'in_library' &&
         Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
         data.libraryPresence.verifiedEpisodeCount > 0
         ? data.libraryPresence.verifiedEpisodeCount : 0;
-      const pageCount = pager.episodes.filter((episode) =>
-        episode.availability === 'available').length;
-      const verified = Math.max(savedCount, pageCount);
-      panel.append(element('p', film?.available
+      const summary = element('p');
+      refreshAvailabilitySummary = () => {
+        const season = summarizeSeasonAvailability({ kind: data.kind,
+          episodes: pager.episodes, nextPage: pager.nextPage });
+        const film = summarizeFilmAvailability({ kind: data.kind,
+          episodes: pager.episodes, nextPage: pager.nextPage });
+        const pageCount = pager.episodes.filter((episode) =>
+          episode.availability === 'available').length;
+        const verified = Math.max(savedCount, pageCount);
+        summary.textContent = film?.available
         ? `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`
         : film && film.total > 0
           ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
@@ -1309,9 +1312,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         ? `${verified} ${data.kind === 'movie'
           ? `film entr${verified === 1 ? 'y' : 'ies'}`
           : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
-        : 'Current Plex availability has not been verified for this title.',
-      film?.available || season?.verified > 0 ||
-        (!film && verified > 0) ? 'presence available' : 'presence unknown'));
+        : 'Current Plex availability has not been verified for this title.';
+        summary.className = film?.available || season?.verified > 0 ||
+          (!film && verified > 0) ? 'presence available' : 'presence unknown';
+      };
+      refreshAvailabilitySummary();
+      panel.append(summary);
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
@@ -1413,6 +1419,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (!franchise) void loadRelated();
     if (!pager) return;
     let filmChoiceSelect = null;
+    let refreshRequestAction = () => {};
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
@@ -1457,6 +1464,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           episode.availabilityNote = presentation === 'alternate_card'
             ? 'alternate_card' : undefined;
           option.textContent = optionText(episode);
+          refreshAvailabilitySummary();
+          refreshRequestAction();
         }
       };
       appendOptions(pager.episodes);
@@ -1564,6 +1573,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             const added = pager.append(page);
             if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
             appendOptions(added.episodes);
+            refreshAvailabilitySummary();
+            refreshRequestAction();
             if (pager.nextPage === null) more.remove();
             else more.disabled = false;
           } catch (error) { message(error.message, true); more.disabled = false; }
@@ -1607,19 +1618,27 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.insertBefore(requestAction, relatedHeading);
     const requestStatus = element('p', '', 'muted request-feedback');
     requestStatus.setAttribute('role', 'status');
-    const alreadyAvailable = installmentRequestState({ kind: data.kind,
+    const alreadyAvailable = () => installmentRequestState({ kind: data.kind,
       episodes: pager.episodes, nextPage: pager.nextPage,
       monitorFuture: data.monitorFuture }) === 'already_available';
-    const requestLabel = data.kind === 'movie' ? 'Request film' :
+    const requestLabel = () => data.kind === 'movie' ? 'Request film' :
       data.monitorFuture === true && pager.episodes.some((episode) =>
         episode.type === 'Episode' && episode.availability === 'available')
         ? 'Watch future episodes' : 'Request series';
-    const button = element('button', requestLabel, 'primary');
-    if (alreadyAvailable) {
-      button.disabled = true;
-      button.textContent = 'Already available';
-      requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
-    }
+    const button = element('button', requestLabel(), 'primary');
+    let requestSaving = false;
+    let requestSaved = false;
+    refreshRequestAction = () => {
+      if (requestSaving || requestSaved) return;
+      const blocked = alreadyAvailable();
+      button.disabled = blocked;
+      button.textContent = blocked ? 'Already available' : requestLabel();
+      if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
+      else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
+        requestStatus.textContent = '';
+      }
+    };
+    refreshRequestAction();
     const filmEntries = data.kind === 'movie'
       ? pager.episodes.filter((episode) => episode.type === 'Episode') : [];
     const needsFilmChoice = data.kind === 'movie' &&
@@ -1645,7 +1664,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       requestAction.append(filmChoice);
     }
     button.addEventListener('click', async () => {
-      if (alreadyAvailable) return;
+      if (alreadyAvailable() || requestSaving || requestSaved) return;
       if (needsFilmChoice && !filmChoiceSelect.value) {
         filmChoice.hidden = false;
         button.textContent = 'Request selected film';
@@ -1653,6 +1672,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         filmChoiceSelect.focus();
         return;
       }
+      requestSaving = true;
       button.disabled = true;
       button.textContent = 'Saving request…';
       requestStatus.textContent = 'Saving your request…';
@@ -1667,6 +1687,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
         }) });
         requestKeys.saved(scope);
+        requestSaved = true;
         button.textContent = 'Requested';
         requestStatus.textContent = `Request #${saved.requestId} saved. View its progress under My Requests.`;
         message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
@@ -1674,8 +1695,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       } catch (error) {
         requestStatus.textContent = error.message;
         message(error.message, true);
-        button.textContent = requestLabel;
-        button.disabled = false;
+        requestSaving = false;
+        refreshRequestAction();
       }
     });
     requestAction.append(button, requestStatus);
