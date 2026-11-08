@@ -114,6 +114,14 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
       url: '/api/requests', headers: { cookie } })).json().items, []);
     assert.deepEqual((await service.app.inject({ method: 'GET', url: target,
       headers: { cookie } })).json().state, 'unknown');
+    const session = await service.app.inject({ method: 'GET',
+      url: '/api/session', headers: { cookie } });
+    const created = await service.app.inject({ method: 'POST',
+      url: '/api/requests', headers: { cookie,
+        origin: 'http://localhost:3000',
+        'x-negev-csrf': session.json().csrfToken },
+      payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
+    assert.equal(created.statusCode, 202, created.body);
     assert.deepEqual(await service.refreshShokoFile(51),
       { state: 'recorded_file', fileId: 51 });
     assert.deepEqual(service.getDirectAvailabilityStatus({
@@ -128,15 +136,7 @@ test('a signed-in user sees a manual Shoko import only after exact public Plex d
     const detailWithPlayable = await service.app.inject({ method: 'GET',
       url: '/api/catalogue/42', headers: { cookie } });
     assert.equal(detailWithPlayable.json().episodes[0].availability, 'available');
-    const session = await service.app.inject({ method: 'GET',
-      url: '/api/session', headers: { cookie } });
     assert.equal(session.json().capabilities.availabilityChecks, true);
-    const created = await service.app.inject({ method: 'POST',
-      url: '/api/requests', headers: { cookie,
-        origin: 'http://localhost:3000',
-        'x-negev-csrf': session.json().csrfToken },
-      payload: { anidbId: 42, scope: 'installment', requestKey: 'direct-check' } });
-    assert.equal(created.statusCode, 202, created.body);
     const pending = path.join(importRoot, 'pending.mkv');
     await writeFile(pending, 'partial import');
     const probeUrl = `/api/requests/${created.json().requestId}/presence-probe`;

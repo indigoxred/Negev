@@ -5,7 +5,10 @@ import { requestPresentation } from './request-progress-text.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
-import { summarizeSeasonAvailability, summarizeFilmAvailability } from './season-availability-presentation.mjs';
+import { summarizeSeasonAvailability, summarizeFilmAvailability,
+  installmentRequestState } from './season-availability-presentation.mjs';
+import { detailRefreshDelay } from './detail-refresh.mjs';
+import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
 
@@ -25,6 +28,7 @@ const sessionResponses = createResponseEpoch();
 const requestResponses = {
   watching: createResponseEpoch(), history: createResponseEpoch(),
 };
+const displayCache = new Map();
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -180,6 +184,7 @@ function showSession(data) {
     seasonalResponses.invalidate();
     state.selected = null;
     state.detailHydrationQueued.clear();
+    displayCache.clear();
     byId('request-list').replaceChildren();
     byId('watch-list').replaceChildren();
     byId('review-list').replaceChildren();
@@ -238,6 +243,7 @@ function clearWorkspace() {
   state.csrf = null;
   state.selected = null;
   state.detailHydrationQueued.clear();
+  displayCache.clear();
   state.searchToken++;
   state.lastSearchQuery = '';
   state.searchItems.clear();
@@ -1113,7 +1119,7 @@ byId('search-form').addEventListener('submit', async (event) => {
     message(error.message, true);
   }
 });
-async function showDetail(item, franchise = null) {
+async function showDetail(item, franchise = null, refreshAttempt = 0) {
   if (detailPollTimer !== null) clearTimeout(detailPollTimer);
   detailPollTimer = null;
   const detailRequest = detailResponses.invalidate();
@@ -1126,8 +1132,48 @@ async function showDetail(item, franchise = null) {
   const loadingPoster = posterImage(item);
   loadingPoster.addEventListener('load', () => loadingArt.classList.add('has-poster'));
   loadingArt.append(loadingPoster);
+  const displaySummary = element('div', undefined, 'detail-display');
   panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
-    element('p', 'Loading details…', 'muted'));
+    element('p', 'Loading episode details…', 'muted'), displaySummary);
+  let displayRead = displayCache.get(item.anidbId);
+  if (!displayRead) {
+    displayRead = api(`/api/catalogue/${item.anidbId}/display`)
+      .catch(() => null);
+    displayCache.set(item.anidbId, displayRead);
+    if (displayCache.size > 100) displayCache.delete(displayCache.keys().next().value);
+  }
+  const renderDisplay = (display, title) => {
+    if (!isCurrentDetail() || display?.state !== 'display') return;
+    displaySummary.replaceChildren();
+    const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
+    if (facts) displaySummary.append(element('p', facts, 'detail-facts'));
+    if (display.englishTitle && display.englishTitle !== title) {
+      displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
+        'detail-alias'));
+    }
+    if (display.description) displaySummary.append(element('p',
+      display.description, 'detail-description'));
+    const quickFacts = element('dl', undefined, 'detail-quickfacts');
+    for (const [label, value] of [
+      ['Format', display.type], ['First aired', display.startDate],
+      ['Last aired', display.endDate],
+      ['Listed episodes', display.episodeCount],
+    ]) {
+      if (value === null || value === undefined || value === '') continue;
+      const fact = element('div');
+      fact.append(element('dt', label), element('dd', String(value)));
+      quickFacts.append(fact);
+    }
+    if (quickFacts.childElementCount) displaySummary.append(quickFacts);
+    if (display.tags?.length) {
+      const tags = element('div', undefined, 'detail-tags');
+      for (const tag of display.tags) tags.append(element('span', tag));
+      displaySummary.append(tags);
+    }
+  };
+  if (state.showAdult && state.user?.adultAllowed !== false) {
+    void displayRead.then((display) => renderDisplay(display, item.title));
+  }
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
@@ -1147,6 +1193,7 @@ async function showDetail(item, franchise = null) {
     detailArt.append(detailPoster);
     panel.replaceChildren(detailArt,
       element('h1', data.title || item.title, 'detail-title'));
+    panel.append(displaySummary);
     if (typeof data.plexUrl === 'string' &&
         /^https:\/\/app\.plex\.tv\/desktop\/#\!\/server\/[a-f0-9]{40}\/details\?key=%2Flibrary%2Fmetadata%2F[1-9][0-9]*$/i
           .test(data.plexUrl)) {
@@ -1157,26 +1204,7 @@ async function showDetail(item, franchise = null) {
       openPlex.dataset.plexLink = '';
       panel.append(openPlex);
     }
-    const displaySummary = element('div', undefined, 'detail-display');
-    panel.append(displaySummary);
-    void api(`/api/catalogue/${item.anidbId}/display`).then((display) => {
-      if (!isCurrentDetail() || display.state !== 'display') return;
-      displaySummary.replaceChildren();
-      const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
-      if (facts) displaySummary.append(element('p', facts, 'detail-facts'));
-      if (display.englishTitle &&
-          display.englishTitle !== (data.title || item.title)) {
-        displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
-          'detail-alias'));
-      }
-      if (display.description) displaySummary.append(element('p',
-        display.description, 'detail-description'));
-      if (display.tags?.length) {
-        const tags = element('div', undefined, 'detail-tags');
-        for (const tag of display.tags) tags.append(element('span', tag));
-        displaySummary.append(tags);
-      }
-    }).catch(() => { /* Optional display metadata never blocks the title. */ });
+    void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
@@ -1190,9 +1218,14 @@ async function showDetail(item, franchise = null) {
           state.detailHydrationQueued.add(item.anidbId);
           retry.hidden = true;
           try {
-            await api(`/api/catalogue/${item.anidbId}/load-detail`,
+            const hydration = await api(`/api/catalogue/${item.anidbId}/load-detail`,
               { method: 'POST', body: '{}' });
-            if (isCurrentDetail()) void showDetail(item, franchise);
+            if (isCurrentDetail()) {
+              if (hydration.state === 'detail_ready') void showDetail(item, franchise);
+              else detailPollTimer = setTimeout(() => {
+                void showDetail(item, franchise, 1);
+              }, detailRefreshDelay(0));
+            }
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
@@ -1204,7 +1237,9 @@ async function showDetail(item, franchise = null) {
         retry.addEventListener('click', () => { void begin(); });
         panel.append(retry);
         if (state.detailHydrationQueued.has(item.anidbId)) {
-          detailPollTimer = setTimeout(() => { void showDetail(item, franchise); }, 5_000);
+          detailPollTimer = setTimeout(() => {
+            void showDetail(item, franchise, refreshAttempt + 1);
+          }, detailRefreshDelay(refreshAttempt));
         } else {
           void begin();
         }
@@ -1251,15 +1286,35 @@ async function showDetail(item, franchise = null) {
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
+    let installmentSelect = null;
+    const syncInstallmentChoice = () => {
+      if (!installmentSelect) return;
+      installmentSelect.replaceChildren();
+      for (const entry of family.items()) {
+        const option = element('option', entry.anidbId === item.anidbId
+          ? `${entry.title} · this installment` : entry.title);
+        option.value = String(entry.anidbId);
+        installmentSelect.append(option);
+      }
+      installmentSelect.value = String(item.anidbId);
+    };
     const renderFamily = () => {
       relatedList.replaceChildren(element('p',
         family.status().state === 'no_cached_links'
           ? 'Shoko has no related titles cached for this installment. Other installments may still exist; search by title to find them.'
           : 'Related AniDB titles. Other installments may exist; each title has its own request.',
         'muted'));
-      for (const installment of family.items()) {
-        const open = element('button', `${installment.title}${installment.relation ? ` · ${installment.relation}` : ''}`);
+      for (const installment of family.items().filter((entry) => entry.anidbId !== item.anidbId)) {
+        const open = element('button', undefined, 'related-card');
         open.disabled = installment.anidbId === item.anidbId;
+        const art = element('span', 'N', 'related-art poster-fallback');
+        const image = posterImage(installment);
+        image.addEventListener('load', () => art.classList.add('has-poster'));
+        art.append(image);
+        const copy = element('span', undefined, 'related-copy');
+        copy.append(element('small', relationLabel(installment.relation)),
+          element('strong', installment.title));
+        open.append(art, copy);
         open.addEventListener('click', () => {
           state.searchItems.set(installment.anidbId, installment);
           location.hash = titleRoute(installment.anidbId);
@@ -1270,11 +1325,14 @@ async function showDetail(item, franchise = null) {
         'No more cached links to explore';
       relatedButton.hidden = !family.next();
       relatedButton.disabled = !family.next();
+      syncInstallmentChoice();
     };
     if (franchise) renderFamily();
-    relatedButton.addEventListener('click', async () => {
+    let relatedLoading = false;
+    const loadRelated = async () => {
       const next = family.next();
-      if (!next) return;
+      if (!next || relatedLoading) return;
+      relatedLoading = true;
       relatedButton.disabled = true;
       try {
         const related = await api(`/api/catalogue/${next.anidbId}/related`);
@@ -1286,9 +1344,12 @@ async function showDetail(item, franchise = null) {
             'Related titles could not be loaded now. You can still search for another installment by name.', 'muted'));
           relatedButton.disabled = false;
         }
-      }
-    });
-    panel.append(relatedButton, relatedList);
+      } finally { relatedLoading = false; }
+    };
+    relatedButton.addEventListener('click', () => { void loadRelated(); });
+    const relatedHeading = element('h2', 'Related titles', 'related-heading');
+    panel.append(relatedHeading, relatedList, relatedButton);
+    if (!franchise) void loadRelated();
     if (!pager) return;
     let filmChoiceSelect = null;
     // One explicit check at a time: a pending or incomplete public observation
@@ -1369,7 +1430,8 @@ async function showDetail(item, franchise = null) {
         const updateSelection = () => {
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           requestSelected.disabled = requesting ||
-            !['Episode', 'Special'].includes(episode?.type);
+            !['Episode', 'Special'].includes(episode?.type) ||
+            episode?.availability === 'available';
           requestSelected.textContent = episode?.type === 'Special'
             ? 'Request this Special' : 'Request this episode';
         };
@@ -1378,7 +1440,8 @@ async function showDetail(item, franchise = null) {
         requestSelected.addEventListener('click', async () => {
           if (requesting) return;
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-          if (!['Episode', 'Special'].includes(episode?.type)) return;
+          if (!['Episode', 'Special'].includes(episode?.type) ||
+              episode.availability === 'available') return;
           const scope = { userId: state.user.id, anidbId: item.anidbId,
             selection: `episode-${episode.id}` };
           requesting = true;
@@ -1398,16 +1461,18 @@ async function showDetail(item, franchise = null) {
       if (chooseFilmEntry && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected film entry');
         let requesting = false;
+        const filmAlreadyAvailable = summarizeFilmAvailability({ kind: data.kind,
+          episodes: pager.episodes, nextPage: pager.nextPage })?.available === true;
         const updateSelection = () => {
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           requestSelected.disabled = requesting || episode?.type !== 'Episode' ||
-            episode.availability === 'available';
+            episode.availability === 'available' || filmAlreadyAvailable;
         };
         select.addEventListener('change', updateSelection);
         updateSelection();
         requestSelected.addEventListener('click', async () => {
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-          if (requesting || episode?.type !== 'Episode' ||
+          if (requesting || filmAlreadyAvailable || episode?.type !== 'Episode' ||
               episode.availability === 'available') return;
           const scope = { userId: state.user.id, anidbId: item.anidbId,
             selection: `film-entry-${episode.id}` };
@@ -1452,11 +1517,41 @@ async function showDetail(item, franchise = null) {
     }
     if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
-    panel.append(element('p', data.kind === 'movie'
+    const requestAction = element('section', undefined, 'request-action');
+    requestAction.append(element('h2', 'Request this installment'));
+    requestAction.append(element('p', data.kind === 'movie'
       ? 'A film request includes one main film entry, not extras or trailers.'
-      : 'A series request includes regular episodes. Request Specials individually above.',
+      : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
     'muted'));
+    if (data.kind === 'series') {
+      const installmentLabel = element('label', 'Choose a season or installment',
+        'installment-choice');
+      installmentSelect = element('select');
+      installmentSelect.addEventListener('change', () => {
+        const selectedId = Number(installmentSelect.value);
+        if (selectedId !== item.anidbId && Number.isSafeInteger(selectedId)) {
+          const selected = family.items().find((entry) => entry.anidbId === selectedId);
+          if (selected) {
+            state.searchItems.set(selectedId, selected);
+            location.hash = titleRoute(selectedId);
+          }
+        }
+      });
+      installmentLabel.append(installmentSelect);
+      requestAction.append(installmentLabel);
+      syncInstallmentChoice();
+    }
+    panel.insertBefore(requestAction, relatedHeading);
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
+    const requestStatus = element('p', '', 'muted request-feedback');
+    requestStatus.setAttribute('role', 'status');
+    const alreadyAvailable = installmentRequestState({ kind: data.kind,
+      episodes: pager.episodes, nextPage: pager.nextPage }) === 'already_available';
+    if (alreadyAvailable) {
+      button.disabled = true;
+      button.textContent = 'Already available';
+      requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
+    }
     const filmEntries = data.kind === 'movie'
       ? pager.episodes.filter((episode) => episode.type === 'Episode') : [];
     const needsFilmChoice = data.kind === 'movie' &&
@@ -1479,17 +1574,20 @@ async function showDetail(item, franchise = null) {
       filmChoice.append(label);
       if (pager.nextPage !== null) filmChoice.append(element('p',
         'More film entries may be listed under Episode and Special options below.', 'muted'));
-      panel.insertBefore(filmChoice, relatedButton);
+      requestAction.append(filmChoice);
     }
     button.addEventListener('click', async () => {
+      if (alreadyAvailable) return;
       if (needsFilmChoice && !filmChoiceSelect.value) {
         filmChoice.hidden = false;
-        filmChoice.append(button);
         button.textContent = 'Request selected film';
+        requestStatus.textContent = 'Choose one main film entry above.';
         filmChoiceSelect.focus();
         return;
       }
       button.disabled = true;
+      button.textContent = 'Saving request…';
+      requestStatus.textContent = 'Saving your request…';
       const selectedFilmId = needsFilmChoice ? Number(filmChoiceSelect.value) : null;
       const scope = { userId: state.user.id, anidbId: item.anidbId,
         ...(selectedFilmId ? { selection: `film-entry-${selectedFilmId}` } : {}) };
@@ -1501,19 +1599,32 @@ async function showDetail(item, franchise = null) {
           ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
         }) });
         requestKeys.saved(scope);
+        button.textContent = 'Requested';
+        requestStatus.textContent = `Request #${saved.requestId} saved. View its progress under My Requests.`;
         message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
         loadRequests();
-      } catch (error) { message(error.message, true); }
-      finally { button.disabled = false; }
+      } catch (error) {
+        requestStatus.textContent = error.message;
+        message(error.message, true);
+        button.textContent = `Request ${data.kind === 'movie' ? 'film' : 'series'}`;
+        button.disabled = false;
+      }
     });
-    panel.insertBefore(button, relatedButton);
+    requestAction.append(button, requestStatus);
   } catch (error) {
     if (!isCurrentDetail()) return;
     const retry = element('button', 'Try again');
     retry.type = 'button';
     retry.addEventListener('click', () => { void showDetail(item, franchise); });
-    panel.replaceChildren(element('p', 'Details are unavailable right now.', 'muted'), retry);
-    message(error.message, true);
+    const unavailable = element('p', error.status === 429
+      ? 'Episode details are temporarily unavailable because the server is busy. The title information above is still available; try again shortly.'
+      : 'Episode details are temporarily unavailable. Try again to load request options.',
+    'muted');
+    panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
+      displaySummary, unavailable, retry);
+    if (state.showAdult && state.user?.adultAllowed !== false) {
+      void displayRead.then((display) => renderDisplay(display, item.title));
+    }
   }
 }
 void refreshSession();

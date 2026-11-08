@@ -17,6 +17,8 @@ import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
 import { createSeasonalCatalogue } from '../catalogue/seasonal-catalogue.mjs';
 import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
+import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
+import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
@@ -199,6 +201,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const shokoPosters = createShokoPosterReader({ baseUrl: shokoBaseUrl,
       apiKey: shokoApiKey, fetchImpl, now });
     const displayReader = createAniDbDisplayReader({ fetchImpl, now });
+    const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
@@ -247,6 +250,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       registry: titleRegistry, source: titleSource });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
+    });
+    const loadFastDetail = createFastDetailReader({
+      archive: (input) => rawDetailReader.read(input),
+      shoko: (input) => metadata.run(() => loadDetail(input)),
+    });
+    const loadCurrentDetail = createFastDetailReader({ prefer: 'shoko',
+      archive: (input) => rawDetailReader.read(input),
+      shoko: (input) => metadata.run(() => loadDetail(input)),
     });
     const observeCurrentPublic = (target, observedShoko,
       includeProof = false) => {
@@ -342,7 +353,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const submitRequest = createHeldRequestSubmitter({
-      titleRegistry, confirmKnownTitle, loadDetail, ledger: requests, now, today,
+      titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
+      ledger: requests, now, today,
+      recentlyAvailable: ({ anidbId, episodeId }) => {
+        const target = { anidbId, episodeId, nowMs: now() };
+        return episodeDisplayAvailability({
+          direct: directAvailability.getStatus(target).state,
+          title: titleChecks?.getTargetStatus(target).state,
+          file: fileProofs?.getCurrent(target),
+        }).availability === 'available';
+      },
     });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
@@ -351,7 +371,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       };
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
       readRequest: (id) => requests.getRequest(id),
-      loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
@@ -360,7 +380,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
-        loadDetail: (input) => metadata.run(() => loadDetail(input)),
+        loadDetail: (input) => loadCurrentDetail(input),
         readRelatedTitles: ({ anidbId }) => metadata.run(() =>
           readAniDbRelatedTitles({ baseUrl: shokoBaseUrl,
             apiKey: shokoApiKey, anidbId, fetchImpl })),
@@ -376,7 +396,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
           loadPage: async ({ page }) => {
             if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
-            return metadata.run(() => loadDetail({ anidbId, page }));
+            return loadCurrentDetail({ anidbId, page });
           },
         }),
       }),
@@ -417,7 +437,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
-      now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
+      now, submitRequest: (input) => submitRequest(input),
       cancelRequest: (input) => requests.cancelRequest(input),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
@@ -507,7 +527,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         });
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
-        const detail = await metadata.run(() => loadDetail(input));
+        const detail = await loadFastDetail(input);
         if (!plexObserver || detail?.state !== 'details' ||
             !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
         const card = fileProofs?.getCurrentTitleCard({ anidbId: detail.anidbId });
@@ -814,7 +834,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {
               if (page > 1) await sleep(250);
-              return metadata.run(() => loadDetail({ anidbId, page }));
+              return loadCurrentDetail({ anidbId, page });
             } }),
           readEvidence: observeFirstTimeUncertain,
         });

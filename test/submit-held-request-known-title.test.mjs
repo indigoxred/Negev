@@ -23,3 +23,23 @@ test('request submission checks validated catalogue after observed search expire
     { state: 'held', reason: 'unknown_title' });
   assert.deepEqual(checked, [42, 99]);
 });
+
+test('a recently verified whole installment is held before a duplicate request is saved', async () => {
+  let saved = 0;
+  const detail = { state: 'details', anidbId: 42, title: 'Known film',
+    kind: 'movie', restricted: false, complete: true, page: 1, total: 1,
+    nextPage: null, airDate: '2020-01-01', endDate: '2020-01-01',
+    episodeCount: 1, episodes: [{ id: 99, number: 1, type: 'Episode',
+      title: 'Film', airDate: '2020-01-01' }] };
+  const submit = createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => detail,
+    recentlyAvailable: ({ episodeId }) => episodeId === 99,
+    ledger: { findSubmission: () => null, submit: () => { saved++; } },
+    now: () => 1, today: () => '2026-11-08',
+  });
+  assert.deepEqual(await submit({ requesterId: 1, anidbId: 42,
+    scope: 'installment', requestKey: 'available' }),
+  { state: 'held', reason: 'already_available' });
+  assert.equal(saved, 0);
+});

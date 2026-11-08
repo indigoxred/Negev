@@ -18,7 +18,8 @@ const assets = new Map([
   ...['request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs', 'season-availability-presentation.mjs']
+    'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
@@ -141,6 +142,7 @@ async function inspectMobile(url, profile, width = 390) {
     await wait(300);
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({listed: document.querySelector('.related-list')?.textContent,
+        posterCards: document.querySelectorAll('.related-list .related-card img').length,
         next: document.querySelector('.related-trigger')?.textContent})`,
     });
     return { ...result.value, menu: menu.result.value,
@@ -272,12 +274,35 @@ test('signed-in consumer routes render real shell with search, library and reque
           ] }));
         return;
       }
+      if (path === '/api/catalogue/42') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 42,
+          title: 'Example Series', kind: 'series', restricted: false,
+          page: 1, total: 1, nextPage: null,
+          episodes: [{ id: 4201, number: 1, type: 'Episode', title: 'First',
+            availability: 'unknown' }] }));
+        return;
+      }
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
           title: 'Pale Cocoon', englishTitle: null, type: 'OVA',
-          startYear: 2005, description: 'A quiet archive and a lost world.',
+          startYear: 2005, startDate: '2005-12-10', endDate: '2005-12-10',
+          episodeCount: 1, description: 'A quiet archive and a lost world.',
           tags: ['Science fiction'] }));
+        return;
+      }
+      if (path === '/api/catalogue/19847/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 19847,
+          title: 'FX Senshi Kurumi-chan', englishTitle: null, type: 'TV Series',
+          startYear: 2026, startDate: '2026-10-01', endDate: null,
+          episodeCount: 12, description: 'A new anime description.', tags: [] }));
+        return;
+      }
+      if (path === '/api/catalogue/19847') {
+        response.writeHead(429, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Too Many Requests' }));
         return;
       }
       const asset = assets.get(path);
@@ -311,8 +336,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
-      assert.equal(mobile.franchise.before, 'Explore franchise');
-      assert.match(mobile.franchise.listed, /The Garden of Words · SideStory/);
+      assert.equal(mobile.franchise.before, 'Explore next related title');
+      assert.match(mobile.franchise.listed, /The Garden of Words/);
+      assert.match(mobile.franchise.listed, /Side story/);
+      assert.equal(mobile.franchise.posterCards, 1);
       assert.equal(mobile.franchise.next, 'Explore next related title');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
@@ -341,15 +368,26 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
+      assert.match(detail, /Listed episodes/);
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
+      assert.doesNotMatch(detail, /Choose a season or installment/);
+      const seriesDetail = await dump(`${base}/#/title/42`,
+        join(dir, 'series-detail'));
+      assert.match(seriesDetail, /Choose a season or installment/);
+      assert.match(seriesDetail, /class="installment-choice"/);
+      const throttledDetail = await dump(`${base}/#/title/19847`,
+        join(dir, 'throttled-detail'));
+      assert.match(throttledDetail, /A new anime description/);
+      assert.match(throttledDetail, /Episode details are temporarily unavailable/);
+      assert.match(throttledDetail, /Try again/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
-      assert.match(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /<button class="primary" disabled="">Already available<\/button>/);
       assert.match(alternateFilm, /Choose the film version or part/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);

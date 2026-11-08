@@ -11,6 +11,7 @@ test('display reader accepts only the exact non-restricted AniDB record and coal
       return new Response(JSON.stringify({ anidb_id: 4158,
         title: 'Pale Cocoon', title_english: null,
         type: 'OVA', restricted: false, startyear: 2005,
+        startdate: '2005-12-10', enddate: '2005-12-10', episodecount: 1,
         description: '<p>A quiet archive &amp; a lost world.</p>',
         tags: [{ name: 'science fiction', weight: 600 }] }));
     } });
@@ -19,7 +20,8 @@ test('display reader accepts only the exact non-restricted AniDB record and coal
   assert.equal(calls, 1);
   assert.ok(results.every((result) => result.state === 'display'));
   assert.deepEqual(results[0], { state: 'display', anidbId: 4158,
-    title: 'Pale Cocoon', englishTitle: null, type: 'OVA', startYear: 2005,
+    title: 'Pale Cocoon', restricted: false, englishTitle: null, type: 'OVA', startYear: 2005,
+    startDate: '2005-12-10', endDate: '2005-12-10', episodeCount: 1,
     description: 'A quiet archive & a lost world.', tags: ['science fiction'] });
   await reader.read({ anidbId: 4158 });
   assert.equal(calls, 1);

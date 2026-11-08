@@ -9,11 +9,12 @@ const held = (reason) => ({ state: 'held', reason });
 // qBittorrent. The authenticated caller supplies requesterId.
 export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
   (input) => titleRegistry?.isKnownTitle(input) ?? false,
-  loadDetail, ledger, now, today }) {
+  loadDetail, ledger, now, today, recentlyAvailable = () => false }) {
   if (typeof confirmKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
       typeof ledger?.findSubmission !== 'function' ||
-      typeof now !== 'function' || typeof today !== 'function') {
+      typeof now !== 'function' || typeof today !== 'function' ||
+      typeof recentlyAvailable !== 'function') {
     throw new TypeError('Invalid held-request configuration');
   }
   return async ({ requesterId, anidbId, scope, episodeIds, requestKey }) => {
@@ -51,6 +52,11 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;
+    if (!intent.monitorFuture && intent.episodeIds.length > 0 &&
+        (await Promise.all(intent.episodeIds.map((episodeId) =>
+          recentlyAvailable({ anidbId, episodeId })))).every((value) => value === true)) {
+      return held('already_available');
+    }
     return ledger.submit({ requesterId, requestKey, commandKey,
       intent: { ...intent, title }, nowMs: now() });
   };
