@@ -251,7 +251,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
-    const loadFastDetail = createFastDetailReader({
+    const loadFastDetail = createFastDetailReader({ deadlineMs: 4_500,
       archive: (input) => rawDetailReader.read(input),
       shoko: (input) => metadata.run(() => loadDetail(input)),
     });
