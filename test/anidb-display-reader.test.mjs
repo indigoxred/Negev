@@ -48,6 +48,17 @@ test('display descriptions show character names instead of raw AniDB character l
   assert.equal(display.description, 'Fia meets Yashu.');
 });
 
+test('display reader keeps a valid title with more than 100 catalogue tags', async () => {
+  const reader = createAniDbDisplayReader({ fetchImpl: async () =>
+    new Response(JSON.stringify({ anidb_id: 69, title: 'One Piece',
+      restricted: false, description: 'Pirates seek the great treasure.',
+      tags: Array.from({ length: 122 }, (_, index) => ({ name: `tag ${index + 1}` })) })) });
+  const display = await reader.read({ anidbId: 69 });
+  assert.equal(display.state, 'display');
+  assert.equal(display.description, 'Pirates seek the great treasure.');
+  assert.deepEqual(display.tags, Array.from({ length: 8 }, (_, index) => `tag ${index + 1}`));
+});
+
 test('different display titles use a bounded queue without blocking one another', async () => {
   let active = 0;
   let peak = 0;
