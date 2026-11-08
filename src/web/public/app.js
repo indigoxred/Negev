@@ -7,7 +7,7 @@ import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
   installmentRequestState } from './season-availability-presentation.mjs';
-import { detailRefreshDelay } from './detail-refresh.mjs';
+import { detailRefreshDelay, detailHydrationFollowup } from './detail-refresh.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
@@ -1229,17 +1229,31 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       if (state.detailLoad) {
         const retry = element('button', 'Retry loading details');
         retry.hidden = true;
+        const preparationStatus = element('p', '', 'muted');
         const begin = async () => {
           state.detailHydrationQueued.add(item.anidbId);
           retry.hidden = true;
+          preparationStatus.textContent = '';
           try {
             const hydration = await api(`/api/catalogue/${item.anidbId}/load-detail`,
               { method: 'POST', body: '{}' });
+            const followup = detailHydrationFollowup(hydration, refreshAttempt);
+            if (followup.state === 'retry' || followup.state === 'stop') {
+              state.detailHydrationQueued.delete(item.anidbId);
+            }
             if (isCurrentDetail()) {
-              if (hydration.state === 'detail_ready') void showDetail(item, franchise);
-              else detailPollTimer = setTimeout(() => {
-                void showDetail(item, franchise, 1);
-              }, detailRefreshDelay(0));
+              if (followup.state === 'ready') void showDetail(item, franchise);
+              else if (followup.state === 'stop') {
+                preparationStatus.textContent = 'Episode details are still unavailable. Try again later.';
+                retry.hidden = false;
+              } else {
+                if (followup.state === 'retry') {
+                  preparationStatus.textContent = 'Another title is being prepared. This one will retry automatically.';
+                }
+                detailPollTimer = setTimeout(() => {
+                  void showDetail(item, franchise, refreshAttempt + 1);
+                }, followup.delayMs);
+              }
             }
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
@@ -1249,9 +1263,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             }
           }
         };
-        retry.addEventListener('click', () => { void begin(); });
-        panel.append(retry);
-        if (state.detailHydrationQueued.has(item.anidbId)) {
+        retry.addEventListener('click', () => { void showDetail(item, franchise, 0); });
+        panel.append(preparationStatus, retry);
+        if (refreshAttempt >= 5) {
+          state.detailHydrationQueued.delete(item.anidbId);
+          preparationStatus.textContent = 'Episode details are still unavailable. Try again later.';
+          retry.hidden = false;
+        } else if (state.detailHydrationQueued.has(item.anidbId)) {
           detailPollTimer = setTimeout(() => {
             void showDetail(item, franchise, refreshAttempt + 1);
           }, detailRefreshDelay(refreshAttempt));
