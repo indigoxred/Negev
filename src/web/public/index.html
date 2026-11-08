@@ -77,9 +77,12 @@
               <option value="all">All anime</option><option value="series">Series</option>
               <option value="movies">Movies</option>
             </select></label>
-            <details class="genre-picker"><summary>Genres · All</summary>
-              <div id="season-tags" class="genre-options"></div>
-              <small>Select up to five genres. A title must match each selected genre.</small>
+            <details class="genre-picker"><summary>Genres &amp; themes · All</summary>
+              <div class="genre-popover">
+                <input id="season-tag-search" type="search" placeholder="Find a genre or theme" aria-label="Find a genre or theme">
+                <div id="season-tags" class="genre-options"></div>
+                <small id="season-tag-count">Select up to five. A title must match each selection.</small>
+              </div>
             </details>
             <button type="submit">Browse</button>
           </form>

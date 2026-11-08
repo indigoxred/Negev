@@ -141,6 +141,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const discovered = [];
   const previewed = [];
   const seasonalInputs = [];
+  let seasonalTags = ['action', 'fantasy'];
   let acquisitionState = 'disabled';
   const knownTitles = new Set([1234, 1235]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
@@ -165,7 +166,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status }) => {
       seasonalInputs.push({ year, season, after, limit, kind, tag, status });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
-        availableTags: ['action', 'fantasy'],
+        availableTags: seasonalTags,
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
@@ -342,6 +343,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=0&season=ALL',
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).year, 0);
+    seasonalTags = Array.from({ length: 2_464 }, (_, index) => `theme ${index}`);
+    const fullCatalogue = await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL', headers: { cookie } });
+    assert.equal(fullCatalogue.statusCode, 200);
+    assert.equal(fullCatalogue.json().availableTags.length, 2_464);
+    seasonalTags = ['action', 'fantasy'];
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&tag=%0A',
       headers: { cookie } })).statusCode, 400);

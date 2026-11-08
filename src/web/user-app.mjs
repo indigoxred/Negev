@@ -358,7 +358,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof page.sourceDate !== 'string' ||
         !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
         !Array.isArray(page.items) || page.items.length > 12 ||
-        !Array.isArray(page.availableTags) || page.availableTags.length > 500 ||
+        !Array.isArray(page.availableTags) || page.availableTags.length > 5_000 ||
         page.availableTags.some((tag) => typeof tag !== 'string' ||
           !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)) ||
         page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||

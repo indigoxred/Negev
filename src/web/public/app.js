@@ -37,6 +37,7 @@ const seasonalResponses = createResponseEpoch();
 const discoverResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 let detailPollTimer = null;
+let seasonGenreSelection = new Set();
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -696,26 +697,45 @@ for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
 }
 function renderSeasonGenres(availableTags, selected) {
   const choices = byId('season-tags');
-  const chosen = new Set(selected ? selected.split(',') : []);
-  choices.replaceChildren();
-  for (const tag of availableTags) {
-    const label = element('label', undefined, 'genre-option');
-    const box = element('input');
-    box.type = 'checkbox';
-    box.value = tag;
-    box.checked = chosen.has(tag);
-    box.addEventListener('change', () => {
-      const checked = [...choices.querySelectorAll('input:checked')];
-      if (checked.length > 5) box.checked = false;
-      const count = choices.querySelectorAll('input:checked').length;
-      byId('season-form').querySelector('.genre-picker summary').textContent =
-        `Genres · ${count || 'All'}${count === 1 ? ' selected' : count > 1 ? ' selected' : ''}`;
-    });
-    label.append(box, document.createTextNode(tag));
-    choices.append(label);
-  }
-  byId('season-form').querySelector('.genre-picker summary').textContent =
-    `Genres · ${chosen.size || 'All'}${chosen.size ? ' selected' : ''}`;
+  const search = byId('season-tag-search');
+  seasonGenreSelection = new Set(selected ? selected.split(',') : []);
+  const featured = ['action', 'adventure', 'comedy', 'drama', 'fantasy',
+    'romance', 'sci-fi', 'slice of life', 'supernatural', 'sports', 'horror',
+    'mystery', 'psychological', 'mecha', 'music', 'historical', 'magic'];
+  const render = () => {
+    const query = search.value.trim().toLowerCase();
+    const matching = query
+      ? availableTags.filter((tag) => tag.includes(query))
+      : [...new Set([...seasonGenreSelection,
+        ...featured.filter((tag) => availableTags.includes(tag)), ...availableTags])];
+    choices.replaceChildren();
+    for (const tag of matching.slice(0, 40)) {
+      const label = element('label', undefined, 'genre-option');
+      const box = element('input');
+      box.type = 'checkbox';
+      box.value = tag;
+      box.checked = seasonGenreSelection.has(tag);
+      box.addEventListener('change', () => {
+        if (box.checked) {
+          if (seasonGenreSelection.size >= 5) box.checked = false;
+          else seasonGenreSelection.add(tag);
+        } else seasonGenreSelection.delete(tag);
+        byId('season-form').querySelector('.genre-picker summary').textContent =
+          `Genres & themes · ${seasonGenreSelection.size || 'All'}`;
+      });
+      label.append(box, document.createTextNode(tag));
+      choices.append(label);
+    }
+    byId('season-tag-count').textContent = matching.length > 40
+      ? `Showing 40 of ${matching.length} matches. Search to narrow; select up to five.`
+      : `${matching.length} matching genres and themes. Select up to five.`;
+    byId('season-form').querySelector('.genre-picker summary').textContent =
+      `Genres & themes · ${seasonGenreSelection.size || 'All'}`;
+  };
+  search.value = '';
+  search.oninput = render;
+  search.onkeydown = (event) => { if (event.key === 'Enter') event.preventDefault(); };
+  render();
 }
 async function loadSeasonal({ year, season, after, kind, tag }) {
   const session = sessionResponses.current();
@@ -789,8 +809,7 @@ byId('season-form').addEventListener('submit', (event) => {
   const year = Number(byId('season-year').value);
   const season = byId('season-name').value;
   const kind = byId('season-kind').value;
-  const tag = [...byId('season-tags').querySelectorAll('input:checked')]
-    .map((input) => input.value).join(',');
+  const tag = [...seasonGenreSelection].join(',');
   if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100)) return;
   const route = seasonRoute(year, season, 0, { kind, tag });
   if (location.hash === route) void loadSeasonal({ year, season,
