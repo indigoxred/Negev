@@ -1170,7 +1170,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     const quickFacts = element('dl', undefined, 'detail-quickfacts');
     for (const [label, value] of [
-      ['Format', display.type], ['First aired', display.startDate],
+      ['Format', display.type], ['Status', display.releaseStatus],
+      ['Season', display.season], ['Studio', display.studio],
+      ['Runtime', display.durationMinutes ? `${display.durationMinutes} min` : null],
+      ['First aired', display.startDate],
       ['Last aired', display.endDate],
       ['Listed episodes', display.episodeCount],
     ]) {

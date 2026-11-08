@@ -21,7 +21,12 @@ test('rapid signed-in title browsing retains a bounded detail read budget', asyn
     submitRequest: async () => null, readRequest: () => null,
     loadDetail: async ({ anidbId, page }) => ({ state: 'details', anidbId,
       page, title: 'A title', kind: 'series', restricted: false,
-      episodes: [], total: 0, nextPage: null, complete: true }) });
+      episodes: [], total: 0, nextPage: null, complete: true }),
+    readDisplayMetadata: async ({ anidbId }) => ({ state: 'display', anidbId,
+      title: 'A title', restricted: false, englishTitle: null,
+      type: 'TV Series', startYear: 2026, startDate: null, endDate: null,
+      episodeCount: 12, description: 'A series.', tags: [] }),
+    confirmKnownTitle: async () => true });
   try {
     const login = await app.inject({ method: 'POST', url: '/api/login',
       headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
@@ -34,6 +39,11 @@ test('rapid signed-in title browsing retains a bounded detail read budget', asyn
     const excessive = await app.inject({ method: 'GET',
       url: '/api/catalogue/61', headers: { cookie } });
     assert.equal(excessive.statusCode, 429);
+    for (let id = 1; id <= 20; id++) {
+      const response = await app.inject({ method: 'GET',
+        url: `/api/catalogue/${id}/display`, headers: { cookie } });
+      assert.equal(response.statusCode, 200, `display ${id}: ${response.body}`);
+    }
   } finally { await app.close(); }
 });
 
@@ -246,6 +256,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       ? { state: 'display', anidbId, title: 'Example series',
         restricted: false, englishTitle: null, type: 'TV Series', startYear: 2026,
         startDate: null, endDate: null, episodeCount: null,
+        season: 'Fall 2026', releaseStatus: 'Airing',
+        studio: 'studio comet', durationMinutes: 23,
         description: 'A story about a test.', tags: ['Adventure'] }
       : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
@@ -528,6 +540,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/catalogue/1234/display', headers: { cookie } });
     assert.equal(display.statusCode, 200);
     assert.equal(display.json().description, 'A story about a test.');
+    assert.equal(display.json().season, 'Fall 2026');
+    assert.equal(display.json().durationMinutes, 23);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/display', headers: { cookie } })).statusCode, 404);
     const checkedPage = await app.inject({ method: 'GET',

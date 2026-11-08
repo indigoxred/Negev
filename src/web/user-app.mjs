@@ -492,7 +492,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return result.bytes;
   });
   app.get('/api/catalogue/:id/display', { preHandler: requireUser,
-    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
   async (request, reply) => {
     reply.header('Cache-Control', 'private, max-age=600');
     const anidbId = Number(request.params.id);
@@ -524,6 +524,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         display.episodeCount !== null &&
           (!Number.isSafeInteger(display.episodeCount) ||
             display.episodeCount < 0 || display.episodeCount > 10_000) ||
+        [display.season, display.releaseStatus, display.studio].some((value) =>
+          value !== undefined && value !== null &&
+          (typeof value !== 'string' || value.length > 100)) ||
+        display.durationMinutes !== undefined && display.durationMinutes !== null &&
+          (!Number.isSafeInteger(display.durationMinutes) ||
+            display.durationMinutes < 1 || display.durationMinutes > 1_440) ||
         !Array.isArray(display.tags) || display.tags.length > 8 ||
         display.tags.some((tag) => typeof tag !== 'string' || tag.length > 80)) {
       return reply.code(503).send({ error: 'Display details unavailable' });
