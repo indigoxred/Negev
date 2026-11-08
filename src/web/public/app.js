@@ -1379,7 +1379,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
-              message(error.message, true);
+              preparationStatus.textContent = error.status === 429
+                ? 'Episode details are busy. You can request this title now; Negev will check the library before any download.'
+                : 'Episode details could not be prepared right now. You can still request this title.';
               retry.hidden = false;
             }
           }

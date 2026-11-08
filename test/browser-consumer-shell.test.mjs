@@ -194,7 +194,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
           adultAllowed: true },
           csrfToken: 'test-only', capabilities: { acquisitionState: 'disabled',
-            titleChecks: true } }));
+            titleChecks: true, detailLoad: true } }));
         return;
       }
       if (path === '/api/admin/users') {
@@ -371,6 +371,17 @@ test('signed-in consumer routes render real shell with search, library and reque
         }, 10_000);
         return;
       }
+      if (path === '/api/catalogue/19849/load-detail') {
+        response.writeHead(429, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Too Many Requests' }));
+        return;
+      }
+      if (path === '/api/catalogue/19849') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'detail_pending', anidbId: 19849,
+          title: 'Pending title', restricted: false }));
+        return;
+      }
       const asset = assets.get(path);
       if (!asset) { response.writeHead(404); response.end(); return; }
       try {
@@ -479,6 +490,11 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'cold-detail'));
       assert.match(coldDetail, /Request if missing/,
         'the request action appears before a cold episode-list read finishes');
+      const busyDetail = await dump(`${base}/#/title/19849`,
+        join(dir, 'busy-detail'));
+      assert.match(busyDetail, /Episode details are busy/);
+      assert.match(busyDetail, /Request if missing/);
+      assert.doesNotMatch(busyDetail, /id="message"[^>]*>Too Many Requests/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);
