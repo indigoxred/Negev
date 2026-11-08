@@ -256,7 +256,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     // inside the five-second UI budget. Exact resolution runs later.
     const loadFastDetail = createFastDetailReader({ deadlineMs: 3_000,
       archive: (input) => rawDetailReader.read(input),
-      shoko: (input) => metadata.run(() => loadDetail(input)),
+      shoko: (input) => metadata.run(() => loadAniDbDetail({
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
+        ...input, fetchImpl, timeoutMs: 3_000 })),
     });
     const loadCurrentDetail = createFastDetailReader({ prefer: 'shoko',
       archive: (input) => rawDetailReader.read(input),
