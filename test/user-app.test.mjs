@@ -165,6 +165,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listSeasonalTitles: async ({ year, season, after, limit, kind, tag }) => {
       seasonalInputs.push({ year, season, after, limit, kind, tag });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
+        availableTags: ['action', 'fantasy'],
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
@@ -319,7 +320,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } });
     assert.equal(seasonal.statusCode, 200);
     assert.deepEqual(seasonal.json(), { state: 'ready', year: 2026,
-      season: 'FALL', sourceDate: '2026-11-05', items: [{ anidbId: 1234,
+      season: 'FALL', sourceDate: '2026-11-05',
+      availableTags: ['action', 'fantasy'], items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
         releaseStatus: 'RELEASING', adult: false,
         libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],

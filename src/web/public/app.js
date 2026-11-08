@@ -36,6 +36,7 @@ const airingResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
 const discoverResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
+let detailPollTimer = null;
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -110,6 +111,8 @@ function renderRoute() {
   } else {
     if (state.selected !== null) {
       detailResponses.invalidate();
+      if (detailPollTimer !== null) clearTimeout(detailPollTimer);
+      detailPollTimer = null;
       state.selected = null;
     }
   }
@@ -122,18 +125,18 @@ function renderRoute() {
         (returning || route.query !== state.lastSearchQuery)) {
       byId('search-form').requestSubmit();
     }
-  } else if (page === 'library' && (returning || !state.libraryLoaded)) {
-    void loadLibrary();
-  } else if (page === 'requests' && returning) {
-    void loadRequests();
-  } else if (page === 'airing') {
-    if (!state.airingLoaded) void loadAiring();
     const choice = seasonChoice(route);
     const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}`;
     if (state.seasonalRouteKey !== key) {
       state.seasonalRouteKey = key;
       void loadSeasonal(choice);
     }
+  } else if (page === 'library' && (returning || !state.libraryLoaded)) {
+    void loadLibrary();
+  } else if (page === 'requests' && returning) {
+    void loadRequests();
+  } else if (page === 'airing') {
+    if (!state.airingLoaded) void loadAiring();
   } else if (page === 'admin' && !state.usersLoaded) {
     void loadUsers();
   }
@@ -171,6 +174,8 @@ function showSession(data) {
     invalidateRequestResponses();
     reviewResponses.invalidate();
     detailResponses.invalidate();
+    if (detailPollTimer !== null) clearTimeout(detailPollTimer);
+    detailPollTimer = null;
     libraryResponses.invalidate();
     airingResponses.invalidate();
     seasonalResponses.invalidate();
@@ -222,6 +227,8 @@ function clearWorkspace() {
   invalidateRequestResponses();
   reviewResponses.invalidate();
   detailResponses.invalidate();
+  if (detailPollTimer !== null) clearTimeout(detailPollTimer);
+  detailPollTimer = null;
   libraryResponses.invalidate();
   airingResponses.invalidate();
   seasonalResponses.invalidate();
@@ -581,11 +588,6 @@ async function loadDiscover() {
   const seasonal = api(`/api/seasons?${seasonQuery}`).then(
     (value) => ({ status: 'fulfilled', value }),
     () => ({ status: 'rejected' }));
-  const [airing, library] = await Promise.allSettled([
-    api('/api/airing'), api('/api/library'),
-  ]);
-  if (!sessionResponses.isCurrent(session) ||
-      !discoverResponses.isCurrent(epoch) || state.user?.id !== userId) return;
   state.discoverLoaded = true;
   shelves.replaceChildren();
   const addShelf = ({ title, note, href, items, card, leading = false }) => {
@@ -603,35 +605,30 @@ async function loadDiscover() {
     if (leading) shelves.prepend(section);
     else shelves.append(section);
   };
-  if (airing.status === 'fulfilled' && Array.isArray(airing.value?.items)) {
-    addShelf({ title: 'This week on AniDB',
-      note: airing.value.state === 'stale'
-        ? 'Saved schedule; dates may have changed. Local availability is checked separately.'
-        : 'Upcoming and recent episode dates. Local availability is checked separately.',
-      href: '#/airing', items: airing.value.items,
-      card: (item) => discoveryCard(item,
-        `Episode ${item.episodeNumber} · ${item.scheduledDate}`,
-        'Availability not checked'),
-    });
-  }
-  if (library.status === 'fulfilled' && Array.isArray(library.value?.items)) {
-    addShelf({ title: 'Verified in your library',
+  void api('/api/library').then((library) => {
+    if (!sessionResponses.isCurrent(session) ||
+        !discoverResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        !Array.isArray(library?.items)) return;
+    shelves.querySelector('.empty-state')?.remove();
+    addShelf({ title: 'In Negev’s Library',
       note: 'A sample of titles with current exact public Plex file proof.',
-      href: '#/library', items: library.value.items,
+      href: '#/library', items: library.items,
       card: (item) => discoveryCard(item,
         `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
         'In library', true),
     });
-  }
-  if (!shelves.childElementCount) shelves.append(element('p',
-    'Browse shelves are unavailable right now. Search the catalogue by title above.',
-    'empty-state'));
+  }).catch(() => { /* The catalogue remains usable without library browse. */ });
   const currentSeason = await seasonal;
   if (!sessionResponses.isCurrent(session) ||
       !discoverResponses.isCurrent(epoch) || state.user?.id !== userId) return;
   if (currentSeason.status !== 'fulfilled' ||
       !Array.isArray(currentSeason.value?.items) ||
-      currentSeason.value.items.length === 0) return;
+      currentSeason.value.items.length === 0) {
+    if (!shelves.childElementCount) shelves.append(element('p',
+      'Browse shelves are unavailable right now. Search the catalogue by title above.',
+      'empty-state'));
+    return;
+  }
   shelves.querySelector('.empty-state')?.remove();
   addShelf({ title: 'This season',
     note: currentSeason.value.state === 'stale'
@@ -717,6 +714,29 @@ function seasonChoice(route) {
     season: ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)],
     after: 0, kind: 'all', tag: '' };
 }
+function renderSeasonGenres(availableTags, selected) {
+  const choices = byId('season-tags');
+  const chosen = new Set(selected ? selected.split(',') : []);
+  choices.replaceChildren();
+  for (const tag of availableTags) {
+    const label = element('label', undefined, 'genre-option');
+    const box = element('input');
+    box.type = 'checkbox';
+    box.value = tag;
+    box.checked = chosen.has(tag);
+    box.addEventListener('change', () => {
+      const checked = [...choices.querySelectorAll('input:checked')];
+      if (checked.length > 5) box.checked = false;
+      const count = choices.querySelectorAll('input:checked').length;
+      byId('season-form').querySelector('.genre-picker summary').textContent =
+        `Genres · ${count || 'All'}${count === 1 ? ' selected' : count > 1 ? ' selected' : ''}`;
+    });
+    label.append(box, document.createTextNode(tag));
+    choices.append(label);
+  }
+  byId('season-form').querySelector('.genre-picker summary').textContent =
+    `Genres · ${chosen.size || 'All'}${chosen.size ? ' selected' : ''}`;
+}
 async function loadSeasonal({ year, season, after, kind, tag }) {
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
@@ -726,7 +746,6 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
   byId('season-year').value = String(year);
   byId('season-name').value = season;
   byId('season-kind').value = kind;
-  byId('season-tag').value = tag;
   byId('season-previous').hidden = true;
   byId('season-next').hidden = true;
   notice.textContent = `Loading ${season.toLowerCase()} ${year}…`;
@@ -743,6 +762,7 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
       return;
     }
+    renderSeasonGenres(page.availableTags ?? [], tag);
     notice.textContent = page.state === 'stale'
       ? `Showing a saved season list from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
@@ -787,7 +807,8 @@ byId('season-form').addEventListener('submit', (event) => {
   const year = Number(byId('season-year').value);
   const season = byId('season-name').value;
   const kind = byId('season-kind').value;
-  const tag = byId('season-tag').value;
+  const tag = [...byId('season-tags').querySelectorAll('input:checked')]
+    .map((input) => input.value).join(',');
   if (!Number.isSafeInteger(year) || year < 1900 || year > 2100) return;
   const route = seasonRoute(year, season, 0, { kind, tag });
   if (location.hash === route) void loadSeasonal({ year, season,
@@ -1069,12 +1090,20 @@ byId('search-form').addEventListener('submit', async (event) => {
   }
 });
 async function showDetail(item, franchise = null) {
+  if (detailPollTimer !== null) clearTimeout(detailPollTimer);
+  detailPollTimer = null;
   const detailRequest = detailResponses.invalidate();
   const isCurrentDetail = () => detailResponses.isCurrent(detailRequest) &&
     state.selected === item.anidbId;
   state.selected = item.anidbId;
   const panel = byId('detail');
-  panel.replaceChildren(element('p', 'Loading details…', 'muted'));
+  const loadingArt = element('div', 'N', 'detail-art poster-fallback');
+  loadingArt.setAttribute('aria-hidden', 'true');
+  const loadingPoster = posterImage(item);
+  loadingPoster.addEventListener('load', () => loadingArt.classList.add('has-poster'));
+  loadingArt.append(loadingPoster);
+  panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
+    element('p', 'Loading details…', 'muted'));
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
@@ -1128,32 +1157,34 @@ async function showDetail(item, franchise = null) {
       if (!state.detailLoad) {
         panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
       } else {
-        panel.append(element('p', 'Episode details are being prepared. This title cannot be requested yet.', 'muted'));
+        panel.append(element('p', 'Preparing episode details automatically. You can keep browsing; this page will update when they are ready.', 'muted'));
       }
-      const queued = state.detailHydrationQueued.has(item.anidbId);
-      const button = element('button', queued || !state.detailLoad
-        ? 'Check again' : 'Load details');
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        if (queued || !state.detailLoad) {
-          await showDetail(item, franchise);
-          return;
-        }
-        const session = sessionResponses.current();
-        state.detailHydrationQueued.add(item.anidbId);
-        try {
-          await api(`/api/catalogue/${item.anidbId}/load-detail`,
-            { method: 'POST', body: '{}' });
-          if (!sessionResponses.isCurrent(session) || !isCurrentDetail()) return;
-          await showDetail(item, franchise);
-        } catch (error) {
-          if (sessionResponses.isCurrent(session)) {
+      if (state.detailLoad) {
+        const retry = element('button', 'Retry loading details');
+        retry.hidden = true;
+        const begin = async () => {
+          state.detailHydrationQueued.add(item.anidbId);
+          retry.hidden = true;
+          try {
+            await api(`/api/catalogue/${item.anidbId}/load-detail`,
+              { method: 'POST', body: '{}' });
+            if (isCurrentDetail()) void showDetail(item, franchise);
+          } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
+            if (isCurrentDetail()) {
+              message(error.message, true);
+              retry.hidden = false;
+            }
           }
-          if (isCurrentDetail()) message(error.message, true);
-        } finally { button.disabled = false; }
-      });
-      panel.append(button);
+        };
+        retry.addEventListener('click', () => { void begin(); });
+        panel.append(retry);
+        if (state.detailHydrationQueued.has(item.anidbId)) {
+          detailPollTimer = setTimeout(() => { void showDetail(item, franchise); }, 5_000);
+        } else {
+          void begin();
+        }
+      }
     } else {
       state.detailHydrationQueued.delete(item.anidbId);
     }
@@ -1308,58 +1339,6 @@ async function showDetail(item, franchise = null) {
         finally { button.disabled = !select.value; select.disabled = false; }
       });
       check.append(label, button, result);
-      if (state.titleChecks) {
-        const checkTitle = element('button', 'Recheck unknown entries in background');
-        const progress = element('p', '', 'muted');
-        const url = `/api/catalogue/${item.anidbId}/title-check`;
-        let pollTimer;
-        let progressEpoch = 0;
-        const showProgress = async () => {
-          if (!isCurrentDetail()) return;
-          const epoch = ++progressEpoch;
-          if (pollTimer) clearTimeout(pollTimer);
-          try {
-            const status = await api(url);
-            if (!isCurrentDetail() || epoch !== progressEpoch) return;
-            if (status.state === 'not_started') progress.textContent =
-              'Availability has not been checked for this title.';
-            else if (status.state === 'held') progress.textContent =
-              'The title check needs another try. No missing episodes were assumed.';
-            else {
-              const olderCount = Math.max(0,
-                (status.lastVerifiedAvailableCount ?? status.recentAvailableCount) -
-                  status.recentAvailableCount);
-              const olderText = olderCount
-                ? ` · ${olderCount} previously verified; recheck needed` : '';
-              progress.textContent = status.totalCount === null
-                ? `Loading the episode list…${olderText}`
-                : `${status.state === 'done' ? 'Finished: ' : ''}` +
-                  `${status.checkedCount} of ${status.totalCount} checked · ` +
-                  `${status.recentAvailableCount} recently verified playable${olderText}`;
-            }
-            if (['loading', 'checking'].includes(status.state)) {
-              pollTimer = setTimeout(() => { void showProgress(); }, 15_000);
-            }
-          } catch { progress.textContent = 'Availability progress is temporarily unavailable.'; }
-        };
-        checkTitle.addEventListener('click', async () => {
-          checkTitle.disabled = true;
-          try {
-            await api(url, { method: 'POST', body: JSON.stringify({}) });
-            await showProgress();
-          } catch (error) { message(error.message, true); }
-          finally { checkTitle.disabled = false; }
-        });
-        const summary = element('details', undefined, 'title-check-summary');
-        summary.append(element('summary', 'Detailed availability recheck'),
-          element('p', 'Current verified availability is shown above. A full recheck may take several minutes and does not block requests.', 'muted'),
-          checkTitle, progress);
-        panel.append(summary);
-        summary.addEventListener('toggle', () => {
-          if (summary.open) void showProgress();
-          else if (pollTimer) clearTimeout(pollTimer);
-        });
-      }
       if (data.kind === 'series' && typeof data.restricted === 'boolean') {
         const requestSelected = element('button', 'Request selected episode');
         let requesting = false;

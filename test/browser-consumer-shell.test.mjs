@@ -99,7 +99,7 @@ async function inspectMobile(url, profile, width = 390) {
         headerBottom: document.querySelector('.topbar').getBoundingClientRect().bottom,
         mobileNavVisible: document.querySelector('#mobile-nav').getBoundingClientRect().height > 0,
         searchRight: document.querySelector('#search-form').getBoundingClientRect().right,
-        hasContent: document.querySelector('#discover-shelves').textContent.includes('This week on AniDB')})`,
+        hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 390) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
@@ -118,7 +118,7 @@ async function inspectMobile(url, profile, width = 390) {
         return {before, after: toggle.getAttribute('aria-pressed'),
           saved: localStorage.getItem('negev:show-adult:1')}; })()`,
     });
-    await send('Page.navigate', { url: url.replace('#/discover', '#/airing?year=2026&season=FALL') });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/discover?year=2026&season=FALL') });
     await wait(800);
     const filtered = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({adultHidden: document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden,
@@ -222,7 +222,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/seasons') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
-          sourceDate: '2026-11-05', items: [{ anidbId: 4158,
+          sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance'],
+          items: [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
             adult: false, libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
@@ -292,9 +293,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /This season/);
       assert.match(browse, /Pale Cocoon/);
-      assert.match(browse, /This week on AniDB/);
-      assert.match(browse, /FX Senshi Kurumi-chan/);
-      assert.match(browse, /Verified in your library/);
+      assert.match(browse, /Browse by season and genre/);
+      assert.match(browse, /In Negev’s Library/);
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
       assert.equal(mobile.width, 390);
@@ -316,13 +316,14 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(tablet.mobileNavVisible, true,
         'Tablet navigation stays visible after the desktop links no longer fit');
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
+      assert.match(library, /Negev’s Library/);
       assert.match(library, /The Garden of Words/);
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
-      const season = await dump(`${base}/#/airing?year=2026&season=FALL`,
+      const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);
       assert.match(season, /The Garden of Words/);
@@ -333,8 +334,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
-      assert.match(detail, /Detailed availability recheck/);
-      assert.match(detail, /Detailed availability recheck[\s\S]*Episode and Special options/);
+      assert.doesNotMatch(detail, /Recheck unknown entries in background/);
+      assert.match(detail, /Episode and Special options/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);

@@ -332,7 +332,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
         !['all', 'series', 'movies'].includes(query.kind ?? 'all') ||
         (query.tag !== undefined && (typeof query.tag !== 'string' ||
-          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(query.tag))) ||
+          query.tag.length > 200 || query.tag.split(',').length > 5 ||
+          query.tag.split(',').some((tag) =>
+            !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)))) ||
         query.after !== undefined && (typeof query.after !== 'string' ||
           !/^(0|[1-9]\d*)$/.test(query.after))) {
       return reply.code(400).send({ error: 'Invalid season page' });
@@ -354,6 +356,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof page.sourceDate !== 'string' ||
         !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
         !Array.isArray(page.items) || page.items.length > 12 ||
+        !Array.isArray(page.availableTags) || page.availableTags.length > 500 ||
+        page.availableTags.some((tag) => typeof tag !== 'string' ||
+          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)) ||
         page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
           item.anidbId < 1 || typeof item.title !== 'string' ||
           !item.title.trim() || item.title.length > 300 ||
@@ -372,7 +377,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
     return { state: page.state, year, season: query.season,
-      sourceDate: page.sourceDate, items: page.items.filter((item) =>
+      sourceDate: page.sourceDate, availableTags: page.availableTags,
+      items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
         releaseStatus: item.releaseStatus, adult: item.adult,

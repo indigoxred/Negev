@@ -37,6 +37,15 @@ test('display reader rejects mismatched, unknown-age and oversized records', asy
   }
 });
 
+test('display descriptions show character names instead of raw AniDB character links', async () => {
+  const reader = createAniDbDisplayReader({ fetchImpl: async () =>
+    new Response(JSON.stringify({ anidb_id: 42, title: 'Example',
+      restricted: false, tags: [],
+      description: '<p>http://anidb.net/ch147564 [Fia] meets https://anidb.net/cr68397 [Yashu].</p>' })) });
+  const display = await reader.read({ anidbId: 42 });
+  assert.equal(display.description, 'Fia meets Yashu.');
+});
+
 test('different display titles use a bounded queue without blocking one another', async () => {
   let active = 0;
   let peak = 0;

@@ -11,6 +11,9 @@ const seasons = new Set(['WINTER', 'SPRING', 'SUMMER', 'FALL']);
 const kinds = new Set(['all', 'series', 'movies']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
+const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
+  (value === '' || value.split(',').length <= 5 &&
+    value.split(',').every((tag) => validTag(tag) && tag !== ''));
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const validDate = (value) => typeof value === 'string' &&
   datePattern.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
@@ -204,18 +207,22 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
         !seasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
-        !kinds.has(kind) || !validTag(tag)) {
+        !kinds.has(kind) || !validTags(tag)) {
       throw new TypeError('Invalid season page');
     }
     const time = now();
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     const mapState = await loadMap(time);
     if (mapState === 'unavailable') return { state: 'unavailable' };
-    const entries = (cached.groups.get(`${year}-${season}`) ?? [])
+    const seasonEntries = cached.groups.get(`${year}-${season}`) ?? [];
+    const availableTags = [...new Set(seasonEntries.flatMap((entry) => entry.tags))]
+      .sort((a, b) => a.localeCompare(b));
+    const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];
+    const entries = seasonEntries
       .filter((entry) => (kind === 'all' || (kind === 'movies'
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
-        (!tag || entry.tags.includes(tag.trim().toLowerCase())));
+        selectedTags.every((selected) => entry.tags.includes(selected)));
     const page = entries.slice(after, after + limit);
     const found = [];
     for (let offset = 0; offset < page.length; offset += 4) {
@@ -229,7 +236,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         title: verification.title, type: verification.type,
         releaseStatus: entry.releaseStatus, adult: verification.adult }));
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
-      year, season, sourceDate: cached.sourceDate, items,
+      year, season, sourceDate: cached.sourceDate, items, availableTags,
       nextAfter: after + limit < entries.length ? after + limit : null };
   } };
 }

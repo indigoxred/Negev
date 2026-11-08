@@ -26,7 +26,8 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   }, now: () => 1000 });
   const first = await reader.read({ year: 2026, season: 'FALL', limit: 2 });
   assert.deepEqual(first, { state: 'ready', year: 2026, season: 'FALL',
-    sourceDate: '2026-11-05', items: [{ anidbId: 1, title: 'AniDB 1',
+    sourceDate: '2026-11-05', availableTags: [],
+    items: [{ anidbId: 1, title: 'AniDB 1',
       type: 'TV Series', releaseStatus: 'RELEASING', adult: false },
     { anidbId: 2, title: 'AniDB 2', type: 'TV Series',
       releaseStatus: 'RELEASING', adult: true }], nextAfter: 2 });
@@ -73,6 +74,11 @@ test('season type and tag filters apply before pagination using exact AniDB map 
     kind: 'series', tag: 'action' });
   assert.deepEqual(actionShows.items.map((item) => item.anidbId), [1]);
   assert.equal(actionShows.nextAfter, null);
+  assert.deepEqual(actionShows.availableTags,
+    ['action', 'adventure', 'comedy', 'drama']);
+  const both = await reader.read({ year: 2026, season: 'FALL',
+    tag: 'action,adventure' });
+  assert.deepEqual(both.items.map((item) => item.anidbId), [1]);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
     kind: 'unsafe' }), TypeError);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
