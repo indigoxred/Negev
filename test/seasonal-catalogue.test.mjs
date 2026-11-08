@@ -51,7 +51,7 @@ test('unknown restriction never displays a seasonal card and visibly marks parti
 
 test('season type and tag filters apply before pagination using exact AniDB map entries', async () => {
   const entries = [
-    { ...row('Action show', 1), tags: ['Action', 'Adventure'] },
+    { ...row('Action show', 1), status: 'ONGOING', tags: ['Action', 'Adventure'] },
     { ...row('Drama film', 2), type: 'MOVIE', tags: ['Drama'] },
     { ...row('Action film', 3), type: 'MOVIE', tags: ['Action'] },
     { ...row('Comedy OVA', 4), type: 'OVA', tags: ['Comedy'] },
@@ -79,6 +79,9 @@ test('season type and tag filters apply before pagination using exact AniDB map 
   const both = await reader.read({ year: 2026, season: 'FALL',
     tag: 'action,adventure' });
   assert.deepEqual(both.items.map((item) => item.anidbId), [1]);
+  const ongoing = await reader.read({ year: 2026, season: 'FALL',
+    status: 'ongoing' });
+  assert.deepEqual(ongoing.items.map((item) => item.anidbId), [1]);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
     kind: 'unsafe' }), TypeError);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',

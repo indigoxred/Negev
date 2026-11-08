@@ -793,12 +793,54 @@ byId('season-form').addEventListener('submit', (event) => {
     after: 0, kind, tag });
   else location.hash = route;
 });
+async function loadCurrentAiring(session, epoch, userId, after = 0) {
+  const list = byId('airing-season-list');
+  const notice = byId('airing-season-state');
+  const more = byId('airing-season-more');
+  more.hidden = true;
+  if (after === 0) {
+    notice.textContent = 'Loading ongoing titles…';
+    list.replaceChildren();
+  }
+  const { year, season } = seasonChoice({});
+  const params = new URLSearchParams({ year: String(year), season,
+    status: 'ongoing' });
+  if (after) params.set('after', String(after));
+  try {
+    const page = await api(`/api/seasons?${params}`);
+    if (!sessionResponses.isCurrent(session) ||
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    notice.textContent = page.state === 'stale'
+      ? 'Showing a saved ongoing-title list; release status may have changed.'
+      : 'Ongoing titles from the current season.';
+    for (const item of page.items ?? []) {
+      const count = item.libraryPresence?.verifiedEpisodeCount ?? 0;
+      const available = item.libraryPresence?.state === 'in_library' && count > 0;
+      list.append(discoveryCard(item, item.type || 'Anime', available
+        ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
+        : 'Availability not checked', available));
+    }
+    if (page.nextAfter !== null && page.nextAfter !== undefined) {
+      more.hidden = false;
+      more.onclick = () => { void loadCurrentAiring(session, epoch, userId,
+        page.nextAfter); };
+    } else if (!list.childElementCount) {
+      list.append(element('p', 'No ongoing titles are listed for this season.',
+        'empty-state'));
+    }
+  } catch {
+    if (!sessionResponses.isCurrent(session) ||
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
+  }
+}
 async function loadAiring() {
   const session = sessionResponses.current();
   const epoch = airingResponses.invalidate();
   const userId = state.user?.id;
   const list = byId('airing-list');
   const notice = byId('airing-state');
+  void loadCurrentAiring(session, epoch, userId);
   notice.textContent = '';
   list.replaceChildren(element('p', 'Loading this week’s schedule…', 'muted'));
   try {

@@ -9,6 +9,7 @@ const MAX_DETAIL_BYTES = 128_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const seasons = new Set(['WINTER', 'SPRING', 'SUMMER', 'FALL']);
 const kinds = new Set(['all', 'series', 'movies']);
+const statuses = new Set(['all', 'ongoing']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
 const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
@@ -203,11 +204,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     } catch { return { kind: 'unknown' }; }
   }
   return { async read({ year, season, after = 0, limit = 12,
-    kind = 'all', tag = '' } = {}) {
+    kind = 'all', tag = '', status = 'all' } = {}) {
     if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
         !seasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
-        !kinds.has(kind) || !validTags(tag)) {
+        !kinds.has(kind) || !validTags(tag) || !statuses.has(status)) {
       throw new TypeError('Invalid season page');
     }
     const time = now();
@@ -219,7 +220,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       .sort((a, b) => a.localeCompare(b));
     const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];
     const entries = seasonEntries
-      .filter((entry) => (kind === 'all' || (kind === 'movies'
+      .filter((entry) => (status === 'all' || entry.releaseStatus === 'ONGOING') &&
+        (kind === 'all' || (kind === 'movies'
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
         selectedTags.every((selected) => entry.tags.includes(selected)));

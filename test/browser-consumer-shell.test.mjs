@@ -220,10 +220,15 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/seasons') {
+        const ongoing = new URL(request.url, 'http://localhost')
+          .searchParams.get('status') === 'ongoing';
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
           sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance'],
-          items: [{ anidbId: 4158,
+          items: ongoing ? [{ anidbId: 19847, title: 'FX Senshi Kurumi-chan',
+            type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
+            libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] :
+            [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
             adult: false, libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
@@ -321,6 +326,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
+      assert.match(airing, /Ongoing this season/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,

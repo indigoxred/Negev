@@ -92,6 +92,14 @@
       <section id="view-airing" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
           <p>Upcoming and recent episodes this week. Dates come from AniDB; local availability is separate.</p></header>
+        <section class="section" aria-labelledby="ongoing-title"><div class="section-head"><div>
+          <h2 id="ongoing-title">Ongoing this season</h2>
+          <p>Titles AniMap currently marks ongoing. This is a catalogue status, not a popularity ranking.</p>
+        </div></div>
+          <p id="airing-season-state" class="muted" role="status"></p>
+          <div id="airing-season-list" class="poster-grid"></div>
+          <button id="airing-season-more" type="button" hidden>Show more ongoing titles</button>
+        </section>
         <section class="section" aria-labelledby="weekly-title"><div class="section-head"><h2 id="weekly-title">This week's episodes</h2></div>
         <div id="airing-state" class="muted"></div>
         <div id="airing-list" class="poster-grid"><p class="muted">Loading this week's schedule…</p></div>
