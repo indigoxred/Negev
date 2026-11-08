@@ -48,6 +48,24 @@ test('one Shoko file candidate can prove two distinct exact public episode cards
   }
 });
 
+test('an offline Shoko link needs the same exact public Plex file and episode card', async () => {
+  const offline = { ...candidate, anidbFileId: null,
+    releaseEvidence: 'shoko_offline_link',
+    pairs: [candidate.pairs[0]], identities: [candidate.identities[0]] };
+  const input = { ...base, candidate: offline,
+    target: { anidbId: 42, episodeId: 1001, kind: 'series' } };
+  assert.equal((await observeFileCandidateTarget(input)).state, 'available');
+  assert.notEqual((await observeFileCandidateTarget({ ...input,
+    proveImpl: async () => ({ state: 'held', reason: 'different_file' }) })).state,
+  'available');
+  assert.notEqual((await observeFileCandidateTarget({ ...input,
+    readPlex: async () => ({ state: 'ok', complete: true, parts: [{
+      partId: 600, libraryId: 102, size: 5, plexPath: '/source-pure/a.mkv',
+      cardType: 'episode', itemGuid: 'tv.plex.agents.custom.shoko://episode/e999',
+      showGuid: 'tv.plex.agents.custom.shoko://show/99',
+    }] }) })).state, 'available');
+});
+
 test('one fully linked file playable on a sibling episode card proves both episodes', async () => {
   const result = await observeFileCandidateTarget({ ...base,
     target: { anidbId: 42, episodeId: 1002, kind: 'series' },

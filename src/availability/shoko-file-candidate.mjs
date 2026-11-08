@@ -2,6 +2,7 @@ import path from 'node:path';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { normalizeShokoFile } from './shoko-file-page.mjs';
+import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -113,6 +114,10 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
       ? 'anidb_flagged' : 'registered';
   } else if (userLink) {
     releaseEvidence = 'shoko_user_link';
+  } else if (item.pairs.length === 1 &&
+      exactShokoOfflineLink(file.Release, item.pairs[0].anidbId,
+        item.pairs[0].episodeId)) {
+    releaseEvidence = 'shoko_offline_link';
   } else return unavailable();
   const sourcePaths = [];
   for (const location of file.Locations) {
