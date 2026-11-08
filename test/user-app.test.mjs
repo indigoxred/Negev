@@ -10,7 +10,7 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
-test('cold-title preparation allows browsing beyond five titles without bypassing its metadata ledger', async () => {
+test('cold-title preparation permits normal browsing after thirty deferred checks', async () => {
   const user = { id: 17, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
   const accounts = { authenticate: async () => user,
@@ -32,12 +32,12 @@ test('cold-title preparation allows browsing beyond five titles without bypassin
     const session = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie } });
     const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
-    for (let id = 1; id <= 6; id++) {
+    for (let id = 1; id <= 35; id++) {
       const response = await app.inject({ method: 'POST',
         url: `/api/catalogue/${id}/load-detail`, headers, payload: {} });
       assert.equal(response.statusCode, 202, response.body);
     }
-    assert.deepEqual(admitted, [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(admitted, Array.from({ length: 35 }, (_, index) => index + 1));
   } finally { await app.close(); }
 });
 
