@@ -161,11 +161,21 @@ async function inspectMobile(url, profile, width = 390) {
       await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'related-desktop.png'),
         Buffer.from(shot.data, 'base64'));
     }
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/42') });
+    await wait(700);
+    const requestReview = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        const button = action?.querySelector('.primary'); button?.click();
+        return {button: button?.textContent,
+          reviewVisible: !action?.querySelector('.request-review')?.hidden,
+          summary: action?.querySelector('.request-review p')?.textContent}; })()`,
+    });
     return { ...result.value, menu: menu.result.value,
       adultChoice: adultChoice.result.value, filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
       franchise: { before: franchiseBefore.result.value,
-        ...franchiseAfter.result.value } };
+        ...franchiseAfter.result.value },
+      requestReview: requestReview.result.value };
   } finally {
     socket?.close();
     child.kill();
@@ -351,6 +361,16 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ error: 'Too Many Requests' }));
         return;
       }
+      if (path === '/api/catalogue/19848') {
+        // A cold catalogue read may outlive the first render. The title must
+        // remain requestable while the episode list is still loading.
+        setTimeout(() => {
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'detail_pending', anidbId: 19848,
+            title: 'Cold title', restricted: false }));
+        }, 10_000);
+        return;
+      }
       const asset = assets.get(path);
       if (!asset) { response.writeHead(404); response.end(); return; }
       try {
@@ -388,10 +408,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.franchise.listed, /1 verified item in library/);
       assert.equal(mobile.franchise.posterCards, 5);
       assert.deepEqual(mobile.franchise.relationLabels,
-        ['Side story', 'Sequel', 'Prequel', 'Side story', 'Alternative']);
+        ['Prequel', 'Sequel', 'Side story', 'Side story', 'Alternative']);
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
       assert.equal(mobile.franchise.next, 'Show more related titles');
+      assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
+        reviewVisible: true,
+        summary: 'Example Series · this installment’s regular episodes and future episodes' });
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
@@ -451,7 +474,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(throttledDetail, /A new anime description/);
       assert.match(throttledDetail, /Episode details are temporarily unavailable/);
       assert.match(throttledDetail, /Try again/);
-      assert.match(throttledDetail, /Request while details prepare/);
+      assert.match(throttledDetail, /Request if missing/);
+      const coldDetail = await dump(`${base}/#/title/19848`,
+        join(dir, 'cold-detail'));
+      assert.match(coldDetail, /Request if missing/,
+        'the request action appears before a cold episode-list read finishes');
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);
