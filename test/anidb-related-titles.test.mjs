@@ -75,6 +75,36 @@ test('display combines distinct exact AniDB relations while preferring Shoko tit
   }), { ...local, items: [local.items[0], archive.items[1]] });
 });
 
+test('archive relations do not wait for a slow Shoko display read', async () => {
+  let releaseLocal;
+  const archive = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Sequel', relation: 'Sequel' }] };
+  const read = readDisplayRelations({
+    readLocal: () => new Promise((resolve) => { releaseLocal = resolve; }),
+    readArchive: async () => archive,
+    mergeWaitMs: 10,
+  });
+  const result = await Promise.race([read, new Promise((resolve) =>
+    setTimeout(() => resolve('late'), 40))]);
+  releaseLocal({ state: 'unavailable' });
+  assert.deepEqual(result, archive);
+});
+
+test('cached Shoko relations do not wait for a slow archive read', async () => {
+  let releaseArchive;
+  const local = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 44,
+      title: 'Local sequel', relation: 'Sequel' }] };
+  const read = readDisplayRelations({ readLocal: async () => local,
+    readArchive: () => new Promise((resolve) => { releaseArchive = resolve; }),
+    mergeWaitMs: 10 });
+  const result = await Promise.race([read, new Promise((resolve) =>
+    setTimeout(() => resolve('late'), 40))]);
+  releaseArchive({ state: 'unavailable' });
+  assert.deepEqual(result, local);
+});
+
 test('archive relations retain exact AniDB IDs and distinguish unknown names', async () => {
   const result = await readAniDbRelatedTitles({ anidbId: 1,
     titleForId: (id) => id === 2 ? 'Seikai no Senki' : null,

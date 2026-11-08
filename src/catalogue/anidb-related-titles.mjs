@@ -19,12 +19,30 @@ export function preferDisplayRelations(local, archive) {
   }
   return archive?.state === 'related_titles' ? archive : local;
 }
-export async function readDisplayRelations({ readLocal, readArchive }) {
-  const [local, archive] = await Promise.all([
-    Promise.resolve().then(readLocal).catch(() => ({ state: 'unavailable' })),
-    Promise.resolve().then(readArchive).catch(() => ({ state: 'unavailable' })),
+export async function readDisplayRelations({ readLocal, readArchive,
+  mergeWaitMs = 250 }) {
+  if (!Number.isSafeInteger(mergeWaitMs) || mergeWaitMs < 1 || mergeWaitMs > 1_000) {
+    throw new TypeError('Invalid relation merge wait');
+  }
+  const localRead = Promise.resolve().then(readLocal)
+    .catch(() => ({ state: 'unavailable' }));
+  const archiveRead = Promise.resolve().then(readArchive)
+    .catch(() => ({ state: 'unavailable' }));
+  const first = await Promise.race([
+    localRead.then((result) => ({ source: 'local', result })),
+    archiveRead.then((result) => ({ source: 'archive', result })),
   ]);
-  return preferDisplayRelations(local, archive);
+  const otherRead = first.source === 'local' ? archiveRead : localRead;
+  const usable = first.result?.state === 'related_titles' &&
+    first.result.items?.length > 0;
+  let timer;
+  const other = usable ? await Promise.race([otherRead,
+    new Promise((resolve) => { timer = setTimeout(() => resolve(null), mergeWaitMs); })])
+    : await otherRead;
+  clearTimeout(timer);
+  return first.source === 'local'
+    ? preferDisplayRelations(first.result, other)
+    : preferDisplayRelations(other, first.result);
 }
 
 // Related titles are display-only. A short shared cache prevents several
