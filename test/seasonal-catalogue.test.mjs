@@ -85,6 +85,7 @@ test('season type and tag filters apply before pagination using exact AniDB map 
   const ongoing = await reader.read({ year: 2026, season: 'FALL',
     status: 'ongoing' });
   assert.deepEqual(ongoing.items.map((item) => item.anidbId), [1]);
+  assert.deepEqual(ongoing.availableTags, ['action', 'adventure']);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
     kind: 'unsafe' }), TypeError);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',

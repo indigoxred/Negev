@@ -240,7 +240,10 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         (year === 0 || entry.year === year) &&
         (season === 'ALL' || entry.season === season))
       : cached.groups.get(`${year}-${season}`) ?? [];
-    const availableTags = [...new Set(seasonEntries.flatMap((entry) => entry.tags))]
+    const tagEntries = status === 'ongoing'
+      ? seasonEntries.filter((entry) => entry.releaseStatus === 'ONGOING')
+      : seasonEntries;
+    const availableTags = [...new Set(tagEntries.flatMap((entry) => entry.tags))]
       .sort((a, b) => a.localeCompare(b));
     const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];
     const entries = seasonEntries
