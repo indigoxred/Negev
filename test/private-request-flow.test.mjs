@@ -90,7 +90,9 @@ test('private search to exact held request never dispatches acquisition', async 
     assert.equal(laterRequest.statusCode, 202);
     const laterSaved = await service.app.inject({ method: 'GET',
       url: `/api/requests/${laterRequest.json().requestId}`, headers: auth });
-    assert.equal(laterSaved.json().monitorFuture, true);
+    // A new request after the stated final episode aired is one-time. The
+    // existing watch stays open until an explicit end date is published.
+    assert.equal(laterSaved.json().monitorFuture, false);
     assert.equal(methods.every((entry) => entry.startsWith('GET ')), true);
     const forged = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'forged', releaseState: 'completed', requesterId: 999 } });

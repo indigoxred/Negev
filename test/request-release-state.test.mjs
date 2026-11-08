@@ -15,3 +15,8 @@ test('request release state keeps an incomplete aired installment watching', () 
   assert.equal(requestReleaseState({ ...detail, airDate: null },
     '2026-11-08'), 'unknown');
 });
+
+test('all stated and aired episodes complete a series without an end date', () => {
+  assert.equal(requestReleaseState({ ...detail, episodeCount: 1 },
+    '2026-11-08'), 'completed');
+});
