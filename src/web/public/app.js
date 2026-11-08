@@ -1138,7 +1138,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
     displayRead = api(`/api/catalogue/${item.anidbId}/display`)
-      .catch(() => null);
+      .catch(() => null)
+      .then((display) => {
+        if (display?.state !== 'display' &&
+          displayCache.get(item.anidbId) === displayRead) {
+          displayCache.delete(item.anidbId);
+        }
+        return display;
+      });
     displayCache.set(item.anidbId, displayRead);
     if (displayCache.size > 100) displayCache.delete(displayCache.keys().next().value);
   }

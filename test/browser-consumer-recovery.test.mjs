@@ -28,6 +28,7 @@ test('title and library controls recover from pending and failed reads without d
     let holdNextDetailPost = false;
     let heldDetailResponse = null;
     let failedTitleReads = 0;
+    let recoveredDisplayReads = 0;
     let pageTwoReads = 0;
     let firstLibraryReads = 0;
     let searchReads = 0;
@@ -83,6 +84,13 @@ test('title and library controls recover from pending and failed reads without d
           { state: 'details', anidbId: 2, title: 'Recovered title',
             kind: 'movie', page: 1, total: 0, nextPage: null, episodes: [] },
         failedTitleReads === 1 ? 503 : 200);
+      } else if (path === '/api/catalogue/2/display') {
+        recoveredDisplayReads++;
+        json(response, recoveredDisplayReads === 1
+          ? { error: 'temporarily unavailable' }
+          : { state: 'display', anidbId: 2, title: 'Recovered title',
+            description: 'The recovered catalogue summary.', tags: [] },
+        recoveredDisplayReads === 1 ? 503 : 200);
       } else if (path === '/api/library') {
         if (url.searchParams.has('afterAnidbId')) pageTwoReads++;
         else firstLibraryReads++;
@@ -252,6 +260,12 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Try again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Recovered title')");
       assert.equal(failedTitleReads, 2);
+      await evaluate("location.hash = '#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash = '#/title/2'");
+      await until("document.querySelector('#detail')?.textContent.includes('The recovered catalogue summary.')");
+      assert.equal(recoveredDisplayReads, 2,
+        'a failed display read must be retried when the title is reopened');
       await evaluate("location.hash = '#/library'");
       await until("document.querySelector('#library-list')?.textContent.includes('Show more verified titles')");
       await evaluate("[...document.querySelectorAll('#library-list button')].find(b => b.textContent.includes('Show more')).click()");
