@@ -1314,6 +1314,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const copy = element('span', undefined, 'related-copy');
         copy.append(element('small', relationLabel(installment.relation)),
           element('strong', installment.title));
+        const count = installment.libraryPresence?.state === 'in_library'
+          ? installment.libraryPresence.verifiedEpisodeCount : 0;
+        if (count > 0) copy.append(element('span',
+          `${count} verified item${count === 1 ? '' : 's'} in library`,
+          'related-presence'));
         open.append(art, copy);
         open.addEventListener('click', () => {
           state.searchItems.set(installment.anidbId, installment);
