@@ -141,10 +141,19 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await wait(300);
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `({listed: document.querySelector('.related-list')?.textContent,
-        posterCards: document.querySelectorAll('.related-list .related-card img').length,
-        next: document.querySelector('.related-trigger')?.textContent})`,
+      expression: `(() => { const cards = [...document.querySelectorAll('.related-list .related-card')];
+        const firstTop = cards[0]?.getBoundingClientRect().top;
+        return {listed: document.querySelector('.related-list')?.textContent,
+          posterCards: document.querySelectorAll('.related-list .related-card img').length,
+          firstRowCount: cards.filter((card) => Math.abs(card.getBoundingClientRect().top - firstTop) < 2).length,
+          next: document.querySelector('.related-trigger')?.textContent}; })()`,
     });
+    if (process.env.NEGEV_UI_CAPTURE_DIR && width === 1200) {
+      const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true,
+        captureBeyondViewport: true });
+      await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'related-desktop.png'),
+        Buffer.from(shot.data, 'base64'));
+    }
     return { ...result.value, menu: menu.result.value,
       adultChoice: adultChoice.result.value, filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
@@ -250,7 +259,11 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'related_titles', anidbId: 4158,
           completeness: 'unproven', items: [{ anidbId: 9589,
             title: 'The Garden of Words', relation: 'SideStory',
-            libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }] }));
+            libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } },
+          { anidbId: 9600, title: 'Another related film', relation: 'Sequel' },
+          { anidbId: 9601, title: 'Prequel season', relation: 'Prequel' },
+          { anidbId: 9602, title: 'A separate special', relation: 'SideStory' },
+          { anidbId: 9603, title: 'Another installment', relation: 'Alternative' }] }));
         return;
       }
       if (path === '/api/catalogue/4158') {
@@ -341,8 +354,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
       assert.match(mobile.franchise.listed, /1 verified item in library/);
-      assert.equal(mobile.franchise.posterCards, 1);
+      assert.equal(mobile.franchise.posterCards, 5);
       assert.equal(mobile.franchise.next, 'Try related titles again');
+      const desktopRelated = await inspectMobile(`${base}/#/discover`,
+        join(dir, 'related-desktop'), 1200);
+      assert.ok(desktopRelated.franchise.firstRowCount >= 4,
+        'related anime use a compact poster shelf on desktop');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');
