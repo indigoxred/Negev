@@ -163,8 +163,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
         scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] }),
-    listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status }) => {
-      seasonalInputs.push({ year, season, after, limit, kind, tag, status });
+    listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status, sort }) => {
+      seasonalInputs.push({ year, season, after, limit, kind, tag, status, sort });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
         availableTags: seasonalTags,
         items: [{ anidbId: 1234, title: 'Example series',
@@ -334,11 +334,19 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=2026&season=FALL&kind=movies&tag=action',
       headers: { cookie } })).statusCode, 200);
     assert.deepEqual(seasonalInputs.at(-1), { year: 2026, season: 'FALL',
-      after: 0, limit: 12, kind: 'movies', tag: 'action', status: 'all' });
+      after: 0, limit: 12, kind: 'movies', tag: 'action', status: 'all',
+      sort: 'newest' });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&status=ongoing',
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).status, 'ongoing');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=title_desc',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).sort, 'title_desc');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=popularity',
+      headers: { cookie } })).statusCode, 400);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=0&season=ALL',
       headers: { cookie } })).statusCode, 200);

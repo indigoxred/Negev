@@ -91,6 +91,33 @@ test('season type and tag filters apply before pagination using exact AniDB map 
     tag: '\nunsafe' }), TypeError);
 });
 
+test('ongoing titles span seasons and sort before pagination', async () => {
+  const older = { ...row('Zeta', 1), status: 'ONGOING',
+    animeSeason: { season: 'SPRING', year: 2024 } };
+  const newer = { ...row('Alpha', 2), status: 'ONGOING' };
+  const finished = { ...row('Finished', 3), status: 'FINISHED' };
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [older, newer, finished] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: url.endsWith('/1') ? 'Zeta' : 'Alpha',
+        type: 'TV Series', restricted: false }), now: () => 1000 });
+  const newest = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'newest', limit: 1 });
+  assert.deepEqual(newest.items.map((item) => item.anidbId), [2]);
+  const next = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'newest', after: newest.nextAfter, limit: 1 });
+  assert.deepEqual(next.items.map((item) => item.anidbId), [1]);
+  const oldest = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'oldest' });
+  assert.deepEqual(oldest.items.map((item) => item.anidbId), [1, 2]);
+  const title = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'title_desc' });
+  assert.deepEqual(title.items.map((item) => item.anidbId), [1, 2]);
+  await assert.rejects(reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'popularity' }), TypeError);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;

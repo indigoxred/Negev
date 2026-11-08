@@ -63,9 +63,7 @@
           <p>Search by name to see series and films.</p></div>
           <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
         </section>
-        <section class="section" aria-labelledby="season-title">
-          <div class="section-head"><div><h2 id="season-title">Browse the catalogue</h2>
-            <p>Explore all years or narrow by season, format and genres. Search can find titles missing from this map.</p></div></div>
+        <section class="section" aria-label="Catalogue filters and titles">
           <form id="season-form" class="season-controls">
             <label>Year <select id="season-year" name="year"><option value="0">All years</option></select></label>
             <label>Season <select id="season-name" name="season">
@@ -91,15 +89,35 @@
           <div class="season-pages"><button id="season-previous" type="button" hidden>Previous page</button>
             <button id="season-next" type="button" hidden>Next page</button></div>
         </section>
-        <div id="discover-shelves"></div>
       </section>
       <section id="view-airing" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
-          <p>Upcoming and recent episodes this week. Dates come from AniDB; local availability is separate.</p></header>
-        <section class="section" aria-labelledby="ongoing-title"><div class="section-head"><div>
-          <h2 id="ongoing-title">Ongoing this season</h2>
-          <p>Titles AniMap currently marks ongoing. This is a catalogue status, not a popularity ranking.</p>
-        </div></div>
+          <p>Browse shows marked ongoing, including those that began in earlier seasons. This week’s AniDB episode schedule is below.</p></header>
+        <section class="section" aria-label="Airing title filters and results">
+          <form id="airing-form" class="season-controls">
+            <label>Year <select id="airing-year" name="year"><option value="0">All years</option></select></label>
+            <label>Season <select id="airing-season" name="season">
+              <option value="ALL">All seasons</option><option value="WINTER">Winter</option>
+              <option value="SPRING">Spring</option><option value="SUMMER">Summer</option>
+              <option value="FALL">Fall</option>
+            </select></label>
+            <label>Format <select id="airing-kind" name="kind">
+              <option value="all">All anime</option><option value="series">Series</option>
+              <option value="movies">Movies</option>
+            </select></label>
+            <details class="genre-picker"><summary>Genres &amp; themes · All</summary>
+              <div class="genre-popover">
+                <input id="airing-tag-search" type="search" placeholder="Find a genre or theme" aria-label="Find an airing genre or theme">
+                <div id="airing-tags" class="genre-options"></div>
+                <small id="airing-tag-count">Select up to five. A title must match each selection.</small>
+              </div>
+            </details>
+            <label>Sort <select id="airing-sort" name="sort">
+              <option value="newest">Newest season</option><option value="oldest">Oldest season</option>
+              <option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option>
+            </select></label>
+            <button type="submit">Apply filters</button>
+          </form>
           <p id="airing-season-state" class="muted" role="status"></p>
           <div id="airing-season-list" class="poster-grid"></div>
           <button id="airing-season-more" type="button" hidden>Show more ongoing titles</button>

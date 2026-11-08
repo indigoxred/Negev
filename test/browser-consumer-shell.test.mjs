@@ -296,10 +296,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
-      assert.match(browse, /Browse the catalogue/);
       assert.match(browse, /Pale Cocoon/);
-      assert.match(browse, /Browse the catalogue/);
-      assert.match(browse, /In Negev’s Library/);
+      assert.match(browse, /<h1>Browse anime\.<\/h1>/);
+      assert.doesNotMatch(browse, /id="discover-shelves"/);
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
       assert.equal(mobile.width, 390);
@@ -326,7 +325,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
-      assert.match(airing, /Ongoing this season/);
+      assert.match(airing, /<h1>Airing anime<\/h1>/);
+      assert.doesNotMatch(airing, /Ongoing this season/);
+      assert.match(airing, /id="airing-sort"/);
+      assert.match(airing, /id="airing-kind"/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,

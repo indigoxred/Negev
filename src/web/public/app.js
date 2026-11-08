@@ -19,7 +19,7 @@ const state = { csrf: null, user: null, selected: null,
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
-  discoverLoaded: false, showAdult: true, usersLoaded: false,
+  showAdult: true, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
 const requestResponses = {
@@ -34,10 +34,10 @@ const detailResponses = createResponseEpoch();
 const libraryResponses = createResponseEpoch();
 const airingResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
-const discoverResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 let detailPollTimer = null;
-let seasonGenreSelection = new Set();
+const genreSelections = { season: new Set(), airing: new Set() };
+let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -119,9 +119,7 @@ function renderRoute() {
   }
   if (page === 'discover') {
     byId('query').value = route.query;
-    byId('discover-shelves').hidden = route.query.length >= 2;
     byId('search-results-section').hidden = route.query.length < 2;
-    if (route.query.length < 2 && !state.discoverLoaded) void loadDiscover();
     if (route.query.length >= 2 &&
         (returning || route.query !== state.lastSearchQuery)) {
       byId('search-form').requestSubmit();
@@ -180,7 +178,6 @@ function showSession(data) {
     libraryResponses.invalidate();
     airingResponses.invalidate();
     seasonalResponses.invalidate();
-    discoverResponses.invalidate();
     state.selected = null;
     state.detailHydrationQueued.clear();
     byId('request-list').replaceChildren();
@@ -193,9 +190,11 @@ function showSession(data) {
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
+    airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
+    genreSelections.airing.clear();
+    genreSelections.season.clear();
     state.seasonalRouteKey = null;
     state.routePage = null;
-    state.discoverLoaded = false;
     nextReviewAttemptId = null;
   }
   state.user = data.user;
@@ -233,7 +232,6 @@ function clearWorkspace() {
   libraryResponses.invalidate();
   airingResponses.invalidate();
   seasonalResponses.invalidate();
-  discoverResponses.invalidate();
   state.user = null;
   state.showAdult = true;
   state.usersLoaded = false;
@@ -246,9 +244,11 @@ function clearWorkspace() {
   state.libraryLoaded = false;
   state.libraryAfter = null;
   state.airingLoaded = false;
+  airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
+  genreSelections.airing.clear();
+  genreSelections.season.clear();
   state.seasonalRouteKey = null;
   state.routePage = null;
-  state.discoverLoaded = false;
   state.nextBeforeId = { watching: null, history: null };
   state.requestHistoryExpanded = false;
   nextReviewAttemptId = null;
@@ -266,7 +266,6 @@ function clearWorkspace() {
   byId('more-review').hidden = true;
   byId('admin-review').hidden = true;
   byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
-  byId('discover-shelves').replaceChildren();
   byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));
   byId('search-form').reset();
   byId('search-form').hidden = true;
@@ -578,51 +577,6 @@ function publicPresenceBadge(presence) {
     : 'Availability not checked',
   `presence ${available ? 'available' : 'unknown'}`);
 }
-async function loadDiscover() {
-  const session = sessionResponses.current();
-  const epoch = discoverResponses.invalidate();
-  const userId = state.user?.id;
-  const shelves = byId('discover-shelves');
-  shelves.replaceChildren(element('p', 'Checking Negev’s Library…', 'muted'));
-  state.discoverLoaded = true;
-  shelves.replaceChildren();
-  const addShelf = ({ title, note, href, items, card, leading = false }) => {
-    if (!items?.length) return;
-    const section = element('section', undefined, 'section discovery-shelf');
-    const heading = element('div', undefined, 'section-head');
-    const label = element('div');
-    label.append(element('h2', title), element('p', note));
-    const more = element('a', 'Explore all →', 'text-link');
-    more.href = href;
-    heading.append(label, more);
-    const grid = element('div', undefined, 'poster-grid');
-    for (const item of items.slice(0, 6)) grid.append(card(item));
-    section.append(heading, grid);
-    if (leading) shelves.prepend(section);
-    else shelves.append(section);
-  };
-  void api('/api/library').then((library) => {
-    if (!sessionResponses.isCurrent(session) ||
-        !discoverResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        !Array.isArray(library?.items)) return;
-    shelves.querySelector('.empty-state')?.remove();
-    shelves.replaceChildren();
-    addShelf({ title: 'In Negev’s Library',
-      note: 'A sample of titles with current exact public Plex file proof.',
-      href: '#/library', items: library.items,
-      card: (item) => discoveryCard(item,
-        `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
-        'In library', true),
-    });
-  }).catch(() => {
-    if (sessionResponses.isCurrent(session) &&
-        discoverResponses.isCurrent(epoch) && state.user?.id === userId) {
-      shelves.replaceChildren(element('p',
-        'Library highlights are unavailable right now. Catalogue browsing still works.',
-        'muted'));
-    }
-  });
-}
 async function loadLibrary(append = false, continuation = null) {
   const session = sessionResponses.current();
   const epoch = libraryResponses.invalidate();
@@ -694,11 +648,12 @@ for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
   const option = element('option', String(year));
   option.value = String(year);
   byId('season-year').append(option);
+  byId('airing-year').append(option.cloneNode(true));
 }
-function renderSeasonGenres(availableTags, selected) {
-  const choices = byId('season-tags');
-  const search = byId('season-tag-search');
-  seasonGenreSelection = new Set(selected ? selected.split(',') : []);
+function renderGenres(prefix, availableTags, selected) {
+  const choices = byId(`${prefix}-tags`);
+  const search = byId(`${prefix}-tag-search`);
+  genreSelections[prefix] = new Set(selected ? selected.split(',') : []);
   const featured = ['action', 'adventure', 'comedy', 'drama', 'fantasy',
     'romance', 'sci-fi', 'slice of life', 'supernatural', 'sports', 'horror',
     'mystery', 'psychological', 'mecha', 'music', 'historical', 'magic'];
@@ -706,7 +661,7 @@ function renderSeasonGenres(availableTags, selected) {
     const query = search.value.trim().toLowerCase();
     const matching = query
       ? availableTags.filter((tag) => tag.includes(query))
-      : [...new Set([...seasonGenreSelection,
+      : [...new Set([...genreSelections[prefix],
         ...featured.filter((tag) => availableTags.includes(tag)), ...availableTags])];
     choices.replaceChildren();
     for (const tag of matching.slice(0, 40)) {
@@ -714,23 +669,23 @@ function renderSeasonGenres(availableTags, selected) {
       const box = element('input');
       box.type = 'checkbox';
       box.value = tag;
-      box.checked = seasonGenreSelection.has(tag);
+      box.checked = genreSelections[prefix].has(tag);
       box.addEventListener('change', () => {
         if (box.checked) {
-          if (seasonGenreSelection.size >= 5) box.checked = false;
-          else seasonGenreSelection.add(tag);
-        } else seasonGenreSelection.delete(tag);
-        byId('season-form').querySelector('.genre-picker summary').textContent =
-          `Genres & themes · ${seasonGenreSelection.size || 'All'}`;
+          if (genreSelections[prefix].size >= 5) box.checked = false;
+          else genreSelections[prefix].add(tag);
+        } else genreSelections[prefix].delete(tag);
+        byId(`${prefix}-form`).querySelector('.genre-picker summary').textContent =
+          `Genres & themes · ${genreSelections[prefix].size || 'All'}`;
       });
       label.append(box, document.createTextNode(tag));
       choices.append(label);
     }
-    byId('season-tag-count').textContent = matching.length > 40
+    byId(`${prefix}-tag-count`).textContent = matching.length > 40
       ? `Showing 40 of ${matching.length} matches. Search to narrow; select up to five.`
       : `${matching.length} matching genres and themes. Select up to five.`;
-    byId('season-form').querySelector('.genre-picker summary').textContent =
-      `Genres & themes · ${seasonGenreSelection.size || 'All'}`;
+    byId(`${prefix}-form`).querySelector('.genre-picker summary').textContent =
+      `Genres & themes · ${genreSelections[prefix].size || 'All'}`;
   };
   search.value = '';
   search.oninput = render;
@@ -764,7 +719,7 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
       return;
     }
-    renderSeasonGenres(page.availableTags ?? [], tag);
+    renderGenres('season', page.availableTags ?? [], tag);
     notice.textContent = page.state === 'stale'
       ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
@@ -809,7 +764,7 @@ byId('season-form').addEventListener('submit', (event) => {
   const year = Number(byId('season-year').value);
   const season = byId('season-name').value;
   const kind = byId('season-kind').value;
-  const tag = [...seasonGenreSelection].join(',');
+  const tag = [...genreSelections.season].join(',');
   if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100)) return;
   const route = seasonRoute(year, season, 0, { kind, tag });
   if (location.hash === route) void loadSeasonal({ year, season,
@@ -825,19 +780,28 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
     notice.textContent = 'Loading ongoing titles…';
     list.replaceChildren();
   }
-  const date = new Date();
-  const year = date.getUTCFullYear();
-  const season = ['WINTER', 'SPRING', 'SUMMER', 'FALL'][Math.floor(date.getUTCMonth() / 3)];
+  const { year, season, kind, tag, sort } = airingFilters;
+  byId('airing-year').value = String(year);
+  byId('airing-season').value = season;
+  byId('airing-kind').value = kind;
+  byId('airing-sort').value = sort;
   const params = new URLSearchParams({ year: String(year), season,
-    status: 'ongoing' });
+    status: 'ongoing', sort });
+  if (kind !== 'all') params.set('kind', kind);
+  if (tag) params.set('tag', tag);
   if (after) params.set('after', String(after));
   try {
     const page = await api(`/api/seasons?${params}`);
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+    if (page.state === 'unavailable') {
+      notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
+      return;
+    }
+    if (after === 0) renderGenres('airing', page.availableTags ?? [], tag);
     notice.textContent = page.state === 'stale'
       ? 'Showing a saved ongoing-title list; release status may have changed.'
-      : 'Ongoing titles from the current season.';
+      : 'Titles AniMap currently marks ongoing. Popularity is not ranked here.';
     for (const item of page.items ?? []) {
       const count = item.libraryPresence?.verifiedEpisodeCount ?? 0;
       const available = item.libraryPresence?.state === 'in_library' && count > 0;
@@ -850,7 +814,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
       more.onclick = () => { void loadCurrentAiring(session, epoch, userId,
         page.nextAfter); };
     } else if (!list.childElementCount) {
-      list.append(element('p', 'No ongoing titles are listed for this season.',
+      list.append(element('p', 'No ongoing titles match these filters.',
         'empty-state'));
     }
   } catch {
@@ -859,6 +823,21 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
     notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
   }
 }
+byId('airing-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const year = Number(byId('airing-year').value);
+  const season = byId('airing-season').value;
+  const kind = byId('airing-kind').value;
+  const sort = byId('airing-sort').value;
+  const tag = [...genreSelections.airing].join(',');
+  if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
+      !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(season) ||
+      !['all', 'series', 'movies'].includes(kind) ||
+      !['newest', 'oldest', 'title_asc', 'title_desc'].includes(sort)) return;
+  airingFilters = { year, season, kind, tag, sort };
+  const epoch = airingResponses.invalidate();
+  void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);
+});
 async function loadAiring() {
   const session = sessionResponses.current();
   const epoch = airingResponses.invalidate();

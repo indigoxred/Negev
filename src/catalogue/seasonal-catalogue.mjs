@@ -12,6 +12,7 @@ const browseSeasons = new Set(['ALL', ...seasons]);
 const seasonOrder = new Map(['WINTER', 'SPRING', 'SUMMER', 'FALL'].map((value, index) => [value, index]));
 const kinds = new Set(['all', 'series', 'movies']);
 const statuses = new Set(['all', 'ongoing']);
+const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
 const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
@@ -222,11 +223,12 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     } catch { return { kind: 'unknown' }; }
   }
   return { async read({ year, season, after = 0, limit = 12,
-    kind = 'all', tag = '', status = 'all' } = {}) {
+    kind = 'all', tag = '', status = 'all', sort = 'newest' } = {}) {
     if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
         !browseSeasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
-        !kinds.has(kind) || !validTags(tag) || !statuses.has(status)) {
+        !kinds.has(kind) || !validTags(tag) || !statuses.has(status) ||
+        !sorts.has(sort)) {
       throw new TypeError('Invalid season page');
     }
     const time = now();
@@ -247,6 +249,16 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
         selectedTags.every((selected) => entry.tags.includes(selected)));
+    if (sort === 'oldest') entries.sort((a, b) =>
+      (a.year ?? year) - (b.year ?? year) ||
+      (seasonOrder.get(a.season ?? season) ?? 0) -
+        (seasonOrder.get(b.season ?? season) ?? 0) ||
+      a.title.localeCompare(b.title) || a.anidbId - b.anidbId);
+    if (sort === 'title_asc' || sort === 'title_desc') {
+      const direction = sort === 'title_desc' ? -1 : 1;
+      entries.sort((a, b) => direction * a.title.localeCompare(b.title) ||
+        a.anidbId - b.anidbId);
+    }
     const page = entries.slice(after, after + limit);
     const found = [];
     for (let offset = 0; offset < page.length; offset += 4) {
