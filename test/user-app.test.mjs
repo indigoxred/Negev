@@ -10,6 +10,33 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('rapid signed-in title browsing retains a bounded detail read budget', async () => {
+  const user = { id: 17, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    loadDetail: async ({ anidbId, page }) => ({ state: 'details', anidbId,
+      page, title: 'A title', kind: 'series', restricted: false,
+      episodes: [], total: 0, nextPage: null, complete: true }) });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    for (let id = 1; id <= 60; id++) {
+      const response = await app.inject({ method: 'GET',
+        url: `/api/catalogue/${id}`, headers: { cookie } });
+      assert.equal(response.statusCode, 200, `title ${id}: ${response.body}`);
+    }
+    const excessive = await app.inject({ method: 'GET',
+      url: '/api/catalogue/61', headers: { cookie } });
+    assert.equal(excessive.statusCode, 429);
+  } finally { await app.close(); }
+});
+
 test('cold-title preparation permits normal browsing after thirty deferred checks', async () => {
   const user = { id: 17, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
