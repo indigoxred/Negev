@@ -518,7 +518,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
       loadRelatedTitles: async ({ anidbId }) => {
-        return readDisplayRelations({
+        const related = await readDisplayRelations({
           readLocal: () => metadata.run(() => readAniDbRelatedTitles({
             baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
             timeoutMs: 4_000,
@@ -527,6 +527,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             timeoutMs: 4_000,
             titleForId: (id) => titleSource?.getTitle(id) ?? null }),
         });
+        if (related?.state !== 'related_titles' || !Array.isArray(related.items)) {
+          return related;
+        }
+        const checkedMs = now();
+        return { ...related, items: related.items.map((item) => ({ ...item,
+          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await loadFastDetail(input);

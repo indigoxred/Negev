@@ -27,7 +27,16 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
         if (!validId(item?.anidbId) || item.anidbId === result.anidbId ||
             seen.has(item.anidbId) || typeof item.title !== 'string' ||
             !item.title.trim() || typeof item.relation !== 'string' ||
-            !item.relation.trim()) throw new TypeError('Invalid franchise installment');
+            !item.relation.trim() ||
+            (item.libraryPresence !== undefined &&
+              (!['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
+                !Number.isSafeInteger(item.libraryPresence.verifiedEpisodeCount) ||
+                item.libraryPresence.verifiedEpisodeCount < 0 ||
+                item.libraryPresence.verifiedEpisodeCount > 10_000 ||
+                (item.libraryPresence.state === 'in_library') !==
+                  (item.libraryPresence.verifiedEpisodeCount > 0)))) {
+          throw new TypeError('Invalid franchise installment');
+        }
         seen.add(item.anidbId);
       }
       const newItems = result.items.filter((item) => !members.has(item.anidbId));
@@ -36,7 +45,8 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
       }
       for (const item of newItems) members.set(item.anidbId, {
         anidbId: item.anidbId, title: item.title.trim(),
-        relation: item.relation.trim() });
+        relation: item.relation.trim(),
+        ...(item.libraryPresence ? { libraryPresence: item.libraryPresence } : {}) });
       expanded.add(result.anidbId);
     },
   };

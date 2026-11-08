@@ -249,7 +249,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'related_titles', anidbId: 4158,
           completeness: 'unproven', items: [{ anidbId: 9589,
-            title: 'The Garden of Words', relation: 'SideStory' }] }));
+            title: 'The Garden of Words', relation: 'SideStory',
+            libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }] }));
         return;
       }
       if (path === '/api/catalogue/4158') {
@@ -339,6 +340,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.franchise.before, 'Explore next related title');
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
+      assert.match(mobile.franchise.listed, /1 verified item in library/);
       assert.equal(mobile.franchise.posterCards, 1);
       assert.equal(mobile.franchise.next, 'Try related titles again');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);

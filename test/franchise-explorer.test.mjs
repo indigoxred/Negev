@@ -47,3 +47,17 @@ test('an empty cached relation response is not presented as a complete franchise
     linkedInstallments: 0 });
   assert.equal(view.next(), null);
 });
+
+test('a related installment carries only a bounded positive library count', () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Sequel', relation: 'Sequel',
+      libraryPresence: { state: 'in_library', verifiedEpisodeCount: 3 } }] });
+  assert.deepEqual(view.items()[1].libraryPresence,
+    { state: 'in_library', verifiedEpisodeCount: 3 });
+  const invalid = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  assert.throws(() => invalid.add({ anidbId: 10, state: 'related_titles',
+    completeness: 'unproven', items: [{ anidbId: 20, title: 'Sequel',
+      relation: 'Sequel', libraryPresence: { state: 'in_library',
+        verifiedEpisodeCount: -1 } }] }));
+});
