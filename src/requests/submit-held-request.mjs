@@ -57,12 +57,14 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;
-    if (!intent.monitorFuture && intent.episodeIds.length > 0 &&
-        (await Promise.all(intent.episodeIds.map((episodeId) =>
-          recentlyAvailable({ anidbId, episodeId })))).every((value) => value === true)) {
+    const currentAvailability = await Promise.all(intent.episodeIds.map((episodeId) =>
+      recentlyAvailable({ anidbId, episodeId })));
+    const missingIds = intent.episodeIds.filter((_, index) =>
+      currentAvailability[index] !== true);
+    if (!intent.monitorFuture && missingIds.length === 0) {
       return held('already_available');
     }
     return ledger.submit({ requesterId, requestKey, commandKey,
-      intent: { ...intent, title }, nowMs: now() });
+      intent: { ...intent, episodeIds: missingIds, title }, nowMs: now() });
   };
 }
