@@ -1151,8 +1151,23 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
         'detail-alias'));
     }
-    if (display.description) displaySummary.append(element('p',
-      display.description, 'detail-description'));
+    if (display.description) {
+      const description = element('p', display.description, 'detail-description');
+      displaySummary.append(description);
+      if (display.description.length > 600) {
+        description.classList.add('is-collapsed');
+        const toggle = element('button', 'Read full synopsis',
+          'detail-description-toggle');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.addEventListener('click', () => {
+          const expanded = !description.classList.toggle('is-collapsed');
+          toggle.setAttribute('aria-expanded', String(expanded));
+          toggle.textContent = expanded ? 'Show less' : 'Read full synopsis';
+        });
+        displaySummary.append(toggle);
+      }
+    }
     const quickFacts = element('dl', undefined, 'detail-quickfacts');
     for (const [label, value] of [
       ['Format', display.type], ['First aired', display.startDate],
