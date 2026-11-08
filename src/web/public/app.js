@@ -1326,7 +1326,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
-    const relatedButton = element('button', 'Explore franchise', 'text-link related-trigger');
+    const relatedButton = element('button', 'Show more related titles', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
     let installmentSelect = null;
     const syncInstallmentChoice = () => {
@@ -1351,9 +1351,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const image = posterImage(installment);
         image.addEventListener('load', () => art.classList.add('has-poster'));
         art.append(image);
-        art.append(element('small', relationLabel(installment.relation),
-          'related-relation'));
         const copy = element('span', undefined, 'related-copy');
+        copy.append(element('small', relationLabel(installment.relation),
+          'related-relation'));
         copy.append(element('strong', installment.title));
         const count = installment.libraryPresence?.state === 'in_library'
           ? installment.libraryPresence.verifiedEpisodeCount : 0;
@@ -1367,7 +1367,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         });
         relatedList.append(open);
       }
-      relatedButton.textContent = family.next() ? 'Explore next related title' :
+      relatedButton.textContent = family.next() ? 'Show more related titles' :
         'No more cached links to explore';
       relatedButton.hidden = !family.next();
       relatedButton.disabled = !family.next();
@@ -1385,6 +1385,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       if (!next || relatedLoading) return;
       relatedLoading = true;
       relatedButton.disabled = true;
+      relatedButton.textContent = 'Loading related titles…';
       try {
         const related = await api(`/api/catalogue/${next.anidbId}/related`);
         family.add(related);
@@ -1406,7 +1407,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           } else relatedList.replaceChildren(error);
           if (family.next()) {
             relatedButton.textContent = next.anidbId === item.anidbId ?
-              'Try related titles again' : 'Explore next related title';
+              'Try related titles again' : 'Show more related titles';
             relatedButton.hidden = false;
             relatedButton.disabled = false;
           }

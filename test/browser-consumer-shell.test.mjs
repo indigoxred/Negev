@@ -147,6 +147,11 @@ async function inspectMobile(url, profile, width = 390) {
           posterCards: document.querySelectorAll('.related-list .related-card img').length,
           relationLabels: [...document.querySelectorAll('.related-relation')]
             .map((label) => label.textContent),
+          relationBelowPoster: cards.every((card) => {
+            const poster = card.querySelector('.related-art')?.getBoundingClientRect();
+            const relation = card.querySelector('.related-relation')?.getBoundingClientRect();
+            return poster && relation && relation.top >= poster.bottom - 1;
+          }),
           firstRowCount: cards.filter((card) => Math.abs(card.getBoundingClientRect().top - firstTop) < 2).length,
           next: document.querySelector('.related-trigger')?.textContent}; })()`,
     });
@@ -352,14 +357,16 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
-      assert.equal(mobile.franchise.before, 'Explore next related title');
+      assert.equal(mobile.franchise.before, 'Show more related titles');
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
       assert.match(mobile.franchise.listed, /1 verified item in library/);
       assert.equal(mobile.franchise.posterCards, 5);
       assert.deepEqual(mobile.franchise.relationLabels,
         ['Side story', 'Sequel', 'Prequel', 'Side story', 'Alternative']);
-      assert.equal(mobile.franchise.next, 'Explore next related title');
+      assert.equal(mobile.franchise.relationBelowPoster, true,
+        'relation labels remain readable below poster artwork');
+      assert.equal(mobile.franchise.next, 'Show more related titles');
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
