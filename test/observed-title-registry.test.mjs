@@ -11,9 +11,11 @@ test('only exact recently observed AniDB IDs are trusted', () => {
   assert.equal(registry.isKnownTitle({ anidbId: 42 }), false);
   assert.equal(registry.observe(hit(42)), true);
   assert.equal(registry.isKnownTitle({ anidbId: 42 }), true);
+  assert.equal(registry.getTitle({ anidbId: 42 }), 'Title 42');
   assert.equal(registry.isKnownTitle({ anidbId: 43 }), false);
   time = 1_100;
   assert.equal(registry.isKnownTitle({ anidbId: 42 }), false);
+  assert.equal(registry.getTitle({ anidbId: 42 }), null);
 });
 
 test('malformed search results cannot authorize arbitrary IDs and capacity is bounded', () => {

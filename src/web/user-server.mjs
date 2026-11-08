@@ -35,6 +35,7 @@ let airingScheduler;
 let plexScheduler;
 let fileBackfillScheduler;
 let directAvailabilityScheduler;
+let pendingTitleScheduler;
 try {
   const config = parseUserServerConfig(process.env);
   const store = await openUserStore({ dataDir: config.dataDir });
@@ -148,6 +149,17 @@ try {
       idleDelayMs: config.titleCheck ? 60_000 : 5 * 60_000 });
     directAvailabilityScheduler.start();
   }
+  pendingTitleScheduler = createDirectAvailabilityScheduler({
+    runOnce: async () => {
+      const result = await service.tickPendingTitle();
+      return ['resolved', 'complete'].includes(result?.state)
+        ? { state: 'checked' } : result;
+    },
+    initialDelayMs: 10_000,
+    activeDelayMs: 10_000,
+    idleDelayMs: 60_000,
+  });
+  pendingTitleScheduler.start();
   process.stdout.write(`Negev user API listening on ${config.host}:${config.port}\n`);
   let stopping = false;
   const stop = async () => {
@@ -158,6 +170,7 @@ try {
       await plexScheduler?.close();
       await fileBackfillScheduler?.close();
       await directAvailabilityScheduler?.close();
+      await pendingTitleScheduler?.close();
       await shokoInventory?.close();
       await shokoRecent?.close();
       await shokoFeedSupervisor?.close();
@@ -172,6 +185,7 @@ try {
     await plexScheduler?.close();
     await fileBackfillScheduler?.close();
     await directAvailabilityScheduler?.close();
+    await pendingTitleScheduler?.close();
     await shokoInventory?.close();
     await shokoRecent?.close();
     await shokoFeedSupervisor?.close();

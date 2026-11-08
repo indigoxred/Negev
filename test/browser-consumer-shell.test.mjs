@@ -213,6 +213,13 @@ test('signed-in consumer routes render real shell with search, library and reque
         }], nextBeforeId: null }));
         return;
       }
+      if (path === '/api/request-preparations') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ items: [{ id: 12, anidbId: 19847,
+          title: 'FX Senshi Kurumi-chan', state: 'pending',
+          reason: 'detail_pending', createdMs: 1_000 }], nextBeforeId: 12 }));
+        return;
+      }
       if (path === '/api/catalogue/search') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'results', page: 1, total: 1,
@@ -444,6 +451,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(throttledDetail, /A new anime description/);
       assert.match(throttledDetail, /Episode details are temporarily unavailable/);
       assert.match(throttledDetail, /Try again/);
+      assert.match(throttledDetail, /Request while details prepare/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
       assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);
@@ -453,6 +461,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(alternateFilm, /Choose the film version or part/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
+      assert.match(requests, /FX Senshi Kurumi-chan/);
+      assert.match(requests, /Preparing episode details/);
+      assert.match(requests, /id="more-preparations" type="button">Show older preparations/);
       assert.match(requests, /Cancel request/);
       assert.match(requests, /My requests/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);

@@ -32,7 +32,11 @@ const privateLanHost = (hostname) => {
 // separately; no browser can supply a requester ID or torrent URL.
 export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   localOrigin = null, secureCookies = true,
-  now = Date.now, submitRequest, cancelRequest, readRequest, listRequests, listLibraryTitles,
+  now = Date.now, submitRequest, queuePendingTitle,
+  cancelRequest, readRequest, listRequests,
+  listPendingTitles, readPendingTitle, readPendingTitleByKey,
+  readActivePendingTitle,
+  cancelPendingTitle, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
   readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
@@ -789,10 +793,54 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         return reply.code(403).send({ error: '18+ requests are disabled for this account' });
       }
     }
+    if (typeof body.requestKey === 'string' &&
+        /^[A-Za-z0-9_-]{1,64}$/.test(body.requestKey) &&
+        typeof readPendingTitleByKey === 'function') {
+      const pending = readPendingTitleByKey({
+        requesterId: request.negevUser.id, requestKey: body.requestKey });
+      if (pending) {
+        if (body.scope !== 'installment' ||
+            pending.anidbId !== body.anidbId ||
+            Array.isArray(body.episodeIds)) {
+          return reply.code(409).send({ state: 'held',
+            reason: 'idempotency_key_conflict' });
+        }
+        if (pending.state === 'resolved') {
+          return reply.code(202).send({ state: 'held',
+            requestId: pending.normalRequestId });
+        }
+        if (['pending', 'resolving'].includes(pending.state)) {
+          return reply.code(202).send({ state: 'pending',
+            intentId: pending.id, created: false });
+        }
+        return reply.code(409).send({ state: 'held',
+          reason: pending.reason ?? 'intent_already_finished' });
+      }
+    }
+    if (body.scope === 'installment' && body.episodeIds === undefined &&
+        Number.isSafeInteger(body.anidbId) && body.anidbId > 0 &&
+        typeof readActivePendingTitle === 'function') {
+      const active = readActivePendingTitle({
+        requesterId: request.negevUser.id, anidbId: body.anidbId });
+      if (active) return reply.code(202).send({ state: 'pending',
+        intentId: active.id, created: false });
+    }
     const result = await submitRequest({ ...body, requesterId: request.negevUser.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
       return reply.code(202).send(result);
+    }
+    if (body.scope === 'installment' &&
+        ['detail_pending', 'detail_unavailable'].includes(result.reason) &&
+        typeof queuePendingTitle === 'function') {
+      const pending = await queuePendingTitle({
+        requesterId: request.negevUser.id, anidbId: body.anidbId,
+        requestKey: body.requestKey });
+      if (pending?.state === 'pending' &&
+          Number.isSafeInteger(pending.intentId) && pending.intentId > 0) {
+        return reply.code(202).send(pending);
+      }
+      return reply.code(409).send(pending ?? result);
     }
     if (result.reason === 'already_available') {
       return reply.code(409).send({ error: 'Already available in Negev’s Library',
@@ -816,6 +864,56 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view });
   });
+  app.get('/api/request-preparations', { preHandler: requireUser },
+  async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (typeof listPendingTitles !== 'function') {
+      return reply.code(503).send({ error: 'Request preparation unavailable' });
+    }
+    const rawBefore = request.query.beforeId;
+    const beforeId = rawBefore === undefined ? Number.MAX_SAFE_INTEGER :
+      Number(rawBefore);
+    if (Object.keys(request.query).some((key) => key !== 'beforeId') ||
+        rawBefore !== undefined && (typeof rawBefore !== 'string' ||
+          !/^[1-9]\d*$/.test(rawBefore)) ||
+        !Number.isSafeInteger(beforeId) || beforeId < 1) {
+      return reply.code(400).send({ error: 'Invalid preparation page' });
+    }
+    const page = listPendingTitles({ requesterId: request.negevUser.id,
+      beforeId, limit: 20 });
+    return { items: page.items.map((item) => ({ id: item.id,
+      anidbId: item.anidbId, title: item.title, state: item.state,
+      reason: item.reason, createdMs: item.nowMs })),
+      nextBeforeId: page.nextBeforeId };
+  });
+  app.post('/api/request-preparations/:id/cancel',
+    { preHandler: writeGuards }, async (request, reply) => {
+      reply.header('Cache-Control', 'no-store');
+      const rawId = request.params.id;
+      const intentId = Number(rawId);
+      if (typeof rawId !== 'string' || !/^[1-9]\d*$/.test(rawId) ||
+          !Number.isSafeInteger(intentId) ||
+          Object.keys(request.query).length ||
+          !allowedBody(request.body, []) ||
+          Object.keys(request.body).length !== 0) {
+        return reply.code(400).send({ error: 'Invalid cancellation' });
+      }
+      if (typeof readPendingTitle !== 'function' ||
+          typeof cancelPendingTitle !== 'function') {
+        return reply.code(503).send({ error: 'Cancellation unavailable' });
+      }
+      const item = readPendingTitle(intentId);
+      if (!item || item.requesterId !== request.negevUser.id) {
+        return reply.code(404).send({ error: 'Preparation not found' });
+      }
+      const result = cancelPendingTitle({ requesterId: request.negevUser.id,
+        intentId, nowMs: now() });
+      return result.state === 'cancelled' ? result :
+        reply.code(409).send({ error: result.reason === 'resolution_in_progress'
+          ? 'Request is being finalized. Refresh My Requests to see its result.'
+          : 'Preparation cannot be cancelled',
+          reason: result.reason });
+    });
   app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const requestId = Number(request.params.id);

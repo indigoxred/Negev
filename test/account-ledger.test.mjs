@@ -77,6 +77,9 @@ test('admin can disable adult requests for one user without changing other accou
         version: friend.sessionVersion }).adultAllowed, false);
       assert.equal(ledger.getSessionUser({ userId: owner.id,
         version: owner.sessionVersion }).adultAllowed, true);
+      assert.equal(ledger.getActiveUser({ userId: friend.id }).adultAllowed,
+        false, 'background resolution reads the current account setting');
+      assert.equal(ledger.getActiveUser({ userId: 999 }), null);
       assert.equal(ledger.listUsers({ adminUserId: owner.id }).items.length, 2);
     } finally { ledger.close(); }
     const reopened = openAccountLedger(dbPath, { now: () => 2_000 });
