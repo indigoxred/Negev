@@ -170,12 +170,38 @@ async function inspectMobile(url, profile, width = 390) {
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
+    await wait(700);
+    const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        const button = action?.querySelector('.primary'); button?.click();
+        return {button: button?.textContent,
+          reviewVisible: !action?.querySelector('.request-review')?.hidden,
+          summary: action?.querySelector('.request-review p')?.textContent}; })()`,
+    });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/19849') });
+    await wait(700);
+    await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        action?.querySelector('.primary')?.click();
+        [...document.querySelectorAll('#detail button')]
+          .find((button) => button.textContent === 'Retry loading details')?.click();
+        return true; })()`,
+    });
+    await wait(700);
+    const reviewAfterRetry = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {button: action?.querySelector('.primary')?.textContent,
+          reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
+    });
     return { ...result.value, menu: menu.result.value,
       adultChoice: adultChoice.result.value, filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
-      requestReview: requestReview.result.value };
+      requestReview: requestReview.result.value,
+      coldRequestReview: coldRequestReview.result.value,
+      reviewAfterRetry: reviewAfterRetry.result.value };
   } finally {
     socket?.close();
     child.kill();
@@ -185,6 +211,7 @@ async function inspectMobile(url, profile, width = 390) {
 
 test('signed-in consumer routes render real shell with search, library and requests',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+    let allowAdult = true;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -192,7 +219,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
-          adultAllowed: true },
+          adultAllowed: allowAdult },
           csrfToken: 'test-only', capabilities: { acquisitionState: 'disabled',
             titleChecks: true, detailLoad: true } }));
         return;
@@ -351,7 +378,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/catalogue/19847/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 19847,
-          title: 'FX Senshi Kurumi-chan', englishTitle: null, type: 'TV Series',
+          title: 'FX Senshi Kurumi-chan', restricted: false,
+          englishTitle: null, type: 'TV Series',
           startYear: 2026, startDate: '2026-10-01', endDate: null,
           episodeCount: 12, description: 'A new anime description.', tags: [] }));
         return;
@@ -426,6 +454,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
+      assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
+        reviewVisible: true,
+        summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
+      assert.equal(mobile.reviewAfterRetry.button, 'Confirm request');
+      assert.equal(mobile.reviewAfterRetry.reviewVisible, true);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
@@ -514,6 +547,15 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /data-request-group="attention">(?:(?!<\/section>)[\s\S])*A title needing help/);
       assert.match(requests, /data-request-group="active">(?:(?!<\/section>)[\s\S])*Pale Cocoon/);
       assert.match(requests, /data-request-group="completed">(?:(?!<\/section>)[\s\S])*The Garden of Words/);
+      allowAdult = false;
+      const ordinaryCold = await dump(`${base}/#/title/19848`,
+        join(dir, 'ordinary-cold-adult-blocked'));
+      assert.match(ordinaryCold, /Request if missing/,
+        'disabling 18+ must not block an ordinary cold-title request');
+      const ordinaryDescription = await dump(`${base}/#/title/19847`,
+        join(dir, 'ordinary-description-adult-blocked'));
+      assert.match(ordinaryDescription, /A new anime description/,
+        'disabling 18+ must not hide an ordinary title synopsis');
     } finally {
       await new Promise((resolve) => server.close(resolve));
       await rm(dir, { recursive: true, force: true,

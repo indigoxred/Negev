@@ -1199,15 +1199,37 @@ byId('search-form').addEventListener('submit', async (event) => {
   }
 });
 function pendingTitleAction(item) {
-  if (!state.user || state.user.adultAllowed !== true ||
-      !state.showAdult && item.adult === true) return null;
+  if (!state.user || item.adult === true &&
+      (!state.showAdult || state.user.adultAllowed !== true)) return null;
   const action = element('section', undefined, 'request-action');
+  action.dataset.pending = 'true';
   const button = element('button', 'Request if missing', 'primary');
   const status = element('p', '', 'muted request-feedback');
   status.setAttribute('role', 'status');
-  action.append(button, status);
+  const review = element('div', undefined, 'request-review');
+  review.hidden = true;
+  review.append(element('strong', 'Review your request'));
+  review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
+  const back = element('button', 'Back', 'quiet');
+  back.type = 'button';
+  back.addEventListener('click', () => {
+    action.dataset.reviewing = 'false';
+    review.hidden = true;
+    button.textContent = 'Request if missing';
+    status.textContent = '';
+  });
+  review.append(back);
+  action.append(review, button, status);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
+    if (action.dataset.reviewing !== 'true') {
+      action.dataset.reviewing = 'true';
+      review.hidden = false;
+      button.textContent = 'Confirm request';
+      status.textContent = 'Negev will check the episode list and Plex before any download.';
+      return;
+    }
+    action.dataset.saving = 'true';
     button.disabled = true;
     button.textContent = 'Saving request…';
     status.textContent = 'Saving your request…';
@@ -1217,6 +1239,8 @@ function pendingTitleAction(item) {
         body: JSON.stringify({ anidbId: item.anidbId, scope: 'installment',
           requestKey: requestKeys.pending(scope) }) });
       requestKeys.saved(scope);
+      action.dataset.saving = 'false';
+      action.dataset.saved = 'true';
       button.textContent = 'Requested';
       status.textContent = saved.state === 'pending'
         ? 'Request received. Negev will check the episode list and library before accepting any missing episodes or starting a download. Follow it under My Requests.'
@@ -1224,8 +1248,9 @@ function pendingTitleAction(item) {
       message('Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
+      action.dataset.saving = 'false';
       button.disabled = false;
-      button.textContent = 'Request if missing';
+      button.textContent = 'Confirm request';
       status.textContent = error.message;
       message(error.message, true);
     }
@@ -1233,6 +1258,9 @@ function pendingTitleAction(item) {
   return action;
 }
 async function showDetail(item, franchise = null, refreshAttempt = 0) {
+  const previousAction = state.selected === item.anidbId
+    ? byId('detail').querySelector('.request-action[data-pending="true"]')
+    : null;
   if (detailPollTimer !== null) clearTimeout(detailPollTimer);
   detailPollTimer = null;
   const detailRequest = detailResponses.invalidate();
@@ -1250,7 +1278,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     element('p', 'Loading episode details…', 'muted'), displaySummary);
   // A cold title can take time to gain an episode list. Keep the request
   // action available while that independent read is in flight.
-  const earlyRequest = pendingTitleAction(item);
+  const earlyRequest = previousAction ?? pendingTitleAction(item);
   if (earlyRequest) panel.append(earlyRequest);
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
@@ -1268,6 +1296,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   }
   const renderDisplay = (display, title) => {
     if (!isCurrentDetail() || display?.state !== 'display') return;
+    if (display.restricted !== false &&
+        (!state.showAdult || state.user?.adultAllowed !== true)) return;
     displaySummary.replaceChildren();
     const main = element('div', undefined, 'detail-main');
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
@@ -1315,9 +1345,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     displaySummary.append(main);
     if (quickFacts.childElementCount) displaySummary.append(quickFacts);
   };
-  if (state.showAdult && state.user?.adultAllowed !== false) {
-    void displayRead.then((display) => renderDisplay(display, item.title));
-  }
+  void displayRead.then((display) => renderDisplay(display, item.title));
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
@@ -1742,6 +1770,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
+    // Keep the original control mounted while its save is in flight so the
+    // asynchronous result and request number remain visible after hydration.
+    if (earlyRequest?.dataset.saving === 'true' ||
+        earlyRequest?.dataset.saved === 'true') {
+      panel.insertBefore(earlyRequest, relatedHeading);
+      return;
+    }
     const requestAction = element('section', undefined, 'request-action');
     requestAction.append(element('h2', 'Request this installment'));
     requestAction.append(element('p', data.kind === 'movie'
@@ -1781,9 +1816,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const button = element('button', requestLabel(), 'primary');
     let requestSaving = false;
     let requestSaved = false;
-    let reviewingRequest = false;
+    let reviewingRequest = earlyRequest?.dataset.reviewing === 'true';
     const requestReview = element('div', undefined, 'request-review');
-    requestReview.hidden = true;
+    requestReview.hidden = !reviewingRequest;
     requestReview.append(element('strong', 'Review your request'));
     requestReview.append(element('p', data.kind === 'movie'
       ? `${data.title || item.title} · one film entry`
@@ -1906,9 +1941,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       displaySummary, unavailable, retry);
     const pendingAction = earlyRequest;
     if (pendingAction) panel.append(pendingAction);
-    if (state.showAdult && state.user?.adultAllowed !== false) {
-      void displayRead.then((display) => renderDisplay(display, item.title));
-    }
+    void displayRead.then((display) => renderDisplay(display, item.title));
   }
 }
 void refreshSession();
