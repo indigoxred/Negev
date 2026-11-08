@@ -1,7 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readAniDbRelatedTitles } from '../src/catalogue/anidb-related-titles.mjs';
-import { preferDisplayRelations, readDisplayRelations } from '../src/catalogue/anidb-related-titles.mjs';
+import { createCachedDisplayRelations, preferDisplayRelations,
+  readDisplayRelations } from '../src/catalogue/anidb-related-titles.mjs';
+
+test('related-title reads coalesce and reuse a successful result', async () => {
+  let calls = 0;
+  const result = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Sequel', relation: 'Sequel' }] };
+  const reader = createCachedDisplayRelations({
+    read: async () => { calls++; return result; }, now: () => 1_000,
+  });
+  assert.deepEqual(await Promise.all([
+    reader({ anidbId: 42 }), reader({ anidbId: 42 }),
+  ]), [result, result]);
+  assert.deepEqual(await reader({ anidbId: 42 }), result);
+  assert.equal(calls, 1);
+});
+
+test('related-title cache serves recent proof during a provider outage', async () => {
+  let clock = 1_000;
+  let online = true;
+  const result = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Sequel', relation: 'Sequel' }] };
+  const reader = createCachedDisplayRelations({
+    read: async () => online ? result : { state: 'unavailable' },
+    now: () => clock, freshMs: 100, staleMs: 1_000,
+  });
+  assert.deepEqual(await reader({ anidbId: 42 }), result);
+  online = false;
+  clock += 150;
+  assert.deepEqual(await reader({ anidbId: 42 }), result);
+  clock += 1_000;
+  assert.deepEqual(await reader({ anidbId: 42 }), { state: 'unavailable' });
+  assert.deepEqual(await reader({ anidbId: 43 }), { state: 'unavailable' });
+});
 
 test('display can use archive relations when Shoko holds an unverified edge', () => {
   const archive = { state: 'related_titles', anidbId: 42,
