@@ -79,3 +79,22 @@ test('active pace cannot exceed the bounded 10-second to five-minute range', () 
     }), TypeError);
   }
 });
+
+test('pending title runner can begin shortly after startup without overlap', async () => {
+  const timers = [];
+  const scheduler = createDirectAvailabilityScheduler({
+    runOnce: async () => ({ state: 'resolved' }),
+    initialDelayMs: 10_000,
+    idleDelayMs: 60_000,
+    setTimer: (fn, delay) => { timers.push({ fn, delay }); return timers.length; },
+    clearTimer: () => {},
+  });
+  scheduler.start();
+  assert.equal(timers.shift().delay, 10_000);
+  await scheduler.close();
+  for (const initialDelayMs of [0, 999, 300_001]) {
+    assert.throws(() => createDirectAvailabilityScheduler({
+      runOnce: async () => ({}), initialDelayMs,
+    }), TypeError);
+  }
+});

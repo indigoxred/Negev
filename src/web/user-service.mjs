@@ -2,6 +2,8 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
+import { openPendingTitleLedger } from '../requests/pending-title-ledger.mjs';
+import { createPendingTitleWorker } from '../requests/pending-title-worker.mjs';
 import { openRequestProgress } from '../requests/request-progress.mjs';
 import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
@@ -164,6 +166,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   }
   let accounts;
   let requests;
+  let pendingTitles;
   let acquisitions;
   let handoffs;
   let publishReview;
@@ -181,6 +184,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
+    pendingTitles = openPendingTitleLedger(dbPath);
     acquisitions = openAcquisitionLedger(dbPath);
     handoffs = openHandoffLedger(dbPath);
     publishReview = openHandoffPublishQueue(dbPath);
@@ -361,6 +365,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }).availability === 'available';
       },
     });
+    const pendingTitleWorker = createPendingTitleWorker({
+      ledger: pendingTitles, submitRequest, now,
+      authorize: ({ requesterId }) =>
+        accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true,
+      prepareDetail: shokoHydration ? ({ anidbId }) =>
+        metadata.run(() => hydrator.load({ anidbId })) : async () => {},
+    });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
         return status?.state === 'ready' || status?.state === 'stale'
@@ -446,6 +457,29 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => submitRequest(input),
+      queuePendingTitle: async ({ requesterId, anidbId, requestKey }) => {
+        if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
+            !Number.isSafeInteger(anidbId) || anidbId < 1 ||
+            typeof requestKey !== 'string') {
+          return { state: 'held', reason: 'invalid_request' };
+        }
+        // The exact submitter already confirmed this ID before returning
+        // detail_pending. Rechecking here would add another provider wait.
+        const title = titleSource?.getTitle(anidbId) ??
+          titleRegistry.getTitle({ anidbId });
+        if (typeof title !== 'string' || !title.trim() ||
+            title.trim() !== title || title.length > 300 ||
+            /[\x00-\x1f\x7f]/.test(title)) {
+          return { state: 'held', reason: 'title_unavailable' };
+        }
+        return pendingTitles.enqueue({ requesterId, anidbId,
+          title, requestKey, nowMs: now() });
+      },
+      listPendingTitles: (input) => pendingTitles.listForUser(input),
+      readPendingTitle: (id) => pendingTitles.get(id),
+      readPendingTitleByKey: (input) => pendingTitles.getByKey(input),
+      readActivePendingTitle: (input) => pendingTitles.getActiveForTitle(input),
+      cancelPendingTitle: (input) => pendingTitles.cancel(input),
       cancelRequest: (input) => requests.cancelRequest(input),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
@@ -705,6 +739,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }));
     };
     return { app,
+      tickPendingTitle: () => stopping
+        ? Promise.resolve({ state: 'held', reason: 'service_stopping' })
+        : track(pendingTitleWorker.runOnce()),
       pollAiringNextPage: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(airingWorker.runOnce());
@@ -863,7 +900,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               inventory.close(); hydration.close(); progress.close();
               completionReview.close(); startReview.close(); publishReview.close();
               handoffs.close(); acquisitions.close();
-              requests.close(); accounts.close();
+              pendingTitles.close(); requests.close(); accounts.close();
             }
           })();
         }
@@ -876,7 +913,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     progress?.close(); completionReview?.close(); startReview?.close();
     publishReview?.close();
     handoffs?.close(); acquisitions?.close();
-    requests?.close(); accounts?.close();
+    pendingTitles?.close(); requests?.close(); accounts?.close();
     throw error;
   }
 }

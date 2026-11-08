@@ -27,11 +27,13 @@ const state = { csrf: null, user: null, selected: null,
 const sessionResponses = createResponseEpoch();
 const requestResponses = {
   watching: createResponseEpoch(), history: createResponseEpoch(),
+  preparing: createResponseEpoch(),
 };
 const displayCache = new Map();
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
+  requestResponses.preparing.invalidate();
 }
 const reviewResponses = createResponseEpoch();
 const detailResponses = createResponseEpoch();
@@ -186,6 +188,7 @@ function showSession(data) {
     state.detailHydrationQueued.clear();
     displayCache.clear();
     byId('request-list').replaceChildren();
+    byId('preparing-list').replaceChildren();
     byId('watch-list').replaceChildren();
     byId('review-list').replaceChildren();
     byId('detail').replaceChildren(element('p',
@@ -544,8 +547,65 @@ async function refreshExpandedHistory() {
 }
 function loadRequests({ silent = false } = {}) {
   if (!state.user) return;
+  void loadPreparations(silent);
   void loadRequestView('watching', false, silent);
   void loadRequestView('history', false, silent);
+}
+async function loadPreparations(silent = false) {
+  const session = sessionResponses.current();
+  const epoch = requestResponses.preparing.invalidate();
+  const userId = state.user?.id;
+  const list = byId('preparing-list');
+  try {
+    const page = await api('/api/request-preparations');
+    if (!sessionResponses.isCurrent(session) ||
+        !requestResponses.preparing.isCurrent(epoch) ||
+        state.user?.id !== userId) return;
+    list.replaceChildren();
+    if (!page.items?.length) return;
+    const section = element('section', undefined, 'request-group');
+    section.append(element('h3', 'Preparing requests'));
+    const rows = element('div', undefined, 'request-group-rows');
+    for (const item of page.items) {
+      if (item.state === 'cancelled') continue;
+      const row = element('div', undefined, 'request-row');
+      row.append(posterImage(item));
+      const heading = element('div');
+      heading.append(element('strong', item.title),
+        element('small', 'Preparing episode details'));
+      const open = element('a', 'View title →', 'text-link');
+      open.href = titleRoute(item.anidbId);
+      heading.append(open);
+      if (item.state === 'pending') {
+        const cancel = element('button', 'Cancel request', 'quiet');
+        cancel.type = 'button';
+        cancel.addEventListener('click', async () => {
+          cancel.disabled = true;
+          try {
+            await api(`/api/request-preparations/${item.id}/cancel`, {
+              method: 'POST', body: '{}' });
+            message('Request cancelled. No download was started.');
+            loadRequests();
+          } catch (error) { message(error.message, true); cancel.disabled = false; }
+        });
+        heading.append(cancel);
+      }
+      row.append(heading, element('p', item.state === 'complete'
+        ? item.reason === 'already_available'
+          ? 'Already available in Negev’s Library.'
+          : 'This title could not be requested automatically.'
+        : 'Waiting for a verified episode list before any download.',
+      'muted'));
+      rows.append(row);
+    }
+    if (rows.childElementCount) { section.append(rows); list.append(section); }
+  } catch {
+    if (!silent && sessionResponses.isCurrent(session) &&
+        requestResponses.preparing.isCurrent(epoch)) {
+      list.replaceChildren(element('p',
+        'Preparing requests are temporarily unavailable.', 'muted'));
+    }
+  }
 }
 function refreshVisibleRequests() {
   if (!state.user || state.routePage !== 'requests') return;
@@ -1119,6 +1179,40 @@ byId('search-form').addEventListener('submit', async (event) => {
     message(error.message, true);
   }
 });
+function pendingTitleAction(item) {
+  if (!state.user || state.user.adultAllowed !== true ||
+      !state.showAdult && item.adult === true) return null;
+  const action = element('section', undefined, 'request-action');
+  const button = element('button', 'Request while details prepare', 'primary');
+  const status = element('p', '', 'muted request-feedback');
+  status.setAttribute('role', 'status');
+  action.append(button, status);
+  button.addEventListener('click', async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = 'Saving request…';
+    status.textContent = 'Saving your request…';
+    const scope = { userId: state.user.id, anidbId: item.anidbId };
+    try {
+      const saved = await api('/api/requests', { method: 'POST',
+        body: JSON.stringify({ anidbId: item.anidbId, scope: 'installment',
+          requestKey: requestKeys.pending(scope) }) });
+      requestKeys.saved(scope);
+      button.textContent = 'Requested';
+      status.textContent = saved.state === 'pending'
+        ? 'Request saved. We will prepare the episode list and check the library before any download. Follow it under My Requests.'
+        : `Request #${saved.requestId} saved. Follow it under My Requests.`;
+      message('Request saved. Follow it under My Requests.');
+      loadRequests();
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = 'Request while details prepare';
+      status.textContent = error.message;
+      message(error.message, true);
+    }
+  });
+  return action;
+}
 async function showDetail(item, franchise = null, refreshAttempt = 0) {
   if (detailPollTimer !== null) clearTimeout(detailPollTimer);
   detailPollTimer = null;
@@ -1228,6 +1322,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       } else {
         panel.append(element('p', 'Preparing episode details automatically. You can keep browsing; this page will update when they are ready.', 'muted'));
       }
+      const pendingAction = pendingTitleAction(item);
+      if (pendingAction) panel.append(pendingAction);
       if (state.detailLoad) {
         const retry = element('button', 'Retry loading details');
         retry.hidden = true;
@@ -1710,8 +1806,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestKeys.saved(scope);
         requestSaved = true;
         button.textContent = 'Requested';
-        requestStatus.textContent = `Request #${saved.requestId} saved. View its progress under My Requests.`;
-        message(`Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
+        requestStatus.textContent = saved.state === 'pending'
+          ? 'Request saved. Episode details are being prepared. Follow it under My Requests.'
+          : `Request #${saved.requestId} saved. View its progress under My Requests.`;
+        message(saved.state === 'pending'
+          ? 'Request saved. Follow it under My Requests.'
+          : `Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
         loadRequests();
       } catch (error) {
         requestStatus.textContent = error.message;
@@ -1744,6 +1844,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     'muted');
     panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
       displaySummary, unavailable, retry);
+    const pendingAction = pendingTitleAction(item);
+    if (pendingAction) panel.append(pendingAction);
     if (state.showAdult && state.user?.adultAllowed !== false) {
       void displayRead.then((display) => renderDisplay(display, item.title));
     }

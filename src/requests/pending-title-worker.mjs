@@ -5,11 +5,12 @@ const terminalReasons = new Set(['already_available', 'invalid_request',
 // One paced resolution attempt. The only way this worker creates an
 // acquisition-visible request is through the existing exact submitter.
 export function createPendingTitleWorker({ ledger, submitRequest,
-  prepareDetail = async () => {}, now = Date.now } = {}) {
+  authorize, prepareDetail = async () => {}, now = Date.now } = {}) {
   if (typeof ledger?.claimDue !== 'function' ||
       typeof ledger.defer !== 'function' ||
       typeof ledger.finish !== 'function' ||
       typeof submitRequest !== 'function' ||
+      typeof authorize !== 'function' ||
       typeof prepareDetail !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid pending title worker');
   }
@@ -18,12 +19,21 @@ export function createPendingTitleWorker({ ledger, submitRequest,
       const startedMs = now();
       const claim = ledger.claimDue({ nowMs: startedMs, leaseMs: 300_000 });
       if (!claim) return { state: 'idle' };
+      let authorized;
+      try { authorized = await authorize({ requesterId: claim.requesterId }); }
+      catch { authorized = null; }
+      if (authorized === false) {
+        return ledger.finish({ intentId: claim.id, version: claim.version,
+          reason: 'account_access_changed', nowMs: now() });
+      }
       let result;
       try {
+        if (authorized !== true) throw new TypeError('Account status unavailable');
         result = await submitRequest({ requesterId: claim.requesterId,
           anidbId: claim.anidbId, scope: 'installment',
           requestKey: claim.requestKey });
-      } catch { result = { state: 'held', reason: 'submit_unavailable' }; }
+      } catch { result = { state: 'held', reason: authorized === true
+        ? 'submit_unavailable' : 'authorization_unavailable' }; }
       if (result?.state === 'held' && Number.isSafeInteger(result.requestId) &&
           result.requestId > 0) {
         const saved = ledger.finish({ intentId: claim.id,

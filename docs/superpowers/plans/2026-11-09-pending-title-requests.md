@@ -29,7 +29,7 @@
 
 **Files:** Create `src/requests/pending-title-ledger.mjs`; test `test/pending-title-ledger.test.mjs`.
 
-**Interface:** `openPendingTitleLedger(dbPath)` returns `enqueue`, `get`, `listDue`, `defer`, `resolve`, `cancel`, `close`. It shares the SQLite path but has no acquisition targets.
+**Interface:** `openPendingTitleLedger(dbPath)` returns `enqueue`, `get`, `claimDue`, `defer`, `finish`, `cancel`, `close`. It shares the SQLite path but has no acquisition targets.
 
 - [x] Write failing restart, idempotency, conflict, cancellation and due-order tests.
 - [x] Run the focused test and confirm failure.
@@ -50,13 +50,15 @@
 
 **Files:** Modify `src/web/user-app.mjs`, `src/web/user-service.mjs`, the service tick loop, and focused route tests.
 
-- [ ] Write failing authorization, key-reuse, history and no-target acquisition tests.
-- [ ] Confirm failure, wire ledger and paced worker, rerun and commit.
+- [x] Write failing authorization, key-reuse, history and no-target acquisition tests.
+- [x] Confirm failure and wire ledger and paced worker.
+- [ ] Rerun focused checks and commit.
 
 ### Task 4: Consumer flow and isolated proof
 
 **Files:** Modify `src/web/public/app.js`, browser tests, and relevant copy/style.
 
-- [ ] Write failing cold-title browser test: prompt saved intent, visible preparation, no repeated click, later normal request.
-- [ ] Confirm failure, implement, rerun and commit.
+- [x] Write failing cold-title browser and route tests for visible preparation, key reuse and later exact request.
+- [x] Confirm failure and implement the consumer flow.
+- [ ] Rerun focused checks and commit.
 - [ ] Verify restart and resolution in isolated Docker with acquisition disabled before release or deployment.

@@ -33,11 +33,19 @@ export function openPendingTitleLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS pending_title_due
       ON pending_title_intents(state,next_due_ms,id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS pending_title_active_owner
+      ON pending_title_intents(requester_id,anidb_id,state,id)`);
   } catch (error) { db.close(); throw error; }
 
   const byId = db.prepare('SELECT * FROM pending_title_intents WHERE id=?');
   const byKey = db.prepare(`SELECT * FROM pending_title_intents
     WHERE requester_id=? AND request_key=?`);
+  const activeByTitle = db.prepare(`SELECT * FROM pending_title_intents
+    WHERE requester_id=? AND anidb_id=? AND state IN ('pending','resolving')
+    ORDER BY id LIMIT 1`);
+  const byOwner = db.prepare(`SELECT * FROM pending_title_intents
+    WHERE requester_id=? AND id<? AND state!='resolved'
+    ORDER BY id DESC LIMIT ?`);
   const insert = db.prepare(`INSERT INTO pending_title_intents
     (requester_id,request_key,anidb_id,title,created_ms,state,next_due_ms)
     VALUES (?,?,?,?,?,'pending',?)`);
@@ -88,6 +96,8 @@ export function openPendingTitleLedger(dbPath) {
         if (existing) return existing.anidb_id === anidbId &&
           existing.title === title ? outcome(existing, false) :
           held('idempotency_key_conflict');
+        const active = activeByTitle.get(requesterId, anidbId);
+        if (active) return outcome(active, false);
         const id = Number(insert.run(requesterId, requestKey, anidbId,
           title, nowMs, nowMs).lastInsertRowid);
         return outcome(byId.get(id), true);
@@ -96,6 +106,30 @@ export function openPendingTitleLedger(dbPath) {
     get(intentId) {
       if (!validId(intentId)) throw new TypeError('Invalid intent ID');
       return toItem(byId.get(intentId)) ?? null;
+    },
+    getByKey({ requesterId, requestKey }) {
+      if (!validId(requesterId) || typeof requestKey !== 'string' ||
+          !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey)) {
+        throw new TypeError('Invalid pending intent key');
+      }
+      return toItem(byKey.get(requesterId, requestKey)) ?? null;
+    },
+    getActiveForTitle({ requesterId, anidbId }) {
+      if (!validId(requesterId) || !validId(anidbId)) {
+        throw new TypeError('Invalid pending title lookup');
+      }
+      return toItem(activeByTitle.get(requesterId, anidbId)) ?? null;
+    },
+    listForUser({ requesterId, beforeId = Number.MAX_SAFE_INTEGER,
+      limit = 20 }) {
+      if (!validId(requesterId) || !validId(beforeId) ||
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+        throw new TypeError('Invalid pending title history page');
+      }
+      const rows = byOwner.all(requesterId, beforeId, limit + 1);
+      const items = rows.slice(0, limit).map(toItem);
+      return { items, nextBeforeId: rows.length > limit
+        ? items.at(-1).id : null };
     },
     claimDue({ nowMs, leaseMs }) {
       if (!validMs(nowMs) || !Number.isSafeInteger(leaseMs) ||

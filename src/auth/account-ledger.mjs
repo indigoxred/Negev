@@ -163,6 +163,11 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       const row = findUser.get(userId);
       return row && !row.disabled && row.session_version === version ? publicUser(row) : null;
     },
+    getActiveUser({ userId }) {
+      if (!validId(userId)) return null;
+      const row = findUser.get(userId);
+      return row && !row.disabled ? publicUser(row) : null;
+    },
     revokeSessions({ userId }) {
       if (!validId(userId)) throw new TypeError('Invalid user ID');
       return bumpVersion.run(userId).changes === 1;

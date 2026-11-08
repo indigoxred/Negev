@@ -1,11 +1,14 @@
 // Explicit opt-in runner. One target per tick, with no overlapping reads.
 // An idle queue backs off; failures retry after five minutes.
 export function createDirectAvailabilityScheduler({ runOnce,
+  initialDelayMs = 60_000,
   idleDelayMs = 5 * 60_000,
   activeDelayMs = 60_000,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof runOnce !== 'function' || typeof setTimer !== 'function' ||
       typeof clearTimer !== 'function' ||
+      !Number.isSafeInteger(initialDelayMs) || initialDelayMs < 1_000 ||
+      initialDelayMs > 300_000 ||
       !Number.isSafeInteger(idleDelayMs) || idleDelayMs < 60_000 ||
       idleDelayMs > 5 * 60_000 ||
       !Number.isSafeInteger(activeDelayMs) || activeDelayMs < 10_000 ||
@@ -39,7 +42,7 @@ export function createDirectAvailabilityScheduler({ runOnce,
     start() {
       if (started || stopping) return;
       started = true;
-      schedule(60_000);
+      schedule(initialDelayMs);
     },
     async close() {
       stopping = true;

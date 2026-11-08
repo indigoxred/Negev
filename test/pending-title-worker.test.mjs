@@ -26,6 +26,7 @@ test('pending detail schedules preparation and later resolves with the original 
     const submissions = [];
     const prepared = [];
     const worker = createPendingTitleWorker({ ledger, now: () => nowMs,
+      authorize: async () => true,
       prepareDetail: async (input) => { prepared.push(input); },
       submitRequest: async (input) => {
         submissions.push(input);
@@ -54,6 +55,7 @@ test('a full library match finishes without creating a normal request',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);
     const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+      authorize: async () => true,
       submitRequest: async () => ({ state: 'held', reason: 'already_available' }) });
     assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
       reason: 'already_available' });
@@ -65,6 +67,7 @@ test('an ambiguous movie ends preparation so the user can select a part',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);
     const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+      authorize: async () => true,
       submitRequest: async () => ({ state: 'held',
         reason: 'ambiguous_movie_scope' }) });
     assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
@@ -79,6 +82,7 @@ test('a cancelled intent is never submitted and another due intent advances',
     ledger.cancel({ requesterId: 4, intentId: 1, nowMs: 1_001 });
     const submitted = [];
     const worker = createPendingTitleWorker({ ledger, now: () => 1_001,
+      authorize: async () => true,
       submitRequest: async (input) => {
         submitted.push(input);
         return { state: 'held', requestId: 29 };
@@ -97,6 +101,7 @@ test('a crash after exact submission reuses the same request key',
     try {
       let calls = 0;
       const worker = createPendingTitleWorker({ ledger: reopened,
+        authorize: async () => true,
         now: () => 301_000, submitRequest: async (input) => {
           calls++;
           assert.equal(input.requestKey, item.requestKey);
@@ -128,6 +133,7 @@ test('real exact submitter creates one completed film target only after detail a
         today: () => '2026-11-09',
       });
       const worker = createPendingTitleWorker({ ledger,
+        authorize: async () => true,
         submitRequest, now: () => nowMs });
       assert.equal((await worker.runOnce()).state, 'pending');
       assert.equal(requests.countRequests(), 0);
@@ -161,6 +167,7 @@ test('real exact submitter keeps an Airing title watched for future episodes',
         today: () => '2026-11-09',
       });
       const worker = createPendingTitleWorker({ ledger,
+        authorize: async () => true,
         submitRequest, now: () => 1_000 });
       const result = await worker.runOnce();
       assert.equal(result.state, 'resolved');
@@ -168,4 +175,20 @@ test('real exact submitter keeps an Airing title watched for future episodes',
       assert.deepEqual(requests.getRequest(result.requestId).episodeIds,
         [317633]);
     } finally { requests.close(); }
+  }));
+
+test('revoked adult access prevents a queued request from resolving',
+  async () => withLedger(async ({ ledger }) => {
+    ledger.enqueue(item);
+    let submitted = 0;
+    const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+      authorize: async ({ requesterId }) => {
+        assert.equal(requesterId, 4);
+        return false;
+      },
+      submitRequest: async () => { submitted++; return { state: 'held',
+        requestId: 44 }; } });
+    assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
+      reason: 'account_access_changed' });
+    assert.equal(submitted, 0);
   }));

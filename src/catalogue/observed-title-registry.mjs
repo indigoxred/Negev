@@ -6,7 +6,7 @@ export function createObservedTitleRegistry({ ttlMs = 15 * 60_000, maxEntries = 
       typeof now !== 'function') throw new TypeError('Invalid title registry configuration');
   const seen = new Map();
   function prune(time) {
-    for (const [id, expiry] of seen) if (expiry <= time) seen.delete(id);
+    for (const [id, item] of seen) if (item.expiry <= time) seen.delete(id);
   }
   return {
     observe(result) {
@@ -19,7 +19,7 @@ export function createObservedTitleRegistry({ ttlMs = 15 * 60_000, maxEntries = 
       prune(time);
       for (const item of result.items) {
         seen.delete(item.anidbId);
-        seen.set(item.anidbId, time + ttlMs);
+        seen.set(item.anidbId, { title: item.title.trim(), expiry: time + ttlMs });
       }
       while (seen.size > maxEntries) seen.delete(seen.keys().next().value);
       return true;
@@ -30,6 +30,13 @@ export function createObservedTitleRegistry({ ttlMs = 15 * 60_000, maxEntries = 
       if (!Number.isSafeInteger(time) || time < 0) return false;
       prune(time);
       return seen.has(anidbId);
+    },
+    getTitle({ anidbId }) {
+      if (!Number.isSafeInteger(anidbId) || anidbId <= 0) return null;
+      const time = now();
+      if (!Number.isSafeInteger(time) || time < 0) return null;
+      prune(time);
+      return seen.get(anidbId)?.title ?? null;
     },
   };
 }

@@ -20,6 +20,10 @@ test('pending title intent survives restart and one key never changes its title'
     const ledger = openPendingTitleLedger(dbPath);
     const saved = ledger.enqueue(first);
     assert.deepEqual(saved, { state: 'pending', intentId: 1, created: true });
+    assert.equal(ledger.getByKey({ requesterId: 7,
+      requestKey: 'cold-one' })?.anidbId, 4158);
+    assert.equal(ledger.getByKey({ requesterId: 8,
+      requestKey: 'cold-one' }), null);
     ledger.close();
 
     const reopened = openPendingTitleLedger(dbPath);
@@ -29,6 +33,11 @@ test('pending title intent survives restart and one key never changes its title'
         version: 0, attempts: 0, normalRequestId: null, reason: null });
       assert.deepEqual(reopened.enqueue({ ...first, nowMs: 2_000 }),
         { state: 'pending', intentId: 1, created: false });
+      assert.deepEqual(reopened.enqueue({ ...first, requestKey: 'new-key',
+        nowMs: 2_000 }), { state: 'pending', intentId: 1,
+          created: false });
+      assert.equal(reopened.getActiveForTitle({ requesterId: 7,
+        anidbId: 4158 })?.id, 1);
       assert.deepEqual(reopened.enqueue({ ...first, anidbId: 4159,
         nowMs: 2_000 }), { state: 'held', reason: 'idempotency_key_conflict' });
       assert.deepEqual(reopened.enqueue({ ...first, requesterId: 8,
@@ -95,4 +104,28 @@ test('a pending title creates no normal request or acquisition target',
       assert.equal(requests.countRequests(), 0);
       assert.equal(requests.countTargets(), 0);
     } finally { pending.close(); requests.close(); }
+  }));
+
+test('preparation history is owner scoped and resolved rows leave the pending view',
+  async () => withPath(async (dbPath) => {
+    const ledger = openPendingTitleLedger(dbPath);
+    try {
+      ledger.enqueue(first);
+      ledger.enqueue({ ...first, requestKey: 'second', anidbId: 4159,
+        title: 'Second title', nowMs: 1_001 });
+      ledger.enqueue({ ...first, requesterId: 8, nowMs: 1_002 });
+      assert.deepEqual(ledger.listForUser({ requesterId: 7, limit: 1 })
+        .items.map((row) => row.id), [2]);
+      const page = ledger.listForUser({ requesterId: 7, limit: 1 });
+      assert.equal(page.nextBeforeId, 2);
+      assert.deepEqual(ledger.listForUser({ requesterId: 7, limit: 1,
+        beforeId: 2 }).items.map((row) => row.id), [1]);
+      const claim = ledger.claimDue({ nowMs: 1_000, leaseMs: 5_000 });
+      ledger.finish({ intentId: claim.id, version: claim.version,
+        normalRequestId: 90, nowMs: 1_003 });
+      assert.deepEqual(ledger.listForUser({ requesterId: 7 }).items
+        .map((row) => row.id), [2]);
+      assert.deepEqual(ledger.listForUser({ requesterId: 8 }).items
+        .map((row) => row.id), [3]);
+    } finally { ledger.close(); }
   }));
