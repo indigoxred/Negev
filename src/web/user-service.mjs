@@ -252,7 +252,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
     });
-    const loadFastDetail = createFastDetailReader({ deadlineMs: 4_500,
+    // Cold title pages and the initial save need time for HTTP/auth overhead
+    // inside the five-second UI budget. Exact resolution runs later.
+    const loadFastDetail = createFastDetailReader({ deadlineMs: 3_000,
       archive: (input) => rawDetailReader.read(input),
       shoko: (input) => metadata.run(() => loadDetail(input)),
     });

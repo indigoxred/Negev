@@ -16,6 +16,7 @@ test('cold title is durably queued without targets, then becomes one exact reque
     const dbPath = path.join(dir, 'negev.sqlite');
     let clock = 1_000;
     let ready = false;
+    let slow = false;
     const accounts = openAccountLedger(dbPath, { now: () => clock });
     await accounts.bootstrapAdmin({ username: 'Owner',
       password: 'long-owner-passphrase' });
@@ -27,6 +28,7 @@ test('cold title is durably queued without targets, then becomes one exact reque
           { ID: 4158, Title: 'Pale Cocoon' }] });
       }
       if (route === '/api/v3/Series/AniDB/4158') {
+        if (!ready && slow) await new Promise((resolve) => setTimeout(resolve, 3_500));
         return ready ? Response.json({ ID: 4158, Title: 'Pale Cocoon',
           Type: 'Movie', AirDate: '2005-11-01', EndDate: '2005-11-01',
           EpisodeCount: 1, Restricted: false }) :
@@ -60,12 +62,18 @@ test('cold title is durably queued without targets, then becomes one exact reque
       const search = await service.app.inject({ method: 'GET',
         url: '/api/catalogue/search?q=Pale%20Cocoon', headers: { cookie } });
       assert.equal(search.statusCode, 200, search.body);
+      slow = true;
+      const started = performance.now();
       const request = await service.app.inject({ method: 'POST',
         url: '/api/requests', headers,
         payload: { anidbId: 4158, scope: 'installment',
           requestKey: 'cold-one' } });
       assert.equal(request.statusCode, 202, request.body);
       assert.equal(request.json().state, 'pending');
+      assert.ok(performance.now() - started < 5_000,
+        'cold request should save inside the five-second UI budget');
+      slow = false;
+      await new Promise((resolve) => setTimeout(resolve, 550));
       const history = await service.app.inject({ method: 'GET',
         url: '/api/request-preparations', headers: { cookie } });
       assert.equal(history.statusCode, 200, history.body);

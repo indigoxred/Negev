@@ -52,7 +52,7 @@
 
 - [x] Write failing authorization, key-reuse, history and no-target acquisition tests.
 - [x] Confirm failure and wire ledger and paced worker.
-- [ ] Rerun focused checks and commit.
+- [x] Rerun focused checks and commit.
 
 ### Task 4: Consumer flow and isolated proof
 
@@ -60,5 +60,6 @@
 
 - [x] Write failing cold-title browser and route tests for visible preparation, key reuse and later exact request.
 - [x] Confirm failure and implement the consumer flow.
-- [ ] Rerun focused checks and commit.
-- [ ] Verify restart and resolution in isolated Docker with acquisition disabled before release or deployment.
+- [x] Rerun focused checks and commit.
+- [x] Verify a slow cold title saves inside five seconds in the isolated account-service test with acquisition disabled.
+- [ ] Verify restart and resolution in isolated Docker before release or deployment.
