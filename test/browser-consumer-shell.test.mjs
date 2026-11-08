@@ -399,6 +399,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Listed episodes/);
+      assert.match(detail, /class="detail-main"/,
+        'title synopsis and aliases share a compact column beside the facts');
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);

@@ -46,6 +46,9 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 .title-detail .related-trigger{justify-self:start;width:auto;min-height:0;padding:8px 0;background:none;border:0;box-shadow:none}
 .related-presence{display:block;margin-top:7px;color:var(--success);font-size:12px;font-weight:700}
 .title-detail .detail-display>.detail-description-toggle{grid-column:1}
+.title-detail .detail-display>.detail-main{grid-column:1;grid-row:1;display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+.title-detail .detail-display>.detail-main>.detail-tags{align-self:stretch}
+.title-detail .detail-display>.detail-quickfacts{grid-row:1}
 .film-request-choice{display:grid;gap:10px;max-width:430px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}.film-request-choice[hidden]{display:none}.film-request-choice label{display:grid;gap:8px;font-size:13px;font-weight:700}.film-request-choice select{width:100%;min-height:42px;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface2);color:var(--text)}.film-request-choice .muted{margin:0;font-size:12px}
 .source-credit{max-width:1344px}.source-credit a{color:var(--accent)}
 #library-list.poster-grid>p,#library-list.poster-grid>.text-link{grid-column:1/-1}#library-list.poster-grid>.text-link{justify-self:start}

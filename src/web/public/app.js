@@ -1145,15 +1145,16 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const renderDisplay = (display, title) => {
     if (!isCurrentDetail() || display?.state !== 'display') return;
     displaySummary.replaceChildren();
+    const main = element('div', undefined, 'detail-main');
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
-    if (facts) displaySummary.append(element('p', facts, 'detail-facts'));
+    if (facts) main.append(element('p', facts, 'detail-facts'));
     if (display.englishTitle && display.englishTitle !== title) {
-      displaySummary.append(element('p', `Also known as ${display.englishTitle}`,
+      main.append(element('p', `Also known as ${display.englishTitle}`,
         'detail-alias'));
     }
     if (display.description) {
       const description = element('p', display.description, 'detail-description');
-      displaySummary.append(description);
+      main.append(description);
       if (display.description.length > 600) {
         description.classList.add('is-collapsed');
         const toggle = element('button', 'Read full synopsis',
@@ -1165,7 +1166,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           toggle.setAttribute('aria-expanded', String(expanded));
           toggle.textContent = expanded ? 'Show less' : 'Read full synopsis';
         });
-        displaySummary.append(toggle);
+        main.append(toggle);
       }
     }
     const quickFacts = element('dl', undefined, 'detail-quickfacts');
@@ -1182,12 +1183,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       fact.append(element('dt', label), element('dd', String(value)));
       quickFacts.append(fact);
     }
-    if (quickFacts.childElementCount) displaySummary.append(quickFacts);
     if (display.tags?.length) {
       const tags = element('div', undefined, 'detail-tags');
       for (const tag of display.tags) tags.append(element('span', tag));
-      displaySummary.append(tags);
+      main.append(tags);
     }
+    displaySummary.append(main);
+    if (quickFacts.childElementCount) displaySummary.append(quickFacts);
   };
   if (state.showAdult && state.user?.adultAllowed !== false) {
     void displayRead.then((display) => renderDisplay(display, item.title));
