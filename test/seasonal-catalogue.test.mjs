@@ -26,7 +26,8 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   }, now: () => 1000 });
   const first = await reader.read({ year: 2026, season: 'FALL', limit: 2 });
   assert.deepEqual(first, { state: 'ready', year: 2026, season: 'FALL',
-    sourceDate: '2026-11-05', items: [{ anidbId: 1, title: 'AniDB 1',
+    sourceDate: '2026-11-05', availableTags: [],
+    items: [{ anidbId: 1, title: 'AniDB 1',
       type: 'TV Series', releaseStatus: 'RELEASING', adult: false },
     { anidbId: 2, title: 'AniDB 2', type: 'TV Series',
       releaseStatus: 'RELEASING', adult: true }], nextAfter: 2 });
@@ -36,6 +37,9 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   assert.equal(second.nextAfter, null);
   assert.equal(calls.filter((url) => url.endsWith('/api/v1/map')).length, 1);
   assert.equal(calls.some((url) => url.endsWith('/4') || url.endsWith('/5')), false);
+  const archive = await reader.read({ year: 0, season: 'ALL', limit: 4 });
+  assert.deepEqual(archive.items.map((item) => item.anidbId), [1, 2, 3, 6]);
+  assert.equal(archive.nextAfter, null);
 });
 
 test('unknown restriction never displays a seasonal card and visibly marks partial data', async () => {
@@ -50,7 +54,7 @@ test('unknown restriction never displays a seasonal card and visibly marks parti
 
 test('season type and tag filters apply before pagination using exact AniDB map entries', async () => {
   const entries = [
-    { ...row('Action show', 1), tags: ['Action', 'Adventure'] },
+    { ...row('Action show', 1), status: 'ONGOING', tags: ['Action', 'Adventure'] },
     { ...row('Drama film', 2), type: 'MOVIE', tags: ['Drama'] },
     { ...row('Action film', 3), type: 'MOVIE', tags: ['Action'] },
     { ...row('Comedy OVA', 4), type: 'OVA', tags: ['Comedy'] },
@@ -73,10 +77,46 @@ test('season type and tag filters apply before pagination using exact AniDB map 
     kind: 'series', tag: 'action' });
   assert.deepEqual(actionShows.items.map((item) => item.anidbId), [1]);
   assert.equal(actionShows.nextAfter, null);
+  assert.deepEqual(actionShows.availableTags,
+    ['action', 'adventure', 'comedy', 'drama']);
+  const both = await reader.read({ year: 2026, season: 'FALL',
+    tag: 'action,adventure' });
+  assert.deepEqual(both.items.map((item) => item.anidbId), [1]);
+  const ongoing = await reader.read({ year: 2026, season: 'FALL',
+    status: 'ongoing' });
+  assert.deepEqual(ongoing.items.map((item) => item.anidbId), [1]);
+  assert.deepEqual(ongoing.availableTags, ['action', 'adventure']);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
     kind: 'unsafe' }), TypeError);
   await assert.rejects(reader.read({ year: 2026, season: 'FALL',
     tag: '\nunsafe' }), TypeError);
+});
+
+test('ongoing titles span seasons and sort before pagination', async () => {
+  const older = { ...row('Zeta', 1), status: 'ONGOING',
+    animeSeason: { season: 'SPRING', year: 2024 } };
+  const newer = { ...row('Alpha', 2), status: 'ONGOING' };
+  const finished = { ...row('Finished', 3), status: 'FINISHED' };
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [older, newer, finished] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: url.endsWith('/1') ? 'Zeta' : 'Alpha',
+        type: 'TV Series', restricted: false }), now: () => 1000 });
+  const newest = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'newest', limit: 1 });
+  assert.deepEqual(newest.items.map((item) => item.anidbId), [2]);
+  const next = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'newest', after: newest.nextAfter, limit: 1 });
+  assert.deepEqual(next.items.map((item) => item.anidbId), [1]);
+  const oldest = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'oldest' });
+  assert.deepEqual(oldest.items.map((item) => item.anidbId), [1, 2]);
+  const title = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'title_desc' });
+  assert.deepEqual(title.items.map((item) => item.anidbId), [1, 2]);
+  await assert.rejects(reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'popularity' }), TypeError);
 });
 
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {

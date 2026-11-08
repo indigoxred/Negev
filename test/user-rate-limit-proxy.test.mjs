@@ -78,3 +78,59 @@ test('login attempts still share the proxy budget after one account signs in', a
     assert.equal((await attempt(cookie, '203.0.113.250')).statusCode, 429);
   } finally { await app.close(); }
 });
+
+test('normal title browsing can open more than ten detail pages per minute', async () => {
+  const origin = 'http://localhost:3000';
+  const user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const app = await buildUserApp({
+    accounts: { authenticate: async () => user, getSessionUser: () => user,
+      registerInvite: async () => null, createInvite: () => null,
+      revokeSessions: () => false },
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    loadDetail: async ({ anidbId, page }) => ({ state: 'details', anidbId,
+      page, kind: 'series', restricted: false, episodes: [], total: 0 }),
+  });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin },
+      payload: { username: 'Owner', password: 'test-passphrase' } });
+    assert.equal(login.statusCode, 200);
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    for (let id = 1; id <= 12; id++) {
+      const result = await app.inject({ method: 'GET',
+        url: `/api/catalogue/${id}`, headers: { cookie } });
+      assert.equal(result.statusCode, 200, `title ${id}: ${result.body}`);
+    }
+  } finally { await app.close(); }
+});
+
+test('related title browsing can expand more than five links per minute', async () => {
+  const origin = 'http://localhost:3000';
+  const user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const app = await buildUserApp({
+    accounts: { authenticate: async () => user, getSessionUser: () => user,
+      registerInvite: async () => null, createInvite: () => null,
+      revokeSessions: () => false },
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    titleRegistry: { observe: () => true },
+    confirmKnownTitle: async () => true,
+    loadRelatedTitles: async ({ anidbId }) => ({ state: 'related_titles',
+      anidbId, completeness: 'unproven', items: [] }),
+  });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin },
+      payload: { username: 'Owner', password: 'test-passphrase' } });
+    assert.equal(login.statusCode, 200);
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    for (let id = 1; id <= 6; id++) {
+      const result = await app.inject({ method: 'GET',
+        url: `/api/catalogue/${id}/related`, headers: { cookie } });
+      assert.equal(result.statusCode, 200, `related ${id}: ${result.body}`);
+    }
+  } finally { await app.close(); }
+});

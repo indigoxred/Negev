@@ -9,7 +9,7 @@ import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mj
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
-import { createHeldRequestSubmitter } from '../requests/submit-held-request.mjs';
+import { createHeldRequestSubmitter, requestReleaseState } from '../requests/submit-held-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
@@ -17,12 +17,15 @@ import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
 import { createSeasonalCatalogue } from '../catalogue/seasonal-catalogue.mjs';
 import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
+import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
+import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
 import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
-import { readAniDbRelatedTitles as readArchiveRelatedTitles } from
+import { readAniDbRelatedTitles as readArchiveRelatedTitles,
+  readDisplayRelations } from
   '../catalogue/anidb-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
@@ -87,7 +90,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   shokoImportRoot = null, shokoImportFolderId = null,
   acquisitionImportParent = null, acquisitionImportFolderId = null,
   qbitSidecarObserver = null,
-  sessionKey, publicOrigin, secureCookies = true, shokoHydration = false,
+  sessionKey, publicOrigin, localOrigin = null,
+  secureCookies = true, shokoHydration = false,
   titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
   fileBackfillFilesPerTick = 1,
   shokoRecent = false, shokoInventoryHints = false, anidbTitleDump = false,
@@ -106,6 +110,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       typeof today !== 'function' || typeof shokoHydration !== 'boolean' ||
       typeof titleCheck !== 'boolean' || (titleCheck && !plex) ||
       typeof fileBackfill !== 'boolean' ||
+      (fileProofLifetimeMs !== null && (!plex ||
+        !Number.isSafeInteger(fileProofLifetimeMs) ||
+        fileProofLifetimeMs < 30 * 60_000 ||
+        fileProofLifetimeMs > 7 * 24 * 60 * 60_000)) ||
       !Number.isSafeInteger(fileBackfillFilesPerTick) ||
       fileBackfillFilesPerTick < 1 || fileBackfillFilesPerTick > 10 ||
       (fileBackfill && (!plex || !shokoInventoryHints ||
@@ -193,6 +201,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const shokoPosters = createShokoPosterReader({ baseUrl: shokoBaseUrl,
       apiKey: shokoApiKey, fetchImpl, now });
     const displayReader = createAniDbDisplayReader({ fetchImpl, now });
+    const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
@@ -206,6 +215,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       // Resume the saved sweep and bounded proofs after restart. Accepted
       // Shoko/Plex changes withdraw only the affected exact proof rows.
       fileCursor = openFileBackfillCursor(dbPath);
+    }
+    if (plex && fileProofLifetimeMs !== null) {
       fileProofs = openFileProofLedger(dbPath, {
         positiveLifetimeMs: fileProofLifetimeMs, now });
     }
@@ -239,6 +250,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       registry: titleRegistry, source: titleSource });
     const loadDetail = ({ anidbId, page }) => loadAniDbDetail({
       baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, page, fetchImpl,
+    });
+    const loadFastDetail = createFastDetailReader({ deadlineMs: 4_500,
+      archive: (input) => rawDetailReader.read(input),
+      shoko: (input) => metadata.run(() => loadDetail(input)),
+    });
+    const loadCurrentDetail = createFastDetailReader({ prefer: 'shoko',
+      archive: (input) => rawDetailReader.read(input),
+      shoko: (input) => metadata.run(() => loadDetail(input)),
     });
     const observeCurrentPublic = (target, observedShoko,
       includeProof = false) => {
@@ -334,7 +353,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const submitRequest = createHeldRequestSubmitter({
-      titleRegistry, confirmKnownTitle, loadDetail, ledger: requests, now, today,
+      titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
+      ledger: requests, now, today,
+      recentlyAvailable: ({ anidbId, episodeId }) => {
+        const target = { anidbId, episodeId, nowMs: now() };
+        return episodeDisplayAvailability({
+          direct: directAvailability.getStatus(target).state,
+          title: titleChecks?.getTargetStatus(target).state,
+          file: fileProofs?.getCurrent(target),
+        }).availability === 'available';
+      },
     });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
@@ -343,7 +371,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       };
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
       readRequest: (id) => requests.getRequest(id),
-      loadDetail: (input) => metadata.run(() => loadDetail(input)),
+      loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
@@ -352,7 +380,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
-        loadDetail: (input) => metadata.run(() => loadDetail(input)),
+        loadDetail: (input) => loadCurrentDetail(input),
         readRelatedTitles: ({ anidbId }) => metadata.run(() =>
           readAniDbRelatedTitles({ baseUrl: shokoBaseUrl,
             apiKey: shokoApiKey, anidbId, fetchImpl })),
@@ -368,7 +396,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
           loadPage: async ({ page }) => {
             if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
-            return metadata.run(() => loadDetail({ anidbId, page }));
+            return loadCurrentDetail({ anidbId, page });
           },
         }),
       }),
@@ -403,12 +431,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
         verifiedEpisodeCount: ids.size };
     };
-    const app = await buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies,
+    const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
+      localOrigin, secureCookies,
       readImportActivity,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
-      now, submitRequest: (input) => metadata.run(() => submitRequest(input)),
+      now, submitRequest: (input) => submitRequest(input),
+      cancelRequest: (input) => requests.cancelRequest(input),
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);
@@ -488,19 +518,30 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
       loadRelatedTitles: async ({ anidbId }) => {
-        const local = await metadata.run(() => readAniDbRelatedTitles({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
-        }));
-        if (local?.state === 'related_titles' && local.items.length > 0) return local;
-        if (local?.state === 'held' || local?.state === 'busy') return local;
-        const archive = await readArchiveRelatedTitles({ anidbId, fetchImpl,
-          titleForId: (id) => titleSource?.getTitle(id) ?? null });
-        return archive.state === 'related_titles' ? archive : local;
+        const related = await readDisplayRelations({
+          readLocal: () => metadata.run(() => readAniDbRelatedTitles({
+            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
+            timeoutMs: 4_000,
+          })),
+          readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
+            timeoutMs: 4_000,
+            titleForId: (id) => titleSource?.getTitle(id) ?? null }),
+        });
+        if (related?.state !== 'related_titles' || !Array.isArray(related.items)) {
+          return related;
+        }
+        const checkedMs = now();
+        return { ...related, items: related.items.map((item) => ({ ...item,
+          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
-        const detail = await metadata.run(() => loadDetail(input));
-        if (!plexObserver || detail?.state !== 'details' ||
-            !Array.isArray(detail.episodes) || detail.episodes.length > 100) return detail;
+        const detail = await loadFastDetail(input);
+        if (detail?.state !== 'details' || !Array.isArray(detail.episodes) ||
+            detail.episodes.length > 100) return detail;
+        const requestMode = detail.nextPage === null && detail.complete === true
+          ? { monitorFuture: requestReleaseState(detail, today()) === 'airing' }
+          : {};
+        if (!plexObserver) return { ...detail, ...requestMode };
         const card = fileProofs?.getCurrentTitleCard({ anidbId: detail.anidbId });
         if (card && !plexMachineId &&
             (plexIdentityCheckedMs === null ||
@@ -516,7 +557,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         const plexUrl = plexWebItemUrl({ machineId: plexMachineId,
           ratingKey: card?.ratingKey });
-        return { ...detail,
+        return { ...detail, ...requestMode,
           ...(plexUrl ? { plexUrl } : {}),
           libraryPresence: publicPresenceForTitle(detail.anidbId, now()),
           episodes: detail.episodes.map((episode) => {
@@ -812,7 +853,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {
               if (page > 1) await sleep(250);
-              return metadata.run(() => loadDetail({ anidbId, page }));
+              return loadCurrentDetail({ anidbId, page });
             } }),
           readEvidence: observeFirstTimeUncertain,
         });

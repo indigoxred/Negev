@@ -232,6 +232,64 @@ test('a first-load AniDB dump failure falls back to bounded Shoko search', async
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a newly searched title can use exact public AniDB episodes before Shoko caches it', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-fast-detail-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  let shokoDetailReads = 0;
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    now: () => 1_000, today: () => '2026-11-08',
+    fetchImpl: async (url) => {
+      const target = String(url);
+      if (target.includes('/Series/AniDB/Search')) return json({ Total: 1,
+        List: [{ ID: 19586, Title: '#Zombie Sagashitemasu' }] });
+      if (target === 'https://animap.id/api/anidb/19586/raw') {
+        return json({ anime: { '@id': '19586', '@restricted': 'false',
+          type: 'TV Series', startdate: '2026-10-03', enddate: '2026-10-10',
+          episodecount: '2', titles: { title: { '@type': 'main',
+            '#text': '#Zombie Sagashitemasu' } }, episodes: { episode: [
+            { '@id': '316607', epno: { '@type': '1', '#text': '1' },
+              title: { '#text': 'First' }, airdate: '2026-10-03' },
+            { '@id': '316608', epno: { '@type': '1', '#text': '2' },
+              title: { '#text': 'Second' }, airdate: '2026-10-10' },
+          ] } } });
+      }
+      shokoDetailReads++;
+      return new Response(null, { status: 404 });
+    },
+  });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await service.app.inject({ method: 'GET',
+      url: '/api/session', headers: { cookie } });
+    const csrf = session.json().csrfToken;
+    const search = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Zombie', headers: { cookie } });
+    assert.equal(search.statusCode, 200, search.body);
+    const detail = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/19586', headers: { cookie } });
+    assert.equal(detail.statusCode, 200, detail.body);
+    assert.deepEqual(detail.json().episodes.map((episode) => episode.id),
+      [316607, 316608]);
+    assert.equal(detail.json().monitorFuture, false);
+    const requested = await service.app.inject({ method: 'POST',
+      url: '/api/requests', headers: auth(cookie, csrf),
+      payload: { anidbId: 19586, scope: 'installment', requestKey: 'new-anime' } });
+    assert.equal(requested.statusCode, 202, requested.body);
+    const saved = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${requested.json().requestId}`, headers: { cookie } });
+    assert.deepEqual(saved.json().episodeIds, [316607, 316608]);
+    assert.equal(shokoDetailReads, 0);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('catalogue search reports when its restart cache cannot be saved', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-cache-warning-'));
   const dbPath = path.join(dir, 'negev.sqlite');
@@ -398,6 +456,10 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       url: '/api/catalogue/search?q=Example', headers: { cookie } });
     assert.equal(search.statusCode, 200, search.body);
     assert.equal(search.json().items[0].anidbId, 1234);
+    const airingDetail = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/1234', headers: { cookie } });
+    assert.equal(airingDetail.statusCode, 200, airingDetail.body);
+    assert.equal(airingDetail.json().monitorFuture, true);
     const beforeHydration = methods.length;
     const disabledHydration = await service.app.inject({ method: 'POST',
       url: '/api/catalogue/1234/load-detail', headers: auth(cookie, csrf),

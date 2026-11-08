@@ -12,6 +12,46 @@ import { openFileBackfillCursor } from
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { createUserService } from '../src/web/user-service.mjs';
 
+test('review service reads recent saved public proofs without starting backfill', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-proof-review-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  let service;
+  try {
+    const proofs = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
+    proofs.observe({ anidbId: 42, episodeId: 1001,
+      proof: { fileId: 2, libraryId: 102, ratingKey: 500, partId: 900 },
+      checkedMs: 900 });
+    proofs.close();
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
+      sessionKey: randomBytes(32), publicOrigin: 'http://localhost:3000',
+      secureCookies: false, now: () => 1_000,
+      fileProofLifetimeMs: 30 * 60_000,
+      plex: { plexBaseUrl: 'http://plex:32400/', plexToken: 'synthetic',
+        publicSections: { episode: [102], movie: [] },
+        shokoMount: { appRoot: '/pure', localRoot: root },
+        plexMounts: [{ appRoot: '/source-pure', localRoot: root }] },
+    });
+    const loginAccounts = openAccountLedger(dbPath, { now: () => 1_000 });
+    await loginAccounts.bootstrapAdmin({ username: 'Owner',
+      password: 'long-owner-passphrase' });
+    loginAccounts.close();
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: 'http://localhost:3000' }, payload: {
+        username: 'Owner', password: 'long-owner-passphrase' } });
+    const library = await service.app.inject({ method: 'GET',
+      url: '/api/library', headers: {
+        cookie: login.headers['set-cookie'].split(';')[0] } });
+    assert.equal(library.statusCode, 200);
+    assert.equal(library.json().items[0].anidbId, 42);
+    assert.equal((await service.tickFileBackfill()).state, 'held');
+  } finally {
+    await service?.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('service restart retains recent broad proof and resumes its scan', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-backfill-restart-'));
   const dbPath = path.join(root, 'state.sqlite');

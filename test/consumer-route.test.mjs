@@ -28,19 +28,24 @@ test('search query survives reload and Back/Forward without permitting arbitrary
 });
 
 test('season and page survive reload and Back/Forward without accepting arbitrary filters', () => {
+  assert.deepEqual(parseConsumerRoute(seasonRoute(0, 'ALL')),
+    { page: 'discover', anidbId: null, query: '', year: 0,
+      season: 'ALL', after: 0 });
   const route = seasonRoute(2026, 'FALL', 12);
-  assert.equal(route, '#/airing?year=2026&season=FALL&after=12');
-  assert.deepEqual(parseConsumerRoute(route), { page: 'airing', anidbId: null,
+  assert.equal(route, '#/discover?year=2026&season=FALL&after=12');
+  assert.deepEqual(parseConsumerRoute(route), { page: 'discover', anidbId: null,
     query: '', year: 2026, season: 'FALL', after: 12 });
-  assert.deepEqual(parseConsumerRoute('#/airing?year=2026&season=FALL&admin=1'),
+  assert.deepEqual(parseConsumerRoute('#/discover?year=2026&season=FALL&admin=1'),
     { page: 'discover', anidbId: null, query: '' });
   const filtered = seasonRoute(2026, 'FALL', 12,
     { kind: 'movies', tag: 'sci-fi' });
   assert.equal(filtered,
-    '#/airing?year=2026&season=FALL&after=12&kind=movies&tag=sci-fi');
-  assert.deepEqual(parseConsumerRoute(filtered), { page: 'airing', anidbId: null,
+    '#/discover?year=2026&season=FALL&after=12&kind=movies&tag=sci-fi');
+  assert.deepEqual(parseConsumerRoute(filtered), { page: 'discover', anidbId: null,
     query: '', year: 2026, season: 'FALL', after: 12,
     kind: 'movies', tag: 'sci-fi' });
-  assert.deepEqual(parseConsumerRoute('#/airing?year=2026&season=FALL&kind=unsafe'),
+  assert.equal(seasonRoute(2026, 'FALL', 0,
+    { tag: 'action,fantasy' }), '#/discover?year=2026&season=FALL&tag=action%2Cfantasy');
+  assert.deepEqual(parseConsumerRoute('#/discover?year=2026&season=FALL&kind=unsafe'),
     { page: 'discover', anidbId: null, query: '' });
 });

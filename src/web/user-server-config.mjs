@@ -274,6 +274,11 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Shoko path hints need inventory');
   }
   const fileBackfill = env.NEGEV_FILE_BACKFILL === '1';
+  const fileProofRead = env.NEGEV_FILE_PROOF_READ === '1';
+  if (env.NEGEV_FILE_PROOF_READ != null &&
+      !['0', '1'].includes(env.NEGEV_FILE_PROOF_READ)) {
+    throw new TypeError('Invalid file proof reader flag');
+  }
   const rawFileInterval = env.NEGEV_FILE_BACKFILL_INTERVAL_MS;
   const rawProofLifetime = env.NEGEV_FILE_PROOF_LIFETIME_MS;
   const rawFilesPerTick = env.NEGEV_FILE_BACKFILL_FILES_PER_TICK;
@@ -290,8 +295,11 @@ export function parseUserServerConfig(env) {
          !validPositiveMs(rawFilesPerTick, 1, 10)) ||
        !validPositiveMs(rawProofLifetime, 30 * 60_000,
          7 * 24 * 60 * 60_000)) :
-      rawFileInterval !== undefined || rawProofLifetime !== undefined ||
-      rawFilesPerTick !== undefined) {
+      rawFileInterval !== undefined || rawFilesPerTick !== undefined ||
+      (fileProofRead ?
+        (env.NEGEV_PLEX_OBSERVER !== '1' ||
+          !validPositiveMs(rawProofLifetime, 30 * 60_000,
+            7 * 24 * 60 * 60_000)) : rawProofLifetime !== undefined)) {
     throw new TypeError('File backfill needs measured Shoko/Plex inventory and proof policy');
   }
   if (env.NEGEV_DIRECT_AVAILABILITY === '1' &&
@@ -303,16 +311,18 @@ export function parseUserServerConfig(env) {
   }
   const rawDirectDelay = env.NEGEV_DIRECT_ACTIVE_DELAY_MS;
   if (rawDirectDelay !== undefined &&
-      (env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
+      (env.NEGEV_DIRECT_AVAILABILITY !== '1' &&
+        env.NEGEV_TITLE_CHECK !== '1' ||
        typeof rawDirectDelay !== 'string' ||
        !/^[1-9]\d*$/.test(rawDirectDelay) ||
        Number(rawDirectDelay) < 10_000 || Number(rawDirectDelay) > 300_000)) {
     throw new TypeError('Invalid direct availability active delay');
   }
   if (env.NEGEV_TITLE_CHECK === '1' &&
-      (env.NEGEV_PLEX_INDEX !== '1' ||
+      ((env.NEGEV_PLEX_INDEX !== '1' &&
+        env.NEGEV_PLEX_GUID_PROBE !== '1') ||
        env.NEGEV_PLEX_OBSERVER !== '1')) {
-    throw new TypeError('Title check needs a public Plex index');
+    throw new TypeError('Title check needs scoped public Plex discovery');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
@@ -351,6 +361,21 @@ export function parseUserServerConfig(env) {
   }
   const port = Number(rawPort);
   if (port > 65_535) throw new TypeError('Invalid user server port');
+  const localOrigin = env.NEGEV_LOCAL_ORIGIN ?? null;
+  if (localOrigin !== null) {
+    const local = baseUrl(localOrigin, 'local origin');
+    const octets = local.hostname.split('.');
+    const privateLan = octets.length === 4 && octets.every((part) =>
+      /^(?:0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255) &&
+      (Number(octets[0]) === 10 ||
+        (Number(octets[0]) === 172 && Number(octets[1]) >= 16 &&
+          Number(octets[1]) <= 31) ||
+        (Number(octets[0]) === 192 && Number(octets[1]) === 168));
+    if (!exposed || host !== '0.0.0.0' || local.protocol !== 'http:' ||
+        !privateLan || local.port !== String(port)) {
+      throw new TypeError('Local origin needs the exposed private LAN listener');
+    }
+  }
   const plex = plexConfig(env, dataDir);
   const prowlarr = prowlarrConfig(env, dataDir);
   const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
@@ -424,7 +449,8 @@ export function parseUserServerConfig(env) {
     fileBackfill,
     fileBackfillIntervalMs: fileBackfill ? Number(rawFileInterval) : null,
     fileBackfillFilesPerTick: fileBackfill ? Number(rawFilesPerTick ?? 1) : 1,
-    fileProofLifetimeMs: fileBackfill ? Number(rawProofLifetime) : null,
+    fileProofLifetimeMs: fileBackfill || fileProofRead ?
+      Number(rawProofLifetime) : null,
     shokoRecent: env.NEGEV_SHOKO_RECENT === '1',
     directAvailability: env.NEGEV_DIRECT_AVAILABILITY === '1',
     directActiveDelayMs: rawDirectDelay === undefined ? 60_000 :
@@ -436,5 +462,6 @@ export function parseUserServerConfig(env) {
     prowlarr, qbitSidecar,
     plexIndex: env.NEGEV_PLEX_INDEX === '1',
     plexIndexIntervalMs: Number(rawPlexIndexInterval ?? 60_000), publicOrigin,
+    localOrigin,
     secureCookies: exposed, host, port };
 }

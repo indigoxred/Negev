@@ -57,23 +57,17 @@
     </section>
     <div id="workspace" hidden>
       <section id="view-discover" class="page-view">
-        <header class="page-head"><p class="eyebrow">Discover</p><h1>Anime, ready to explore.</h1>
-          <p>Find something new, or see what is already on this server.</p></header>
-        <div id="discover-shelves"></div>
-        <section class="section"><div class="section-head"><h2 id="results-title">Search the catalogue</h2>
+        <header class="page-head"><p class="eyebrow">Discover</p><h1>Browse anime.</h1>
+          <p>Search the catalogue or browse any season. Series and films can be requested from their title pages.</p></header>
+        <section id="search-results-section" class="section" hidden><div class="section-head"><h2 id="results-title">Search the catalogue</h2>
           <p>Search by name to see series and films.</p></div>
           <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
         </section>
-      </section>
-      <section id="view-airing" class="page-view" hidden>
-        <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
-          <p>Browse a season, or see this week's scheduled episodes. Availability is checked separately.</p></header>
-        <section class="section" aria-labelledby="season-title">
-          <div class="section-head"><div><h2 id="season-title">Explore a season</h2>
-            <p>AniMap titles with a confirmed AniDB identity. Some titles may be absent from this view; search can still find them.</p></div></div>
+        <section class="section" aria-label="Catalogue filters and titles">
           <form id="season-form" class="season-controls">
-            <label>Year <input id="season-year" name="year" type="number" min="1900" max="2100" step="1" required></label>
+            <label>Year <select id="season-year" name="year"><option value="0">All years</option></select></label>
             <label>Season <select id="season-name" name="season">
+              <option value="ALL">All seasons</option>
               <option value="WINTER">Winter</option><option value="SPRING">Spring</option>
               <option value="SUMMER">Summer</option><option value="FALL">Fall</option>
             </select></label>
@@ -81,14 +75,13 @@
               <option value="all">All anime</option><option value="series">Series</option>
               <option value="movies">Movies</option>
             </select></label>
-            <label>Genre <select id="season-tag" name="tag">
-              <option value="">All genres</option><option value="action">Action</option>
-              <option value="adventure">Adventure</option><option value="comedy">Comedy</option>
-              <option value="drama">Drama</option><option value="fantasy">Fantasy</option>
-              <option value="romance">Romance</option><option value="sci-fi">Sci-fi</option>
-              <option value="slice of life">Slice of life</option>
-              <option value="supernatural">Supernatural</option><option value="sports">Sports</option>
-            </select></label>
+            <details class="genre-picker"><summary>Genres &amp; themes · All</summary>
+              <div class="genre-popover">
+                <input id="season-tag-search" type="search" placeholder="Find a genre or theme" aria-label="Find a genre or theme">
+                <div id="season-tags" class="genre-options"></div>
+                <small id="season-tag-count">Select up to five. A title must match each selection.</small>
+              </div>
+            </details>
             <button type="submit">Browse</button>
           </form>
           <p id="season-state" class="muted" role="status"></p>
@@ -96,13 +89,46 @@
           <div class="season-pages"><button id="season-previous" type="button" hidden>Previous page</button>
             <button id="season-next" type="button" hidden>Next page</button></div>
         </section>
+      </section>
+      <section id="view-airing" class="page-view" hidden>
+        <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
+          <p>Browse shows marked ongoing, including those that began in earlier seasons. This week’s AniDB episode schedule is below.</p></header>
+        <section class="section" aria-label="Airing title filters and results">
+          <form id="airing-form" class="season-controls">
+            <label>Year <select id="airing-year" name="year"><option value="0">All years</option></select></label>
+            <label>Season <select id="airing-season" name="season">
+              <option value="ALL">All seasons</option><option value="WINTER">Winter</option>
+              <option value="SPRING">Spring</option><option value="SUMMER">Summer</option>
+              <option value="FALL">Fall</option>
+            </select></label>
+            <label>Format <select id="airing-kind" name="kind">
+              <option value="all">All anime</option><option value="series">Series</option>
+              <option value="movies">Movies</option>
+            </select></label>
+            <details class="genre-picker"><summary>Genres &amp; themes · All</summary>
+              <div class="genre-popover">
+                <input id="airing-tag-search" type="search" placeholder="Find a genre or theme" aria-label="Find an airing genre or theme">
+                <div id="airing-tags" class="genre-options"></div>
+                <small id="airing-tag-count">Select up to five. A title must match each selection.</small>
+              </div>
+            </details>
+            <label>Sort <select id="airing-sort" name="sort">
+              <option value="newest">Newest season</option><option value="oldest">Oldest season</option>
+              <option value="title_asc">Title A–Z</option><option value="title_desc">Title Z–A</option>
+            </select></label>
+            <button type="submit">Apply filters</button>
+          </form>
+          <p id="airing-season-state" class="muted" role="status"></p>
+          <div id="airing-season-list" class="poster-grid"></div>
+          <button id="airing-season-more" type="button" hidden>Show more ongoing titles</button>
+        </section>
         <section class="section" aria-labelledby="weekly-title"><div class="section-head"><h2 id="weekly-title">This week's episodes</h2></div>
         <div id="airing-state" class="muted"></div>
         <div id="airing-list" class="poster-grid"><p class="muted">Loading this week's schedule…</p></div>
         </section>
       </section>
       <section id="view-library" class="page-view" hidden>
-        <header class="page-head"><p class="eyebrow">On this server</p><h1>Your library</h1>
+        <header class="page-head"><p class="eyebrow">On this server</p><h1>Negev’s Library</h1>
           <p>Titles with recent exact public Plex proof, including owner imports. Verification is still filling this view.</p></header>
         <button id="refresh-library" class="quiet" type="button">Refresh verified titles</button>
         <div id="library-list" class="empty-state">The public-library browse index is being prepared. Search results show verified library matches now.</div>

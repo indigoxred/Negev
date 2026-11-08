@@ -12,6 +12,19 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('cancelled requests are not claimed while later requests continue', async () =>
+  fixture(async (dbPath) => {
+    const requests = openRequestLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(requests.cancelRequest({ requesterId: 1, requestId: 1,
+        nowMs: 10 }).state, 'cancelled');
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 2);
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 3);
+      assert.equal(queue.claimNext({ nowMs: 11 }).state, 'pass_complete');
+    } finally { queue.close(); requests.close(); }
+  }));
+
 test('a forward candidate cursor can continue next pass without a 30-minute delay', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

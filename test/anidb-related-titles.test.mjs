@@ -1,6 +1,44 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readAniDbRelatedTitles } from '../src/catalogue/anidb-related-titles.mjs';
+import { preferDisplayRelations, readDisplayRelations } from '../src/catalogue/anidb-related-titles.mjs';
+
+test('display can use archive relations when Shoko holds an unverified edge', () => {
+  const archive = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Sequel', relation: 'Sequel' }] };
+  assert.deepEqual(preferDisplayRelations({ state: 'held',
+    reason: 'relation_review_required' }, archive), archive);
+});
+
+test('display falls back to exact archive IDs when the Shoko relation call fails', async () => {
+  const archive = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Sequel', relation: 'Sequel' }] };
+  assert.deepEqual(await readDisplayRelations({
+    readLocal: async () => { throw new Error('Shoko unavailable'); },
+    readArchive: async () => archive,
+  }), archive);
+  let archiveCalls = 0;
+  assert.deepEqual(await readDisplayRelations({
+    readLocal: async () => archive,
+    readArchive: async () => { archiveCalls++; return archive; },
+  }), archive);
+  assert.equal(archiveCalls, 1);
+});
+
+test('display combines distinct exact AniDB relations while preferring Shoko titles', async () => {
+  const local = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Local sequel', relation: 'Sequel' }] };
+  const archive = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Archive sequel', relation: 'Prequel' }, { anidbId: 44,
+      title: 'Other installment', relation: 'SideStory' }] };
+  assert.deepEqual(await readDisplayRelations({
+    readLocal: async () => local, readArchive: async () => archive,
+  }), { ...local, items: [local.items[0], archive.items[1]] });
+});
 
 test('archive relations retain exact AniDB IDs and distinguish unknown names', async () => {
   const result = await readAniDbRelatedTitles({ anidbId: 1,

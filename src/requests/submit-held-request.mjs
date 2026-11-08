@@ -5,15 +5,26 @@ import { planRequest } from './plan-request.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
+// The title page and request submission must agree on whether a complete
+// current installment can still be watched for future episodes.
+export function requestReleaseState(detail, currentDate) {
+  const release = inferReleaseState({ ...detail, today: currentDate });
+  if (!['airing', 'completed'].includes(release.state)) return release.state;
+  return detail.kind === 'series' && release.state === 'completed' &&
+    (detail.endDate == null || !hasStatedRegularEpisodes(detail))
+    ? 'airing' : release.state;
+}
+
 // Held-request orchestration. It never searches an indexer or dispatches
 // qBittorrent. The authenticated caller supplies requesterId.
 export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
   (input) => titleRegistry?.isKnownTitle(input) ?? false,
-  loadDetail, ledger, now, today }) {
+  loadDetail, ledger, now, today, recentlyAvailable = () => false }) {
   if (typeof confirmKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
       typeof ledger?.findSubmission !== 'function' ||
-      typeof now !== 'function' || typeof today !== 'function') {
+      typeof now !== 'function' || typeof today !== 'function' ||
+      typeof recentlyAvailable !== 'function') {
     throw new TypeError('Invalid held-request configuration');
   }
   return async ({ requesterId, anidbId, scope, episodeIds, requestKey }) => {
@@ -41,17 +52,19 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
       return held('detail_unavailable');
     }
     const currentDate = today();
-    const release = inferReleaseState({ ...detail, today: currentDate });
-    if (!['airing', 'completed'].includes(release.state)) return held('release_state_unknown');
-    // An end date can precede AniDB listing the final expected episode. Keep
-    // a new series watched until both the end date and stated episodes agree.
-    const releaseState = detail.kind === 'series' && release.state === 'completed' &&
-      (detail.endDate == null || !hasStatedRegularEpisodes(detail))
-      ? 'airing' : release.state;
+    const releaseState = requestReleaseState(detail, currentDate);
+    if (!['airing', 'completed'].includes(releaseState)) return held('release_state_unknown');
     const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;
+    const currentAvailability = await Promise.all(intent.episodeIds.map((episodeId) =>
+      recentlyAvailable({ anidbId, episodeId })));
+    const missingIds = intent.episodeIds.filter((_, index) =>
+      currentAvailability[index] !== true);
+    if (!intent.monitorFuture && missingIds.length === 0) {
+      return held('already_available');
+    }
     return ledger.submit({ requesterId, requestKey, commandKey,
-      intent: { ...intent, title }, nowMs: now() });
+      intent: { ...intent, episodeIds: missingIds, title }, nowMs: now() });
   };
 }

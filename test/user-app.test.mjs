@@ -10,6 +10,68 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('cold-title preparation allows browsing beyond five titles without bypassing its metadata ledger', async () => {
+  const user = { id: 17, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const admitted = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    confirmKnownTitle: async () => true,
+    hydrateTitle: async ({ anidbId }) => {
+      admitted.push(anidbId);
+      return { state: 'pending', reason: 'global_cooldown' };
+    } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    for (let id = 1; id <= 6; id++) {
+      const response = await app.inject({ method: 'POST',
+        url: `/api/catalogue/${id}/load-detail`, headers, payload: {} });
+      assert.equal(response.statusCode, 202, response.body);
+    }
+    assert.deepEqual(admitted, [1, 2, 3, 4, 5, 6]);
+  } finally { await app.close(); }
+});
+
+test('request cancellation is owner scoped and CSRF protected', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const calls = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: (id) => id === 2
+      ? { id: 2, requesterId: 8 } : { id, requesterId: 7 },
+    cancelRequest: (input) => { calls.push(input); return { state: 'cancelled', requestId: input.requestId }; } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers: { cookie, origin }, payload: {} })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/2/cancel',
+      headers, payload: {} })).statusCode, 404);
+    const cancelled = await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers, payload: {} });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.deepEqual(calls, [{ requesterId: 7, requestId: 1, nowMs: expectTime(calls[0]?.nowMs) }]);
+  } finally { await app.close(); }
+});
+
+function expectTime(value) { assert.ok(Number.isSafeInteger(value) && value >= 0); return value; }
+
 test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', async () => {
   const publicOrigin = 'https://negev.example.test';
   const accounts = {
@@ -33,6 +95,47 @@ test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', a
     assert.match(login.headers['set-cookie'], /^__Host-negev=/);
     assert.match(login.headers['set-cookie'], /; Secure(?:;|$)/i);
     assert.match(login.headers['set-cookie'], /; HttpOnly(?:;|$)/i);
+  } finally { await app.close(); }
+});
+
+test('an exposed review instance keeps HTTPS and LAN HTTP sessions separate', async () => {
+  const publicOrigin = 'https://anime.negev.red';
+  const localOrigin = 'http://192.168.50.138:17116';
+  const user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = {
+    authenticate: async () => user, registerInvite: async () => null,
+    getSessionUser: ({ userId, version }) => userId === 1 && version === 1
+      ? user : null,
+    createInvite: () => null, revokeSessions: () => false,
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin, localOrigin, secureCookies: true,
+    submitRequest: async () => null, readRequest: () => null });
+  try {
+    const login = (site) => app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin: site, host: new URL(site).host },
+      payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const publicLogin = await login(publicOrigin);
+    assert.equal(publicLogin.statusCode, 200);
+    assert.match(publicLogin.headers['set-cookie'], /^__Host-negev=/);
+    assert.match(publicLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    const localLogin = await login(localOrigin);
+    assert.equal(localLogin.statusCode, 200);
+    assert.match(localLogin.headers['set-cookie'], /^negev-lan-session=/);
+    assert.doesNotMatch(localLogin.headers['set-cookie'], /; Secure(?:;|$)/i);
+    for (const [site, response] of [[publicOrigin, publicLogin],
+      [localOrigin, localLogin]]) {
+      const session = await app.inject({ method: 'GET', url: '/api/session',
+        headers: { host: new URL(site).host,
+          cookie: response.headers['set-cookie'] } });
+      assert.equal(session.statusCode, 200);
+      assert.equal(session.json().user.username, 'Owner');
+    }
+    const cross = await app.inject({ method: 'POST', url: '/api/logout',
+      headers: { host: new URL(localOrigin).host, origin: publicOrigin,
+        cookie: localLogin.headers['set-cookie'] } });
+    assert.equal(cross.statusCode, 401);
   } finally { await app.close(); }
 });
 
@@ -69,6 +172,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const discovered = [];
   const previewed = [];
   const seasonalInputs = [];
+  let seasonalTags = ['action', 'fantasy'];
   let acquisitionState = 'disabled';
   const knownTitles = new Set([1234, 1235]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
@@ -90,9 +194,10 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
         scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] }),
-    listSeasonalTitles: async ({ year, season, after, limit, kind, tag }) => {
-      seasonalInputs.push({ year, season, after, limit, kind, tag });
+    listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status, sort }) => {
+      seasonalInputs.push({ year, season, after, limit, kind, tag, status, sort });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
+        availableTags: seasonalTags,
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
@@ -105,9 +210,15 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readCataloguePoster: async ({ anidbId }) => anidbId === 1234
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([0xff, 0xd8, 0xff]) }
       : { state: 'unavailable' },
-    readDisplayMetadata: async ({ anidbId }) => anidbId === 1234
-      ? { state: 'display', anidbId, title: 'Example series',
+    readDisplayMetadata: async ({ anidbId }) => anidbId === 1235
+      ? { state: 'display', anidbId, title: 'Adult series', restricted: true,
         englishTitle: null, type: 'TV Series', startYear: 2026,
+        startDate: null, endDate: null, episodeCount: null,
+        description: 'Private adult description.', tags: [] }
+      : anidbId === 1234
+      ? { state: 'display', anidbId, title: 'Example series',
+        restricted: false, englishTitle: null, type: 'TV Series', startYear: 2026,
+        startDate: null, endDate: null, episodeCount: null,
         description: 'A story about a test.', tags: ['Adventure'] }
       : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
@@ -247,7 +358,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } });
     assert.equal(seasonal.statusCode, 200);
     assert.deepEqual(seasonal.json(), { state: 'ready', year: 2026,
-      season: 'FALL', sourceDate: '2026-11-05', items: [{ anidbId: 1234,
+      season: 'FALL', sourceDate: '2026-11-05',
+      availableTags: ['action', 'fantasy'], items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
         releaseStatus: 'RELEASING', adult: false,
         libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
@@ -259,7 +371,29 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=2026&season=FALL&kind=movies&tag=action',
       headers: { cookie } })).statusCode, 200);
     assert.deepEqual(seasonalInputs.at(-1), { year: 2026, season: 'FALL',
-      after: 0, limit: 12, kind: 'movies', tag: 'action' });
+      after: 0, limit: 12, kind: 'movies', tag: 'action', status: 'all',
+      sort: 'newest' });
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL&status=ongoing',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).status, 'ongoing');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=title_desc',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).sort, 'title_desc');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=popularity',
+      headers: { cookie } })).statusCode, 400);
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).year, 0);
+    seasonalTags = Array.from({ length: 2_464 }, (_, index) => `theme ${index}`);
+    const fullCatalogue = await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL', headers: { cookie } });
+    assert.equal(fullCatalogue.statusCode, 200);
+    assert.equal(fullCatalogue.json().availableTags.length, 2_464);
+    seasonalTags = ['action', 'fantasy'];
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&tag=%0A',
       headers: { cookie } })).statusCode, 400);
@@ -425,6 +559,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { anidbId: 1235, scope: 'installment', requestKey: 'adult-denied' } });
     assert.equal(deniedAdult.statusCode, 403, deniedAdult.body);
     assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235',
+      headers: { cookie: friendCookie } })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235/display',
       headers: { cookie: friendCookie } })).statusCode, 403);
     const allowedOrdinary = await app.inject({ method: 'POST', url: '/api/requests',
       headers: { cookie: friendCookie, origin,
