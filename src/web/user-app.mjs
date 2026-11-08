@@ -709,7 +709,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       kind: request.query.kind });
   });
   app.post('/api/catalogue/:id/load-detail', { preHandler: writeGuards,
-    config: { rateLimit: { max: 5, timeWindow: '1 hour' } } }, async (request, reply) => {
+    // The durable Shoko ledger still enforces one refresh per minute and 30
+    // per day. Browsing six cold titles must not hit an earlier HTTP cap.
+    config: { rateLimit: { max: 30, timeWindow: '1 hour' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof hydrateTitle !== 'function') {
       return reply.code(503).send({ error: 'Catalogue hydration unavailable' });

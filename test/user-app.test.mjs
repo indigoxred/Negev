@@ -10,6 +10,37 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('cold-title preparation allows browsing beyond five titles without bypassing its metadata ledger', async () => {
+  const user = { id: 17, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const admitted = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    confirmKnownTitle: async () => true,
+    hydrateTitle: async ({ anidbId }) => {
+      admitted.push(anidbId);
+      return { state: 'pending', reason: 'global_cooldown' };
+    } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    for (let id = 1; id <= 6; id++) {
+      const response = await app.inject({ method: 'POST',
+        url: `/api/catalogue/${id}/load-detail`, headers, payload: {} });
+      assert.equal(response.statusCode, 202, response.body);
+    }
+    assert.deepEqual(admitted, [1, 2, 3, 4, 5, 6]);
+  } finally { await app.close(); }
+});
+
 test('request cancellation is owner scoped and CSRF protected', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
