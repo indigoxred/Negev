@@ -15,6 +15,12 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
     status: () => ({ state: expanded.size === 0 ? 'not_checked' :
       members.size === 1 ? 'no_cached_links' : 'linked_installments',
     linkedInstallments: members.size - 1 }),
+    skip(anidbId) {
+      if (!validId(anidbId) || !members.has(anidbId) || expanded.has(anidbId)) {
+        throw new TypeError('Invalid franchise installment');
+      }
+      expanded.add(anidbId);
+    },
     add(result) {
       if (result?.state !== 'related_titles' ||
           result.completeness !== 'unproven' ||

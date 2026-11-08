@@ -1332,21 +1332,20 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       installmentSelect.value = String(item.anidbId);
     };
     const renderFamily = () => {
-      relatedList.replaceChildren(element('p',
-        family.status().state === 'no_cached_links'
-          ? 'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.'
-          : 'Related AniDB titles. Other installments may exist; each title has its own request.',
-        'muted'));
-      for (const installment of family.items().filter((entry) => entry.anidbId !== item.anidbId)) {
+      relatedList.replaceChildren();
+      const installments = family.items().filter((entry) => entry.anidbId !== item.anidbId);
+      if (installments.length === 0) relatedList.append(element('p',
+        'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.', 'muted'));
+      for (const installment of installments) {
         const open = element('button', undefined, 'related-card');
-        open.disabled = installment.anidbId === item.anidbId;
         const art = element('span', 'N', 'related-art poster-fallback');
         const image = posterImage(installment);
         image.addEventListener('load', () => art.classList.add('has-poster'));
         art.append(image);
+        art.append(element('small', relationLabel(installment.relation),
+          'related-relation'));
         const copy = element('span', undefined, 'related-copy');
-        copy.append(element('small', relationLabel(installment.relation)),
-          element('strong', installment.title));
+        copy.append(element('strong', installment.title));
         const count = installment.libraryPresence?.state === 'in_library'
           ? installment.libraryPresence.verifiedEpisodeCount : 0;
         if (count > 0) copy.append(element('span',
@@ -1383,15 +1382,25 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (isCurrentDetail()) renderFamily();
       } catch {
         if (isCurrentDetail()) {
+          if (next.anidbId !== item.anidbId) {
+            family.skip(next.anidbId);
+            renderFamily();
+          }
           const error = element('p',
-            'Related titles could not be loaded now. You can still search for another installment by name.',
+            next.anidbId === item.anidbId
+              ? 'Related titles could not be loaded. Try again or search for another installment.'
+              : 'Some relationships could not be loaded. You can open that title directly or continue exploring.',
             'muted related-error');
           if (relatedList.querySelector('.related-card')) {
             relatedList.querySelector('.related-error')?.remove();
             relatedList.append(error);
           } else relatedList.replaceChildren(error);
-          relatedButton.textContent = 'Try related titles again';
-          relatedButton.disabled = false;
+          if (family.next()) {
+            relatedButton.textContent = next.anidbId === item.anidbId ?
+              'Try related titles again' : 'Explore next related title';
+            relatedButton.hidden = false;
+            relatedButton.disabled = false;
+          }
         }
       } finally { relatedLoading = false; }
     };

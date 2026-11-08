@@ -145,6 +145,8 @@ async function inspectMobile(url, profile, width = 390) {
         const firstTop = cards[0]?.getBoundingClientRect().top;
         return {listed: document.querySelector('.related-list')?.textContent,
           posterCards: document.querySelectorAll('.related-list .related-card img').length,
+          relationLabels: [...document.querySelectorAll('.related-relation')]
+            .map((label) => label.textContent),
           firstRowCount: cards.filter((card) => Math.abs(card.getBoundingClientRect().top - firstTop) < 2).length,
           next: document.querySelector('.related-trigger')?.textContent}; })()`,
     });
@@ -355,11 +357,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.franchise.listed, /Side story/);
       assert.match(mobile.franchise.listed, /1 verified item in library/);
       assert.equal(mobile.franchise.posterCards, 5);
-      assert.equal(mobile.franchise.next, 'Try related titles again');
+      assert.deepEqual(mobile.franchise.relationLabels,
+        ['Side story', 'Sequel', 'Prequel', 'Side story', 'Alternative']);
+      assert.equal(mobile.franchise.next, 'Explore next related title');
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
-        'related anime use a compact poster shelf on desktop');
+        'related anime use the desktop page width');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');

@@ -59,3 +59,14 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 @media(max-width:650px){.identity #username,.identity #invite{display:block}.identity #signout{font-size:12px;padding:8px 6px}.identity summary{padding:7px 8px;font-size:0}.identity summary:before{content:"Me";font-size:12px}.identity summary:after{font-size:12px}.topbar{gap:8px;flex-wrap:nowrap;justify-content:flex-start}.brand{white-space:nowrap;flex:none}.brand span:last-child{display:none}.global-search{min-width:0;width:0;flex:1 1 0;margin-left:0}.global-search input{min-width:0}.identity{flex:none}}
 /* Keep franchise installments together as a compact, image-led shelf. */
 @media(min-width:951px){.title-detail .related-list{grid-template-columns:repeat(auto-fill,minmax(min(100%,200px),1fr));gap:12px}.related-card{gap:10px;min-height:114px;padding:8px}.related-art{width:68px;height:96px}.related-copy strong{font-size:13px}}
+/* Show related installments together, with their relationship on each cover. */
+.title-detail .related-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:14px}
+.title-detail .related-list>p{grid-column:1/-1;margin:8px 0;color:var(--muted)}
+.related-list .related-card{display:flex;flex-direction:column;align-items:stretch;gap:0;min-height:0;padding:0;border:0;background:transparent;box-shadow:none;text-align:left}
+.related-list .related-card:hover .related-art{outline:2px solid var(--accent);outline-offset:2px}
+.related-list .related-art{width:100%;height:auto;aspect-ratio:2/3;border-radius:8px}
+.related-list .related-relation{position:absolute;z-index:1;left:5px;bottom:6px;max-width:calc(100% - 10px);padding:3px 6px;border-radius:4px;background:#101621d9;color:#fff;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.related-list .related-copy{display:block;padding:8px 1px 0}
+.related-list .related-copy strong{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:13px;line-height:1.35}
+.related-list .related-presence{margin-top:5px;font-size:11px}
+@media(max-width:650px){.title-detail .related-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}}
