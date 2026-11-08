@@ -304,6 +304,24 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'available' }] }));
         return;
       }
+      if (path === '/api/catalogue/99' || path === '/api/catalogue/98') {
+        const secondPage = new URL(request.url, 'http://localhost')
+          .searchParams.get('page') === '2';
+        const missingLast = path.endsWith('/98');
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: missingLast ? 98 : 99,
+          title: missingLast ? 'Incomplete paginated series' : 'Complete paginated series',
+          kind: 'series', restricted: false,
+          monitorFuture: false, episodeCount: 4, endDate: '2020-01-01',
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 4 },
+          page: secondPage ? 2 : 1, total: 4, nextPage: secondPage ? null : 2,
+          episodes: (secondPage ? [3, 4] : [1, 2]).map((number) => ({
+            id: (missingLast ? 9800 : 9900) + number, number, type: 'Episode',
+            title: `Episode ${number}`,
+            availability: missingLast && number === 4 ? 'unknown' : 'available',
+          })) }));
+        return;
+      }
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
@@ -411,6 +429,16 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(seriesDetail, /class="installment-choice"/);
       assert.match(seriesDetail, /Watch future episodes/);
       assert.doesNotMatch(seriesDetail, /Already available/);
+      const completePaginated = await dump(`${base}/#/title/99`,
+        join(dir, 'complete-paginated'));
+      assert.match(completePaginated, /4 of 4 regular episodes verified playable in Plex/);
+      assert.match(completePaginated,
+        /<button class="primary" disabled="">Already available<\/button>/);
+      assert.doesNotMatch(completePaginated, /Show more episodes/);
+      const incompletePaginated = await dump(`${base}/#/title/98`,
+        join(dir, 'incomplete-paginated'));
+      assert.match(incompletePaginated, /3 of 4 regular episodes verified playable in Plex/);
+      assert.match(incompletePaginated, /<button class="primary">Request series<\/button>/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);
