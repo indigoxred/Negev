@@ -8,6 +8,7 @@ import { acquisitionNotice } from './acquisition-notice.mjs';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
   installmentRequestState } from './season-availability-presentation.mjs';
 import { detailRefreshDelay } from './detail-refresh.mjs';
+import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute } from './consumer-route.mjs';
 
@@ -1311,7 +1312,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         image.addEventListener('load', () => art.classList.add('has-poster'));
         art.append(image);
         const copy = element('span', undefined, 'related-copy');
-        copy.append(element('small', installment.relation || 'Related'),
+        copy.append(element('small', relationLabel(installment.relation)),
           element('strong', installment.title));
         open.append(art, copy);
         open.addEventListener('click', () => {

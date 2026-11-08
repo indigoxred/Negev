@@ -19,7 +19,7 @@ const assets = new Map([
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'detail-refresh.mjs']
+    'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
@@ -329,7 +329,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
       assert.equal(mobile.franchise.before, 'Explore next related title');
       assert.match(mobile.franchise.listed, /The Garden of Words/);
-      assert.match(mobile.franchise.listed, /SideStory/);
+      assert.match(mobile.franchise.listed, /Side story/);
       assert.equal(mobile.franchise.posterCards, 1);
       assert.equal(mobile.franchise.next, 'Explore next related title');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
