@@ -24,7 +24,20 @@ test('display falls back to exact archive IDs when the Shoko relation call fails
     readLocal: async () => archive,
     readArchive: async () => { archiveCalls++; return archive; },
   }), archive);
-  assert.equal(archiveCalls, 0);
+  assert.equal(archiveCalls, 1);
+});
+
+test('display combines distinct exact AniDB relations while preferring Shoko titles', async () => {
+  const local = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Local sequel', relation: 'Sequel' }] };
+  const archive = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Archive sequel', relation: 'Prequel' }, { anidbId: 44,
+      title: 'Other installment', relation: 'SideStory' }] };
+  assert.deepEqual(await readDisplayRelations({
+    readLocal: async () => local, readArchive: async () => archive,
+  }), { ...local, items: [local.items[0], archive.items[1]] });
 });
 
 test('archive relations retain exact AniDB IDs and distinguish unknown names', async () => {

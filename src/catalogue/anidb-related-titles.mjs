@@ -1,17 +1,30 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
-// Display may use the archive's AniDB IDs when Shoko has not verified its
-// relation cache. Acquisition keeps its separate, stricter relation guard.
+// Display merges exact AniDB IDs from the Shoko cache and archive. A local
+// title/relation wins on duplicate IDs. Acquisition uses its separate guard.
 export function preferDisplayRelations(local, archive) {
-  if (local?.state === 'related_titles' && local.items.length > 0) return local;
+  if (local?.state === 'related_titles' && local.items.length > 0) {
+    if (archive?.state !== 'related_titles' ||
+        archive.anidbId !== local.anidbId) return local;
+    const known = new Set(local.items.map((item) => item.anidbId));
+    const items = [...local.items];
+    for (const item of archive.items) {
+      if (items.length >= 50) break;
+      if (!known.has(item.anidbId)) {
+        known.add(item.anidbId);
+        items.push(item);
+      }
+    }
+    return { ...local, items };
+  }
   return archive?.state === 'related_titles' ? archive : local;
 }
 export async function readDisplayRelations({ readLocal, readArchive }) {
-  let local;
-  try { local = await readLocal(); }
-  catch { local = { state: 'unavailable' }; }
-  if (local?.state === 'related_titles' && local.items.length > 0) return local;
-  return preferDisplayRelations(local, await readArchive());
+  const [local, archive] = await Promise.all([
+    Promise.resolve().then(readLocal).catch(() => ({ state: 'unavailable' })),
+    Promise.resolve().then(readArchive).catch(() => ({ state: 'unavailable' })),
+  ]);
+  return preferDisplayRelations(local, archive);
 }
 
 // Display-only AniDB relationships for titles Shoko has not cached. These
