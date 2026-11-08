@@ -11,23 +11,66 @@ export function createFastDetailReader({ archive, shoko, prefer = 'archive',
   const first = prefer === 'archive' ? archive : shoko;
   const fallback = prefer === 'archive' ? shoko : archive;
   return async (input) => {
+    const valid = (result) => result?.state === 'details' &&
+      result.anidbId === input?.anidbId && result.page === input?.page;
+    const safe = (result) => result?.state === 'details' && !valid(result)
+      ? { state: 'unavailable' } : result;
     const read = async () => {
       let result;
       try { result = await first(input); }
       catch { /* The other source can still have the catalogue page. */ }
-      if (result?.state === 'details' && result.anidbId === input?.anidbId &&
-          result.page === input?.page) return result;
-      return fallback(input);
+      if (valid(result)) return result;
+      return safe(await fallback(input));
     };
     if (deadlineMs === null) return read();
-    let timer;
-    try {
-      return await Promise.race([read(), new Promise((resolve) => {
-        timer = setTimeout(() => resolve(input?.page === 1
-          ? { state: 'detail_pending', anidbId: input?.anidbId }
-          : { state: 'unavailable' }), deadlineMs);
-        timer.unref?.();
-      })]);
-    } finally { clearTimeout(timer); }
+    // A slow archive used to consume the entire first-page deadline before
+    // Shoko was tried. Hedge the cached Shoko read after a short delay, while
+    // retaining the same overall deadline and exact ID/page validation.
+    return new Promise((resolve) => {
+      let settled = false;
+      let primaryDone = false;
+      let secondaryDone = false;
+      let primaryResult;
+      let secondaryResult;
+      let secondaryStarted = false;
+      let hedgeTimer;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadlineTimer);
+        clearTimeout(hedgeTimer);
+        resolve(result);
+      };
+      const finishIfDone = () => {
+        if (primaryDone && secondaryDone) {
+          finish(secondaryResult ?? primaryResult ?? { state: 'unavailable' });
+        }
+      };
+      const startSecondary = () => {
+        if (secondaryStarted || settled) return;
+        secondaryStarted = true;
+        Promise.resolve().then(() => fallback(input)).catch(() => null)
+          .then((result) => {
+            secondaryDone = true;
+            secondaryResult = safe(result);
+            if (valid(result)) finish(result);
+            else finishIfDone();
+          });
+      };
+      const deadlineTimer = setTimeout(() => finish(input?.page === 1
+        ? { state: 'detail_pending', anidbId: input?.anidbId }
+        : { state: 'unavailable' }), deadlineMs);
+      deadlineTimer.unref?.();
+      hedgeTimer = setTimeout(startSecondary,
+        Math.min(750, Math.max(1, Math.floor(deadlineMs / 4))));
+      hedgeTimer.unref?.();
+      Promise.resolve().then(() => first(input)).catch(() => null)
+        .then((result) => {
+          primaryDone = true;
+          primaryResult = safe(result);
+          if (valid(result)) finish(result);
+          else { startSecondary(); finishIfDone(); }
+        });
+    });
   };
 }

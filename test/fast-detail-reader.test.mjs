@@ -53,13 +53,23 @@ test('first-load detail returns pending before a slow Shoko fallback blocks the 
   assert.equal(shokoReads, 1);
 });
 
-test('first-load detail returns pending if the public archive itself stalls', async () => {
+test('first-load detail uses cached Shoko episodes when the archive stalls', async () => {
   let shokoReads = 0;
   const reader = createFastDetailReader({ deadlineMs: 20,
     archive: async () => new Promise(() => {}),
-    shoko: async () => { shokoReads++; return { state: 'details' }; },
+    shoko: async () => { shokoReads++; return { state: 'details',
+      anidbId: 16325, page: 1, episodes: [{ id: 123 }] }; },
+  });
+  assert.equal((await reader({ anidbId: 16325, page: 1 })).episodes[0].id, 123);
+  assert.equal(shokoReads, 1);
+});
+
+test('a hedged provider cannot return episodes for a different anime', async () => {
+  const reader = createFastDetailReader({ deadlineMs: 20,
+    archive: async () => ({ state: 'unavailable' }),
+    shoko: async () => ({ state: 'details', anidbId: 999,
+      page: 1, episodes: [{ id: 123 }] }),
   });
   assert.deepEqual(await reader({ anidbId: 16325, page: 1 }),
-    { state: 'detail_pending', anidbId: 16325 });
-  assert.equal(shokoReads, 0);
+    { state: 'unavailable' });
 });

@@ -534,7 +534,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return display;
   });
   app.get('/api/catalogue/:id', { preHandler: requireUser,
-    config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof loadDetail !== 'function') return reply.code(503).send({ error: 'Catalogue unavailable' });
     const id = Number(request.params.id);
