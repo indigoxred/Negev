@@ -274,6 +274,15 @@ test('signed-in consumer routes render real shell with search, library and reque
           ] }));
         return;
       }
+      if (path === '/api/catalogue/42') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 42,
+          title: 'Example Series', kind: 'series', restricted: false,
+          page: 1, total: 1, nextPage: null,
+          episodes: [{ id: 4201, number: 1, type: 'Episode', title: 'First',
+            availability: 'unknown' }] }));
+        return;
+      }
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
@@ -363,8 +372,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
-      assert.match(detail, /Choose a season or installment/);
-      assert.match(detail, /class="installment-choice"/);
+      assert.doesNotMatch(detail, /Choose a season or installment/);
+      const seriesDetail = await dump(`${base}/#/title/42`,
+        join(dir, 'series-detail'));
+      assert.match(seriesDetail, /Choose a season or installment/);
+      assert.match(seriesDetail, /class="installment-choice"/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);

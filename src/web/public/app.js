@@ -1523,22 +1523,24 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? 'A film request includes one main film entry, not extras or trailers.'
       : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
     'muted'));
-    const installmentLabel = element('label', 'Choose a season or installment',
-      'installment-choice');
-    installmentSelect = element('select');
-    installmentSelect.addEventListener('change', () => {
-      const selectedId = Number(installmentSelect.value);
-      if (selectedId !== item.anidbId && Number.isSafeInteger(selectedId)) {
-        const selected = family.items().find((entry) => entry.anidbId === selectedId);
-        if (selected) {
-          state.searchItems.set(selectedId, selected);
-          location.hash = titleRoute(selectedId);
+    if (data.kind === 'series') {
+      const installmentLabel = element('label', 'Choose a season or installment',
+        'installment-choice');
+      installmentSelect = element('select');
+      installmentSelect.addEventListener('change', () => {
+        const selectedId = Number(installmentSelect.value);
+        if (selectedId !== item.anidbId && Number.isSafeInteger(selectedId)) {
+          const selected = family.items().find((entry) => entry.anidbId === selectedId);
+          if (selected) {
+            state.searchItems.set(selectedId, selected);
+            location.hash = titleRoute(selectedId);
+          }
         }
-      }
-    });
-    installmentLabel.append(installmentSelect);
-    requestAction.append(installmentLabel);
-    syncInstallmentChoice();
+      });
+      installmentLabel.append(installmentSelect);
+      requestAction.append(installmentLabel);
+      syncInstallmentChoice();
+    }
     panel.insertBefore(requestAction, relatedHeading);
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     const requestStatus = element('p', '', 'muted request-feedback');

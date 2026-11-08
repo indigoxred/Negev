@@ -255,6 +255,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       archive: (input) => rawDetailReader.read(input),
       shoko: (input) => metadata.run(() => loadDetail(input)),
     });
+    const loadCurrentDetail = createFastDetailReader({ prefer: 'shoko',
+      archive: (input) => rawDetailReader.read(input),
+      shoko: (input) => metadata.run(() => loadDetail(input)),
+    });
     const observeCurrentPublic = (target, observedShoko,
       includeProof = false) => {
       if (directAvailability.getObservation(target) &&
@@ -367,7 +371,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       };
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
       readRequest: (id) => requests.getRequest(id),
-      loadDetail: (input) => loadFastDetail(input),
+      loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
@@ -376,7 +380,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
-        loadDetail: (input) => loadFastDetail(input),
+        loadDetail: (input) => loadCurrentDetail(input),
         readRelatedTitles: ({ anidbId }) => metadata.run(() =>
           readAniDbRelatedTitles({ baseUrl: shokoBaseUrl,
             apiKey: shokoApiKey, anidbId, fetchImpl })),
@@ -392,7 +396,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
           loadPage: async ({ page }) => {
             if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
-            return loadFastDetail({ anidbId, page });
+            return loadCurrentDetail({ anidbId, page });
           },
         }),
       }),
@@ -830,7 +834,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {
               if (page > 1) await sleep(250);
-              return loadFastDetail({ anidbId, page });
+              return loadCurrentDetail({ anidbId, page });
             } }),
           readEvidence: observeFirstTimeUncertain,
         });

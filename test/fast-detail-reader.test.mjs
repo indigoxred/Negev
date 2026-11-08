@@ -23,3 +23,19 @@ test('unavailable archive falls back to Shoko and does not invent targets', asyn
   assert.deepEqual(await reader({ anidbId: 19586, page: 1 }),
     { state: 'detail_pending', anidbId: 19586 });
 });
+
+test('background airing reads prefer current Shoko detail and fall back to the archive', async () => {
+  let archived = 0;
+  let local = { state: 'details', anidbId: 19586, page: 1,
+    episodes: [{ id: 316609 }] };
+  const reader = createFastDetailReader({ prefer: 'shoko',
+    archive: async () => { archived++; return { state: 'details',
+      anidbId: 19586, page: 1, episodes: [{ id: 316607 }] }; },
+    shoko: async () => local,
+  });
+  assert.equal((await reader({ anidbId: 19586, page: 1 })).episodes[0].id, 316609);
+  assert.equal(archived, 0);
+  local = { state: 'detail_pending', anidbId: 19586 };
+  assert.equal((await reader({ anidbId: 19586, page: 1 })).episodes[0].id, 316607);
+  assert.equal(archived, 1);
+});
