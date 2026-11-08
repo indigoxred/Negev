@@ -67,22 +67,33 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
   const queue = [];
   let active = 0;
   const fetchRecord = async (anidbId) => {
-    try {
-      const response = await fetchImpl(`https://animap.id/api/anidb/${anidbId}/raw`, {
-        method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (response.status !== 200) return null;
-      return parseRecord(await readBoundedJson(response, 2_000_000), anidbId);
-    } catch { return null; }
+    const started = Date.now();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetchImpl(`https://animap.id/api/anidb/${anidbId}/raw`, {
+          method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' },
+          signal: AbortSignal.timeout(Math.max(1, timeoutMs - (Date.now() - started))),
+        });
+        if (response.status === 200) return {
+          value: parseRecord(await readBoundedJson(response, 2_000_000), anidbId),
+          transient: false };
+        if (attempt === 0 && (response.status === 429 || response.status >= 500) &&
+            Date.now() - started + 200 < timeoutMs) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          continue;
+        }
+        return { value: null, transient: response.status !== 404 };
+      } catch { return { value: null, transient: true }; }
+    }
+    return { value: null, transient: true };
   };
   const pump = () => {
     while (active < 2 && queue.length) {
       const job = queue.shift();
       active++;
-      void fetchRecord(job.anidbId).then((value) => {
+      void fetchRecord(job.anidbId).then(({ value, transient }) => {
         cache.set(job.anidbId, { value, expiresMs: now() +
-          (value ? 600_000 : 30_000) });
+          (value ? 600_000 : transient ? 1_000 : 30_000) });
         while (cache.size > 100) cache.delete(cache.keys().next().value);
         pending.delete(job.anidbId);
         job.resolve(value);
