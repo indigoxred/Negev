@@ -42,6 +42,18 @@ test('public raw AniDB record gives exact bounded episode pages', async () => {
   assert.equal(second.restricted, false);
 });
 
+test('a large registered series stays inside the bounded archive reader', async () => {
+  // One Piece's public raw AniDB response was 2,156,579 bytes on 9 Nov 2026.
+  const payload = JSON.stringify({ anime: { ...record.anime,
+    description: 'x'.repeat(2_150_000) } });
+  assert.ok(Buffer.byteLength(payload) > 2_000_000);
+  const reader = createAniMapRawDetailReader({ fetchImpl: async () =>
+    new Response(payload, { status: 200 }) });
+  const detail = await reader.read({ anidbId: 19586, page: 1 });
+  assert.equal(detail.state, 'details');
+  assert.equal(detail.episodes.length, 3);
+});
+
 test('wrong ID, duplicate episodes and missing adult status fail closed', async () => {
   for (const malformed of [
     { ...record, anime: { ...record.anime, '@id': '1' } },
