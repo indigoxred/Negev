@@ -582,12 +582,7 @@ async function loadDiscover() {
   const epoch = discoverResponses.invalidate();
   const userId = state.user?.id;
   const shelves = byId('discover-shelves');
-  shelves.replaceChildren(element('p', 'Finding anime to explore…', 'muted'));
-  const { year, season } = seasonChoice({});
-  const seasonQuery = new URLSearchParams({ year: String(year), season });
-  const seasonal = api(`/api/seasons?${seasonQuery}`).then(
-    (value) => ({ status: 'fulfilled', value }),
-    () => ({ status: 'rejected' }));
+  shelves.replaceChildren(element('p', 'Checking Negev’s Library…', 'muted'));
   state.discoverLoaded = true;
   shelves.replaceChildren();
   const addShelf = ({ title, note, href, items, card, leading = false }) => {
@@ -610,6 +605,7 @@ async function loadDiscover() {
         !discoverResponses.isCurrent(epoch) || state.user?.id !== userId ||
         !Array.isArray(library?.items)) return;
     shelves.querySelector('.empty-state')?.remove();
+    shelves.replaceChildren();
     addShelf({ title: 'In Negev’s Library',
       note: 'A sample of titles with current exact public Plex file proof.',
       href: '#/library', items: library.items,
@@ -617,32 +613,14 @@ async function loadDiscover() {
         `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
         'In library', true),
     });
-  }).catch(() => { /* The catalogue remains usable without library browse. */ });
-  const currentSeason = await seasonal;
-  if (!sessionResponses.isCurrent(session) ||
-      !discoverResponses.isCurrent(epoch) || state.user?.id !== userId) return;
-  if (currentSeason.status !== 'fulfilled' ||
-      !Array.isArray(currentSeason.value?.items) ||
-      currentSeason.value.items.length === 0) {
-    if (!shelves.childElementCount) shelves.append(element('p',
-      'Browse shelves are unavailable right now. Search the catalogue by title above.',
-      'empty-state'));
-    return;
-  }
-  shelves.querySelector('.empty-state')?.remove();
-  addShelf({ title: 'This season',
-    note: currentSeason.value.state === 'stale'
-      ? 'Saved season list; release details may have changed.'
-      : 'Explore series and films, including titles not yet in your library.',
-    href: seasonRoute(year, season), items: currentSeason.value.items,
-    leading: true,
-    card: (item) => {
-      const count = item.libraryPresence?.verifiedEpisodeCount ?? 0;
-      const available = item.libraryPresence?.state === 'in_library' && count > 0;
-      return discoveryCard(item, item.type || 'Anime', available
-        ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
-        : 'Availability not checked', available);
-    } });
+  }).catch(() => {
+    if (sessionResponses.isCurrent(session) &&
+        discoverResponses.isCurrent(epoch) && state.user?.id === userId) {
+      shelves.replaceChildren(element('p',
+        'Library highlights are unavailable right now. Catalogue browsing still works.',
+        'muted'));
+    }
+  });
 }
 async function loadLibrary(append = false, continuation = null) {
   const session = sessionResponses.current();
