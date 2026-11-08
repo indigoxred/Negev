@@ -22,9 +22,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
         typeof inspectCandidateTargets !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
-  return async ({ requestId, candidateOffset = 0,
+  return async ({ requestId, pass = 1, candidateOffset = 0,
     candidateFingerprint = null } = {}) => {
-    if (!validId(requestId) || !Number.isSafeInteger(candidateOffset) ||
+    if (!validId(requestId) || !validId(pass) ||
+        !Number.isSafeInteger(candidateOffset) ||
         candidateOffset < 0 || candidateOffset > 50) return held('invalid_request');
     let request;
     try { request = await readRequest(requestId); }
@@ -63,7 +64,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
       }
     }
     let found;
-    try { found = await discoverCandidates({ requestId }); }
+    const missingIds = request.episodeIds.filter((id) => !exactAvailable.has(id));
+    const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
+      missingIds[(pass - 1) % missingIds.length] : null;
+    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId }); }
     catch { return held('release_search_unavailable'); }
     if (found?.state !== 'candidates') {
       return held(validReason(found?.reason) ? found.reason :

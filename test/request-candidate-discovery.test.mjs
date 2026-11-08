@@ -25,6 +25,38 @@ test('discovers candidates for an existing exact request without authorizing the
   assert.deepEqual(queries, [{ query: 'Canonical Anime' }]);
 });
 
+test('a missing episode search reaches older releases without losing title aliases', async () => {
+  const queries = [];
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async () => ['Official English'],
+    pause: async () => {},
+    searchReleases: async ({ query }) => {
+      queries.push(query);
+      return { state: 'candidates', items: Array.from({ length: 25 }, (_, i) => ({
+        indexerId: 7, guid: `${query}-${i}`, title: `${query} release ${i}`,
+        evidence: 'unverified' })) };
+    },
+  });
+  const found = await discover({ requestId: 12, searchTargetEpisodeId: 1001 });
+  assert.deepEqual(queries, ['Canonical Anime 01', 'Canonical Anime', 'Official English']);
+  assert.equal(found.items.length, 50);
+  for (const query of queries) {
+    assert.ok(found.items.some((item) => item.title.startsWith(`${query} release`)));
+  }
+  assert.ok(found.items[0].title.startsWith('Canonical Anime 01 release'));
+});
+
+test('an episode search cannot use a target outside the saved request', async () => {
+  let searches = 0;
+  const discover = createRequestCandidateDiscovery({ readRequest: () => request,
+    loadDetail: async () => detail,
+    searchReleases: async () => { searches++; return { state: 'candidates', items: [] }; } });
+  assert.deepEqual(await discover({ requestId: 12, searchTargetEpisodeId: 9999 }),
+    { state: 'held', reason: 'invalid_request' });
+  assert.equal(searches, 0);
+});
+
 test('does not search for missing, changed, restricted or incomplete identity', async () => {
   for (const [existing, observation, reason] of [
     [null, detail, 'request_missing'],
