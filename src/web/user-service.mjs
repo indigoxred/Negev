@@ -25,7 +25,7 @@ import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
 import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { readAniDbRelatedTitles as readArchiveRelatedTitles,
-  readDisplayRelations } from
+  createCachedDisplayRelations, readDisplayRelations } from
   '../catalogue/anidb-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
@@ -434,6 +434,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
         verifiedEpisodeCount: ids.size };
     };
+    const cachedDisplayRelations = createCachedDisplayRelations({ now,
+      read: ({ anidbId }) => readDisplayRelations({
+        readLocal: () => metadata.run(() => readAniDbRelatedTitles({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
+          timeoutMs: 4_000,
+        })),
+        readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
+          timeoutMs: 4_000,
+          titleForId: (id) => titleSource?.getTitle(id) ?? null }),
+      }),
+    });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
       localOrigin, secureCookies,
       readImportActivity,
@@ -521,15 +532,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
       loadRelatedTitles: async ({ anidbId }) => {
-        const related = await readDisplayRelations({
-          readLocal: () => metadata.run(() => readAniDbRelatedTitles({
-            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
-            timeoutMs: 4_000,
-          })),
-          readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
-            timeoutMs: 4_000,
-            titleForId: (id) => titleSource?.getTitle(id) ?? null }),
-        });
+        const related = await cachedDisplayRelations({ anidbId });
         if (related?.state !== 'related_titles' || !Array.isArray(related.items)) {
           return related;
         }

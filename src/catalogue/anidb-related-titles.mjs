@@ -27,6 +27,49 @@ export async function readDisplayRelations({ readLocal, readArchive }) {
   return preferDisplayRelations(local, archive);
 }
 
+// Related titles are display-only. A short shared cache prevents several
+// viewers from multiplying Shoko/AniMap reads, and a recently checked result
+// can keep the franchise shelf usable during a transient provider outage.
+export function createCachedDisplayRelations({ read, now = Date.now,
+  freshMs = 60 * 60_000, staleMs = 24 * 60 * 60_000,
+  maxEntries = 256 } = {}) {
+  if (typeof read !== 'function' || typeof now !== 'function' ||
+      !Number.isSafeInteger(freshMs) || freshMs < 1 ||
+      !Number.isSafeInteger(staleMs) || staleMs < freshMs ||
+      !Number.isSafeInteger(maxEntries) || maxEntries < 1 || maxEntries > 1_000) {
+    throw new TypeError('Invalid related-title cache');
+  }
+  const cache = new Map();
+  const pending = new Map();
+  return async ({ anidbId } = {}) => {
+    if (!Number.isSafeInteger(anidbId) || anidbId < 1) {
+      throw new TypeError('Invalid AniDB ID');
+    }
+    const cached = cache.get(anidbId);
+    const age = cached ? now() - cached.checkedMs : Infinity;
+    if (age >= 0 && age < freshMs) return cached.result;
+    if (pending.has(anidbId)) return pending.get(anidbId);
+    const request = Promise.resolve().then(() => read({ anidbId }))
+      .catch(() => ({ state: 'unavailable' }))
+      .then((result) => {
+        if (result?.state === 'related_titles' &&
+            result.anidbId === anidbId &&
+            result.completeness === 'unproven' &&
+            Array.isArray(result.items) && result.items.length > 0 &&
+            result.items.length <= 50) {
+          cache.delete(anidbId);
+          cache.set(anidbId, { result, checkedMs: now() });
+          if (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+          return result;
+        }
+        return age >= 0 && age <= staleMs ? cached.result : result;
+      })
+      .finally(() => pending.delete(anidbId));
+    pending.set(anidbId, request);
+    return request;
+  };
+}
+
 // Display-only AniDB relationships for titles Shoko has not cached. These
 // are exact AniDB IDs, never a title-match or an acquisition identity proof.
 export async function readAniDbRelatedTitles({ anidbId, titleForId,
