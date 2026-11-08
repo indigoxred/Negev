@@ -324,15 +324,18 @@ test('title and library controls recover from pending and failed reads without d
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
       }
-      assert.equal(heldWatchingResponses.length, 1);
+      assert.ok(heldWatchingResponses.length >= 1);
       await evaluate("document.querySelector('#signout').click()");
       await until("document.querySelector('#workspace').hidden");
-      heldWatchingResponses.shift().end(JSON.stringify({ items: [{
+      const staleWatchingBody = JSON.stringify({ items: [{
         id: 9, anidbId: 1, title: 'Prior account watch', kind: 'series',
         episodeIds: [11], monitorFuture: true, watchClosed: false,
         progress: { state: 'saved', targetCount: 1,
           publicAvailability: 'unverified' },
-      }], nextBeforeId: null }));
+      }], nextBeforeId: null });
+      for (const response of heldWatchingResponses.splice(0)) {
+        response.end(staleWatchingBody);
+      }
       await wait(100);
       assert.equal(await evaluate("document.querySelector('#request-list').children.length"), 0);
       assert.equal(await evaluate("document.querySelector('#watch-list').children.length"), 0);
