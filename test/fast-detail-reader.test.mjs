@@ -39,3 +39,27 @@ test('background airing reads prefer current Shoko detail and fall back to the a
   assert.equal((await reader({ anidbId: 19586, page: 1 })).episodes[0].id, 316607);
   assert.equal(archived, 1);
 });
+
+test('first-load detail returns pending before a slow Shoko fallback blocks the page', async () => {
+  let shokoReads = 0;
+  const reader = createFastDetailReader({ deadlineMs: 20,
+    archive: async () => ({ state: 'unavailable' }),
+    shoko: async () => { shokoReads++; return new Promise(() => {}); },
+  });
+  const started = Date.now();
+  assert.deepEqual(await reader({ anidbId: 16325, page: 1 }),
+    { state: 'detail_pending', anidbId: 16325 });
+  assert.ok(Date.now() - started < 1_000);
+  assert.equal(shokoReads, 1);
+});
+
+test('first-load detail returns pending if the public archive itself stalls', async () => {
+  let shokoReads = 0;
+  const reader = createFastDetailReader({ deadlineMs: 20,
+    archive: async () => new Promise(() => {}),
+    shoko: async () => { shokoReads++; return { state: 'details' }; },
+  });
+  assert.deepEqual(await reader({ anidbId: 16325, page: 1 }),
+    { state: 'detail_pending', anidbId: 16325 });
+  assert.equal(shokoReads, 0);
+});
