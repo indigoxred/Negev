@@ -10,6 +10,10 @@ const cleanText = (value, maxLength) => {
     .replace(/\s+/g, ' ').trim();
   return text.length <= maxLength ? text || null : null;
 };
+const cleanDescription = (value) => cleanText(typeof value === 'string'
+  ? value.replace(/\bhttps?:\/\/(?:www\.)?anidb\.net\/(?:ch|cr)\d+\s*\[([^\]\r\n]{1,100})\]/gi, '$1')
+    .replace(/\bhttps?:\/\/(?:www\.)?anidb\.net\/[a-z]{1,3}\d+\b/gi, '')
+  : value, 4_000);
 
 // Optional display metadata. This source never supplies an acquisition,
 // Shoko or Plex identity and cannot change a request target.
@@ -49,7 +53,7 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
         type: cleanText(data.type, 80),
         startYear: Number.isSafeInteger(data.startyear) &&
           data.startyear >= 1800 && data.startyear <= 2200 ? data.startyear : null,
-        description: cleanText(data.description, 4_000),
+        description: cleanDescription(data.description),
         tags: tags.slice(0, 8).map((tag) => tag.trim()) };
     } catch { return unavailable(); }
   };

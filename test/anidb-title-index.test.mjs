@@ -65,6 +65,18 @@ test('search validates user input and never treats a title as file evidence', ()
     { state: 'results', total: 0, page: 1, items: [] });
 });
 
+test('finds shortened title terms in order without requiring an exact phrase', () => {
+  const index = parseAniDbTitleDump([
+    '21|1|x-jat|Tensei Shitara Slime Datta Ken',
+    '21|4|en|That Time I Got Reincarnated as a Slime',
+    '22|1|x-jat|Slime Tensei Side Story',
+    '23|1|x-jat|Unrelated Slime',
+    '24|1|x-jat|Gekijouban Tensei Shitara Slime Datta Ken',
+  ].join('\n'));
+  assert.deepEqual(searchAniDbTitleIndex(index, { query: 'tensei slime' }).items
+    .map((item) => item.anidbId), [21, 24, 22]);
+});
+
 test('large title parsing yields while preserving the exact synchronous index', async () => {
   const text = Array.from({ length: 4_100 }, (_, index) =>
     `${index + 1}|1|x-jat|Title ${index + 1}`).join('\n');

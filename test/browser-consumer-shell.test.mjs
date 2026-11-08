@@ -18,7 +18,8 @@ const assets = new Map([
   ...['request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs'].map((name) => [`/${name}`, [name, 'text/javascript']]),
+    'consumer-route.mjs', 'season-availability-presentation.mjs']
+    .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
 const dump = async (url, profile, captureName, viewport = '1440,900') => new Promise((resolve, reject) => {
@@ -98,7 +99,7 @@ async function inspectMobile(url, profile, width = 390) {
         headerBottom: document.querySelector('.topbar').getBoundingClientRect().bottom,
         mobileNavVisible: document.querySelector('#mobile-nav').getBoundingClientRect().height > 0,
         searchRight: document.querySelector('#search-form').getBoundingClientRect().right,
-        hasContent: document.querySelector('#discover-shelves').textContent.includes('This week on AniDB')})`,
+        hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 390) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
@@ -117,7 +118,7 @@ async function inspectMobile(url, profile, width = 390) {
         return {before, after: toggle.getAttribute('aria-pressed'),
           saved: localStorage.getItem('negev:show-adult:1')}; })()`,
     });
-    await send('Page.navigate', { url: url.replace('#/discover', '#/airing?year=2026&season=FALL') });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/discover?year=2026&season=FALL') });
     await wait(800);
     const filtered = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({adultHidden: document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden,
@@ -177,7 +178,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/requests') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
-          id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie',
+          id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
           episodeIds: [10], monitorFuture: false, watchClosed: false,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
@@ -219,9 +220,15 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/seasons') {
+        const ongoing = new URL(request.url, 'http://localhost')
+          .searchParams.get('status') === 'ongoing';
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
-          sourceDate: '2026-11-05', items: [{ anidbId: 4158,
+          sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance'],
+          items: ongoing ? [{ anidbId: 19847, title: 'FX Senshi Kurumi-chan',
+            type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
+            libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] :
+            [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
             adult: false, libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
@@ -289,11 +296,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
-      assert.match(browse, /This season/);
       assert.match(browse, /Pale Cocoon/);
-      assert.match(browse, /This week on AniDB/);
-      assert.match(browse, /FX Senshi Kurumi-chan/);
-      assert.match(browse, /Verified in your library/);
+      assert.match(browse, /<h1>Browse anime\.<\/h1>/);
+      assert.doesNotMatch(browse, /id="discover-shelves"/);
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
       assert.equal(mobile.width, 390);
@@ -315,13 +320,18 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(tablet.mobileNavVisible, true,
         'Tablet navigation stays visible after the desktop links no longer fit');
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
+      assert.match(library, /Negev’s Library/);
       assert.match(library, /The Garden of Words/);
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
+      assert.match(airing, /<h1>Airing anime<\/h1>/);
+      assert.doesNotMatch(airing, /Ongoing this season/);
+      assert.match(airing, /id="airing-sort"/);
+      assert.match(airing, /id="airing-kind"/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /Local availability not checked/);
-      const season = await dump(`${base}/#/airing?year=2026&season=FALL`,
+      const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);
       assert.match(season, /The Garden of Words/);
@@ -332,16 +342,18 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Back to Discover/);
-      assert.match(detail, /Check whole title in Plex/);
-      assert.match(detail, /Check whole title in Plex[\s\S]*Episodes &amp; availability/);
+      assert.doesNotMatch(detail, /Recheck unknown entries in background/);
+      assert.match(detail, /Episode and Special options/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
-      assert.match(alternateFilm, /2 film entries verified playable in Plex/);
+      assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
-      assert.doesNotMatch(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /<button class="primary">Request film<\/button>/);
+      assert.match(alternateFilm, /Choose the film version or part/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
+      assert.match(requests, /Cancel request/);
       assert.match(requests, /My requests/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);
       assert.match(requests, /No download is confirmed in progress/);

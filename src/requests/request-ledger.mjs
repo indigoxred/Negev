@@ -50,6 +50,7 @@ export function openRequestLedger(dbPath) {
       episode_key TEXT NOT NULL,
       monitor_future INTEGER NOT NULL CHECK(monitor_future IN (0,1)),
       watch_closed INTEGER NOT NULL DEFAULT 0 CHECK(watch_closed IN (0,1)),
+      cancelled_ms INTEGER CHECK(cancelled_ms >= 0),
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       status TEXT NOT NULL CHECK(status = 'held'),
       reason TEXT NOT NULL,
@@ -66,6 +67,10 @@ export function openRequestLedger(dbPath) {
     if (!db.prepare('PRAGMA table_info(requests)').all()
       .some((column) => column.name === 'title')) {
       db.exec('ALTER TABLE requests ADD COLUMN title TEXT');
+    }
+    if (!db.prepare('PRAGMA table_info(requests)').all()
+      .some((column) => column.name === 'cancelled_ms')) {
+      db.exec('ALTER TABLE requests ADD COLUMN cancelled_ms INTEGER CHECK(cancelled_ms >= 0)');
     }
     db.exec(`CREATE TABLE IF NOT EXISTS targets (
       id INTEGER PRIMARY KEY,
@@ -88,7 +93,7 @@ export function openRequestLedger(dbPath) {
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
 
-  const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key
+  const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key,cancelled_ms
     FROM requests WHERE requester_id=? AND request_key=?`);
   const insertRequest = db.prepare(`INSERT INTO requests
     (requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
@@ -99,20 +104,23 @@ export function openRequestLedger(dbPath) {
   const insertLink = db.prepare('INSERT INTO request_targets(request_id,target_id) VALUES (?,?)');
   const findLinks = db.prepare(`SELECT t.id,t.episode_id FROM targets t
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
-  const get = db.prepare(`SELECT id,requester_id,title,anidb_id,kind,monitor_future,watch_closed,created_ms,status,reason
+  const get = db.prepare(`SELECT id,requester_id,title,anidb_id,kind,monitor_future,watch_closed,cancelled_ms,created_ms,status,reason
     FROM requests WHERE id=?`);
   const listOwn = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
     ORDER BY id DESC LIMIT ?`);
   const listWatching = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
-    AND monitor_future=1 AND watch_closed=0 ORDER BY id DESC LIMIT ?`);
+    AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id DESC LIMIT ?`);
   const listHistory = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
-    AND (monitor_future=0 OR watch_closed=1) ORDER BY id DESC LIMIT ?`);
+    AND (monitor_future=0 OR watch_closed=1 OR cancelled_ms IS NOT NULL) ORDER BY id DESC LIMIT ?`);
   const countRequests = db.prepare('SELECT COUNT(*) AS count FROM requests');
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
-  const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed FROM requests WHERE id=?');
+  const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed,cancelled_ms FROM requests WHERE id=?');
   const closeWatch = db.prepare('UPDATE requests SET watch_closed=1 WHERE id=? AND watch_closed=0');
   const activeAirings = db.prepare(`SELECT id,anidb_id FROM requests
-    WHERE id>? AND monitor_future=1 AND watch_closed=0 ORDER BY id LIMIT ?`);
+    WHERE id>? AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id LIMIT ?`);
+  const cancelRow = db.prepare('SELECT requester_id,cancelled_ms FROM requests WHERE id=?');
+  const cancel = db.prepare('UPDATE requests SET cancelled_ms=? WHERE id=? AND requester_id=? AND cancelled_ms IS NULL');
+  const attemptTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_attempts'");
   const readAiringCursor = db.prepare('SELECT after_id FROM airing_poll_cursor WHERE id=1');
   const updateAiringCursor = db.prepare('UPDATE airing_poll_cursor SET after_id=? WHERE id=1 AND after_id=?');
 
@@ -131,6 +139,23 @@ export function openRequestLedger(dbPath) {
   }
 
   return {
+    cancelRequest({ requesterId, requestId, nowMs }) {
+      if (![requesterId, requestId].every((id) => Number.isSafeInteger(id) && id > 0) ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0) {
+        throw new TypeError('Invalid cancellation');
+      }
+      return transact(() => {
+        const row = cancelRow.get(requestId);
+        if (!row || row.requester_id !== requesterId) return held('request_not_found');
+        if (row.cancelled_ms !== null) return { state: 'cancelled', requestId };
+        if (attemptTable.get() && db.prepare(
+          'SELECT 1 FROM acquisition_attempts WHERE request_id=? LIMIT 1').get(requestId)) {
+          return held('acquisition_started');
+        }
+        cancel.run(nowMs, requestId, requesterId);
+        return { state: 'cancelled', requestId };
+      });
+    },
     listRequests({ requesterId, beforeId = Number.MAX_SAFE_INTEGER, limit = 20,
       view = 'all' }) {
       if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
@@ -175,7 +200,7 @@ export function openRequestLedger(dbPath) {
         const watch = watchRow.get(requestId);
         if (!watch) return held('request_missing');
         if (watch.monitor_future !== 1 || watch.kind !== 'series') return held('not_airing_request');
-        if (watch.watch_closed === 1) return held('watch_closed');
+        if (watch.watch_closed === 1 || watch.cancelled_ms !== null) return held('watch_closed');
         if (!isCompleteAniDbDetail(detail, watch.anidb_id,
           { allowEmptySeries: true }) || detail.kind !== 'series' ||
             detail.episodes.length > 2_000) {
@@ -215,6 +240,7 @@ export function openRequestLedger(dbPath) {
       }
       const existing = findRequest.get(requesterId, requestKey);
       if (!existing) return null;
+      if (existing.cancelled_ms !== null) return held('request_cancelled');
       if (existing.command_key !== commandKey) return held('idempotency_key_conflict');
       return { state: 'held', reason: REASON, requestId: existing.id,
         targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
@@ -230,6 +256,7 @@ export function openRequestLedger(dbPath) {
       return transact(() => {
         const existing = findRequest.get(requesterId, requestKey);
         if (existing) {
+          if (existing.cancelled_ms !== null) return held('request_cancelled');
           if (existing.command_key !== commandKey ||
               existing.anidb_id !== item.anidbId || existing.kind !== item.kind ||
               existing.episode_key !== item.episodeKey ||
@@ -259,7 +286,8 @@ export function openRequestLedger(dbPath) {
         kind: row.kind, monitorFuture: Boolean(row.monitor_future),
         watchClosed: Boolean(row.watch_closed),
         episodeIds: findLinks.all(row.id).map((link) => link.episode_id),
-        status: row.status, reason: row.reason, createdMs: row.created_ms } : null;
+        status: row.cancelled_ms === null ? row.status : 'cancelled',
+        reason: row.reason, createdMs: row.created_ms } : null;
     },
     countRequests() { return countRequests.get().count; },
     countTargets() { return countTargets.get().count; },

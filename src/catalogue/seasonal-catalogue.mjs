@@ -8,9 +8,16 @@ const MAX_MAP_BYTES = 60_000_000;
 const MAX_DETAIL_BYTES = 128_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const seasons = new Set(['WINTER', 'SPRING', 'SUMMER', 'FALL']);
+const browseSeasons = new Set(['ALL', ...seasons]);
+const seasonOrder = new Map(['WINTER', 'SPRING', 'SUMMER', 'FALL'].map((value, index) => [value, index]));
 const kinds = new Set(['all', 'series', 'movies']);
+const statuses = new Set(['all', 'ongoing']);
+const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
+const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
+  (value === '' || value.split(',').length <= 5 &&
+    value.split(',').every((tag) => validTag(tag) && tag !== ''));
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const validDate = (value) => typeof value === 'string' &&
   datePattern.test(value) && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
@@ -132,7 +139,23 @@ async function parseMap(response) {
     groups.set(key, entries.filter((entry) => !duplicate.has(entry.anidbId))
       .sort((a, b) => a.title.localeCompare(b.title) || a.anidbId - b.anidbId));
   }
-  return { sourceDate, groups };
+  const seenArchiveIds = new Set();
+  const allEntries = [...groups.entries()]
+    .sort(([left], [right]) => {
+      const [leftYear, leftSeason] = left.split('-');
+      const [rightYear, rightSeason] = right.split('-');
+      return Number(rightYear) - Number(leftYear) ||
+        seasonOrder.get(rightSeason) - seasonOrder.get(leftSeason);
+    })
+    .flatMap(([key, entries]) => {
+      const [year, season] = key.split('-');
+      return entries.map((entry) => ({ ...entry, year: Number(year), season }));
+    }).filter((entry) => {
+      if (seenArchiveIds.has(entry.anidbId)) return false;
+      seenArchiveIds.add(entry.anidbId);
+      return true;
+    });
+  return { sourceDate, groups, allEntries };
 }
 
 // Presentation data only. The acquisition and availability pipelines do not
@@ -200,22 +223,45 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     } catch { return { kind: 'unknown' }; }
   }
   return { async read({ year, season, after = 0, limit = 12,
-    kind = 'all', tag = '' } = {}) {
-    if (!Number.isSafeInteger(year) || year < 1900 || year > 2100 ||
-        !seasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
+    kind = 'all', tag = '', status = 'all', sort = 'newest' } = {}) {
+    if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
+        !browseSeasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
-        !kinds.has(kind) || !validTag(tag)) {
+        !kinds.has(kind) || !validTags(tag) || !statuses.has(status) ||
+        !sorts.has(sort)) {
       throw new TypeError('Invalid season page');
     }
     const time = now();
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     const mapState = await loadMap(time);
     if (mapState === 'unavailable') return { state: 'unavailable' };
-    const entries = (cached.groups.get(`${year}-${season}`) ?? [])
-      .filter((entry) => (kind === 'all' || (kind === 'movies'
+    const seasonEntries = year === 0 || season === 'ALL'
+      ? cached.allEntries.filter((entry) =>
+        (year === 0 || entry.year === year) &&
+        (season === 'ALL' || entry.season === season))
+      : cached.groups.get(`${year}-${season}`) ?? [];
+    const tagEntries = status === 'ongoing'
+      ? seasonEntries.filter((entry) => entry.releaseStatus === 'ONGOING')
+      : seasonEntries;
+    const availableTags = [...new Set(tagEntries.flatMap((entry) => entry.tags))]
+      .sort((a, b) => a.localeCompare(b));
+    const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];
+    const entries = seasonEntries
+      .filter((entry) => (status === 'all' || entry.releaseStatus === 'ONGOING') &&
+        (kind === 'all' || (kind === 'movies'
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
-        (!tag || entry.tags.includes(tag.trim().toLowerCase())));
+        selectedTags.every((selected) => entry.tags.includes(selected)));
+    if (sort === 'oldest') entries.sort((a, b) =>
+      (a.year ?? year) - (b.year ?? year) ||
+      (seasonOrder.get(a.season ?? season) ?? 0) -
+        (seasonOrder.get(b.season ?? season) ?? 0) ||
+      a.title.localeCompare(b.title) || a.anidbId - b.anidbId);
+    if (sort === 'title_asc' || sort === 'title_desc') {
+      const direction = sort === 'title_desc' ? -1 : 1;
+      entries.sort((a, b) => direction * a.title.localeCompare(b.title) ||
+        a.anidbId - b.anidbId);
+    }
     const page = entries.slice(after, after + limit);
     const found = [];
     for (let offset = 0; offset < page.length; offset += 4) {
@@ -229,7 +275,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         title: verification.title, type: verification.type,
         releaseStatus: entry.releaseStatus, adult: verification.adult }));
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
-      year, season, sourceDate: cached.sourceDate, items,
+      year, season, sourceDate: cached.sourceDate, items, availableTags,
       nextAfter: after + limit < entries.length ? after + limit : null };
   } };
 }

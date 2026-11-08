@@ -1,5 +1,19 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
+// Display may use the archive's AniDB IDs when Shoko has not verified its
+// relation cache. Acquisition keeps its separate, stricter relation guard.
+export function preferDisplayRelations(local, archive) {
+  if (local?.state === 'related_titles' && local.items.length > 0) return local;
+  return archive?.state === 'related_titles' ? archive : local;
+}
+export async function readDisplayRelations({ readLocal, readArchive }) {
+  let local;
+  try { local = await readLocal(); }
+  catch { local = { state: 'unavailable' }; }
+  if (local?.state === 'related_titles' && local.items.length > 0) return local;
+  return preferDisplayRelations(local, await readArchive());
+}
+
 // Display-only AniDB relationships for titles Shoko has not cached. These
 // are exact AniDB IDs, never a title-match or an acquisition identity proof.
 export async function readAniDbRelatedTitles({ anidbId, titleForId,

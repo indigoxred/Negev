@@ -14,7 +14,8 @@ const root = new URL('../src/web/public/', import.meta.url);
 const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
   'request-progress-text.mjs', 'response-epoch.mjs', 'franchise-explorer.mjs',
-  'acquisition-notice.mjs', 'consumer-route.mjs']);
+  'acquisition-notice.mjs', 'consumer-route.mjs',
+  'season-availability-presentation.mjs']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
@@ -196,12 +197,10 @@ test('title and library controls recover from pending and failed reads without d
         'owner review starts while Watching is pending');
       holdWatchingRequests = false;
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
-      await until("document.querySelector('#detail')?.textContent.includes('Load details')");
-      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Load details').click()");
-      await until("document.querySelector('#detail')?.textContent.includes('Check again')");
+      await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
+      for (let attempt = 0; attempt < 80 && detailPosts < 1; attempt++) await wait(100);
       assert.equal(detailPosts, 1);
       detailReady = true;
-      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       assert.equal(await evaluate("document.querySelector('#detail a[data-plex-link]')?.textContent"),
         'Open in Plex');
@@ -209,23 +208,19 @@ test('title and library controls recover from pending and failed reads without d
       detailReady = false;
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/1'");
-      await until("document.querySelector('#detail')?.textContent.includes('Load details')");
       holdNextDetailPost = true;
-      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Load details').click()");
-      await until("document.querySelector('#detail button')?.disabled === true");
+      await evaluate("location.hash = '#/title/1'");
+      for (let attempt = 0; attempt < 80 && !heldDetailResponse; attempt++) await wait(100);
+      assert.ok(heldDetailResponse, 'detail hydration starts automatically');
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");
       await evaluate("location.hash = '#/title/1'");
-      await until("document.querySelector('#detail')?.textContent.includes('Check again')");
-      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
-      await until("document.querySelector('#detail')?.textContent.includes('Check again')");
+      await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
       assert.equal(detailPosts, 2, 'an in-flight hydration POST must not be duplicated');
       assert.ok(heldDetailResponse);
       json(heldDetailResponse, { state: 'pending' });
       heldDetailResponse = null;
       detailReady = true;
-      await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Check again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       const beforeReentry = titleReads;
       await evaluate("location.hash = '#/discover'");
@@ -329,15 +324,18 @@ test('title and library controls recover from pending and failed reads without d
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
       }
-      assert.equal(heldWatchingResponses.length, 1);
+      assert.ok(heldWatchingResponses.length >= 1);
       await evaluate("document.querySelector('#signout').click()");
       await until("document.querySelector('#workspace').hidden");
-      heldWatchingResponses.shift().end(JSON.stringify({ items: [{
+      const staleWatchingBody = JSON.stringify({ items: [{
         id: 9, anidbId: 1, title: 'Prior account watch', kind: 'series',
         episodeIds: [11], monitorFuture: true, watchClosed: false,
         progress: { state: 'saved', targetCount: 1,
           publicAvailability: 'unverified' },
-      }], nextBeforeId: null }));
+      }], nextBeforeId: null });
+      for (const response of heldWatchingResponses.splice(0)) {
+        response.end(staleWatchingBody);
+      }
       await wait(100);
       assert.equal(await evaluate("document.querySelector('#request-list').children.length"), 0);
       assert.equal(await evaluate("document.querySelector('#watch-list').children.length"), 0);

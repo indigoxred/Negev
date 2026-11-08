@@ -19,11 +19,20 @@ const constantEqual = (a, b) => {
   const right = Buffer.from(b);
   return left.length === right.length && timingSafeEqual(left, right);
 };
+const privateLanHost = (hostname) => {
+  const octets = hostname.split('.');
+  if (octets.length !== 4 || octets.some((part) =>
+    !/^(?:0|[1-9]\d{0,2})$/.test(part) || Number(part) > 255)) return false;
+  const [first, second] = octets.map(Number);
+  return first === 10 || (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168);
+};
 
 // Account-backed HTTP boundary. Acquisition and availability are injected
 // separately; no browser can supply a requester ID or torrent URL.
-export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureCookies = true,
-  now = Date.now, submitRequest, readRequest, listRequests, listLibraryTitles,
+export async function buildUserApp({ accounts, sessionKey, publicOrigin,
+  localOrigin = null, secureCookies = true,
+  now = Date.now, submitRequest, cancelRequest, readRequest, listRequests, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
   readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
@@ -34,8 +43,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   publicAvailabilityConfigured = false } = {}) {
-  let origin;
+  let origin, local;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
+  if (localOrigin !== null) {
+    try { local = new URL(localOrigin); }
+    catch { throw new TypeError('Invalid local origin'); }
+  }
   if (typeof accounts?.authenticate !== 'function' ||
       typeof accounts?.registerInvite !== 'function' ||
       typeof accounts?.getSessionUser !== 'function' ||
@@ -49,6 +62,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       (!secureCookies && !(origin.protocol === 'http:' &&
         ['localhost', '127.0.0.1'].includes(origin.hostname))) ||
       (secureCookies && origin.protocol !== 'https:') ||
+      (localOrigin !== null && (!secureCookies ||
+        localOrigin !== local.origin || local.protocol !== 'http:' ||
+        !privateLanHost(local.hostname) || local.pathname !== '/' ||
+        local.search || local.hash || local.username || local.password)) ||
       typeof now !== 'function' || typeof submitRequest !== 'function' ||
       typeof readRequest !== 'function' ||
       typeof confirmKnownTitle !== 'function' ||
@@ -58,15 +75,25 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   }
 
   const app = Fastify({ logger: false, bodyLimit: 16 * 1024, trustProxy: false });
-  await app.register(secureSession, { key: sessionKey,
+  const primarySession = { key: sessionKey,
+    ...(local ? { sessionName: 'session' } : {}),
     cookieName: secureCookies ? '__Host-negev' : 'negev-local-session',
     expiry: 24 * 60 * 60,
     cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: secureCookies,
-      maxAge: 24 * 60 * 60 } });
+      maxAge: 24 * 60 * 60 } };
+  await app.register(secureSession, local ? [primarySession,
+    { key: sessionKey, sessionName: 'lanSession',
+      cookieName: 'negev-lan-session', expiry: 24 * 60 * 60,
+      cookie: { path: '/', httpOnly: true, sameSite: 'strict',
+        secure: false, maxAge: 24 * 60 * 60 } }] : primarySession);
+  const sessionFor = (request) => local && request.headers.host === local.host &&
+    (request.headers.origin === localOrigin ||
+      (!request.headers.origin && request.cookies?.['negev-lan-session']))
+    ? request.lanSession : request.session;
   const peerRateKey = (request) => normalizeIP(request.ip, 64);
   const accountRateKey = (request) => {
     let userId;
-    try { userId = request.session?.get('userId'); }
+    try { userId = sessionFor(request)?.get('userId'); }
     catch { /* An invalid session keeps the peer-level limit. */ }
     return Number.isSafeInteger(userId) && userId > 0
       ? `account:${userId}` : `peer:${peerRateKey(request)}`;
@@ -78,7 +105,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs'].map((name) =>
+    'consumer-route.mjs', 'season-availability-presentation.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -96,21 +123,27 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
     ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[9]],
     ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[10]],
     ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
+    ['/season-availability-presentation.mjs',
+      'text/javascript; charset=utf-8', pages[12]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
-    if (request.headers.origin !== publicOrigin) {
+    if (request.headers.origin !== publicOrigin &&
+        !(local && request.headers.origin === localOrigin &&
+          request.headers.host === local.host)) {
       return reply.code(403).send({ error: 'Origin rejected' });
     }
   };
   const requireUser = async (request, reply) => {
     const user = accounts.getSessionUser({
-      userId: request.session.get('userId'), version: request.session.get('version'),
+      userId: sessionFor(request).get('userId'),
+      version: sessionFor(request).get('version'),
     });
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
     request.negevUser = user;
   };
   const requireCsrf = async (request, reply) => {
-    if (!constantEqual(request.headers['x-negev-csrf'], request.session.get('csrfToken'))) {
+    if (!constantEqual(request.headers['x-negev-csrf'],
+      sessionFor(request).get('csrfToken'))) {
       return reply.code(403).send({ error: 'Request token rejected' });
     }
   };
@@ -186,10 +219,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         .send({ error: 'Authentication busy; retry shortly' });
     }
     if (!user) return reply.code(401).send({ error: 'Invalid login' });
-    request.session.regenerate();
-    request.session.set('userId', user.id);
-    request.session.set('version', user.sessionVersion);
-    request.session.set('csrfToken', randomBytes(32).toString('hex'));
+    const session = sessionFor(request);
+    session.regenerate();
+    session.set('userId', user.id);
+    session.set('version', user.sessionVersion);
+    session.set('csrfToken', randomBytes(32).toString('hex'));
     return { user: { id: user.id, username: user.username, role: user.role,
       adultAllowed: user.adultAllowed } };
   });
@@ -202,7 +236,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       'reconciliation_failed', 'stopping', 'stopped']
       .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role, adultAllowed },
-      csrfToken: request.session.get('csrfToken'),
+      csrfToken: sessionFor(request).get('csrfToken'),
       capabilities: { releaseSearch: role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
@@ -292,27 +326,32 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const query = request.query;
-    if (Object.keys(query).some((key) => !['year', 'season', 'after', 'kind', 'tag'].includes(key)) ||
-        typeof query.year !== 'string' || !/^\d{4}$/.test(query.year) ||
+    if (Object.keys(query).some((key) => !['year', 'season', 'after', 'kind', 'tag', 'status', 'sort'].includes(key)) ||
+        typeof query.year !== 'string' || !/^(0|\d{4})$/.test(query.year) ||
         typeof query.season !== 'string' ||
-        !['WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
+        !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
         !['all', 'series', 'movies'].includes(query.kind ?? 'all') ||
+        !['all', 'ongoing'].includes(query.status ?? 'all') ||
+        !['newest', 'oldest', 'title_asc', 'title_desc'].includes(query.sort ?? 'newest') ||
         (query.tag !== undefined && (typeof query.tag !== 'string' ||
-          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(query.tag))) ||
+          query.tag.length > 200 || query.tag.split(',').length > 5 ||
+          query.tag.split(',').some((tag) =>
+            !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)))) ||
         query.after !== undefined && (typeof query.after !== 'string' ||
           !/^(0|[1-9]\d*)$/.test(query.after))) {
       return reply.code(400).send({ error: 'Invalid season page' });
     }
     const year = Number(query.year);
     const after = Number(query.after ?? '0');
-    if (year < 1900 || year > 2100 || !Number.isSafeInteger(after) ||
+    if (year !== 0 && (year < 1900 || year > 2100) || !Number.isSafeInteger(after) ||
         after > 100_000) return reply.code(400).send({ error: 'Invalid season page' });
     if (typeof listSeasonalTitles !== 'function') {
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
     let page;
     try { page = await listSeasonalTitles({ year, season: query.season,
-      after, limit: 12, kind: query.kind ?? 'all', tag: query.tag ?? '' }); }
+      after, limit: 12, kind: query.kind ?? 'all', tag: query.tag ?? '',
+      status: query.status ?? 'all', sort: query.sort ?? 'newest' }); }
     catch { return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
     if (page?.state === 'unavailable') return { state: 'unavailable' };
     if (!['ready', 'partial', 'stale'].includes(page?.state) ||
@@ -320,6 +359,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
         typeof page.sourceDate !== 'string' ||
         !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
         !Array.isArray(page.items) || page.items.length > 12 ||
+        !Array.isArray(page.availableTags) || page.availableTags.length > 5_000 ||
+        page.availableTags.some((tag) => typeof tag !== 'string' ||
+          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)) ||
         page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
           item.anidbId < 1 || typeof item.title !== 'string' ||
           !item.title.trim() || item.title.length > 300 ||
@@ -338,7 +380,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
     return { state: page.state, year, season: query.season,
-      sourceDate: page.sourceDate, items: page.items.filter((item) =>
+      sourceDate: page.sourceDate, availableTags: page.availableTags,
+      items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
         releaseStatus: item.releaseStatus, adult: item.adult,
@@ -674,7 +717,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
   });
   app.post('/api/logout', { preHandler: writeGuards }, async (request, reply) => {
     accounts.revokeSessions({ userId: request.negevUser.id });
-    request.session.delete();
+    sessionFor(request).delete();
     return reply.code(204).send();
   });
   app.post('/api/invitations', { preHandler: writeGuards }, async (request, reply) => {
@@ -746,6 +789,28 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin, secureC
       return reply.code(400).send({ error: 'Invalid history page' });
     }
     return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view });
+  });
+  app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const requestId = Number(request.params.id);
+    if (!Number.isSafeInteger(requestId) || requestId < 1 ||
+        !allowedBody(request.body, []) || Object.keys(request.body).length !== 0) {
+      return reply.code(400).send({ error: 'Invalid cancellation' });
+    }
+    const existing = readRequest(requestId);
+    if (!existing || existing.requesterId !== request.negevUser.id) {
+      return reply.code(404).send({ error: 'Request not found' });
+    }
+    if (typeof cancelRequest !== 'function') {
+      return reply.code(503).send({ error: 'Cancellation unavailable' });
+    }
+    const result = cancelRequest({ requesterId: request.negevUser.id,
+      requestId, nowMs: now() });
+    if (result.state === 'cancelled') return result;
+    return reply.code(result.reason === 'request_not_found' ? 404 : 409).send({
+      error: result.reason === 'acquisition_started'
+        ? 'Download processing has already begun; this request cannot be cancelled here yet.'
+        : 'Request cannot be cancelled', reason: result.reason });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

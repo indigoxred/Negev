@@ -79,7 +79,7 @@ export function openCompletionQueue(dbPath) {
 
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM completion_cursor WHERE id=1');
   const next = db.prepare(`SELECT a.id FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     JOIN acquisition_starts s ON s.attempt_id=a.id AND s.torrent_hash=a.torrent_hash
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
@@ -116,7 +116,7 @@ export function openCompletionQueue(dbPath) {
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
     FROM completion_checks c
     JOIN acquisition_attempts a ON a.id=c.attempt_id AND a.status='torrent_observed'
-    JOIN requests r ON r.id=a.request_id AND r.status='held'
+    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     LEFT JOIN handoff_intents h ON h.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id

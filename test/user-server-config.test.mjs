@@ -82,6 +82,24 @@ test('non-loopback listener requires explicit exposure and HTTPS origin', () => 
   ]) assert.throws(() => parseUserServerConfig({ ...exposed, ...change }), TypeError);
 });
 
+test('an exposed review listener may opt into its exact private LAN HTTP origin', () => {
+  const exposed = { ...valid, NEGEV_LISTEN_HOST: '0.0.0.0',
+    NEGEV_EXPOSE_USERS: '1', NEGEV_PORT: '17116',
+    NEGEV_PUBLIC_ORIGIN: 'https://anime.negev.red',
+    NEGEV_LOCAL_ORIGIN: 'http://192.168.50.138:17116' };
+  assert.equal(parseUserServerConfig(exposed).localOrigin,
+    exposed.NEGEV_LOCAL_ORIGIN);
+  for (const local of ['http://192.168.50.138:17115',
+    'http://8.8.8.8:17116', 'https://192.168.50.138:17116',
+    'http://negev.example.test:17116',
+    'http://user:pass@192.168.50.138:17116']) {
+    assert.throws(() => parseUserServerConfig({ ...exposed,
+      NEGEV_LOCAL_ORIGIN: local }), TypeError);
+  }
+  assert.throws(() => parseUserServerConfig({ ...exposed,
+    NEGEV_EXPOSE_USERS: undefined }), TypeError);
+});
+
 test('a local tunnel can serve an HTTPS origin while Negev stays on loopback', () => {
   const tunnel = { ...valid, NEGEV_EXPOSE_USERS: '1',
     NEGEV_PUBLIC_ORIGIN: 'https://negev.example.test' };
@@ -289,6 +307,16 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
   assert.equal(parsed.titleCheck, false);
   assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_INDEX: '1',
     NEGEV_TITLE_CHECK: '1' }).titleCheck, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_GUID_PROBE: '1',
+    NEGEV_TITLE_CHECK: '1' }).titleCheck, true);
+  assert.equal(parseUserServerConfig({ ...plex, NEGEV_PLEX_GUID_PROBE: '1',
+    NEGEV_TITLE_CHECK: '1', NEGEV_DIRECT_ACTIVE_DELAY_MS: '10000' })
+    .directActiveDelayMs, 10_000);
+  const proofReader = parseUserServerConfig({ ...plex,
+    NEGEV_FILE_PROOF_READ: '1',
+    NEGEV_FILE_PROOF_LIFETIME_MS: String(24 * 60 * 60_000) });
+  assert.equal(proofReader.fileBackfill, false);
+  assert.equal(proofReader.fileProofLifetimeMs, 24 * 60 * 60_000);
   assert.equal(parsed.plex.guidProbe, false);
   assert.equal(parseUserServerConfig({ ...plex,
     NEGEV_PLEX_GUID_PROBE: '1' }).plex.guidProbe, true);
