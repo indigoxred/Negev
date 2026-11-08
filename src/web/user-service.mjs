@@ -19,6 +19,7 @@ import { createSeasonalCatalogue } from '../catalogue/seasonal-catalogue.mjs';
 import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
 import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
 import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
+import { createAniDbMapFactsReader } from '../catalogue/anidb-map-facts.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
@@ -201,6 +202,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const shokoPosters = createShokoPosterReader({ baseUrl: shokoBaseUrl,
       apiKey: shokoApiKey, fetchImpl, now });
     const displayReader = createAniDbDisplayReader({ fetchImpl, now });
+    const mapFacts = createAniDbMapFactsReader({ fetchImpl, now });
     const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now });
@@ -527,7 +529,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
-      readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
+      readDisplayMetadata: async ({ anidbId }) => {
+        const [display, facts] = await Promise.all([
+          displayReader.read({ anidbId }), mapFacts.read({ anidbId }),
+        ]);
+        return display.state === 'display' && facts.state === 'facts'
+          ? { ...display, season: facts.season, releaseStatus: facts.status,
+            studio: facts.studio, durationMinutes: facts.durationMinutes }
+          : display;
+      },
       loadRelatedTitles: async ({ anidbId }) => {
         const related = await cachedDisplayRelations({ anidbId });
         if (related?.state !== 'related_titles' || !Array.isArray(related.items)) {
