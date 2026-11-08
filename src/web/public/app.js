@@ -1414,6 +1414,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     let filmChoiceSelect = null;
     let refreshRequestAction = () => {};
     let refreshSelectedRequestAction = () => {};
+    const likelyCompleteSeries = data.kind === 'series' &&
+      data.monitorFuture !== true &&
+      data.endDate && data.endDate < new Date().toISOString().slice(0, 10) &&
+      Number.isSafeInteger(data.episodeCount) && data.episodeCount > 0 &&
+      data.libraryPresence?.state === 'in_library' &&
+      data.libraryPresence.verifiedEpisodeCount >= data.episodeCount &&
+      pager.nextPage !== null;
+    let checkingCompleteSeries = Boolean(likelyCompleteSeries);
+    let loadNextEpisodePage = null;
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
     if (pager.episodes.length > 0) {
@@ -1562,11 +1571,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       panel.append(advanced);
       if (pager.nextPage !== null) {
         const more = element('button', 'Show more episodes');
-        more.addEventListener('click', async () => {
+        loadNextEpisodePage = async (notifyError = true) => {
+          if (pager.nextPage === null || more.disabled) return false;
           more.disabled = true;
           try {
             const page = await api(`/api/catalogue/${item.anidbId}?page=${pager.nextPage}`);
-            if (!isCurrentDetail()) return;
+            if (!isCurrentDetail()) return false;
             const added = pager.append(page);
             if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
             appendOptions(added.episodes);
@@ -1574,8 +1584,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             refreshRequestAction();
             if (pager.nextPage === null) more.remove();
             else more.disabled = false;
-          } catch (error) { message(error.message, true); more.disabled = false; }
-        });
+            return true;
+          } catch (error) {
+            if (notifyError) message(error.message, true);
+            more.disabled = false;
+            return false;
+          }
+        };
+        more.addEventListener('click', () => { void loadNextEpisodePage(); });
         advanced.append(more);
       }
     }
@@ -1628,8 +1644,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     refreshRequestAction = () => {
       if (requestSaving || requestSaved) return;
       const blocked = alreadyAvailable();
-      button.disabled = blocked;
-      button.textContent = blocked ? 'Already available' : requestLabel();
+      button.disabled = blocked || checkingCompleteSeries;
+      button.textContent = blocked ? 'Already available' :
+        checkingCompleteSeries ? 'Checking availability…' : requestLabel();
       if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
       else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
         requestStatus.textContent = '';
@@ -1697,6 +1714,18 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       }
     });
     requestAction.append(button, requestStatus);
+    if (checkingCompleteSeries && loadNextEpisodePage) {
+      // A saved count only suggests full coverage. Load exact episode pages
+      // before disabling requests; keep this bounded for the title UI.
+      void (async () => {
+        for (let page = 0; page < 8 && pager.nextPage !== null; page++) {
+          if (!isCurrentDetail() || !await loadNextEpisodePage(false)) break;
+        }
+        if (!isCurrentDetail()) return;
+        checkingCompleteSeries = false;
+        refreshRequestAction();
+      })();
+    }
   } catch (error) {
     if (!isCurrentDetail()) return;
     const retry = element('button', 'Try again');
