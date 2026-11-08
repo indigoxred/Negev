@@ -80,3 +80,46 @@ test('public archive reads cap simultaneous distinct-title requests', async () =
   for (const release of releases) release();
   await Promise.all(results);
 });
+
+test('a temporary archive failure retries before declaring a cold title pending', async () => {
+  let calls = 0;
+  const reader = createAniMapRawDetailReader({ fetchImpl: async () => {
+    calls++;
+    return calls === 1 ? { status: 503 } :
+      { status: 200, text: async () => JSON.stringify(record) };
+  } });
+  const result = await reader.read({ anidbId: 19586, page: 1 });
+  assert.equal(result.state, 'details');
+  assert.equal(calls, 2);
+});
+
+test('a missing archive payload does not cause a redundant retry', async () => {
+  let calls = 0;
+  const reader = createAniMapRawDetailReader({ fetchImpl: async () => {
+    calls++;
+    return { status: 404 };
+  } });
+  assert.deepEqual(await reader.read({ anidbId: 19586, page: 1 }),
+    { state: 'unavailable' });
+  assert.equal(calls, 1);
+});
+
+test('a temporary archive failure is not cached for thirty seconds', async () => {
+  let calls = 0;
+  let time = 0;
+  const reader = createAniMapRawDetailReader({ now: () => time,
+    fetchImpl: async () => {
+      calls++;
+      return calls <= 2 ? { status: 503 } :
+        { status: 200, text: async () => JSON.stringify(record) };
+    } });
+  assert.deepEqual(await reader.read({ anidbId: 19586, page: 1 }),
+    { state: 'unavailable' });
+  time = 500;
+  await reader.read({ anidbId: 19586, page: 1 });
+  assert.equal(calls, 2);
+  time = 1_000;
+  assert.equal((await reader.read({ anidbId: 19586, page: 1 })).state,
+    'details');
+  assert.equal(calls, 3);
+});
