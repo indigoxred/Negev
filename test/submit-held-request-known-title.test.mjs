@@ -43,3 +43,50 @@ test('a recently verified whole installment is held before a duplicate request i
   { state: 'held', reason: 'already_available' });
   assert.equal(saved, 0);
 });
+
+test('a partial installment request saves only episodes without recent playable proof', async () => {
+  const detail = { state: 'details', anidbId: 42, title: 'Three episode show',
+    kind: 'series', restricted: false, complete: true, page: 1, total: 3,
+    nextPage: null, airDate: '2020-01-01', endDate: '2020-01-15',
+    episodeCount: 3, episodes: [1, 2, 3].map((number) => ({
+      id: 100 + number, number, type: 'Episode', title: `Part ${number}`,
+      airDate: `2020-01-${String(number).padStart(2, '0')}` })) };
+  let saved;
+  const submit = createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => detail,
+    recentlyAvailable: ({ episodeId }) => episodeId !== 103,
+    ledger: { findSubmission: () => null, submit: (input) => {
+      saved = input;
+      return { state: 'saved' };
+    } },
+    now: () => 1, today: () => '2026-11-08',
+  });
+  assert.deepEqual(await submit({ requesterId: 1, anidbId: 42,
+    scope: 'installment', requestKey: 'missing-one' }), { state: 'saved' });
+  assert.deepEqual(saved.intent.episodeIds, [103]);
+  assert.equal(saved.intent.monitorFuture, false);
+});
+
+test('an Airing request can watch future episodes without reacquiring verified current ones', async () => {
+  const detail = { state: 'details', anidbId: 43, title: 'Airing show',
+    kind: 'series', restricted: false, complete: true, page: 1, total: 1,
+    nextPage: null, airDate: '2026-11-01', endDate: null,
+    episodeCount: 12, episodes: [{ id: 201, number: 1, type: 'Episode',
+      title: 'First', airDate: '2026-11-01' }] };
+  let saved;
+  const submit = createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => detail,
+    recentlyAvailable: async () => true,
+    ledger: { findSubmission: () => null, submit: (input) => {
+      saved = input;
+      return { state: 'saved' };
+    } },
+    now: () => 1, today: () => '2026-11-08',
+  });
+  assert.deepEqual(await submit({ requesterId: 1, anidbId: 43,
+    scope: 'installment', requestKey: 'watch-future' }), { state: 'saved' });
+  assert.deepEqual(saved.intent.episodeIds, []);
+  assert.equal(saved.intent.monitorFuture, true);
+});
