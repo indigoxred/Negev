@@ -23,7 +23,7 @@ import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
 import { createPosterReader } from '../catalogue/poster-reader.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { readAniDbRelatedTitles as readArchiveRelatedTitles,
-  preferDisplayRelations } from
+  readDisplayRelations } from
   '../catalogue/anidb-related-titles.mjs';
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
@@ -498,13 +498,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: ({ anidbId }) => displayReader.read({ anidbId }),
       loadRelatedTitles: async ({ anidbId }) => {
-        const local = await metadata.run(() => readAniDbRelatedTitles({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
-        }));
-        if (local?.state === 'related_titles' && local.items.length > 0) return local;
-        const archive = await readArchiveRelatedTitles({ anidbId, fetchImpl,
-          titleForId: (id) => titleSource?.getTitle(id) ?? null });
-        return preferDisplayRelations(local, archive);
+        return readDisplayRelations({
+          readLocal: () => metadata.run(() => readAniDbRelatedTitles({
+            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
+          })),
+          readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
+            titleForId: (id) => titleSource?.getTitle(id) ?? null }),
+        });
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
         const detail = await metadata.run(() => loadDetail(input));
