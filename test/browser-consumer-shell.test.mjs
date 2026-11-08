@@ -363,6 +363,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Back to Discover/);
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
+      assert.match(detail, /Choose a season or installment/);
+      assert.match(detail, /class="installment-choice"/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);

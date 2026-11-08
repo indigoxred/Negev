@@ -1285,6 +1285,18 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       title: data.title || item.title });
     const relatedButton = element('button', 'Explore franchise', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
+    let installmentSelect = null;
+    const syncInstallmentChoice = () => {
+      if (!installmentSelect) return;
+      installmentSelect.replaceChildren();
+      for (const entry of family.items()) {
+        const option = element('option', entry.anidbId === item.anidbId
+          ? `${entry.title} · this installment` : entry.title);
+        option.value = String(entry.anidbId);
+        installmentSelect.append(option);
+      }
+      installmentSelect.value = String(item.anidbId);
+    };
     const renderFamily = () => {
       relatedList.replaceChildren(element('p',
         family.status().state === 'no_cached_links'
@@ -1312,6 +1324,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         'No more cached links to explore';
       relatedButton.hidden = !family.next();
       relatedButton.disabled = !family.next();
+      syncInstallmentChoice();
     };
     if (franchise) renderFamily();
     let relatedLoading = false;
@@ -1509,6 +1522,22 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? 'A film request includes one main film entry, not extras or trailers.'
       : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
     'muted'));
+    const installmentLabel = element('label', 'Choose a season or installment',
+      'installment-choice');
+    installmentSelect = element('select');
+    installmentSelect.addEventListener('change', () => {
+      const selectedId = Number(installmentSelect.value);
+      if (selectedId !== item.anidbId && Number.isSafeInteger(selectedId)) {
+        const selected = family.items().find((entry) => entry.anidbId === selectedId);
+        if (selected) {
+          state.searchItems.set(selectedId, selected);
+          location.hash = titleRoute(selectedId);
+        }
+      }
+    });
+    installmentLabel.append(installmentSelect);
+    requestAction.append(installmentLabel);
+    syncInstallmentChoice();
     panel.insertBefore(requestAction, relatedHeading);
     const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     const requestStatus = element('p', '', 'muted request-feedback');
