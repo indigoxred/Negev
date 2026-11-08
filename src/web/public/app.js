@@ -16,7 +16,8 @@ const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: () => crypto.randomUUID() });
 const state = { csrf: null, user: null, selected: null,
-  nextBeforeId: { watching: null, history: null }, releaseSearch: false, detailLoad: false,
+  nextBeforeId: { watching: null, history: null, preparing: null },
+  releaseSearch: false, detailLoad: false,
   titleChecks: false, acquisitionState: 'disabled', searchToken: 0,
   lastSearchQuery: '', searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
@@ -189,11 +190,12 @@ function showSession(data) {
     displayCache.clear();
     byId('request-list').replaceChildren();
     byId('preparing-list').replaceChildren();
+    byId('more-preparations').hidden = true;
     byId('watch-list').replaceChildren();
     byId('review-list').replaceChildren();
     byId('detail').replaceChildren(element('p',
       'Select a result to see its details.', 'muted'));
-    state.nextBeforeId = { watching: null, history: null };
+    state.nextBeforeId = { watching: null, history: null, preparing: null };
     state.requestHistoryExpanded = false;
     state.libraryLoaded = false;
     state.libraryAfter = null;
@@ -258,7 +260,7 @@ function clearWorkspace() {
   genreSelections.season.clear();
   state.seasonalRouteKey = null;
   state.routePage = null;
-  state.nextBeforeId = { watching: null, history: null };
+  state.nextBeforeId = { watching: null, history: null, preparing: null };
   state.requestHistoryExpanded = false;
   nextReviewAttemptId = null;
   state.releaseSearch = false;
@@ -268,6 +270,8 @@ function clearWorkspace() {
   byId('service-notice').textContent =
     'Negev is in preview. Sign in to see acquisition status.';
   byId('request-list').replaceChildren();
+  byId('preparing-list').replaceChildren();
+  byId('more-preparations').hidden = true;
   byId('watch-list').replaceChildren();
   byId('review-list').replaceChildren();
   byId('main-nav').hidden = true;
@@ -551,21 +555,29 @@ function loadRequests({ silent = false } = {}) {
   void loadRequestView('watching', false, silent);
   void loadRequestView('history', false, silent);
 }
-async function loadPreparations(silent = false) {
+async function loadPreparations(silent = false, append = false) {
   const session = sessionResponses.current();
   const epoch = requestResponses.preparing.invalidate();
   const userId = state.user?.id;
   const list = byId('preparing-list');
+  const more = byId('more-preparations');
   try {
-    const page = await api('/api/request-preparations');
+    const suffix = append && state.nextBeforeId.preparing
+      ? `?beforeId=${state.nextBeforeId.preparing}` : '';
+    const page = await api(`/api/request-preparations${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
         !requestResponses.preparing.isCurrent(epoch) ||
         state.user?.id !== userId) return;
-    list.replaceChildren();
-    if (!page.items?.length) return;
-    const section = element('section', undefined, 'request-group');
-    section.append(element('h3', 'Preparing requests'));
-    const rows = element('div', undefined, 'request-group-rows');
+    if (!append) list.replaceChildren();
+    let section = list.querySelector('[data-request-group="preparing"]');
+    if (!section && page.items?.some((item) => item.state !== 'cancelled')) {
+      section = element('section', undefined, 'request-group');
+      section.dataset.requestGroup = 'preparing';
+      section.append(element('h3', 'Preparing requests'),
+        element('div', undefined, 'request-group-rows'));
+      list.append(section);
+    }
+    const rows = section?.lastElementChild;
     for (const item of page.items) {
       if (item.state === 'cancelled') continue;
       const row = element('div', undefined, 'request-row');
@@ -593,16 +605,21 @@ async function loadPreparations(silent = false) {
       row.append(heading, element('p', item.state === 'complete'
         ? item.reason === 'already_available'
           ? 'Already available in Negev’s Library.'
-          : 'This title could not be requested automatically.'
-        : 'Waiting for a verified episode list before any download.',
+          : item.reason === 'ambiguous_movie_scope'
+            ? 'Choose a film part on the title page to request it.'
+            : 'This title could not be requested automatically.'
+        : item.state === 'resolving'
+          ? 'Finishing the request. Cancellation is unavailable during this step.'
+          : 'Waiting for a verified episode list before any download.',
       'muted'));
       rows.append(row);
     }
-    if (rows.childElementCount) { section.append(rows); list.append(section); }
+    state.nextBeforeId.preparing = page.nextBeforeId;
+    more.hidden = page.nextBeforeId === null;
   } catch {
     if (!silent && sessionResponses.isCurrent(session) &&
         requestResponses.preparing.isCurrent(epoch)) {
-      list.replaceChildren(element('p',
+      if (!append) list.replaceChildren(element('p',
         'Preparing requests are temporarily unavailable.', 'muted'));
     }
   }
@@ -612,6 +629,7 @@ function refreshVisibleRequests() {
   refreshRequestStatusAges();
   if (document.hidden) return;
   if (state.requestHistoryExpanded) {
+    void loadPreparations(true);
     void loadRequestView('watching', false, true);
     void refreshExpandedHistory();
   } else loadRequests({ silent: true });
@@ -958,6 +976,7 @@ async function loadAiring() {
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('refresh-library').addEventListener('click', () => { void loadLibrary(); });
 byId('more-requests').addEventListener('click', () => { void loadRequestView('history', true); });
+byId('more-preparations').addEventListener('click', () => { void loadPreparations(false, true); });
 byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
 async function loadOperationalReview(append = false) {
   if (state.user?.role !== 'admin') return;
@@ -1318,7 +1337,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
       if (!state.detailLoad) {
-        panel.append(element('p', 'Episode details are not cached yet. Detail loading is disabled in this preview, so this title cannot be requested.', 'muted'));
+        panel.append(element('p', 'Episode details are not cached yet. You can save a request now; it will wait for exact episodes before any download.', 'muted'));
       } else {
         panel.append(element('p', 'Preparing episode details automatically. You can keep browsing; this page will update when they are ready.', 'muted'));
       }

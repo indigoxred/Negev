@@ -21,9 +21,9 @@
 
 - Distinct users requesting one cold title retain distinct intents without duplicate grabs.
 - Restart and repeated key resolve once; a changed command conflicts.
-- Cancellation racing resolution cannot create a later normal request.
+- A successful cancellation before worker claim cannot create a later normal request. After claim, the UI makes the noncancellable finalization point explicit.
 - Unknown or restricted adult status cannot bypass account restrictions.
-- Provider outage remains visible with bounded retry, not a busy browser loop.
+- Provider outage remains visible with bounded retry frequency, not a busy browser loop or a finite deadline that strands late AniDB/Airing metadata.
 
 ### Task 1: Durable intent ledger
 
@@ -62,4 +62,4 @@
 - [x] Confirm failure and implement the consumer flow.
 - [x] Rerun focused checks and commit.
 - [x] Verify a slow cold title saves inside five seconds in the isolated account-service test with acquisition disabled.
-- [ ] Verify the isolated Docker image boots with the preparation route and acquisition disabled; the Linux test job covers synthetic cold-title resolution and restart.
+- [x] Verify the isolated Docker image boots with the preparation route and acquisition disabled; the Linux test job covers synthetic cold-title resolution and restart.

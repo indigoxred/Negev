@@ -5,12 +5,14 @@ const terminalReasons = new Set(['already_available', 'invalid_request',
 // One paced resolution attempt. The only way this worker creates an
 // acquisition-visible request is through the existing exact submitter.
 export function createPendingTitleWorker({ ledger, submitRequest,
-  authorize, prepareDetail = async () => {}, now = Date.now } = {}) {
+  authorize, restoreKnownTitle = async () => true,
+  prepareDetail = async () => {}, now = Date.now } = {}) {
   if (typeof ledger?.claimDue !== 'function' ||
       typeof ledger.defer !== 'function' ||
       typeof ledger.finish !== 'function' ||
       typeof submitRequest !== 'function' ||
       typeof authorize !== 'function' ||
+      typeof restoreKnownTitle !== 'function' ||
       typeof prepareDetail !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid pending title worker');
   }
@@ -29,6 +31,13 @@ export function createPendingTitleWorker({ ledger, submitRequest,
       let result;
       try {
         if (authorized !== true) throw new TypeError('Account status unavailable');
+        // The saved identity was confirmed at enqueue time. The observed-title
+        // registry is memory-only, so restore it before the exact submitter
+        // after a restart. This never creates an episode or acquisition target.
+        if (await restoreKnownTitle({ anidbId: claim.anidbId,
+          title: claim.title }) !== true) {
+          throw new TypeError('Saved title identity unavailable');
+        }
         result = await submitRequest({ requesterId: claim.requesterId,
           anidbId: claim.anidbId, scope: 'installment',
           requestKey: claim.requestKey });

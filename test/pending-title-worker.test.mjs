@@ -51,6 +51,31 @@ test('pending detail schedules preparation and later resolves with the original 
     assert.equal((await worker.runOnce()).state, 'idle');
   }));
 
+test('a long provider outage stays visible, retries at a bounded pace, and does not block another title',
+  async () => withLedger(async ({ ledger }) => {
+    ledger.enqueue(item);
+    ledger.enqueue({ ...item, requesterId: 5, anidbId: 4159,
+      title: 'Other title', requestKey: 'other' });
+    let nowMs = 1_000;
+    const worker = createPendingTitleWorker({ ledger, now: () => nowMs,
+      authorize: async () => true,
+      submitRequest: async ({ anidbId }) => anidbId === 4158
+        ? { state: 'held', reason: 'detail_unavailable' }
+        : { state: 'held', requestId: 44 },
+    });
+    let result = await worker.runOnce();
+    assert.equal(result.state, 'pending');
+    assert.equal((await worker.runOnce()).requestId, 44);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      nowMs = result.nextDueMs;
+      result = await worker.runOnce();
+      assert.equal(result.state, 'pending');
+    }
+    assert.equal(result.nextDueMs - nowMs, 600_000);
+    assert.equal(ledger.get(1).state, 'pending');
+    assert.equal(ledger.get(2).state, 'resolved');
+  }));
+
 test('a full library match finishes without creating a normal request',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);

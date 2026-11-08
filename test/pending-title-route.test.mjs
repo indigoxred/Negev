@@ -150,7 +150,9 @@ test('pending history and cancellation are owner scoped and CSRF guarded',
       readPendingTitle: (id) => ({ id,
         requesterId: id === 13 ? 8 : 7 }),
       cancelPendingTitle: (input) => { calls.push(input);
-        return { state: 'cancelled', intentId: input.intentId }; },
+        return input.intentId === 14
+          ? { state: 'held', reason: 'resolution_in_progress' }
+          : { state: 'cancelled', intentId: input.intentId }; },
     });
     try {
       const anonymous = await app.inject({ method: 'GET',
@@ -172,7 +174,11 @@ test('pending history and cancellation are owner scoped and CSRF guarded',
         url: '/api/request-preparations/12/cancel', headers, payload: {} });
       assert.equal(cancelled.statusCode, 200, cancelled.body);
       assert.equal(cancelled.json().state, 'cancelled');
+      const resolving = await app.inject({ method: 'POST',
+        url: '/api/request-preparations/14/cancel', headers, payload: {} });
+      assert.equal(resolving.statusCode, 409);
+      assert.match(resolving.json().error, /being finalized/);
       assert.deepEqual(calls.map((input) => [input.requesterId,
-        input.intentId]), [[7, 12]]);
+        input.intentId]), [[7, 12], [7, 14]]);
     } finally { await app.close(); }
   });

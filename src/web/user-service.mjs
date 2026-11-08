@@ -373,6 +373,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       ledger: pendingTitles, submitRequest, now,
       authorize: ({ requesterId }) =>
         accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true,
+      restoreKnownTitle: ({ anidbId, title }) =>
+        titleRegistry.observe({ state: 'results', total: 1,
+          items: [{ anidbId, title }] }),
       prepareDetail: shokoHydration ? ({ anidbId }) =>
         metadata.run(() => hydrator.load({ anidbId })) : async () => {},
     });

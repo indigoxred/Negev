@@ -909,7 +909,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       const result = cancelPendingTitle({ requesterId: request.negevUser.id,
         intentId, nowMs: now() });
       return result.state === 'cancelled' ? result :
-        reply.code(409).send({ error: 'Preparation cannot be cancelled',
+        reply.code(409).send({ error: result.reason === 'resolution_in_progress'
+          ? 'Request is being finalized. Refresh My Requests to see its result.'
+          : 'Preparation cannot be cancelled',
           reason: result.reason });
     });
   app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {

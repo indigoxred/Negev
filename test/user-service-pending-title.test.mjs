@@ -44,11 +44,13 @@ test('cold title is durably queued without targets, then becomes one exact reque
       }
       throw new Error(`Unexpected route ${route}`);
     };
-    const service = await createUserService({ dbPath,
+    const sessionKey = randomBytes(32);
+    const options = { dbPath,
       shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic',
-      sessionKey: randomBytes(32), publicOrigin: origin,
+      sessionKey, publicOrigin: origin,
       secureCookies: false, fetchImpl, now: () => clock,
-      today: () => '2026-11-09' });
+      today: () => '2026-11-09' };
+    let service = await createUserService(options);
     try {
       const login = await service.app.inject({ method: 'POST', url: '/api/login',
         headers: { origin }, payload: { username: 'Owner',
@@ -85,6 +87,8 @@ test('cold title is durably queued without targets, then becomes one exact reque
         assert.equal((await service.tickPendingTitle()).state, 'pending');
         ready = true;
         clock = 31_000;
+        await service.close();
+        service = await createUserService(options);
         const resolved = await service.tickPendingTitle();
         assert.equal(resolved.state, 'resolved');
         assert.deepEqual(exact.getRequest(resolved.requestId).episodeIds,
