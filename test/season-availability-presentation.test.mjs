@@ -34,6 +34,10 @@ test('verified complete installments are not offered as new requests', () => {
   assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
     episodes: [{ type: 'Episode', availability: 'available' },
       { type: 'Special', availability: 'unknown' }] }), 'already_available');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
+    monitorFuture: true,
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable',
+  'an airing installment can still watch for future episodes');
   assert.equal(installmentRequestState({ kind: 'movie', nextPage: null,
     episodes: [{ type: 'Episode', availability: 'available' }] }), 'already_available');
   assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,

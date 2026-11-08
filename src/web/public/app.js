@@ -1532,7 +1532,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     requestAction.append(element('h2', 'Request this installment'));
     requestAction.append(element('p', data.kind === 'movie'
       ? 'A film request includes one main film entry, not extras or trailers.'
-      : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
+      : data.monitorFuture === true
+        ? 'This airing installment includes its aired regular episodes and watches for new ones. Other installments have separate requests; Specials can be requested separately.'
+        : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
     'muted'));
     if (data.kind === 'series') {
       const installmentLabel = element('label', 'Choose a season or installment',
@@ -1553,11 +1555,16 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       syncInstallmentChoice();
     }
     panel.insertBefore(requestAction, relatedHeading);
-    const button = element('button', `Request ${data.kind === 'movie' ? 'film' : 'series'}`, 'primary');
     const requestStatus = element('p', '', 'muted request-feedback');
     requestStatus.setAttribute('role', 'status');
     const alreadyAvailable = installmentRequestState({ kind: data.kind,
-      episodes: pager.episodes, nextPage: pager.nextPage }) === 'already_available';
+      episodes: pager.episodes, nextPage: pager.nextPage,
+      monitorFuture: data.monitorFuture }) === 'already_available';
+    const requestLabel = data.kind === 'movie' ? 'Request film' :
+      data.monitorFuture === true && pager.episodes.some((episode) =>
+        episode.type === 'Episode' && episode.availability === 'available')
+        ? 'Watch future episodes' : 'Request series';
+    const button = element('button', requestLabel, 'primary');
     if (alreadyAvailable) {
       button.disabled = true;
       button.textContent = 'Already available';
@@ -1617,7 +1624,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       } catch (error) {
         requestStatus.textContent = error.message;
         message(error.message, true);
-        button.textContent = `Request ${data.kind === 'movie' ? 'film' : 'series'}`;
+        button.textContent = requestLabel;
         button.disabled = false;
       }
     });
