@@ -20,6 +20,25 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('rotates missing regular episode search by queue pass', async () => {
+  const targeted = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 2,
+      availableEpisodeIds: [] }),
+    discoverCandidates: async ({ searchTargetEpisodeId }) => {
+      targeted.push(searchTargetEpisodeId);
+      return { state: 'candidates', requestId: 4, anidbId: 42, items: [] };
+    },
+    previewCandidate: async () => { throw Error('no candidate'); },
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw Error('no candidate'); },
+  });
+  assert.equal((await process({ requestId: 4, pass: 1 })).reason, 'no_release_candidates');
+  assert.equal((await process({ requestId: 4, pass: 2 })).reason, 'no_release_candidates');
+  assert.deepEqual(targeted, [1001, 1002]);
+});
+
 test('preflights a more seeded release first without weakening exact checks', async () => {
   const inspected = [];
   let submitted;

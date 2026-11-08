@@ -189,6 +189,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
           }
           let outcome;
           try { outcome = await processRequest({ requestId: next.requestId,
+            pass: next.pass,
             candidateOffset: next.candidateOffset ?? 0,
             candidateFingerprint: next.candidateFingerprint ?? null }); }
           catch { outcome = held('worker_unavailable'); }

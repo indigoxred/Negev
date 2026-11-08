@@ -13,7 +13,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       typeof pause !== 'function') {
     throw new TypeError('Invalid request discovery configuration');
   }
-  return async ({ requestId }) => {
+  return async ({ requestId, searchTargetEpisodeId = null }) => {
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
     try { request = readRequest(requestId); } catch { return held('request_unavailable'); }
@@ -31,13 +31,26 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
+    let target = null;
+    if (searchTargetEpisodeId !== null) {
+      target = detail.episodes.find((episode) => episode.id === searchTargetEpisodeId);
+      if (request.kind !== 'series' ||
+          !request.episodeIds.includes(searchTargetEpisodeId) ||
+          target?.type !== 'Episode' ||
+          !Number.isSafeInteger(target.number) || target.number < 1) {
+        return held('invalid_request');
+      }
+    }
     let aliases;
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
-    const queries = trustedReleaseQueries(detail.title, aliases);
+    const titleQueries = trustedReleaseQueries(detail.title, aliases);
+    const targeted = target && titleQueries.length > 0 ?
+      `${titleQueries[0]} ${String(target.number).padStart(2, '0')}` : null;
+    const queries = targeted && targeted.length <= 120 ?
+      [targeted, ...titleQueries] : titleQueries;
     if (queries.length === 0) return held('query_too_long');
-    const items = [];
-    const seenCandidates = new Set();
+    const buckets = [];
     let successful = 0;
     for (const [index, query] of queries.entries()) {
       if (index > 0) await pause(1_000);
@@ -51,16 +64,27 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         continue;
       }
       successful++;
-      for (const item of result.items) {
+      buckets.push(result.items);
+    }
+    if (successful === 0) return held('release_search_unavailable');
+    const items = [];
+    const seenCandidates = new Set();
+    // Each source gets a chance before the 50-item cap. An older exact
+    // episode hit must not displace every same-title alias result.
+    for (let position = 0; position < 50 && items.length < 50; position++) {
+      let any = false;
+      for (const bucket of buckets) {
+        const item = bucket[position];
+        if (!item) continue;
+        any = true;
         const key = `${item.indexerId}:${item.guid}`;
         if (seenCandidates.has(key)) continue;
         seenCandidates.add(key);
         items.push(item);
         if (items.length === 50) break;
       }
-      if (items.length === 50) break;
+      if (!any) break;
     }
-    if (successful === 0) return held('release_search_unavailable');
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       items, exhaustive: false };
   };

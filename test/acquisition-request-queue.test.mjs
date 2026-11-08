@@ -137,10 +137,12 @@ test('held and failed requests are recorded while later requests continue', asyn
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
     const seen = [];
+    const passes = [];
     try {
       const worker = createAcquisitionPageWorker({ queue, limit: 3, now: () => 100,
-        processRequest: async ({ requestId }) => {
+        processRequest: async ({ requestId, pass }) => {
           seen.push(requestId);
+          passes.push(pass);
           if (requestId === 1) return { state: 'held', reason: 'shoko_unrecognized' };
           if (requestId === 2) throw Error('private provider detail');
           return { state: 'stopped_observed', attemptId: 77 };
@@ -148,6 +150,7 @@ test('held and failed requests are recorded while later requests continue', asyn
       const page = await worker.runOnce();
       assert.equal(page.state, 'page');
       assert.deepEqual(seen, [1, 2, 3]);
+      assert.deepEqual(passes, [1, 1, 1]);
       assert.deepEqual(page.results.map((result) => result.state),
         ['held', 'held', 'stopped_observed']);
       assert.deepEqual(queue.getResult(1), { requestId: 1, pass: 1, attemptId: null,
