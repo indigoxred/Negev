@@ -186,6 +186,34 @@ test('availability can observe a full Shoko User link without claiming AniDB fil
     sourcePaths: ['/pure/Anime/Example/01.mkv'] }]);
 });
 
+test('availability observes an exact Shoko Offline Importer link without claiming AniDB registration', async () => {
+  const offline = { ...episode.Files[0], Release: {
+    ID: 'offline://42-1001', ProviderName: 'Offline Importer',
+    IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+      AnidbEpisodeID: 1001, PercentageStart: 0, PercentageEnd: 100 }],
+  } };
+  const payload = { ...episode, Files: [offline] };
+  assert.equal((await readShokoEpisodeFiles({ ...base,
+    fetchImpl: async () => json(payload) })).state, 'unavailable');
+  const observed = await readShokoEpisodeFiles({ ...base,
+    purpose: 'availability', fetchImpl: async () => json(payload) });
+  assert.equal(observed.state, 'ok');
+  assert.equal(observed.files[0].anidbFileId, null);
+  assert.equal(observed.files[0].releaseEvidence, 'shoko_offline_link');
+  for (const changed of [
+    { ...offline.Release, ID: 'offline://42-1002' },
+    { ...offline.Release, ID: 'offline://43-1001' },
+    { ...offline.Release, IsCorrupted: true },
+    { ...offline.Release, CrossReferences: [{ ...offline.Release.CrossReferences[0],
+      PercentageEnd: 50 }] },
+  ]) {
+    assert.deepEqual(await readShokoEpisodeFiles({ ...base,
+      purpose: 'availability', fetchImpl: async () => json({ ...episode,
+        Files: [{ ...offline, Release: changed }] }) }),
+    { state: 'unavailable' });
+  }
+});
+
 test('an omitted anime ID on a single Shoko User link needs exact AniDB episode metadata', async () => {
   const user = { ...episode.Files[0], Release: { ID: null,
     ProviderName: 'User', IsCorrupted: false,

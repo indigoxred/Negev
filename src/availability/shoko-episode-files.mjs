@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
+import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -138,6 +139,12 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       const coverage = userCoverage(refs);
       if (coverage) identity = { state: 'accepted', fileId: null,
         coverage, releaseEvidence: 'shoko_user_link' };
+    }
+    if (identity.state !== 'accepted' && purpose === 'availability' &&
+        exactShokoOfflineLink(file.Release, anidbId, episodeId)) {
+      identity = { state: 'accepted', fileId: null,
+        coverage: [{ episodeId, start: 0, end: 100 }],
+        releaseEvidence: 'shoko_offline_link' };
     }
     if (identity.state !== 'accepted') { incomplete = true; continue; }
     if (purpose === 'availability' && identity.isCorrupted === true) {

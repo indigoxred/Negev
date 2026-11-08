@@ -118,6 +118,28 @@ test('a supported Shoko User link can nominate exact episodes without claiming A
   assert.equal(result.pairs.length, 2);
 });
 
+test('an exact Shoko Offline Importer file nominates only its full episode for later Plex proof', async () => {
+  const offline = { ...file, SeriesIDs: [{ ...file.SeriesIDs[0],
+    EpisodeIDs: [file.SeriesIDs[0].EpisodeIDs[0]] }],
+  Release: { ID: 'offline://42-1001', ProviderName: 'Offline Importer',
+    IsCorrupted: false, CrossReferences: [refs[0]] } };
+  const result = await readShokoFileCandidate({ ...base,
+    fetchImpl: async () => json(offline) });
+  assert.equal(result.state, 'candidate');
+  assert.equal(result.releaseEvidence, 'shoko_offline_link');
+  assert.equal(result.anidbFileId, null);
+  assert.deepEqual(result.pairs, [{ anidbId: 42, episodeId: 1001 }]);
+  for (const changed of [
+    { ...offline.Release, ID: 'offline://42-1002' },
+    { ...offline.Release, ID: 'offline://43-1001' },
+    { ...offline.Release, IsCorrupted: true },
+  ]) {
+    assert.deepEqual(await readShokoFileCandidate({ ...base,
+      fetchImpl: async () => json({ ...offline, Release: changed }) }),
+    { state: 'unavailable' });
+  }
+});
+
 test('an omitted anime ID cannot choose between two Shoko pairs with the same episode ID', async () => {
   const ambiguous = { ...file,
     SeriesIDs: [...file.SeriesIDs, { SeriesID: { ID: 100, AniDB: 43 },
