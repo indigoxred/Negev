@@ -1646,6 +1646,34 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       refreshAvailabilitySummary();
       panel.append(summary);
+      if (data.kind === 'series' && pager.nextPage !== null &&
+          !data.regularSeason) {
+        const refreshFullSeason = async (attempt) => {
+          if (!isCurrentDetail() || pager.nextPage === null) return;
+          try {
+            const updated = await api(`/api/catalogue/${item.anidbId}`);
+            if (!isCurrentDetail()) return;
+            if (updated.state === 'details' &&
+                updated.anidbId === data.anidbId &&
+                updated.kind === data.kind && updated.total === data.total &&
+                updated.restricted === data.restricted &&
+                Number.isSafeInteger(updated.regularSeason?.total) &&
+                Number.isSafeInteger(updated.regularSeason?.verified) &&
+                updated.regularSeason.total > 0 &&
+                updated.regularSeason.verified >= 0 &&
+                updated.regularSeason.verified <= updated.regularSeason.total) {
+              data.regularSeason = updated.regularSeason;
+              refreshAvailabilitySummary();
+              return;
+            }
+          } catch { /* Keep the page proof while the catalogue is busy. */ }
+          if (attempt < 2 && isCurrentDetail()) {
+            setTimeout(() => { void refreshFullSeason(attempt + 1); },
+              attempt === 0 ? 2_000 : 3_000);
+          }
+        };
+        setTimeout(() => { void refreshFullSeason(0); }, 1_000);
+      }
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'

@@ -360,6 +360,7 @@ test('signed-in consumer routes render real shell with search, library and reque
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
     let allowAdult = true;
     let airingPreference = { mode: 'library', trackedAnidbIds: [] };
+    let coldSeasonReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -587,6 +588,22 @@ test('signed-in consumer routes render real shell with search, library and reque
           episodes: [{ id: 9601, number: 1, type: 'Episode',
             title: 'First', availability: 'available' },
           { id: 9602, number: 2, type: 'Episode',
+            title: 'Second', availability: 'unknown' }] }));
+        return;
+      }
+      if (path === '/api/catalogue/95') {
+        coldSeasonReads++;
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 95,
+          title: 'Cold partly verified season', kind: 'series', restricted: false,
+          monitorFuture: true, episodeCount: 4,
+          ...(coldSeasonReads > 1 ?
+            { regularSeason: { verified: 1, total: 4 } } : {}),
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 },
+          page: 1, total: 5, nextPage: 2,
+          episodes: [{ id: 9501, number: 1, type: 'Episode',
+            title: 'First', availability: 'available' },
+          { id: 9502, number: 2, type: 'Episode',
             title: 'Second', availability: 'unknown' }] }));
         return;
       }
@@ -818,6 +835,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);
       assert.doesNotMatch(partialSeason,
         /2 of 4 regular episodes verified playable in Plex/);
+      const refreshedSeason = await dump(`${base}/#/title/95`,
+        join(dir, 'refreshed-season'));
+      assert.ok(coldSeasonReads >= 2,
+        'the detail page retries its catalogue count after the raw cache warms');
+      assert.match(refreshedSeason,
+        /1 of 4 regular episodes verified playable in Plex/);
       const completePaginated = await dump(`${base}/#/title/99`,
         join(dir, 'complete-paginated'));
       assert.match(completePaginated, /4 of 4 regular episodes verified playable in Plex/);
