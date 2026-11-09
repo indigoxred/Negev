@@ -1199,15 +1199,37 @@ byId('search-form').addEventListener('submit', async (event) => {
   }
 });
 function pendingTitleAction(item) {
-  if (!state.user || state.user.adultAllowed !== true ||
-      !state.showAdult && item.adult === true) return null;
+  if (!state.user || item.adult === true &&
+      (!state.showAdult || state.user.adultAllowed !== true)) return null;
   const action = element('section', undefined, 'request-action');
-  const button = element('button', 'Request while details prepare', 'primary');
+  action.dataset.pending = 'true';
+  const button = element('button', 'Request if missing', 'primary');
   const status = element('p', '', 'muted request-feedback');
   status.setAttribute('role', 'status');
-  action.append(button, status);
+  const review = element('div', undefined, 'request-review');
+  review.hidden = true;
+  review.append(element('strong', 'Review your request'));
+  review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
+  const back = element('button', 'Back', 'quiet');
+  back.type = 'button';
+  back.addEventListener('click', () => {
+    action.dataset.reviewing = 'false';
+    review.hidden = true;
+    button.textContent = 'Request if missing';
+    status.textContent = '';
+  });
+  review.append(back);
+  action.append(review, button, status);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
+    if (action.dataset.reviewing !== 'true') {
+      action.dataset.reviewing = 'true';
+      review.hidden = false;
+      button.textContent = 'Confirm request';
+      status.textContent = 'Negev will check the episode list and Plex before any download.';
+      return;
+    }
+    action.dataset.saving = 'true';
     button.disabled = true;
     button.textContent = 'Saving request…';
     status.textContent = 'Saving your request…';
@@ -1217,15 +1239,18 @@ function pendingTitleAction(item) {
         body: JSON.stringify({ anidbId: item.anidbId, scope: 'installment',
           requestKey: requestKeys.pending(scope) }) });
       requestKeys.saved(scope);
+      action.dataset.saving = 'false';
+      action.dataset.saved = 'true';
       button.textContent = 'Requested';
       status.textContent = saved.state === 'pending'
-        ? 'Request saved. We will prepare the episode list and check the library before any download. Follow it under My Requests.'
+        ? 'Request received. Negev will check the episode list and library before accepting any missing episodes or starting a download. Follow it under My Requests.'
         : `Request #${saved.requestId} saved. Follow it under My Requests.`;
       message('Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
+      action.dataset.saving = 'false';
       button.disabled = false;
-      button.textContent = 'Request while details prepare';
+      button.textContent = 'Confirm request';
       status.textContent = error.message;
       message(error.message, true);
     }
@@ -1233,6 +1258,9 @@ function pendingTitleAction(item) {
   return action;
 }
 async function showDetail(item, franchise = null, refreshAttempt = 0) {
+  const previousAction = state.selected === item.anidbId
+    ? byId('detail').querySelector('.request-action[data-pending="true"]')
+    : null;
   if (detailPollTimer !== null) clearTimeout(detailPollTimer);
   detailPollTimer = null;
   const detailRequest = detailResponses.invalidate();
@@ -1248,6 +1276,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const displaySummary = element('div', undefined, 'detail-display');
   panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
     element('p', 'Loading episode details…', 'muted'), displaySummary);
+  // A cold title can take time to gain an episode list. Keep the request
+  // action available while that independent read is in flight.
+  const earlyRequest = previousAction ?? pendingTitleAction(item);
+  if (earlyRequest) panel.append(earlyRequest);
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
     displayRead = api(`/api/catalogue/${item.anidbId}/display`)
@@ -1264,6 +1296,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   }
   const renderDisplay = (display, title) => {
     if (!isCurrentDetail() || display?.state !== 'display') return;
+    if (display.restricted !== false &&
+        (!state.showAdult || state.user?.adultAllowed !== true)) return;
     displaySummary.replaceChildren();
     const main = element('div', undefined, 'detail-main');
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
@@ -1311,9 +1345,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     displaySummary.append(main);
     if (quickFacts.childElementCount) displaySummary.append(quickFacts);
   };
-  if (state.showAdult && state.user?.adultAllowed !== false) {
-    void displayRead.then((display) => renderDisplay(display, item.title));
-  }
+  void displayRead.then((display) => renderDisplay(display, item.title));
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`);
     if (!isCurrentDetail()) return;
@@ -1341,7 +1373,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       } else {
         panel.append(element('p', 'Preparing episode details automatically. You can keep browsing; this page will update when they are ready.', 'muted'));
       }
-      const pendingAction = pendingTitleAction(item);
+      const pendingAction = earlyRequest;
       if (pendingAction) panel.append(pendingAction);
       if (state.detailLoad) {
         const retry = element('button', 'Retry loading details');
@@ -1375,7 +1407,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
-              message(error.message, true);
+              preparationStatus.textContent = error.status === 429
+                ? 'Episode details are busy. You can request this title now; Negev will check the library before any download.'
+                : 'Episode details could not be prepared right now. You can still request this title.';
               retry.hidden = false;
             }
           }
@@ -1448,7 +1482,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       installmentSelect.replaceChildren();
       for (const entry of family.items()) {
         const option = element('option', entry.anidbId === item.anidbId
-          ? `${entry.title} · this installment` : entry.title);
+          ? `${entry.title} · this installment`
+          : `${entry.title} · ${relationLabel(entry.relation)}`);
         option.value = String(entry.anidbId);
         installmentSelect.append(option);
       }
@@ -1456,7 +1491,18 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     };
     const renderFamily = () => {
       relatedList.replaceChildren();
-      const installments = family.items().filter((entry) => entry.anidbId !== item.anidbId);
+      const relationOrder = ['Prequel', 'Sequel', 'MainStory', 'SideStory',
+        'Alternative', 'AlternativeVersion'];
+      const installments = family.items().filter((entry) => entry.anidbId !== item.anidbId)
+        .sort((a, b) => {
+          const rank = (entry) => {
+            const value = entry.relation?.replace(/[_\s-]/g, '').toLowerCase();
+            const index = relationOrder.findIndex((relation) =>
+              relation.toLowerCase() === value);
+            return index < 0 ? relationOrder.length : index;
+          };
+          return rank(a) - rank(b);
+        });
       if (installments.length === 0) relatedList.append(element('p',
         'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.', 'muted'));
       for (const installment of installments) {
@@ -1724,6 +1770,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
     if (data.kind === 'movie' && pager.episodes.length === 0) return;
+    // Keep the original control mounted while its save is in flight so the
+    // asynchronous result and request number remain visible after hydration.
+    if (earlyRequest?.dataset.saving === 'true' ||
+        earlyRequest?.dataset.saved === 'true') {
+      panel.insertBefore(earlyRequest, relatedHeading);
+      return;
+    }
     const requestAction = element('section', undefined, 'request-action');
     requestAction.append(element('h2', 'Request this installment'));
     requestAction.append(element('p', data.kind === 'movie'
@@ -1763,12 +1816,28 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const button = element('button', requestLabel(), 'primary');
     let requestSaving = false;
     let requestSaved = false;
+    let reviewingRequest = earlyRequest?.dataset.reviewing === 'true';
+    const requestReview = element('div', undefined, 'request-review');
+    requestReview.hidden = !reviewingRequest;
+    requestReview.append(element('strong', 'Review your request'));
+    requestReview.append(element('p', data.kind === 'movie'
+      ? `${data.title || item.title} · one film entry`
+      : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`));
+    const cancelReview = element('button', 'Back', 'quiet');
+    cancelReview.type = 'button';
+    cancelReview.addEventListener('click', () => {
+      reviewingRequest = false;
+      requestReview.hidden = true;
+      refreshRequestAction();
+    });
+    requestReview.append(cancelReview);
     refreshRequestAction = () => {
       if (requestSaving || requestSaved) return;
       const blocked = alreadyAvailable();
       button.disabled = blocked || checkingCompleteSeries;
       button.textContent = blocked ? 'Already available' :
-        checkingCompleteSeries ? 'Checking availability…' : requestLabel();
+        checkingCompleteSeries ? 'Checking availability…' :
+          reviewingRequest ? 'Confirm request' : requestLabel();
       if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
       else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
         requestStatus.textContent = '';
@@ -1808,6 +1877,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         filmChoiceSelect.focus();
         return;
       }
+      if (!reviewingRequest) {
+        reviewingRequest = true;
+        requestReview.hidden = false;
+        button.textContent = 'Confirm request';
+        requestStatus.textContent = 'Review this installment, then confirm.';
+        return;
+      }
       requestSaving = true;
       button.disabled = true;
       button.textContent = 'Saving request…';
@@ -1839,7 +1915,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         refreshRequestAction();
       }
     });
-    requestAction.append(button, requestStatus);
+    requestAction.append(requestReview, button, requestStatus);
     if (checkingCompleteSeries && loadNextEpisodePage) {
       // A saved count only suggests full coverage. Load exact episode pages
       // before disabling requests; keep this bounded for the title UI.
@@ -1863,11 +1939,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     'muted');
     panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
       displaySummary, unavailable, retry);
-    const pendingAction = pendingTitleAction(item);
+    const pendingAction = earlyRequest;
     if (pendingAction) panel.append(pendingAction);
-    if (state.showAdult && state.user?.adultAllowed !== false) {
-      void displayRead.then((display) => renderDisplay(display, item.title));
-    }
+    void displayRead.then((display) => renderDisplay(display, item.title));
   }
 }
 void refreshSession();
