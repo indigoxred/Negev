@@ -39,14 +39,19 @@ export async function checkExistingShokoBatch({ verified, readEpisode } = {}) {
         episodes.set(episodeId, result);
       }
       const result = episodes.get(episodeId);
-      const candidates = result.state === 'not_imported' ? [] : result.files.filter((file) =>
-        file?.anidbId === verified.anidbId && file.ed2k === expected.ed2k &&
-        file.size === expected.size && validId(file.fileId) &&
+      const byteMatches = result.state === 'not_imported' ? [] : result.files.filter((file) =>
+        file?.ed2k === expected.ed2k && file.size === expected.size &&
+        validId(file.fileId));
+      const candidates = byteMatches.filter((file) =>
+        file.anidbId === verified.anidbId &&
         sameIds(file.episodeIds, expected.episodeIds) &&
         Array.isArray(file.sourcePaths) && file.sourcePaths.length > 0 &&
         expected.episodeIds.every((id) => file.coverage?.some((range) =>
           range.episodeId === id && range.start === 0 && range.end === 100)));
       if (candidates.length > 1) return held('ambiguous_shoko_file');
+      if (byteMatches.length > 0 && candidates.length === 0) {
+        return held('existing_file_unresolved');
+      }
       if (candidates.length === 0) { matching = null; break; }
       if (matching !== null && matching !== candidates[0].fileId) {
         return held('inconsistent_shoko_file');

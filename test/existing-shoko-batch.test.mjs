@@ -41,6 +41,14 @@ test('a different file on the episode does not claim the candidate imported', as
   assert.deepEqual(result, { state: 'no_matching_import' });
 });
 
+test('bytes already in Shoko with partial episode coverage hold instead of copying again', async () => {
+  const result = await checkExistingShokoBatch({ verified,
+    readEpisode: async () => ({ state: 'ok', complete: true,
+      files: [{ ...imported, coverage: [
+        { episodeId: 318041, start: 0, end: 50 }] }] }) });
+  assert.deepEqual(result, { state: 'held', reason: 'existing_file_unresolved' });
+});
+
 test('Shoko errors cannot authorize a copy', async () => {
   const result = await checkExistingShokoBatch({ verified,
     readEpisode: async () => ({ state: 'unavailable' }) });
