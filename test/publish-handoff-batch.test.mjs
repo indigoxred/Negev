@@ -261,6 +261,52 @@ test('offline publish-unknown recovery requires the same file and Shoko predicti
     assert.equal(sample.getObservations(), 1);
   }, { offline: true }));
 
+test('Shoko moving an unknown published handoff records exact content without claiming publication', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const expected = sample.ledger.getHandoff().manifest.videos[0];
+    let contentWrites = 0;
+    sample.ledger.recordContentPresent = ({ fileIds }) => {
+      contentWrites++;
+      assert.deepEqual(fileIds, [77]);
+      return { state: 'content_present', publicationProven: false, fileIds };
+    };
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+        anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+        releaseId: expected.releaseId, ed2k: expected.ed2k,
+        size: expected.size, fileId: 77, episodeIds: [1001],
+        sourcePaths: ['/pure/Anime/01.mkv'],
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      }] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'content_present_unattributed' });
+    assert.equal(contentWrites, 1);
+    assert.equal(sample.getObservations(), 0);
+    assert.equal(sample.getBegins(), 1);
+  }, { offline: true }));
+
+test('an unrelated Shoko file cannot resolve an unknown publish', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    sample.ledger.recordContentPresent = () => {
+      throw new Error('unrelated file must never be recorded');
+    };
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+        anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+        releaseId: 'offline://42-1001', ed2k: '0'.repeat(32),
+        size: sample.video.length, fileId: 77, episodeIds: [1001],
+        sourcePaths: ['/pure/Anime/other.mkv'],
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      }] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'publish_outcome_unknown' });
+    assert.equal(sample.getObservations(), 0);
+  }, { offline: true }));
+
 test('an altered destination or surviving holding copy remains unknown', async () => {
   for (const keepHolding of [false, true]) {
     await withBatch(async (sample) => {

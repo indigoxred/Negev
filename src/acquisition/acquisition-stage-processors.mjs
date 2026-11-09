@@ -70,12 +70,12 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   const offlineLookup = ({ filename }) => previewOfflineRelease({
     baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
     filename, fetchImpl: providerFetchImpl });
+  const readHandoffEpisode = ({ anidbId, episodeId }, fetchImpl = providerFetchImpl) =>
+    readShokoEpisodeFiles({ baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+      anidbId, episodeId, purpose: 'handoff', fetchImpl });
   const checkExisting = (verified, fetchImpl = providerFetchImpl) =>
     checkExistingShokoBatch({ verified,
-      readEpisode: ({ anidbId, episodeId }) => readShokoEpisodeFiles({
-        baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, anidbId, episodeId,
-        purpose: 'handoff', fetchImpl,
-      }),
+      readEpisode: (target) => readHandoffEpisode(target, fetchImpl),
     });
   const handoffMountReady = async () => {
     try {
@@ -180,7 +180,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
         holdingRoot, importRoot, lookup, offlineLookup, readPacer, ed2kMode,
-        verifyHandoffMounts, checkExisting, nowMs: now() });
+        verifyHandoffMounts, checkExisting, readEpisode: readHandoffEpisode,
+        nowMs: now() });
     },
   };
 }

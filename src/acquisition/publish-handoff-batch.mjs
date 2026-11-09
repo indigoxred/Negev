@@ -5,6 +5,7 @@ import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import { reconcileHandoffContent } from './observe-handoff-import.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const admitted = (result, file) =>
@@ -147,6 +148,7 @@ export async function publishPreparedHandoff({
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
   renamePrepared = rename, verifyHandoffMounts, ed2kMode, checkExisting,
+  readEpisode,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -159,6 +161,7 @@ export async function publishPreparedHandoff({
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
       (checkExisting !== undefined && typeof checkExisting !== 'function') ||
+      (readEpisode !== undefined && typeof readEpisode !== 'function') ||
       (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
@@ -191,9 +194,33 @@ export async function publishPreparedHandoff({
       row.publishName !== `negev-${attemptId}-${evidence.digest.slice(0, 16)}`) {
     return held('handoff_conflict');
   }
-  if (row.status === 'publish_unknown') return reconcileUnknownPublish({ attemptId,
-    row, evidence, holdingRoot, importRoot, lookup, offlineLookup, ledger, nowMs, readPacer,
-    readRateBytesPerSecond, verifyVideo, verifySubtitle, ed2kMode });
+  if (row.status === 'publish_unknown') {
+    const recovered = await reconcileUnknownPublish({ attemptId,
+      row, evidence, holdingRoot, importRoot, lookup, offlineLookup, ledger,
+      nowMs, readPacer, readRateBytesPerSecond, verifyVideo, verifySubtitle,
+      ed2kMode });
+    if (recovered.reason !== 'publish_outcome_unknown' || !readEpisode ||
+        typeof ledger.recordContentPresent !== 'function') return recovered;
+    // Shoko may move the published child before a crashed process records the
+    // rename. Exact downstream bytes can stop duplicate work, but cannot
+    // establish that this handoff supplied them.
+    let bothGone = false;
+    try {
+      const [realHolding, realImport] = await Promise.all([
+        realpath(holdingRoot), realpath(importRoot)]);
+      bothGone = path.dirname(row.holdingPath) === realHolding &&
+        !within(realHolding, realImport) && !within(realImport, realHolding) &&
+        await destinationAbsent(row.holdingPath) &&
+        await destinationAbsent(path.join(realImport, row.publishName));
+    } catch { /* Keep the original unknown outcome. */ }
+    if (!bothGone) return recovered;
+    let content;
+    try { content = await reconcileHandoffContent({ attemptId, ledger,
+      readEpisode, nowMs }); }
+    catch { return recovered; }
+    return content?.state === 'content_present'
+      ? held('content_present_unattributed') : recovered;
+  }
   if (row.status === 'published_observed') return { state: 'published_observed' };
   if (row.status !== 'prepared') return held('publish_outcome_unknown');
   if (typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
