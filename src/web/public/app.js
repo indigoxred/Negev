@@ -1423,10 +1423,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   // Only offer a fallback if the first detail read is still loading after
   // ten seconds. Once it returns pending, the normal request action appears.
   const earlyRequest = previousAction ?? pendingTitleAction(item);
-  if (previousAction && (state.showAdult || item.adult === false)) {
-    panel.append(previousAction);
-  }
-  const fallbackTimer = earlyRequest && !previousAction ? setTimeout(() => {
+  const fallbackTimer = earlyRequest ? setTimeout(() => {
     if (!isCurrentDetail() || !panel.contains(loadingArt) ||
         !state.showAdult && state.searchItems.get(item.anidbId)?.adult !== false) return;
     panel.append(earlyRequest);
