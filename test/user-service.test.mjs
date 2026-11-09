@@ -1101,7 +1101,7 @@ test('request history reflects recent title-check proof and loses it on expiry',
   const service = await createUserService({ dbPath,
     shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
-    titleCheck: true, now: () => clock,
+    titleCheck: true, fileProofLifetimeMs: 30 * 60_000, now: () => clock,
     plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
       publicSections: { episode: [102], movie: [] },
       shokoMount: { appRoot: '/pure', localRoot: dir },
@@ -1110,12 +1110,21 @@ test('request history reflects recent title-check proof and loses it on expiry',
       const endpoint = new URL(url);
       if (endpoint.pathname === '/api/v1/map') {
         return Response.json({ lastUpdate: '2026-11-05', data: [{ title: 'Example',
-          status: 'RELEASING', animeSeason: { year: 2026, season: 'FALL' },
+          status: 'ONGOING', animeSeason: { year: 2026, season: 'FALL' },
           sources: ['https://anidb.net/anime/42'] }] });
       }
       if (endpoint.pathname === '/api/anidb/42') {
         return Response.json({ anidb_id: 42, title: 'Example',
           type: 'TV Series', restricted: false });
+      }
+      if (endpoint.pathname === '/api/anidb/schedule') {
+        return Response.json({ period: { week: '2026-W45',
+          start_date: '2026-11-02', end_date: '2026-11-08' },
+        days: ['02', '03', '04', '05', '06', '07', '08'].map((day) => ({
+          date: `2026-11-${day}`, episodes: day === '02' ? [{
+            anidb_id: 42, anidb_episode_id: 1001,
+            anime_title: 'Example', episode_number: '1',
+            episode_type: 'regular', adult_only: false }] : [] })) });
       }
       if (endpoint.pathname === '/api/v3/Series/AniDB/Search') {
         return json({ Total: 1, List: [{ ID: 42, Title: 'Example' }] });
@@ -1134,12 +1143,32 @@ test('request history reflects recent title-check proof and loses it on expiry',
       url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
     const season = async () => (await service.app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } })).json().items[0];
+    const airingSeason = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/seasons?year=2026&season=FALL&status=ongoing',
+      headers: { cookie } })).json().items;
+    const airingWeek = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/airing', headers: { cookie } })).json().items;
     assert.equal((await read()).publicVerifiedTargets, 1);
     assert.deepEqual((await search()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
     assert.deepEqual((await season()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
-    clock = 30 * 60_000 + 906;
+    assert.deepEqual(await airingSeason(), [],
+      'a title check alone must not place a show in the library-only Airing view');
+    assert.deepEqual(await airingWeek(), [],
+      'a title check alone must not place a scheduled show in Airing');
+    const exact = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => clock });
+    try {
+      exact.observe({ anidbId: 42, episodeId: 1001,
+        proof: { fileId: 10, libraryId: 102, ratingKey: 20, partId: 30 },
+        checkedMs: 998 });
+    } finally { exact.close(); }
+    assert.deepEqual((await airingSeason()).map((item) => item.libraryPresence),
+      [{ state: 'in_library', verifiedEpisodeCount: 1 }]);
+    assert.deepEqual((await airingWeek()).map((item) => item.libraryPresence),
+      [{ state: 'in_library', verifiedEpisodeCount: 1 }]);
+    clock = 30 * 60_000 + 1_000;
     assert.equal((await read()).publicAvailability, 'unverified');
     assert.deepEqual((await search()).libraryPresence,
       { state: 'unknown', verifiedEpisodeCount: 0 });
