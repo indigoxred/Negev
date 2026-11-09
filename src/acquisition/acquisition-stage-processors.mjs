@@ -4,6 +4,7 @@ import { processRecordedStart } from './process-recorded-start.mjs';
 import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
+import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
@@ -64,6 +65,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   const lookup = ({ ed2k, size }) => previewAniDbRelease({
     baseUrl: shoko.baseUrl, providerId: shoko.providerId,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
+  const offlineLookup = ({ filename }) => previewOfflineRelease({
+    baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+    filename, fetchImpl: providerFetchImpl });
   const handoffMountReady = async () => {
     try {
       if ((await verifyShokoSource())?.state !== 'verified_shoko_source') {
@@ -164,7 +168,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const ed2kMode = await selectedEd2kMode(handoff?.manifest?.videos);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
-        holdingRoot, importRoot, lookup, readPacer, ed2kMode,
+        holdingRoot, importRoot, lookup, offlineLookup, readPacer, ed2kMode,
         verifyHandoffMounts, nowMs: now() });
     },
   };

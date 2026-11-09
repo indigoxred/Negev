@@ -7,7 +7,7 @@ const sameIds = (left, right) => Array.isArray(left) &&
   left.length === right.length && left.every((id) => right.includes(id));
 
 // Read-only, bounded check of a previously published handoff. A positive
-// result proves Shoko has identified each exact registered video and has an
+// result proves Shoko has identified each exact video and has an
 // accessible location. The file may still be in Import; this does not prove
 // Shoko moved it, Plex playback, or subtitle import.
 const withinLibrary = (root, candidate) => {
@@ -47,7 +47,12 @@ async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
     for (const expected of manifest.videos.filter((file) => file.episodeIds.includes(episodeId))) {
       const matching = result.files.filter((file) =>
         file?.anidbId === manifest.anidbId &&
-        file.anidbFileId === expected.anidbFileId &&
+        (expected.identitySource === 'shoko_offline'
+          ? file.anidbFileId === null &&
+            file.releaseEvidence === 'shoko_offline_link' &&
+            file.releaseId === expected.releaseId
+          : file.anidbFileId === expected.anidbFileId &&
+            file.releaseEvidence !== 'shoko_offline_link') &&
         file.ed2k === expected.ed2k && file.size === expected.size &&
         validId(file.fileId) && sameIds(file.episodeIds, expected.episodeIds) &&
         Array.isArray(file.sourcePaths) && file.sourcePaths.length > 0 &&
@@ -60,15 +65,15 @@ async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
         withinLibrary(libraryRoot, candidate))) {
         return { state: 'awaiting_shoko_placement', episodeId };
       }
-      const prior = observed.get(expected.anidbFileId);
+      const prior = observed.get(expected.name);
       if (prior !== undefined && prior !== file.fileId) {
         return held('inconsistent_shoko_file');
       }
-      observed.set(expected.anidbFileId, file.fileId);
+      observed.set(expected.name, file.fileId);
     }
   }
   return { state: 'shoko_files_identified',
-    fileIds: manifest.videos.map((file) => observed.get(file.anidbFileId)) };
+    fileIds: manifest.videos.map((file) => observed.get(file.name)) };
 }
 
 export async function observeHandoffImport({ handoff, readEpisode } = {}) {

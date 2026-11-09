@@ -2,6 +2,7 @@ import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { ED2K_CHUNK_SIZE, ed2kFile } from './ed2k.mjs';
 import { evaluatePreview } from './evaluate-preview.mjs';
+import { evaluateOfflinePreview } from './evaluate-offline-preview.mjs';
 import { makeBytePacer } from './read-pacer.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -10,7 +11,8 @@ const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts'
 // Identity check only. A separate worker must prove qBittorrent completion
 // and recheck the file before any later Shoko Import handoff.
 export async function verifyStagedFile({
-  root, relativePath, expected, lookup, maxFileBytes = 64 * 1024 ** 3,
+  root, relativePath, expected, lookup, offlineLookup,
+  maxFileBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   ed2kMode,
 }) {
@@ -22,6 +24,9 @@ export async function verifyStagedFile({
   }
   if (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) {
     throw new TypeError('Invalid Shoko ED2K mode');
+  }
+  if (offlineLookup !== undefined && typeof offlineLookup !== 'function') {
+    throw new TypeError('Invalid Shoko offline lookup');
   }
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
@@ -85,6 +90,13 @@ export async function verifyStagedFile({
   let preview;
   try { preview = await lookup(hash); }
   catch { return held('provider_unavailable'); }
+  let offlinePreview;
+  if (preview?.status === 204 && offlineLookup &&
+      expected?.episodeIds?.length === 1) {
+    try { offlinePreview = await offlineLookup({ ...hash,
+      filename: parts.at(-1) }); }
+    catch { return held('provider_unavailable'); }
+  }
 
   try {
     const after = await lstat(fullPath, { bigint: true });
@@ -95,8 +107,15 @@ export async function verifyStagedFile({
         after.size !== BigInt(hash.size)) return held('file_changed_or_unavailable');
   } catch { return held('file_changed_or_unavailable'); }
 
-  const decision = evaluatePreview(preview, { ...expected, ...hash });
+  const offline = offlinePreview !== undefined;
+  const decision = offline
+    ? evaluateOfflinePreview(offlinePreview,
+      { ...expected, filename: parts.at(-1) })
+    : evaluatePreview(preview, { ...expected, ...hash });
   if (decision.state !== 'accepted') return decision;
+  if (offline) return { state: 'identity_verified',
+    identitySource: 'shoko_offline', releaseId: decision.releaseId,
+    coverage: decision.coverage, ...hash };
   return { state: 'identity_verified', fileId: decision.fileId,
     coverage: decision.coverage,
     ...(Object.hasOwn(decision, 'isCorrupted')

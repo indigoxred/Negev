@@ -9,7 +9,8 @@ const held = (reason) => ({ state: 'held', reason });
 // separate, durable operation and must be explicitly reconciled afterward.
 export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
-  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, observe, lookup,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
+  observe, lookup, offlineLookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
   verifyHandoffMounts,
   verifyStagingRoot,
@@ -22,7 +23,8 @@ export async function prepareRecordedHandoff({
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
-    stagingHostPath, qbitStagingRoot, observe, lookup, verify, verifySubtitle, readPacer,
+    stagingHostPath, qbitStagingRoot, observe, lookup, offlineLookup,
+    verify, verifySubtitle, readPacer,
     ed2kMode });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);

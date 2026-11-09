@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -93,6 +93,43 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
     const again = await processCompletedAttempt({ ...stores, handoffs, attemptId, importRoot, ...config });
     assert.deepEqual(again, { state: 'held', reason: 'handoff_already_recorded' });
     assert.equal(calls.filter((call) => call.path.endsWith('/Preview/By-Release')).length, 1);
+  });
+});
+
+test('AniDB 204 with exact installed Offline Importer preview journals only private holding', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, attemptId, config, identity, ...stores } = context;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, importRoot, ...config,
+      shokoFetchImpl: async (url, init) => {
+        const endpoint = new URL(url);
+        assert.equal(init.headers.Authorization, 'Bearer test-key');
+        if (endpoint.pathname === '/api/v3/ReleaseInfo/Provider') {
+          return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
+            ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
+        }
+        const id = endpoint.searchParams.get('id');
+        if (id === `anidb://${identity.ed2k}+${identity.size}`) {
+          return new Response(null, { status: 204 });
+        }
+        if (id === 'search://01.mkv') {
+          return Response.json({ ProviderName: 'Offline Importer',
+            ID: 'offline://42-1001', OriginalFilename: '01.mkv',
+            IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+              AnidbEpisodeID: 1001, PercentageStart: 0,
+              PercentageEnd: 100 }] });
+        }
+        throw Error('unexpected Shoko lookup');
+      },
+    });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    const saved = handoffs.getHandoff(attemptId);
+    assert.equal(saved.manifest.version, 2);
+    assert.equal(saved.manifest.videos[0].releaseId, 'offline://42-1001');
+    assert.equal(saved.manifest.videos[0].anidbFileId, undefined);
+    assert.deepEqual(await readFile(path.join(saved.holdingPath, '01.mkv')),
+      await readFile(path.join(context.stagingHostPath, torrentHash, '01.mkv')));
+    assert.deepEqual(await readdir(importRoot), []);
   });
 });
 
@@ -198,7 +235,7 @@ test('AniDB provider uncertainty stays retryable and a wrong-show match is termi
           return { status: 200, text: async () => JSON.stringify(body) };
         } });
       assert.deepEqual(result, outcome === 'unavailable'
-        ? { state: 'held', reason: 'file_lookup_inconclusive' }
+        ? { state: 'held', reason: 'file_provider_unavailable' }
         : { state: 'rejected_held', reason: 'file_wrong_identity' });
       assert.equal(acquisitions.getAttempt(attemptId).status,
         outcome === 'unavailable' ? 'torrent_observed' : 'rejected_held');

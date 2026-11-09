@@ -18,6 +18,31 @@ const observed = (fileId, episodeIds) => ({ fileId: fileId + 1000,
   coverage: episodeIds.map((episodeId) => ({ episodeId, start: 0, end: 100 })),
   sourcePaths: [`/pure/Anime/${fileId}.mkv`] });
 
+const offlineManifest = { version: 2, anidbId: 42,
+  torrentHash: 'b'.repeat(40), videos: [{ name: '01.mkv', size: 123,
+    identitySource: 'shoko_offline', releaseId: 'offline://42-1001',
+    ed2k: 'A'.repeat(32), episodeIds: [1001] }], subtitles: [] };
+const offlineRow = withEvidence(offlineManifest);
+
+test('offline handoff needs the same imported Shoko bytes and full episode link', async () => {
+  const exact = { ...observed(800, [1001]), anidbFileId: null,
+    releaseEvidence: 'shoko_offline_link', releaseId: 'offline://42-1001' };
+  assert.deepEqual(await observeHandoffPlacement({ handoff: offlineRow,
+    libraryRoot: '/pure/Anime', readEpisode: async () => ({ state: 'ok',
+      complete: true, files: [exact] }) }),
+  { state: 'shoko_library_location_reported', fileIds: [1800] });
+  for (const changed of [
+    { ...exact, releaseEvidence: 'shoko_user_link' },
+    { ...exact, releaseId: 'offline://42-1002' },
+    { ...exact, ed2k: 'B'.repeat(32) },
+    { ...exact, coverage: [{ episodeId: 1001, start: 0, end: 50 }] },
+  ]) {
+    assert.notEqual((await observeHandoffImport({ handoff: offlineRow,
+      readEpisode: async () => ({ state: 'ok', complete: true,
+        files: [changed] }) })).state, 'shoko_files_identified');
+  }
+});
+
 test('each exact claimed video must be identified in Shoko before import is observed', async () => {
   const calls = [];
   const result = await observeHandoffImport({ handoff: row,
@@ -140,4 +165,25 @@ test('published handoff is matched through the bounded Shoko episode adapter', a
       anidbId, episodeId, fetchImpl: async () => Response.json(payload),
     }) });
   assert.deepEqual(result, { state: 'shoko_files_identified', fileIds: [1800] });
+});
+
+test('offline handoff accepts only Shoko’s exact imported Offline Importer link', async () => {
+  const payload = { IDs: { AniDB: 1001 }, Files: [{ ID: 1800, Size: 123,
+    IsIgnored: false, Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+    Release: { ID: 'offline://42-1001', ProviderName: 'Offline Importer',
+      IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+        AnidbEpisodeID: 1001, PercentageStart: 0, PercentageEnd: 100 }] },
+    Locations: [{ FileID: 1800, IsAccessible: true,
+      AbsolutePath: '/pure/Anime/Example/01.mkv' }] }] };
+  const readEpisode = ({ anidbId, episodeId }) => readShokoEpisodeFiles({
+    baseUrl: 'http://shoko.internal:8111', apiKey: 'synthetic',
+    anidbId, episodeId, purpose: 'handoff',
+    fetchImpl: async () => Response.json(payload),
+  });
+  assert.deepEqual(await observeHandoffPlacement({ handoff: offlineRow,
+    readEpisode, libraryRoot: '/pure/Anime' }),
+  { state: 'shoko_library_location_reported', fileIds: [1800] });
+  payload.Files[0].Release.ID = 'offline://42-1002';
+  assert.notEqual((await observeHandoffImport({ handoff: offlineRow,
+    readEpisode })).state, 'shoko_files_identified');
 });

@@ -43,7 +43,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       base.search || base.hash || base.pathname !== '/' ||
       typeof apiKey !== 'string' || !apiKey ||
       !validId(anidbId) || !validId(episodeId) ||
-      !['registered', 'availability', 'first_time'].includes(purpose) ||
+      !['registered', 'availability', 'first_time', 'handoff'].includes(purpose) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko episode observation');
   const url = new URL(`/api/v3/Episode/AniDB/${episodeId}/Episode`, base);
@@ -140,7 +140,8 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       if (coverage) identity = { state: 'accepted', fileId: null,
         coverage, releaseEvidence: 'shoko_user_link' };
     }
-    if (identity.state !== 'accepted' && purpose === 'availability' &&
+    if (identity.state !== 'accepted' &&
+        ['availability', 'handoff'].includes(purpose) &&
         exactShokoOfflineLink(file.Release, anidbId, episodeId)) {
       identity = { state: 'accepted', fileId: null,
         coverage: [{ episodeId, start: 0, end: 100 }],
@@ -165,6 +166,8 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     }
     files.push({ fileId: file.ID, anidbFileId: identity.fileId,
       ...(identity.releaseEvidence ? { releaseEvidence: identity.releaseEvidence } : {}),
+      ...(identity.releaseEvidence === 'shoko_offline_link'
+        ? { releaseId: file.Release.ID } : {}),
       ed2k,
       anidbId, episodeIds, coverage: identity.coverage,
       size: file.Size, sourcePaths });

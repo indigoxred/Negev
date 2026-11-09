@@ -2,7 +2,7 @@ import { publishPreparedHandoff } from './publish-handoff-batch.mjs';
 import { restorePreparedHandoff } from './restore-prepared-handoff.mjs';
 
 // Explicit, one-attempt continuation. Only the journal supplies the batch;
-// the low-level publisher still revalidates paths, bytes and AniDB release
+// the low-level publisher still revalidates paths, bytes and Shoko release
 // identity before any watched-folder rename. No timer calls this yet.
 export async function processRecordedHandoff({ attemptId, ledger, ...providers } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||

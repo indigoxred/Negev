@@ -94,7 +94,7 @@ async function copyVerifiedFile({ stagingRoot, holdingPath, file, kind, pacer,
   await chmod(destinationPath, 0o644);
 }
 
-// Copies exact AniDB-verified videos and bounded hashed subtitles to private holding.
+// Copies verified videos and bounded hashed subtitles to private holding.
 // This never publishes a file into Shoko Import or changes the source torrent.
 export async function prepareHandoffBatch({
   stagingRoot, holdingRoot, importRoot, verified,

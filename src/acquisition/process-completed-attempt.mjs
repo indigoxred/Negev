@@ -1,9 +1,10 @@
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
+import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { observeTorrentCompletion } from './qbittorrent-observation.mjs';
 import { prepareRecordedHandoff } from './prepare-recorded-handoff.mjs';
 
 // Explicit, one-attempt tick. It binds the durable file plan to qBittorrent's
-// completed manifest, then verifies actual bytes with Shoko's AniDB provider.
+// completed manifest, then verifies actual bytes and Shoko release identity.
 // Success only means a private holding copy was journaled; it never publishes
 // into Shoko Import or claims public Plex availability.
 export async function processCompletedAttempt({
@@ -51,6 +52,10 @@ export async function processCompletedAttempt({
     lookup: ({ ed2k, size }) => previewAniDbRelease({
       baseUrl: shoko.baseUrl, providerId: shoko.providerId,
       apiKey: shoko.apiKey, ed2k, size, fetchImpl: shokoFetchImpl,
+    }),
+    offlineLookup: ({ filename }) => previewOfflineRelease({
+      baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+      filename, fetchImpl: shokoFetchImpl,
     }),
   });
   return result?.state === 'held' && result.reason === 'incomplete' && transfer

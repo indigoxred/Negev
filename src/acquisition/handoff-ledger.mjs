@@ -90,7 +90,9 @@ export function openHandoffLedger(dbPath) {
       const evidence = evaluateHandoffEvidence({ anidbId: manifest.anidbId,
         torrentHash: manifest.torrentHash, files: manifest.videos,
         subtitles: manifest.subtitles });
-      return evidence.state === 'valid' && evidence.digest === row.evidence_digest &&
+      return evidence.state === 'valid' &&
+        JSON.stringify(manifest) === JSON.stringify(evidence.manifest) &&
+        evidence.digest === row.evidence_digest &&
         evidence.manifest.torrentHash === row.torrent_hash ? evidence.manifest : null;
     } catch { return null; }
   }
