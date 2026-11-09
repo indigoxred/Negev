@@ -1990,6 +1990,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const selectedId = Number(installmentSelect.value);
         if (Number.isSafeInteger(selectedId) &&
             family.items().some((entry) => entry.anidbId === selectedId)) {
+          if (selectedInstallmentId !== selectedId) {
+            reviewingRequest = false;
+            requestReview.hidden = true;
+          }
           selectedInstallmentId = selectedId;
           requestStatus.textContent = '';
           updateRequestReview();
