@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConsumerRoute, titleRoute, searchRoute,
-  seasonRoute } from '../src/web/public/consumer-route.mjs';
+  seasonRoute, browseReturnDestination } from '../src/web/public/consumer-route.mjs';
 
 test('consumer routes use stable URLs for all main pages and exact AniDB title IDs', () => {
   for (const page of ['discover', 'airing', 'library', 'requests', 'admin']) {
@@ -48,4 +48,18 @@ test('season and page survive reload and Back/Forward without accepting arbitrar
     { tag: 'action,fantasy' }), '#/discover?year=2026&season=FALL&tag=action%2Cfantasy');
   assert.deepEqual(parseConsumerRoute('#/discover?year=2026&season=FALL&kind=unsafe'),
     { page: 'discover', anidbId: null, query: '' });
+});
+
+test('title back link returns to the actual catalogue view', () => {
+  assert.deepEqual(browseReturnDestination(parseConsumerRoute(
+    '#/discover?q=tensei+slime')),
+  { href: '#/discover?q=tensei+slime', label: 'Discover' });
+  assert.deepEqual(browseReturnDestination(parseConsumerRoute(
+    '#/discover?year=2025&season=ALL&kind=movies')),
+  { href: '#/discover?year=2025&season=ALL&kind=movies', label: 'Discover' });
+  assert.deepEqual(browseReturnDestination(parseConsumerRoute('#/airing')),
+    { href: '#/airing', label: 'Airing' });
+  assert.deepEqual(browseReturnDestination(parseConsumerRoute('#/library')),
+    { href: '#/library', label: 'Library' });
+  assert.equal(browseReturnDestination(parseConsumerRoute('#/title/4158')), null);
 });

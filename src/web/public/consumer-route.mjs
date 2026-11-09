@@ -69,3 +69,15 @@ export function searchRoute(query) {
   const term = query.trim();
   return term ? `#/discover?${new URLSearchParams({ q: term })}` : '#/discover';
 }
+
+export function browseReturnDestination(route) {
+  if (route?.page === 'discover') return {
+    href: route.year !== undefined && route.season
+      ? seasonRoute(route.year, route.season, route.after ?? 0,
+        { kind: route.kind ?? 'all', tag: route.tag ?? '' })
+      : searchRoute(route.query ?? ''), label: 'Discover' };
+  if (['airing', 'library', 'requests'].includes(route?.page)) return {
+    href: `#/${route.page}`,
+    label: route.page[0].toUpperCase() + route.page.slice(1) };
+  return null;
+}

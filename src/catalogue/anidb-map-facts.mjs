@@ -28,9 +28,10 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
         return { state: 'unavailable' };
       }
       const period = data.animeSeason;
-      const season = seasons.get(period?.season) &&
+      const year = seasons.has(period?.season) &&
         Number.isSafeInteger(period?.year) && period.year >= 1900 &&
-        period.year <= 2100 ? `${seasons.get(period.season)} ${period.year}` : null;
+        period.year <= 2100 ? period.year : null;
+      const season = year === null ? null : `${seasons.get(period.season)} ${year}`;
       const studio = Array.isArray(data.studios) && data.studios.length <= 50
         ? data.studios.find((name) => typeof name === 'string' &&
           name.trim() && name.trim().length <= 100)?.trim() ?? null : null;
@@ -38,7 +39,7 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
       const durationMinutes = duration?.unit === 'SECONDS' &&
         Number.isSafeInteger(duration.value) && duration.value > 0 &&
         duration.value <= 86_400 ? Math.round(duration.value / 60) : null;
-      return { state: 'facts', anidbId, season,
+      return { state: 'facts', anidbId, season, year,
         status: statuses.get(data.status) ?? null, studio, durationMinutes };
     } catch { return { state: 'unavailable' }; }
   };
