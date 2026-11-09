@@ -78,6 +78,28 @@ test('a saved download attempt cannot be disguised as an unstarted suspension',
     } finally { queue.close(); acquisitions.close(); }
   }));
 
+test('batch suspension is all-or-nothing and keeps the remaining queue live',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const first = queue.claimNext({ nowMs: 10 });
+      assert.equal(first.requestId, 1);
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 1, 3],
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'held', reason: 'request_started_or_unavailable' });
+      assert.equal(queue.getSuspension(2), null);
+      assert.equal(queue.getSuspension(3), null);
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 3],
+        reason: 'cutover_review', nowMs: 12 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.claimNext({ nowMs: 13 }).state, 'pass_complete');
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 3],
+        reason: 'cutover_review', nowMs: 14 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.getSuspension(2).recordedMs, 12);
+    } finally { queue.close(); }
+  }));
+
 test('cancelled requests are not claimed while later requests continue', async () =>
   fixture(async (dbPath) => {
     const requests = openRequestLedger(dbPath);

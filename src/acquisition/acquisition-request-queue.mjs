@@ -115,6 +115,14 @@ export function openAcquisitionRequestQueue(dbPath) {
       throw error;
     }
   };
+  const unstarted = (requestId) => {
+    if (hasAttemptLedger.get()) {
+      attemptForRequest ??= db.prepare(`SELECT 1 FROM acquisition_attempts
+        WHERE request_id=? LIMIT 1`);
+    }
+    return Boolean(suspendable.get(requestId)) &&
+      !attemptForRequest?.get(requestId);
+  };
   return {
     suspendUnstarted({ requestId, reason, nowMs = Date.now() } = {}) {
       if (!validId(requestId) || typeof reason !== 'string' ||
@@ -123,16 +131,29 @@ export function openAcquisitionRequestQueue(dbPath) {
       }
       return transact(() => {
         if (suspended.get(requestId)) return { state: 'suspended' };
-        if (hasAttemptLedger.get()) {
-          attemptForRequest ??= db.prepare(`SELECT 1 FROM acquisition_attempts
-            WHERE request_id=? LIMIT 1`);
-        }
-        if (!suspendable.get(requestId) ||
-            attemptForRequest?.get(requestId)) {
+        if (!unstarted(requestId)) {
           return held('request_started_or_unavailable');
         }
         insertSuspension.run(requestId, reason, nowMs);
         return { state: 'suspended' };
+      });
+    },
+    suspendUnstartedBatch({ requestIds, reason, nowMs = Date.now() } = {}) {
+      if (!Array.isArray(requestIds) || requestIds.length < 1 ||
+          requestIds.length > 50 || requestIds.some((id) => !validId(id)) ||
+          new Set(requestIds).size !== requestIds.length ||
+          typeof reason !== 'string' ||
+          !/^[a-z][a-z0-9_]{0,79}$/.test(reason) || !validTime(nowMs)) {
+        throw new TypeError('Invalid request suspension batch');
+      }
+      return transact(() => {
+        if (requestIds.some((requestId) => !unstarted(requestId))) {
+          return held('request_started_or_unavailable');
+        }
+        for (const requestId of requestIds) {
+          insertSuspension.run(requestId, reason, nowMs);
+        }
+        return { state: 'suspended', count: requestIds.length };
       });
     },
     resumeSuspended({ requestId } = {}) {
