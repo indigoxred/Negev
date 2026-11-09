@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { openHandoffPublishQueue, createHandoffPublishWorker } from
@@ -47,7 +48,7 @@ async function fixture(run) {
   }
   let queue = openHandoffPublishQueue(dbPath);
   try {
-    await run({ dbPath, ids, handoffs,
+    await run({ dbPath, ids, requests, acquisitions, handoffs,
       get queue() { return queue; },
       reopen() { queue.close(); queue = openHandoffPublishQueue(dbPath); } });
   } finally {
@@ -73,6 +74,48 @@ test('one held handoff defers while later prepared batches continue', async () =
     ctx.reopen();
     assert.equal(ctx.queue.claimNext({ nowMs: 1_800_999 }).state, 'idle');
     assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId, ctx.ids[0]);
+  }));
+
+test('cutover hold excludes prepared handoffs across reopen until resumed',
+  async () => fixture(async (ctx) => {
+    const later = ctx.requests.submit({ requesterId: 1,
+      requestKey: 'later-publish', nowMs: 800,
+      intent: { state: 'ready', anidbId: 43, kind: 'series',
+        monitorFuture: false, episodeIds: [2001] } });
+    const candidate = { indexerId: 7, guid: 'later-publish' };
+    const hash = 'f'.repeat(40);
+    const laterId = ctx.acquisitions.reserve({ requestId: later.requestId,
+      candidate, episodeIds: [2001], nowMs: 801 }).attemptId;
+    ctx.acquisitions.bindPreparedTorrent({ attemptId: laterId,
+      candidate, hash, nowMs: 802 });
+    ctx.acquisitions.recordFilePlan({ attemptId: laterId, hash,
+      plannedFiles: [{ name: 'later.mkv', size: 10,
+        episodeIds: [2001] }], nowMs: 803 });
+    ctx.acquisitions.beginDispatch({ attemptId: laterId, nowMs: 804 });
+    ctx.acquisitions.recordTorrent({ attemptId: laterId, hash, nowMs: 805 });
+    ctx.acquisitions.beginStart({ attemptId: laterId, hash,
+      manifestDigest: 'b'.repeat(64), nowMs: 806 });
+    const batch = { anidbId: 43, torrentHash: hash,
+      files: [{ name: 'later.mkv', size: 10, ed2k: 'A'.repeat(32),
+        anidbFileId: 99, episodeIds: [2001] }], subtitles: [] };
+    assert.equal(ctx.handoffs.recordPrepared({ attemptId: laterId,
+      prepared: { ...batch, state: 'handoff_prepared', publishReady: false,
+        holdingPath: path.join(path.dirname(ctx.dbPath), 'later-holding'),
+        evidenceDigest: evaluateHandoffEvidence(batch).digest },
+      nowMs: 807 }).state, 'prepared');
+    const holds = openAcquisitionRequestQueue(ctx.dbPath);
+    try {
+      assert.deepEqual(holds.suspendForCutover({ requestId: 1,
+        reason: 'cutover_review', nowMs: 900 }), { state: 'suspended' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, laterId);
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'idle');
+      ctx.reopen();
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).state, 'idle');
+      assert.deepEqual(holds.resumeSuspended({ requestId: 1 }),
+        { state: 'resumed' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_002 }).attemptId,
+        ctx.ids[0]);
+    } finally { holds.close(); }
   }));
 
 test('changed evidence requires review and does not repeatedly hash the same batch', async () =>

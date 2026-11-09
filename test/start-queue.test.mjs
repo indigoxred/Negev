@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 import { openStartQueue, createStartWorker } from '../src/acquisition/start-queue.mjs';
 import { processRecordedStart } from '../src/acquisition/process-recorded-start.mjs';
 
@@ -57,6 +58,57 @@ test('one stopped torrent holds while later stopped torrents advance', async () 
     assert.equal(ctx.queue.claimNext({ nowMs: 1_800_999 }).state, 'idle');
     assert.equal(ctx.queue.claimNext({ nowMs: 1_801_000 }).attemptId,
       ctx.ids[0].attemptId);
+  }));
+
+test('cutover hold excludes saved starts until explicit resume', async () =>
+  fixture(async (ctx) => {
+    const later = ctx.requests.submit({ requesterId: 1,
+      requestKey: 'later-start', nowMs: 800,
+      intent: { state: 'ready', anidbId: 43, kind: 'series',
+        monitorFuture: false, episodeIds: [2001] } });
+    const candidate = { indexerId: 7, guid: 'later-start' };
+    const hash = 'f'.repeat(40);
+    const laterId = ctx.acquisitions.reserve({ requestId: later.requestId,
+      candidate, episodeIds: [2001], nowMs: 801 }).attemptId;
+    ctx.acquisitions.bindPreparedTorrent({ attemptId: laterId,
+      candidate, hash, nowMs: 802 });
+    ctx.acquisitions.recordFilePlan({ attemptId: laterId, hash,
+      plannedFiles: [{ name: 'later.mkv', size: 10,
+        episodeIds: [2001] }], nowMs: 803 });
+    ctx.acquisitions.beginDispatch({ attemptId: laterId, nowMs: 804 });
+    ctx.acquisitions.recordTorrent({ attemptId: laterId, hash, nowMs: 805 });
+    const holds = openAcquisitionRequestQueue(ctx.dbPath);
+    try {
+      assert.deepEqual(holds.suspendForCutover({ requestId: 1,
+        reason: 'cutover_review', nowMs: 900 }), { state: 'suspended' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, laterId);
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state, 'idle');
+      ctx.reopen();
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).state, 'idle');
+      assert.deepEqual(holds.resumeSuspended({ requestId: 1 }),
+        { state: 'resumed' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_002 }).attemptId,
+        ctx.ids[0].attemptId);
+    } finally { holds.close(); }
+  }));
+
+test('cutover hold refuses an unfinished start claim', async () =>
+  fixture(async (ctx) => {
+    const holds = openAcquisitionRequestQueue(ctx.dbPath);
+    try {
+      const active = ctx.queue.claimNext({ nowMs: 1_000 });
+      assert.equal(active.attemptId, ctx.ids[0].attemptId);
+      assert.deepEqual(holds.suspendForCutover({ requestId: 1,
+        reason: 'cutover_review', nowMs: 1_001 }),
+      { state: 'held', reason: 'request_inflight' });
+      assert.equal(holds.getSuspension(1), null);
+      assert.deepEqual(ctx.queue.recordResult({ attemptId: active.attemptId,
+        version: active.version, state: 'held',
+        reason: 'mount_evidence_unavailable', checkedMs: 1_002 }),
+      { state: 'recorded' });
+      assert.deepEqual(holds.suspendForCutover({ requestId: 1,
+        reason: 'cutover_review', nowMs: 1_003 }), { state: 'suspended' });
+    } finally { holds.close(); }
   }));
 
 test('a prestart retirement intent removes that attempt from start retries', async () =>

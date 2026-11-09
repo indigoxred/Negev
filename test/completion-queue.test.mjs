@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
+import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { openCompletionQueue, createCompletionWorker } from '../src/acquisition/completion-queue.mjs';
 import { createPipelineScheduler } from '../src/acquisition/acquisition-pipeline-scheduler.mjs';
@@ -72,6 +73,43 @@ test('one-attempt pages advance after incomplete work and retry only when due', 
       { state: 'pass_complete', pass: 2 });
     assert.deepEqual(ctx.queue.claimNext({ nowMs: 301_000 }),
       { state: 'claimed', attemptId: ctx.attemptIds[0], pass: 3 });
+  });
+});
+
+test('cutover hold excludes completion retries across reopen until resumed', async () => {
+  await fixture(async (ctx) => {
+    const later = ctx.requests.submit({ requesterId: 1,
+      requestKey: 'later-completion', nowMs: 800,
+      intent: { state: 'ready', anidbId: 43, kind: 'series',
+        monitorFuture: false, episodeIds: [2001] } });
+    const candidate = { indexerId: 7, guid: 'later-completion' };
+    const hash = 'f'.repeat(40);
+    const laterId = ctx.acquisitions.reserve({ requestId: later.requestId,
+      candidate, episodeIds: [2001], nowMs: 801 }).attemptId;
+    ctx.acquisitions.bindPreparedTorrent({ attemptId: laterId,
+      candidate, hash, nowMs: 802 });
+    ctx.acquisitions.recordFilePlan({ attemptId: laterId, hash,
+      plannedFiles: [{ name: 'later.mkv', size: 10,
+        episodeIds: [2001] }], nowMs: 803 });
+    ctx.acquisitions.beginDispatch({ attemptId: laterId, nowMs: 804 });
+    ctx.acquisitions.recordTorrent({ attemptId: laterId, hash, nowMs: 805 });
+    ctx.acquisitions.beginStart({ attemptId: laterId, hash,
+      manifestDigest: 'b'.repeat(64), nowMs: 806 });
+    const holds = openAcquisitionRequestQueue(ctx.dbPath);
+    try {
+      assert.deepEqual(holds.suspendForCutover({ requestId: 1,
+        reason: 'cutover_review', nowMs: 900 }), { state: 'suspended' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, laterId);
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).state,
+        'pass_complete');
+      ctx.reopen();
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_001 }).state,
+        'pass_complete');
+      assert.deepEqual(holds.resumeSuspended({ requestId: 1 }),
+        { state: 'resumed' });
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_002 }).attemptId,
+        ctx.attemptIds[0]);
+    } finally { holds.close(); }
   });
 });
 

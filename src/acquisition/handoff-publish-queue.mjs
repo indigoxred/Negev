@@ -39,9 +39,12 @@ export function openHandoffPublishQueue(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT h.attempt_id AS attemptId
-    FROM handoff_intents h LEFT JOIN handoff_publish_checks c
-      ON c.attempt_id=h.attempt_id
+    FROM handoff_intents h
+    JOIN acquisition_attempts a ON a.id=h.attempt_id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
+    LEFT JOIN handoff_publish_checks c ON c.attempt_id=h.attempt_id
     WHERE h.status IN ('prepared','publish_unknown') AND
+      hold.request_id IS NULL AND
       (c.attempt_id IS NULL OR
         (c.state IN ('held','publish_unknown') AND c.next_due_ms<=?))
     ORDER BY h.attempt_id LIMIT 1`);

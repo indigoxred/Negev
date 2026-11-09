@@ -50,6 +50,13 @@ export function openAcquisitionLedger(dbPath) {
     if (!db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='requests'").get()) {
       throw new TypeError('Request ledger must be initialized first');
     }
+    // Created here as well as in the request queue so standalone downstream
+    // queues can test a saved cutover hold before their first claim.
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_request_suspensions (
+      request_id INTEGER PRIMARY KEY REFERENCES requests(id),
+      reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 80),
+      recorded_ms INTEGER NOT NULL CHECK(recorded_ms>=0)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_attempts (
       id INTEGER PRIMARY KEY,
       request_id INTEGER NOT NULL REFERENCES requests(id),
