@@ -1,6 +1,7 @@
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
+import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
@@ -33,6 +34,8 @@ const requestResponses = {
   preparing: createResponseEpoch(),
 };
 const displayCache = new Map();
+const adultSearchVerifier = createAdultSearchVerifier({ readDisplay: (id) =>
+  api(`/api/catalogue/${id}/display`) });
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -64,17 +67,19 @@ function readAdultPreference(userId) {
   try { return localStorage.getItem(adultPreferenceKey(userId)) !== 'off'; }
   catch { return true; }
 }
-function markAdult(node, item) {
+function markAdult(node, item, { hideUnknown = false } = {}) {
   node.dataset.anidbId = String(item.anidbId);
   node.dataset.adult = item.adult === true ? 'true' :
     item.adult === false ? 'false' : 'unknown';
-  node.hidden = !state.showAdult && item.adult === true;
+  node.hidden = !state.showAdult && (item.adult === true ||
+    hideUnknown && item.adult !== false);
   return node;
 }
 function applyAdultVisibility() {
   for (const node of document.querySelectorAll('[data-anidb-id]')) {
     node.hidden = !state.showAdult && (node.dataset.adult === 'true' ||
-      state.searchItems.get(Number(node.dataset.anidbId))?.adult === true);
+      state.searchItems.get(Number(node.dataset.anidbId))?.adult === true ||
+      node.closest('#results') && node.dataset.adult !== 'false');
   }
   const toggle = byId('adult-toggle');
   toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :
@@ -1102,12 +1107,34 @@ byId('adult-toggle').addEventListener('click', () => {
   try { localStorage.setItem(adultPreferenceKey(state.user.id),
     state.showAdult ? 'on' : 'off'); } catch { /* Choice still applies this session. */ }
   applyAdultVisibility();
+  void classifySearchCards(state.searchToken);
   if (parseConsumerRoute(location.hash).page === 'title' && state.selected) {
     const item = state.searchItems.get(state.selected) ??
       { anidbId: state.selected, title: `Anime ${state.selected}` };
     void showDetail(item);
   }
 });
+async function classifySearchCards(searchToken) {
+  const userId = state.user?.id;
+  const ids = [...document.querySelectorAll('#results [data-anidb-id]')]
+    .filter((node) => node.dataset.adult === 'unknown')
+    .map((node) => Number(node.dataset.anidbId));
+  await adultSearchVerifier.verify(ids, (id, adult) => {
+    if (state.searchToken !== searchToken || state.user?.id !== userId) return;
+    const item = state.searchItems.get(id);
+    if (item) state.searchItems.set(id, { ...item, adult });
+    for (const node of document.querySelectorAll('#results [data-anidb-id]')) {
+      if (Number(node.dataset.anidbId) === id) {
+        node.dataset.adult = String(adult);
+        if (adult && !node.querySelector('.adult-label')) {
+          node.querySelector('.result-copy')?.append(
+            element('span', '18+', 'badge partial adult-label'));
+        }
+      }
+    }
+    applyAdultVisibility();
+  });
+}
 byId('invite').addEventListener('click', async () => {
   try {
     const result = await api('/api/invitations', { method: 'POST', body: '{}' });
@@ -1174,7 +1201,8 @@ byId('search-form').addEventListener('submit', async (event) => {
       const known = state.searchItems.get(item.anidbId);
       const entry = { ...item, adult: item.adult ?? known?.adult };
       state.searchItems.set(item.anidbId, entry);
-      const button = markAdult(element('button', undefined, 'result'), entry);
+      const button = markAdult(element('button', undefined, 'result'), entry,
+        { hideUnknown: true });
       button.type = 'button';
       const tile = element('span', 'N', 'poster-fallback');
       tile.setAttribute('aria-hidden', 'true');
@@ -1186,10 +1214,13 @@ byId('search-form').addEventListener('submit', async (event) => {
       copy.append(element('strong', item.title),
         element('small', `AniDB ${item.anidbId}`));
       copy.append(publicPresenceBadge(item.libraryPresence));
+      if (entry.adult === true) copy.append(
+        element('span', '18+', 'badge partial adult-label'));
       button.append(tile, copy);
       button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
       results.append(button);
     }
+    void classifySearchCards(token);
   };
   try {
     const data = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}`);

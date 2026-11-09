@@ -110,7 +110,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs'].map((name) =>
+    'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
+    'adult-search-visibility.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
@@ -133,6 +134,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     ['/detail-refresh.mjs', 'text/javascript; charset=utf-8', pages[13]],
     ['/relation-label.mjs', 'text/javascript; charset=utf-8', pages[14]],
     ['/request-feedback.mjs', 'text/javascript; charset=utf-8', pages[15]],
+    ['/adult-search-visibility.mjs', 'text/javascript; charset=utf-8', pages[16]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&

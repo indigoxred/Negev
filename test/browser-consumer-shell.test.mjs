@@ -18,6 +18,7 @@ const assets = new Map([
   ...['request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
+    'adult-search-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
@@ -119,6 +120,22 @@ async function inspectMobile(url, profile, width = 390) {
         return {before, after: toggle.getAttribute('aria-pressed'),
           saved: localStorage.getItem('negev:show-adult:1')}; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/discover?q=Lovely') });
+    await wait(1200);
+    const searchAdult = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const cards = [...document.querySelectorAll('#results [data-anidb-id]')];
+        const shown = cards.filter((card) => !card.hidden).map((card) => Number(card.dataset.anidbId));
+        return {shown, adultsHidden: cards.filter((card) =>
+          ['14974', '11003'].includes(card.dataset.anidbId)).every((card) => card.hidden)}; })()`,
+    });
+    const searchAdultLabels = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { document.querySelector('#adult-toggle').click();
+        return [...document.querySelectorAll('#results [data-adult="true"]')]
+          .map((card) => ({id: Number(card.dataset.anidbId),
+            label: card.querySelector('.adult-label')?.textContent})); })()`,
+    });
+    await send('Runtime.evaluate', { expression:
+      `document.querySelector('#adult-toggle').click()` });
     await send('Page.navigate', { url: url.replace('#/discover', '#/discover?year=2026&season=FALL') });
     await wait(800);
     const filtered = await send('Runtime.evaluate', { returnByValue: true,
@@ -209,7 +226,9 @@ async function inspectMobile(url, profile, width = 390) {
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
     return { ...result.value, menu: menu.result.value,
-      adultChoice: adultChoice.result.value, filtered: filtered.result.value,
+      adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
+      searchAdultLabels: searchAdultLabels.result.value,
+      filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
@@ -280,11 +299,28 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/catalogue/search') {
+        if (new URL(request.url, 'http://localhost').searchParams.get('q') === 'Lovely') {
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'results', page: 1, total: 3,
+            catalogueSource: 'test', items: [
+              { anidbId: 14974, title: 'Lovely' },
+              { anidbId: 11003, title: 'Lovely x Cation' },
+              { anidbId: 2498, title: 'Lovely Angels' }] }));
+          return;
+        }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'results', page: 1, total: 1,
           catalogueSource: 'test', items: [{ anidbId: 4158,
             title: 'Pale Cocoon', libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }] }));
+        return;
+      }
+      if (['/api/catalogue/14974/display', '/api/catalogue/11003/display',
+        '/api/catalogue/2498/display'].includes(path)) {
+        const anidbId = Number(path.split('/')[3]);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId,
+          title: 'Verified title', restricted: anidbId !== 2498 }));
         return;
       }
       if (path === '/api/library') {
@@ -489,6 +525,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
+      assert.deepEqual(mobile.searchAdult, { shown: [2498], adultsHidden: true });
+      assert.deepEqual(mobile.searchAdultLabels, [
+        { id: 14974, label: '18+' }, { id: 11003, label: '18+' }]);
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
       assert.equal(mobile.franchise.before, 'Show more related titles');
