@@ -36,6 +36,14 @@ export function openAcquisitionRequestQueue(dbPath) {
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
       candidate_fingerprint TEXT
     ) STRICT`);
+    // Migration review can hold an unstarted request without cancelling the
+    // user's request or changing an existing download. The row survives a
+    // restart and new requests remain eligible by default.
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_request_suspensions (
+      request_id INTEGER PRIMARY KEY REFERENCES requests(id),
+      reason TEXT NOT NULL CHECK(length(reason) BETWEEN 1 AND 80),
+      recorded_ms INTEGER NOT NULL CHECK(recorded_ms>=0)
+    ) STRICT`);
     if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
       .some((column) => column.name === 'candidate_offset')) {
       db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN candidate_offset
@@ -54,7 +62,9 @@ export function openAcquisitionRequestQueue(dbPath) {
   const next = db.prepare(`SELECT r.id,COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
+      s.request_id IS NULL AND
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
@@ -78,6 +88,18 @@ export function openAcquisitionRequestQueue(dbPath) {
   const unresolved = db.prepare(`SELECT request_id AS requestId,pass
     FROM acquisition_request_checks WHERE request_id>? AND state IS NULL
     ORDER BY request_id LIMIT ?`);
+  const suspendable = db.prepare(`SELECT r.id FROM requests r
+    LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
+    WHERE r.id=? AND r.status='held' AND r.cancelled_ms IS NULL
+      AND c.request_id IS NULL`);
+  const suspended = db.prepare(`SELECT request_id AS requestId,reason,
+    recorded_ms AS recordedMs FROM acquisition_request_suspensions
+    WHERE request_id=?`);
+  const insertSuspension = db.prepare(`INSERT INTO acquisition_request_suspensions
+    (request_id,reason,recorded_ms) VALUES (?,?,?)
+    ON CONFLICT(request_id) DO NOTHING`);
+  const deleteSuspension = db.prepare(`DELETE FROM acquisition_request_suspensions
+    WHERE request_id=?`);
   const transact = (action) => {
     let begun = false;
     try {
@@ -91,6 +113,30 @@ export function openAcquisitionRequestQueue(dbPath) {
     }
   };
   return {
+    suspendUnstarted({ requestId, reason, nowMs = Date.now() } = {}) {
+      if (!validId(requestId) || typeof reason !== 'string' ||
+          !/^[a-z][a-z0-9_]{0,79}$/.test(reason) || !validTime(nowMs)) {
+        throw new TypeError('Invalid request suspension');
+      }
+      return transact(() => {
+        if (suspended.get(requestId)) return { state: 'suspended' };
+        if (!suspendable.get(requestId)) {
+          return held('request_started_or_unavailable');
+        }
+        insertSuspension.run(requestId, reason, nowMs);
+        return { state: 'suspended' };
+      });
+    },
+    resumeSuspended({ requestId } = {}) {
+      if (!validId(requestId)) throw new TypeError('Invalid suspended request');
+      return transact(() => deleteSuspension.run(requestId).changes === 1
+        ? { state: 'resumed' } : held('not_suspended'));
+    },
+    getSuspension(requestId) {
+      if (!validId(requestId)) throw new TypeError('Invalid request ID');
+      const row = suspended.get(requestId);
+      return row ? { ...row } : null;
+    },
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid acquisition queue clock');
       return transact(() => {
