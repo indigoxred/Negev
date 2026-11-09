@@ -91,7 +91,7 @@ export async function verifyStagedFile({
   try { preview = await lookup(hash); }
   catch { return held('provider_unavailable'); }
   let offlinePreview;
-  if (preview?.status === 204 && preview.aniDbReady === true && offlineLookup &&
+  if (preview?.status === 204 && offlineLookup &&
       expected?.episodeIds?.length === 1) {
     try { offlinePreview = await offlineLookup({ ...hash,
       filename: parts.at(-1) }); }
