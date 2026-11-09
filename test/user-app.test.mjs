@@ -237,7 +237,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         availableTags: seasonalTags,
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
-          rating: { score: 8.2, votes: 100, members: 500 },
+          rating: { score: 8.2, votes: 100, members: 500, checkedMs: 950 },
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
         nextAfter: null,
         requestedPage: { after, limit } };
@@ -402,7 +402,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       availableTags: ['action', 'fantasy'], items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
         releaseStatus: 'RELEASING', adult: false,
-        rating: { score: 8.2, votes: 100, members: 500 },
+        rating: { score: 8.2, votes: 100, members: 500, checkedMs: 950 },
         libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
       nextAfter: null });
     assert.equal((await app.inject({ method: 'GET',

@@ -391,7 +391,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
             !Number.isSafeInteger(item.rating.votes) || item.rating.votes < 0 ||
             item.rating.score !== null && item.rating.votes === 0 ||
             !Number.isSafeInteger(item.rating.members) ||
-            item.rating.members < 0)) ||
+            item.rating.members < 0 ||
+            !Number.isSafeInteger(item.rating.checkedMs) ||
+            item.rating.checkedMs < 0)) ||
         page.orderState !== undefined &&
           !['schedule', 'fallback', 'score', 'popularity',
             'score_loading', 'score_unavailable'].includes(page.orderState) ||

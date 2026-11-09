@@ -359,7 +359,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           releaseStatus: entry.releaseStatus, adult: verification.adult,
           ...(['rated', 'unrated'].includes(snapshot?.state)
             ? { rating: { score: snapshot.score, votes: snapshot.votes,
-              members: snapshot.members } } : {}) };
+              members: snapshot.members, checkedMs: snapshot.checkedMs } } : {}) };
       });
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
       year, season, sourceDate: cached.sourceDate, items, availableTags,

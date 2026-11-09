@@ -215,9 +215,9 @@ test('Airing sorts the full eligible set by mapped MAL score or members', async 
       `https://myanimelist.net/anime/${id + 10}`],
   }));
   const observations = new Map([
-    [1, { state: 'rated', score: 7.1, votes: 100, members: 9000 }],
-    [2, { state: 'rated', score: 8.2, votes: 200, members: 4000 }],
-    [3, { state: 'unrated', score: null, votes: 0, members: 1000 }],
+    [1, { state: 'rated', score: 7.1, votes: 100, members: 9000, checkedMs: 1000 }],
+    [2, { state: 'rated', score: 8.2, votes: 200, members: 4000, checkedMs: 1000 }],
+    [3, { state: 'unrated', score: null, votes: 0, members: 1000, checkedMs: 1000 }],
   ]);
   const primed = [];
   const scoreCache = { prime(pairs) { primed.push(pairs); return {
@@ -241,9 +241,9 @@ test('Airing sorts the full eligible set by mapped MAL score or members', async 
   assert.equal(byPopularity.orderState, 'popularity');
   assert.deepEqual(byPopularity.items.map((item) => item.anidbId), [1, 2, 3]);
   assert.deepEqual(byScore.items[0].rating, { score: 8.2,
-    votes: 200, members: 4000 });
+    votes: 200, members: 4000, checkedMs: 1000 });
   assert.deepEqual(byPopularity.items[2].rating, { score: null,
-    votes: 0, members: 1000 });
+    votes: 0, members: 1000, checkedMs: 1000 });
 });
 
 test('Airing keeps its fast fallback while scores warm in the background', async () => {

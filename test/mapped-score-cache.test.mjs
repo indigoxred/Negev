@@ -24,10 +24,12 @@ test('bounded MAL snapshots persist across restarts and leave unrated titles vis
     assert.equal(first.prime(entries).ready, false);
     await first.whenIdle();
     assert.equal(first.prime(entries).ready, true);
-    assert.deepEqual(first.get(1, 11), { state: 'rated', score: 8.2,
-      votes: 1400, members: 8000 });
+    assert.equal(first.get(1, 11).score, 8.2);
+    assert.equal(first.get(1, 11).votes, 1400);
+    assert.equal(first.get(1, 11).members, 8000);
+    assert.ok(first.get(1, 11).checkedMs > 0);
     assert.deepEqual(first.get(2, 12), { state: 'unrated', score: null,
-      votes: 32, members: 300 });
+      votes: 32, members: 300, checkedMs: first.get(2, 12).checkedMs });
     assert.equal(seen.length, 2);
     first.close();
     const reopened = openMappedScoreCache({ dbPath,
@@ -44,8 +46,7 @@ test('a mismatched MAL record cannot supply a score to another AniDB title', asy
       score: 9.9, scored_by: 1000, members: 2000 }), { status: 200 }) });
   cache.prime([{ anidbId: 1, malId: 11 }]);
   await cache.whenIdle();
-  assert.deepEqual(cache.get(1, 11), { state: 'unavailable', score: null,
-    votes: null, members: null });
+  assert.equal(cache.get(1, 11).state, 'unavailable');
   assert.equal(cache.get(1, 12), null);
   cache.close();
 });

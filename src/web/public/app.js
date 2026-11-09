@@ -654,10 +654,13 @@ function discoveryCard(item, note, badge, available = false) {
   const copy = element('span', undefined, 'poster-copy');
   copy.append(element('strong', item.title), element('small', note),
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
-  if (item.rating) copy.append(element('small', item.rating.score === null
-    ? `${item.rating.members.toLocaleString()} MAL members · Unrated`
-    : `★ ${item.rating.score.toFixed(1)}/10 · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members`,
-  'muted'));
+  if (item.rating) {
+    const snapshotDate = new Date(item.rating.checkedMs).toLocaleDateString();
+    copy.append(element('small', item.rating.score === null
+      ? `${item.rating.members.toLocaleString()} MAL members · Unrated · ${snapshotDate}`
+      : `★ ${item.rating.score.toFixed(1)}/10 · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members · ${snapshotDate}`,
+    'muted'));
+  }
   if (item.adult) copy.append(element('span', '18+', 'badge partial'));
   card.append(frame, copy);
   state.searchItems.set(item.anidbId, entry);

@@ -41,7 +41,8 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
   const validRow = (row, malId, time) => row?.mal_id === malId &&
     row.checked_ms <= time && row.checked_ms + MONTH > time;
   const observation = (row) => ({ state: row.state,
-    score: row.score, votes: row.votes, members: row.members });
+    score: row.score, votes: row.votes, members: row.members,
+    checkedMs: row.checked_ms });
   const readScore = async (malId) => {
     try {
       const response = await fetchImpl(`https://animap.id/api/mal/${malId}/raw`, {
