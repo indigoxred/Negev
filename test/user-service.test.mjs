@@ -18,6 +18,62 @@ const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
 
+test('a first title view counts a complete multi-page regular season from current proof', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-season-roster-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const clock = 1_000;
+  const accounts = openAccountLedger(dbPath, { now: () => clock });
+  await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const proofs = openFileProofLedger(dbPath, {
+    positiveLifetimeMs: 30 * 60_000, now: () => clock });
+  for (const episodeId of [1, 101, 102]) proofs.observe({ anidbId: 144,
+    episodeId, checkedMs: 999,
+    proof: { fileId: episodeId + 10, libraryId: 102,
+      ratingKey: episodeId + 20, partId: episodeId + 30 } });
+  proofs.close();
+  const pageReads = [];
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    fileProofLifetimeMs: 30 * 60_000, now: () => clock,
+    plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+      publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+    fetchImpl: async (url) => {
+      const endpoint = new URL(url);
+      if (endpoint.pathname === '/api/v3/Series/AniDB/144') return Response.json({
+        ID: 144, Title: 'Inuyasha', Type: 'TV', EpisodeCount: 101,
+        Restricted: false });
+      if (endpoint.pathname === '/api/v3/Series/AniDB/144/Episode') {
+        const page = Number(endpoint.searchParams.get('page'));
+        pageReads.push(page);
+        return Response.json({ Total: 102, List: page === 1
+          ? Array.from({ length: 100 }, (_, offset) => ({
+            ID: offset + 1, AnimeID: 144, EpisodeNumber: offset + 1,
+            Type: 'Episode', Title: `Episode ${offset + 1}` }))
+          : [{ ID: 101, AnimeID: 144, EpisodeNumber: 101,
+            Type: 'Episode', Title: 'Episode 101' },
+          { ID: 102, AnimeID: 144, EpisodeNumber: 1,
+            Type: 'Special', Title: 'Extra' }] });
+      }
+      return new Response(null, { status: 404 });
+    } });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const response = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/144', headers: { cookie } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().regularSeason, { verified: 2, total: 101 });
+    assert.deepEqual(pageReads, [1, 2]);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('weekly Airing applies saved tracking mode after the async schedule read', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-airing-schedule-'));
   const dbPath = path.join(dir, 'negev.sqlite');
