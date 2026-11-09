@@ -91,7 +91,8 @@ export function openAcquisitionRequestQueue(dbPath) {
   const suspendable = db.prepare(`SELECT r.id FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     WHERE r.id=? AND r.status='held' AND r.cancelled_ms IS NULL
-      AND c.request_id IS NULL`);
+      AND (c.request_id IS NULL OR
+        (c.state IS NOT NULL AND c.attempt_id IS NULL))`);
   const hasAttemptLedger = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_attempts'`);
   let attemptForRequest;

@@ -100,6 +100,24 @@ test('batch suspension is all-or-nothing and keeps the remaining queue live',
     } finally { queue.close(); }
   }));
 
+test('completed checks without a download remain eligible for atomic cutover hold',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const checked = queue.claimNext({ nowMs: 10 });
+      assert.equal(checked.requestId, 1);
+      assert.deepEqual(queue.recordResult({ requestId: 1, pass: checked.pass,
+        state: 'held', reason: 'no_release_candidates', checkedMs: 10 }),
+      { state: 'recorded' });
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [1, 2],
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.getSuspension(1)?.requestId, 1);
+      assert.equal(queue.getSuspension(2)?.requestId, 2);
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 3);
+    } finally { queue.close(); }
+  }));
+
 test('cancelled requests are not claimed while later requests continue', async () =>
   fixture(async (dbPath) => {
     const requests = openRequestLedger(dbPath);
