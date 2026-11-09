@@ -765,10 +765,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.airingTrack.card, /FX Senshi Kurumi-chan/);
       assert.equal(mobile.airingTrack.fits, true);
       assert.deepEqual(mobile.airingTrack.weeklyPresence, [
-        { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
+        { title: 'FX Senshi Kurumi-chan', badge: '✓ Show has playable items' },
       ]);
       assert.deepEqual(mobile.airingTrack.allWeeklyPresence, [
-        { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
+        { title: 'FX Senshi Kurumi-chan', badge: '✓ Show has playable items' },
         { title: 'Psyren', badge: 'Local availability not checked' },
       ]);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
