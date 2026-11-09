@@ -84,6 +84,40 @@ test('offline handoff rechecks exact preview and bytes before watched Import', a
       sample.publishName, '01.mkv')), sample.video);
   }, { offline: true }));
 
+test('offline handoff accepts stronger AniDB registration for the same exact file before publish', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500,
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(result.state, 'published_observed', JSON.stringify(result));
+    assert.equal(sample.getBegins(), 1);
+    assert.deepEqual(await readFile(path.join(sample.importRoot,
+      sample.publishName, '01.mkv')), sample.video);
+  }, { offline: true }));
+
+test('offline handoff still holds a corrupt or differently linked AniDB registration', async () => {
+  for (const changed of ['corrupt', 'wrong_episode']) {
+    await withBatch(async (sample) => {
+      const result = await publishPreparedHandoff({ ...sample,
+        attemptId: 1, nowMs: 500,
+        readPacer: { afterBytes: async () => {} },
+        lookup: async (input) => {
+          const preview = await sample.lookup(input);
+          if (changed === 'corrupt') preview.release.isCorrupted = true;
+          else preview.release.crossReferences[0].anidbEpisodeID = 1002;
+          return preview;
+        } });
+      assert.equal(result.state, 'held');
+      assert.equal(sample.getBegins(), 0);
+      assert.deepEqual(await readdir(sample.importRoot), []);
+    }, { offline: true });
+  }
+});
+
 test('offline handoff holds when preview is unavailable or changes target', async () => {
   for (const changed of ['unavailable', 'wrong_episode']) {
     await withBatch(async (sample) => {
@@ -258,6 +292,20 @@ test('offline publish-unknown recovery requires the same file and Shoko predicti
     const unchanged = await publishPreparedHandoff({ ...sample,
       lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
     assert.deepEqual(unchanged, { state: 'published_observed', destination });
+    assert.equal(sample.getObservations(), 1);
+  }, { offline: true }));
+
+test('offline publish-unknown recovery accepts later AniDB registration of the same bytes', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed', destination });
     assert.equal(sample.getObservations(), 1);
   }, { offline: true }));
 

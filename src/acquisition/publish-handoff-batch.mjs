@@ -8,12 +8,15 @@ import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 import { reconcileHandoffContent } from './observe-handoff-import.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
+const registeredIdentity = (result) => result?.isCorrupted === false &&
+  Number.isSafeInteger(result.fileId) && result.fileId > 0 &&
+  result.identitySource === undefined && result.releaseId === undefined;
 const admitted = (result, file) =>
   (file.identitySource === 'shoko_offline'
-    ? result?.identitySource === 'shoko_offline' &&
-      result.releaseId === file.releaseId && result.fileId === undefined
-    : result?.isCorrupted === false && result.fileId === file.anidbFileId &&
-      result.identitySource === undefined && result.releaseId === undefined) &&
+    ? (result?.identitySource === 'shoko_offline' &&
+        result.releaseId === file.releaseId && result.fileId === undefined) ||
+      registeredIdentity(result)
+    : registeredIdentity(result) && result.fileId === file.anidbFileId) &&
   Array.isArray(result.coverage) && result.coverage.length === file.episodeIds.length &&
   file.episodeIds.every((episodeId) => result.coverage.some((range) =>
     range.episodeId === episodeId && range.start === 0 && range.end === 100));
