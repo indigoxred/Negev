@@ -36,6 +36,7 @@ import { readAniDbRelatedTitles as readArchiveRelatedTitles,
 import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { completeRegularRoster } from '../catalogue/complete-regular-roster.mjs';
 import { pollAiringWatches } from '../requests/airing-watch-poll.mjs';
 import { createAiringPageWorker } from '../requests/airing-page-worker.mjs';
 import { buildUserApp } from './user-app.mjs';
@@ -636,10 +637,24 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const checkedMs = now();
         const index = detail.kind === 'series'
           ? rawDetailReader.cachedEpisodeIndex(detail.anidbId) : null;
-        const regularIds = index?.totalEntries === detail.total &&
+        const cachedRegularIds = index?.totalEntries === detail.total &&
           detail.episodes.every((episode) => episode.type !== 'Episode' ||
             index.regularIds.includes(episode.id)) ? index.regularIds : null;
-        const verifiedIds = publicAvailableIdsForTitle(detail.anidbId, checkedMs);
+        const proofBeforeRoster = publicAvailableIdsForTitle(detail.anidbId,
+          checkedMs);
+        // Only titles with current exact file proof need an immediate full
+        // season count. Page reads use Shoko's metadata limiter and a short
+        // deadline; uncertainty leaves the season count absent.
+        const regularIds = cachedRegularIds ??
+          (detail.kind === 'series' && input.page === 1 &&
+            proofBeforeRoster.size > 0 ? await completeRegularRoster({ first: detail,
+              loadPage: (page, remainingMs) => metadata.run(() =>
+                loadAniDbDetail({ baseUrl: shokoBaseUrl,
+                  apiKey: shokoApiKey, anidbId: detail.anidbId, page,
+                  fetchImpl, timeoutMs: Math.min(600,
+                    Math.max(1, Math.floor(remainingMs / 2))) })) }) : null);
+        // A proof may expire or be withdrawn while metadata pages are read.
+        const verifiedIds = publicAvailableIdsForTitle(detail.anidbId, now());
         const regularSeason = countVerifiedRegularEpisodes({ regularIds,
           verifiedIds });
         return { ...detail, ...requestMode,
