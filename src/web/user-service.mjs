@@ -564,8 +564,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                 `Anime title unavailable (${item.anidbId})` })),
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
-      listAiringSchedule: ({ airingPreference } = {}) => {
-        const schedule = weeklySchedule.read();
+      listAiringSchedule: async ({ airingPreference } = {}) => {
+        const schedule = await weeklySchedule.read();
         if (!Array.isArray(schedule.items) || !airingPreference ||
             airingPreference.mode === 'all') return schedule;
         const tracked = new Set(airingPreference.trackedAnidbIds);

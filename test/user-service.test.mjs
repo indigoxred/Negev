@@ -18,6 +18,49 @@ const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
 
+test('weekly Airing applies saved tracking mode after the async schedule read', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-airing-schedule-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const clock = Date.parse('2026-11-09T12:00:00Z');
+  const accounts = openAccountLedger(dbPath, { now: () => clock });
+  const owner = await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const week = { period: { week: '2026-W46', start_date: '2026-11-09',
+    end_date: '2026-11-15' }, days: [
+    { date: '2026-11-09', episodes: [50, 60].map((id) => ({
+      anidb_id: id, anidb_episode_id: id * 10 + 1,
+      anime_title: `Title ${id}`, episode_number: '1',
+      episode_type: 'regular', adult_only: false })) },
+    ...['10', '11', '12', '13', '14', '15'].map((day) => ({
+      date: `2026-11-${day}`, episodes: [] }))] };
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    now: () => clock, fetchImpl: async (url) => {
+      assert.equal(String(url), 'https://animap.id/api/anidb/schedule');
+      return Response.json(week);
+    } });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const read = async () => service.app.inject({ method: 'GET',
+      url: '/api/airing', headers: { cookie } });
+    const library = await read();
+    assert.equal(library.statusCode, 200, library.body);
+    assert.deepEqual(library.json().items, []);
+    const ledger = openAccountLedger(dbPath, { now: () => clock });
+    ledger.setAiringPreferences({ userId: owner.id, mode: 'custom',
+      trackedAnidbIds: [50] });
+    ledger.close();
+    const custom = await read();
+    assert.equal(custom.statusCode, 200, custom.body);
+    assert.deepEqual(custom.json().items.map((item) => item.anidbId), [50]);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('internal first-time observation uses installed Shoko, Plex and Import readers without acquisition', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-time-service-'));
   const dbPath = path.join(dir, 'negev.sqlite');
