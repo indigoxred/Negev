@@ -44,7 +44,7 @@ const seasonalResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 let detailPollTimer = null;
 const genreSelections = { season: new Set(), airing: new Set() };
-let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
+let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -200,7 +200,7 @@ function showSession(data) {
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
-    airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
+    airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
     genreSelections.airing.clear();
     genreSelections.season.clear();
     state.seasonalRouteKey = null;
@@ -255,7 +255,7 @@ function clearWorkspace() {
   state.libraryLoaded = false;
   state.libraryAfter = null;
   state.airingLoaded = false;
-  airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'newest' };
+  airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
   genreSelections.airing.clear();
   genreSelections.season.clear();
   state.seasonalRouteKey = null;
@@ -883,9 +883,11 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
       return;
     }
     if (after === 0) renderGenres('airing', page.availableTags ?? [], tag);
-    notice.textContent = page.state === 'stale'
+    notice.textContent = page.orderState === 'fallback'
+      ? 'This week’s episode dates are unavailable; showing newest ongoing titles first.'
+      : page.state === 'stale'
       ? 'Showing a saved ongoing-title list; release status may have changed.'
-      : 'Titles AniMap currently marks ongoing. Popularity is not ranked here.';
+      : 'Titles with episodes this week appear first, followed by other ongoing titles.';
     for (const item of page.items ?? []) {
       const count = item.libraryPresence?.verifiedEpisodeCount ?? 0;
       const available = item.libraryPresence?.state === 'in_library' && count > 0;
@@ -917,7 +919,7 @@ byId('airing-form').addEventListener('submit', (event) => {
   if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
       !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(season) ||
       !['all', 'series', 'movies'].includes(kind) ||
-      !['newest', 'oldest', 'title_asc', 'title_desc'].includes(sort)) return;
+      !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode'].includes(sort)) return;
   airingFilters = { year, season, kind, tag, sort };
   const epoch = airingResponses.invalidate();
   void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);

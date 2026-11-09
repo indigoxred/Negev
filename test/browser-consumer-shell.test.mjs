@@ -282,11 +282,17 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/seasons') {
-        const ongoing = new URL(request.url, 'http://localhost')
-          .searchParams.get('status') === 'ongoing';
+        const params = new URL(request.url, 'http://localhost').searchParams;
+        const ongoing = params.get('status') === 'ongoing';
+        if (ongoing && params.get('sort') !== 'next_episode') {
+          response.statusCode = 400;
+          response.end('Expected schedule-first airing order');
+          return;
+        }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
           sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance'],
+          ...(ongoing ? { orderState: 'schedule' } : {}),
           items: ongoing ? [{ anidbId: 19847, title: 'FX Senshi Kurumi-chan',
             type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
             libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] :

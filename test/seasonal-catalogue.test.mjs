@@ -119,6 +119,95 @@ test('ongoing titles span seasons and sort before pagination', async () => {
     status: 'ongoing', sort: 'popularity' }), TypeError);
 });
 
+test('airing order puts scheduled episodes first across catalogue pages', async () => {
+  const entries = [
+    { ...row('Old scheduled', 1), status: 'ONGOING',
+      animeSeason: { season: 'SPRING', year: 2024 } },
+    { ...row('New unscheduled', 2), status: 'ONGOING' },
+    { ...row('Soon scheduled', 3), status: 'ONGOING' },
+  ];
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: `Title ${url.split('/').at(-1)}`, type: 'TV Series',
+        restricted: false }),
+  readSchedule: async () => ({ state: 'ready', items: [
+    { anidbId: 1, scheduledDate: '2026-11-12' },
+    { anidbId: 3, scheduledDate: '2026-11-10' },
+  ] }), now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const first = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode', limit: 1 });
+  assert.deepEqual(first.items.map((item) => item.anidbId), [3]);
+  assert.equal(first.orderState, 'schedule');
+  const second = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode', after: first.nextAfter, limit: 2 });
+  assert.deepEqual(second.items.map((item) => item.anidbId), [1, 2]);
+  assert.equal(second.nextAfter, null);
+});
+
+test('airing order visibly falls back to newest when schedule is unavailable', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [
+        { ...row('Older', 1), status: 'ONGOING',
+          animeSeason: { season: 'SPRING', year: 2024 } },
+        { ...row('Newer', 2), status: 'ONGOING' },
+      ] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+  readSchedule: async () => ({ state: 'unavailable' }),
+  now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode' });
+  assert.equal(page.orderState, 'fallback');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [2, 1]);
+});
+
+test('a slow schedule cannot hold an otherwise ready Airing catalogue page', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [
+        { ...row('Ready', 1), status: 'ONGOING' },
+      ] })
+      : reply({ anidb_id: 1, title: 'Ready', type: 'TV Series',
+        restricted: false }),
+  readSchedule: () => new Promise(() => {}), scheduleWaitMs: 20,
+  now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const start = performance.now();
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode' });
+  assert.ok(performance.now() - start < 500);
+  assert.equal(page.orderState, 'fallback');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
+});
+
+test('a cold catalogue page bounds detail fanout and finishes despite slow cards', async () => {
+  const entries = Array.from({ length: 12 }, (_, index) =>
+    row(`Title ${index + 1}`, index + 1));
+  let active = 0;
+  let peak = 0;
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url, options) => {
+    if (url.endsWith('/api/v1/map')) {
+      return reply({ lastUpdate: '2026-11-05', data: entries });
+    }
+    active++;
+    peak = Math.max(peak, active);
+    try {
+      if (url.endsWith('/1')) return reply({ anidb_id: 1,
+        title: 'Ready', type: 'TV Series', restricted: false });
+      return await new Promise((_, reject) => options.signal.addEventListener(
+        'abort', () => reject(options.signal.reason), { once: true }));
+    } finally { active--; }
+  }, detailTimeoutMs: 30, now: () => 1000 });
+  const start = performance.now();
+  const page = await reader.read({ year: 2026, season: 'FALL' });
+  assert.ok(performance.now() - start < 300);
+  assert.ok(peak <= 4);
+  assert.equal(page.state, 'partial');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;
