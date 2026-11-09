@@ -46,12 +46,18 @@ async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
       return held('shoko_unavailable');
     }
     for (const expected of manifest.videos.filter((file) => file.episodeIds.includes(episodeId))) {
+      // Shoko can later replace an Offline Importer release with AniDB's
+      // registered release for the same bytes and episode. The handoff
+      // reader has already validated either provider's exact identity.
       const matching = result.files.filter((file) =>
         file?.anidbId === manifest.anidbId &&
         (expected.identitySource === 'shoko_offline'
-          ? file.anidbFileId === null &&
-            file.releaseEvidence === 'shoko_offline_link' &&
-            file.releaseId === expected.releaseId
+          ? (file.anidbFileId === null &&
+                file.releaseEvidence === 'shoko_offline_link' &&
+                file.releaseId === expected.releaseId) ||
+              (validId(file.anidbFileId) &&
+                file.releaseEvidence === undefined &&
+                file.releaseId === undefined)
           : file.anidbFileId === expected.anidbFileId &&
             file.releaseEvidence !== 'shoko_offline_link') &&
         file.ed2k === expected.ed2k && file.size === expected.size &&

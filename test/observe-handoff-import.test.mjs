@@ -43,6 +43,18 @@ test('offline handoff needs the same imported Shoko bytes and full episode link'
   }
 });
 
+test('offline handoff accepts the same exact bytes after Shoko registers them with AniDB', async () => {
+  const registered = observed(800, [1001]);
+  assert.deepEqual(await observeHandoffImport({ handoff: offlineRow,
+    readEpisode: async () => ({ state: 'ok', complete: true,
+      files: [registered] }) }),
+  { state: 'shoko_files_identified', fileIds: [1800] });
+  assert.deepEqual(await observeHandoffPlacement({ handoff: offlineRow,
+    libraryRoot: '/pure/Anime', readEpisode: async () => ({ state: 'ok',
+      complete: true, files: [registered] }) }),
+  { state: 'shoko_library_location_reported', fileIds: [1800] });
+});
+
 test('each exact claimed video must be identified in Shoko before import is observed', async () => {
   const calls = [];
   const result = await observeHandoffImport({ handoff: row,
@@ -196,6 +208,16 @@ test('offline handoff accepts only Shoko’s exact imported Offline Importer lin
   payload.Files[0].Release.ID = 'offline://42-1002';
   assert.notEqual((await observeHandoffImport({ handoff: offlineRow,
     readEpisode })).state, 'shoko_files_identified');
+  payload.Files[0].Release = {
+    ID: `anidb://${'A'.repeat(32)}+123`, ProviderName: 'AniDB',
+    ReleaseURI: 'https://anidb.net/file/800', FileSize: 123,
+    IsCorrupted: false, Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+      PercentageStart: null, PercentageEnd: null }],
+  };
+  assert.deepEqual(await observeHandoffPlacement({ handoff: offlineRow,
+    readEpisode, libraryRoot: '/pure/Anime' }),
+  { state: 'shoko_library_location_reported', fileIds: [1800] });
 });
 
 test('offline content observation after uncertain publish does not claim the rename', async () => {
