@@ -51,6 +51,22 @@ test('pending detail schedules preparation and later resolves with the original 
     assert.equal((await worker.runOnce()).state, 'idle');
   }));
 
+test('an unlisted film prepares missing details before retrying',
+  async () => withLedger(async ({ ledger }) => {
+    ledger.enqueue({ ...item, anidbId: 20291,
+      title: 'Unlisted future film' });
+    const prepared = [];
+    const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+      authorize: async () => true,
+      prepareDetail: async (input) => { prepared.push(input); },
+      submitRequest: async () => ({ state: 'held',
+        reason: 'detail_incomplete' }),
+    });
+    assert.equal((await worker.runOnce()).state, 'pending');
+    assert.deepEqual(prepared, [{ anidbId: 20291 }]);
+    assert.equal(ledger.get(1).normalRequestId, null);
+  }));
+
 test('a long provider outage stays visible, retries at a bounded pace, and does not block another title',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);

@@ -78,6 +78,28 @@ test('an installment with no trustworthy release date saves a pending watch', as
   } finally { await app.close(); }
 });
 
+test('a film without an exact AniDB entry saves only a pending intent', async () => {
+  let queued = 0;
+  const app = await buildUserApp({ accounts: accounts(),
+    sessionKey: randomBytes(32), publicOrigin: origin,
+    secureCookies: false, readRequest: () => null,
+    confirmKnownTitle: async () => true,
+    submitRequest: async () => ({ state: 'held', reason: 'detail_incomplete' }),
+    queuePendingTitle: () => { queued++; return {
+      state: 'pending', intentId: 31, created: true }; },
+  });
+  try {
+    const headers = await signedIn(app);
+    const saved = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 20291, scope: 'installment',
+        requestKey: 'unlisted-film' } });
+    assert.equal(saved.statusCode, 202, saved.body);
+    assert.deepEqual(saved.json(), { state: 'pending', intentId: 31,
+      created: true });
+    assert.equal(queued, 1);
+  } finally { await app.close(); }
+});
+
 test('a restricted account cannot save an unknown-age pending title',
   async () => {
     let queued = 0;
