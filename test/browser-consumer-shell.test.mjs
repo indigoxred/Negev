@@ -233,12 +233,39 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Runtime.evaluate', { expression:
       `document.querySelector('.request-action .primary').click()` });
+    await send('Runtime.evaluate', { expression: `(() => {
+      const select = document.querySelector('.request-action select');
+      select.value = '44'; select.dispatchEvent(new Event('change'));
+    })()` });
+    await wait(250);
+    const requestOwnedSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {button: action.querySelector('.primary')?.textContent,
+          disabled: action.querySelector('.primary')?.disabled,
+          reviewHidden: action.querySelector('.request-review')?.hidden,
+          status: action.querySelector('.request-feedback')?.textContent}; })()`,
+    });
     const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         const select = action.querySelector('select'); select.value = '43';
         select.dispatchEvent(new Event('change'));
         return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent,
-          cancelLabel: action.querySelector('.request-review button')?.textContent}; })()`,
+          cancelLabel: action.querySelector('.request-review button')?.textContent,
+          reviewHidden: action.querySelector('.request-review')?.hidden,
+          button: action.querySelector('.primary')?.textContent}; })()`,
+    });
+    await wait(250);
+    const requestSelectionReady = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {button: action.querySelector('.primary')?.textContent,
+          disabled: action.querySelector('.primary')?.disabled}; })()`,
+    });
+    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    const reviewAfterSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {reviewVisible: !action.querySelector('.request-review')?.hidden,
+          button: action.querySelector('.primary')?.textContent,
+          status: action.querySelector('.request-feedback')?.textContent}; })()`,
     });
     await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
     await wait(250);
@@ -345,7 +372,10 @@ async function inspectMobile(url, profile, width = 390) {
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
       requestReview: requestReview.result.value,
+      requestOwnedSelection: requestOwnedSelection.result.value,
       requestSelection: requestSelection.result.value,
+      requestSelectionReady: requestSelectionReady.result.value,
+      reviewAfterSelection: reviewAfterSelection.result.value,
       requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
@@ -600,7 +630,29 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'related_titles', anidbId: 42,
           completeness: 'unproven', items: [{ anidbId: 43,
-            title: 'Example Season Two', relation: 'Sequel' }] }));
+            title: 'Example Season Two', relation: 'Sequel' },
+          { anidbId: 44, title: 'Complete related season',
+            relation: 'Sequel' }] }));
+        return;
+      }
+      if (path === '/api/catalogue/44') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 44,
+          title: 'Complete related season', kind: 'series', restricted: false,
+          monitorFuture: false, regularSeason: { verified: 2, total: 2 },
+          page: 1, total: 2, nextPage: null,
+          episodes: [1, 2].map((number) => ({ id: 4400 + number,
+            number, type: 'Episode', availability: 'available' })) }));
+        return;
+      }
+      if (path === '/api/catalogue/43') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 43,
+          title: 'Example Season Two', kind: 'series', restricted: false,
+          monitorFuture: false, regularSeason: { verified: 0, total: 2 },
+          page: 1, total: 2, nextPage: null,
+          episodes: [1, 2].map((number) => ({ id: 4300 + number,
+            number, type: 'Episode', availability: 'unknown' })) }));
         return;
       }
       if (path === '/api/catalogue/96') {
@@ -770,9 +822,17 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
+      assert.deepEqual(mobile.requestOwnedSelection, {
+        button: 'Already available', disabled: true, reviewHidden: true,
+        status: 'This installment is already verified in Negev’s Library.' });
       assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
         summary: 'Example Season Two · Negev will check its film or episodes before saving',
-        cancelLabel: 'Cancel' });
+        cancelLabel: 'Cancel', reviewHidden: true,
+        button: 'Checking selected installment…' });
+      assert.deepEqual(mobile.requestSelectionReady,
+        { button: 'Request selected installment', disabled: false });
+      assert.deepEqual(mobile.reviewAfterSelection, { reviewVisible: true,
+        button: 'Confirm request', status: 'Review this installment, then confirm.' });
       assert.deepEqual(mobile.requestCancelled, { reviewHidden: true,
         button: 'Watch future episodes', status: '' });
       assert.equal(mobile.requestSaved.reviewHidden, true);
