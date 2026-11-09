@@ -655,11 +655,14 @@ function discoveryCard(item, note, badge, available = false) {
   copy.append(element('strong', item.title), element('small', note),
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
   if (item.rating) {
-    const snapshotDate = new Date(item.rating.checkedMs).toLocaleDateString();
-    copy.append(element('small', item.rating.score === null
-      ? `${item.rating.members.toLocaleString()} MAL members · Unrated · ${snapshotDate}`
-      : `★ ${item.rating.score.toFixed(1)}/10 · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members · ${snapshotDate}`,
-    'muted'));
+    const members = new Intl.NumberFormat('en', { notation: 'compact',
+      maximumFractionDigits: 1 }).format(item.rating.members);
+    const rating = element('small', item.rating.score === null
+      ? `${members} members · Unrated`
+      : `★ ${item.rating.score.toFixed(1)} · ${members} members`,
+    'muted rating-line');
+    rating.title = `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members · checked ${new Date(item.rating.checkedMs).toLocaleDateString()}`;
+    copy.append(rating);
   }
   if (item.adult) copy.append(element('span', '18+', 'badge partial'));
   card.append(frame, copy);
