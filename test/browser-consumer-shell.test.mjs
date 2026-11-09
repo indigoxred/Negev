@@ -276,8 +276,13 @@ async function inspectMobile(url, profile, width = 390) {
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/20291') });
     await wait(700);
     const unlistedFilm = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `({message: document.querySelector('#detail')?.textContent,
-        action: document.querySelector('#detail .request-action .primary')?.textContent})`,
+      expression: `(() => { const action = document.querySelector('#detail .request-action');
+        const message = document.querySelector('#detail')?.textContent;
+        const button = action?.querySelector('.primary');
+        const label = button?.textContent;
+        button?.click();
+        return { message, action: label,
+          summary: action?.querySelector('.request-review p')?.textContent }; })()`,
     });
     let airingTrack = null;
     if (width === 390) {
@@ -721,6 +726,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.unlistedFilm.action, 'Request if missing');
       assert.match(mobile.unlistedFilm.message,
         /wait for an exact film entry before any download/i);
+      assert.equal(mobile.unlistedFilm.summary,
+        'Unlisted future film · Negev will identify the film or episodes and check the library first');
       assert.equal(mobile.airingTrack.defaultMode, 'library');
       assert.equal(mobile.airingTrack.tracked, 'Stop tracking');
       assert.equal(mobile.airingTrack.mode, 'custom');
