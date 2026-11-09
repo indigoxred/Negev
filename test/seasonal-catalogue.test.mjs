@@ -338,6 +338,36 @@ test('a restart serves a recent saved catalogue during a provider outage', async
   }
 });
 
+test('a transient snapshot write failure is retried without refetching the map', async () => {
+  let time = 1_000;
+  let fetches = 0;
+  let saves = 0;
+  const snapshotStore = {
+    load: () => null,
+    save: () => {
+      saves++;
+      if (saves === 1) throw new Error('database is locked');
+    },
+  };
+  const reader = createSeasonalCatalogue({ snapshotStore,
+    fetchImpl: async (url) => {
+      if (url.endsWith('/api/v1/map')) {
+        fetches++;
+        return reply({ lastUpdate: '2026-11-05', data: [row('One', 1)] });
+      }
+      return reply({ anidb_id: 1, title: 'One', type: 'TV Series',
+        restricted: false });
+    }, now: () => time });
+  assert.equal((await reader.read({ year: 2026, season: 'FALL' })).state,
+    'ready');
+  assert.equal(saves, 1);
+  time += 60_000;
+  assert.equal((await reader.read({ year: 2026, season: 'FALL' })).state,
+    'ready');
+  assert.equal(saves, 2);
+  assert.equal(fetches, 1);
+});
+
 test('streamed map handles split Unicode and nested JSON without buffering the full map', async () => {
   const body = new TextEncoder().encode(JSON.stringify({ lastUpdate: '2026-11-05',
     data: [{ ...row('猫 { \\" show', 9), tags: [{ name: '猫' }] }] }));
