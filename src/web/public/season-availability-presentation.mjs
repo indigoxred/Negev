@@ -16,10 +16,13 @@ export function summarizeFilmAvailability({ kind, episodes, nextPage }) {
 }
 
 export function installmentRequestState({ kind, episodes, nextPage,
-  monitorFuture = false }) {
+  monitorFuture = false, regularSeason = null }) {
   if (kind === 'movie') return summarizeFilmAvailability({ kind, episodes, nextPage })?.available
     ? 'already_available' : 'requestable';
   if (monitorFuture === true) return 'requestable';
+  if (kind === 'series' && Number.isSafeInteger(regularSeason?.total) &&
+      regularSeason.total > 0 &&
+      regularSeason.verified === regularSeason.total) return 'already_available';
   const season = summarizeSeasonAvailability({ kind, episodes, nextPage });
   return season?.completeList && season.total > 0 && season.verified === season.total
     ? 'already_available' : 'requestable';

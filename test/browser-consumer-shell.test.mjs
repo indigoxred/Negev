@@ -616,6 +616,7 @@ test('signed-in consumer routes render real shell with search, library and reque
           title: missingLast ? 'Incomplete paginated series' : 'Complete paginated series',
           kind: 'series', restricted: false,
           monitorFuture: false, episodeCount: 4, endDate: '2020-01-01',
+          regularSeason: { verified: missingLast ? 3 : 4, total: 4 },
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 4 },
           page: secondPage ? 2 : 1, total: 4, nextPage: secondPage ? null : 2,
           episodes: (secondPage ? [3, 4] : [1, 2]).map((number) => ({
@@ -846,7 +847,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(completePaginated, /4 of 4 regular episodes verified playable in Plex/);
       assert.match(completePaginated,
         /<button class="primary" disabled="">Already available<\/button>/);
-      assert.doesNotMatch(completePaginated, /Show more episodes/);
+      assert.match(completePaginated, /Show more episodes/,
+        'episode details remain optional when complete-season proof is already saved');
+      assert.doesNotMatch(completePaginated, /Checking the complete episode list/);
       const incompletePaginated = await dump(`${base}/#/title/98`,
         join(dir, 'incomplete-paginated'));
       assert.match(incompletePaginated, /3 of 4 regular episodes verified playable in Plex/);
