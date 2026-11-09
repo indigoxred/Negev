@@ -2,7 +2,7 @@
 # This starts catalogue and request handling with acquisition disabled.
 services:
   negev:
-    image: ghcr.io/indigoxred/negev:v0.0.59
+    image: ghcr.io/indigoxred/negev:v0.0.144
     network_mode: host
     user: "1000:1000"
     read_only: true
