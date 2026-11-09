@@ -100,32 +100,41 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
       }).finally(() => { active--; pump(); });
     }
   };
-  return { async read({ anidbId, page = 1 }) {
-    if (!Number.isSafeInteger(anidbId) || anidbId < 1 || anidbId > 2_147_483_647 ||
-        !Number.isSafeInteger(page) || page < 1 || page > 1_000) {
-      throw new TypeError('Invalid AniDB archive page');
-    }
-    let hit = cache.get(anidbId);
-    if (!hit || hit.expiresMs <= now()) {
-      let read = pending.get(anidbId);
-      if (!read) {
-        if (queue.length >= 20) return unavailable();
-        read = new Promise((resolve) => {
-          queue.push({ anidbId, resolve });
-          pump();
-        });
-        pending.set(anidbId, read);
+  return {
+    cachedEpisodeIndex(anidbId) {
+      const hit = cache.get(anidbId);
+      if (!hit?.value || hit.expiresMs <= now()) return null;
+      return { totalEntries: hit.value.episodes.length,
+        regularIds: hit.value.episodes.filter((episode) =>
+          episode.type === 'Episode').map((episode) => episode.id) };
+    },
+    async read({ anidbId, page = 1 }) {
+      if (!Number.isSafeInteger(anidbId) || anidbId < 1 || anidbId > 2_147_483_647 ||
+          !Number.isSafeInteger(page) || page < 1 || page > 1_000) {
+        throw new TypeError('Invalid AniDB archive page');
       }
-      hit = { value: await read };
-    }
-    if (!hit.value) return unavailable();
-    const { episodes, ...metadata } = hit.value;
-    const start = (page - 1) * pageSize;
-    if (start > episodes.length || page > 1 && start === episodes.length) return unavailable();
-    const selected = episodes.slice(start, start + pageSize);
-    return { state: 'details', anidbId, ...metadata, total: episodes.length,
-      page, complete: page === 1 && episodes.length <= pageSize,
-      nextPage: start + selected.length < episodes.length ? page + 1 : null,
-      episodes: selected, requestable: false };
-  } };
+      let hit = cache.get(anidbId);
+      if (!hit || hit.expiresMs <= now()) {
+        let read = pending.get(anidbId);
+        if (!read) {
+          if (queue.length >= 20) return unavailable();
+          read = new Promise((resolve) => {
+            queue.push({ anidbId, resolve });
+            pump();
+          });
+          pending.set(anidbId, read);
+        }
+        hit = { value: await read };
+      }
+      if (!hit.value) return unavailable();
+      const { episodes, ...metadata } = hit.value;
+      const start = (page - 1) * pageSize;
+      if (start > episodes.length || page > 1 && start === episodes.length) return unavailable();
+      const selected = episodes.slice(start, start + pageSize);
+      return { state: 'details', anidbId, ...metadata, total: episodes.length,
+        page, complete: page === 1 && episodes.length <= pageSize,
+        nextPage: start + selected.length < episodes.length ? page + 1 : null,
+        episodes: selected, requestable: false };
+    },
+  };
 }

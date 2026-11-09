@@ -576,6 +576,20 @@ test('signed-in consumer routes render real shell with search, library and reque
             title: 'Example Season Two', relation: 'Sequel' }] }));
         return;
       }
+      if (path === '/api/catalogue/96') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 96,
+          title: 'Partly verified season', kind: 'series', restricted: false,
+          monitorFuture: true, episodeCount: 4,
+          regularSeason: { verified: 1, total: 4 },
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 },
+          page: 1, total: 5, nextPage: 2,
+          episodes: [{ id: 9601, number: 1, type: 'Episode',
+            title: 'First', availability: 'available' },
+          { id: 9602, number: 2, type: 'Episode',
+            title: 'Second', availability: 'unknown' }] }));
+        return;
+      }
       if (path === '/api/catalogue/99' || path === '/api/catalogue/98') {
         const secondPage = new URL(request.url, 'http://localhost')
           .searchParams.get('page') === '2';
@@ -799,6 +813,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(seriesDetail, /class="installment-choice"/);
       assert.match(seriesDetail, /Watch future episodes/);
       assert.doesNotMatch(seriesDetail, /Already available/);
+      const partialSeason = await dump(`${base}/#/title/96`,
+        join(dir, 'partial-season'));
+      assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);
+      assert.doesNotMatch(partialSeason,
+        /2 of 4 regular episodes verified playable in Plex/);
       const completePaginated = await dump(`${base}/#/title/99`,
         join(dir, 'complete-paginated'));
       assert.match(completePaginated, /4 of 4 regular episodes verified playable in Plex/);
