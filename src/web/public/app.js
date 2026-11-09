@@ -1065,7 +1065,7 @@ async function loadAiring() {
       copy.append(element('strong', item.title),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
         element('span', available
-          ? '✓ In library' : 'Local availability not checked',
+          ? '✓ Show has playable items' : 'Local availability not checked',
         `presence ${available ? 'available' : 'unknown'}`));
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(art, copy);
