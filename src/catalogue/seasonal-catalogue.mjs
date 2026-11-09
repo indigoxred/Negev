@@ -169,6 +169,7 @@ async function parseMap(response) {
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   readSchedule = null,
   scoreCache = null,
+  snapshotStore = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
   timeoutMs = 12_000, detailTimeoutMs = 2_500,
   scheduleWaitMs = 2_000 } = {}) {
@@ -182,8 +183,13 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       detailTimeoutMs > timeoutMs || scheduleWaitMs > 5_000) {
     throw new TypeError('Invalid seasonal catalogue configuration');
   }
-  let cached = null;
-  let checkedMs = null;
+  let restored = null;
+  try { restored = snapshotStore?.load() ?? null; } catch { /* Optional cache. */ }
+  const bootMs = now();
+  if (!Number.isSafeInteger(bootMs) || restored?.checkedMs > bootMs ||
+      restored?.checkedMs + staleMs <= bootMs) restored = null;
+  let cached = restored?.map ?? null;
+  let checkedMs = restored?.checkedMs ?? null;
   let attemptedMs = null;
   let pendingMap = null;
   const detailCache = new Map();
@@ -214,6 +220,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           const parsed = await parseMap(response);
           cached = parsed;
           checkedMs = time;
+          try { snapshotStore?.save({ checkedMs: time, map: parsed }); }
+          catch { /* Live catalogue remains usable. */ }
         })().finally(() => { pendingMap = null; });
       }
       try { await pendingMap; return 'ready'; }

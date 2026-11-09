@@ -19,6 +19,7 @@ import { createAniDbTitleSource } from '../catalogue/anidb-title-source.mjs';
 import { createAniDbWeeklySchedule } from '../catalogue/anidb-weekly-schedule.mjs';
 import { createSeasonalCatalogue } from '../catalogue/seasonal-catalogue.mjs';
 import { openMappedScoreCache } from '../catalogue/mapped-score-cache.mjs';
+import { openSeasonalSnapshot } from '../catalogue/seasonal-snapshot.mjs';
 import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs';
 import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
 import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
@@ -182,6 +183,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let titleChecks;
   let plexObserver;
   let scoreCache;
+  let seasonalSnapshot;
   let fileCursor;
   let fileProofs;
   try {
@@ -208,8 +210,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     scoreCache = openMappedScoreCache({ dbPath, fetchImpl, now });
+    seasonalSnapshot = openSeasonalSnapshot(dbPath);
     const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now,
-      readSchedule: weeklySchedule.read, scoreCache });
+      readSchedule: weeklySchedule.read, scoreCache,
+      snapshotStore: seasonalSnapshot });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
@@ -902,7 +906,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               await eventConsumer.close();
               await Promise.allSettled([...observations]);
               plexObserver?.close();
-              scoreCache?.close();
+              scoreCache?.close(); seasonalSnapshot?.close();
               fileProofs?.close(); fileCursor?.close();
               directAvailability.close();
               titleChecks?.close();
@@ -918,7 +922,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       } };
   } catch (error) {
     plexObserver?.close(); fileProofs?.close(); fileCursor?.close();
-    scoreCache?.close();
+    scoreCache?.close(); seasonalSnapshot?.close();
     directAvailability?.close(); titleChecks?.close(); recent?.close();
     inventory?.close(); hydration?.close();
     progress?.close(); completionReview?.close(); startReview?.close();
