@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,7 @@ import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { ED2K_CHUNK_SIZE, ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
+import { observeHandoffPlacement } from '../src/acquisition/observe-handoff-import.mjs';
 import { previewAniDbRelease } from '../src/identity/shoko-preview.mjs';
 import { openHandoffPublishQueue, createHandoffPublishWorker } from
   '../src/acquisition/handoff-publish-queue.mjs';
@@ -130,6 +131,59 @@ test('AniDB 204 with exact installed Offline Importer preview journals only priv
     assert.deepEqual(await readFile(path.join(saved.holdingPath, '01.mkv')),
       await readFile(path.join(context.stagingHostPath, torrentHash, '01.mkv')));
     assert.deepEqual(await readdir(importRoot), []);
+  });
+});
+
+test('one offline attempt survives private preparation, publish and Shoko placement proof', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, holdingRoot, attemptId,
+      config, identity, ...stores } = context;
+    const offlineRelease = { ProviderName: 'Offline Importer',
+      ID: 'offline://42-1001', OriginalFilename: '01.mkv',
+      IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+        AnidbEpisodeID: 1001, PercentageStart: 0,
+        PercentageEnd: 100 }] };
+    const shokoFetchImpl = async (url) => {
+      const endpoint = new URL(url);
+      if (endpoint.pathname === '/api/v3/ReleaseInfo/Provider') {
+        return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
+          ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
+      }
+      if (endpoint.searchParams.get('id') ===
+          `anidb://${identity.ed2k}+${identity.size}`) {
+        return new Response(null, { status: 204 });
+      }
+      if (endpoint.searchParams.get('id') === 'search://01.mkv') {
+        return Response.json(offlineRelease);
+      }
+      throw Error('unexpected Shoko lookup');
+    };
+    const prepared = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, holdingRoot, importRoot, ...config, shokoFetchImpl });
+    assert.equal(prepared.state, 'handoff_prepared', JSON.stringify(prepared));
+    const published = await processRecordedHandoff({ attemptId,
+      ledger: handoffs, holdingRoot, importRoot, nowMs: 207,
+      lookup: async () => ({ status: 204 }),
+      offlineLookup: async ({ filename }) => ({ status: 200,
+        release: { ...offlineRelease, OriginalFilename: filename } }),
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(published.state, 'published_observed', JSON.stringify(published));
+    const row = handoffs.getHandoff(attemptId);
+    const placed = await observeHandoffPlacement({ handoff: row,
+      libraryRoot: '/pure/Anime', readEpisode: async () => ({
+        state: 'ok', complete: true, files: [{ fileId: 1800,
+          anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+          releaseId: 'offline://42-1001', ed2k: identity.ed2k,
+          size: identity.size, anidbId: 42, episodeIds: [1001],
+          coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+          sourcePaths: ['/pure/Anime/Example/01.mkv'] }] }) });
+    assert.deepEqual(placed, { state: 'shoko_library_location_reported',
+      fileIds: [1800] });
+    assert.deepEqual(await readdir(holdingRoot), []);
   });
 });
 
