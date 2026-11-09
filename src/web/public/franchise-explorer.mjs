@@ -110,10 +110,9 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
     let response;
     try { response = await read(next.anidbId); }
     catch (error) {
-      // Throttling, server failures, and transport errors do not prove a
-      // branch has no links. Leave it at the cursor for an explicit retry.
-      if (error?.status === 429 || !Number.isInteger(error?.status) ||
-          error.status >= 500) {
+      // Only a definite missing response can rule out this branch. Access,
+      // throttling, server, and transport failures leave it retryable.
+      if (![404, 410].includes(error?.status)) {
         return { state: error?.status === 429 ? 'rate_limited' :
           'temporarily_unavailable', reads,
           added: explorer.items().length - before,

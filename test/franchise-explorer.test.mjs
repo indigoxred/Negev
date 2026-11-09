@@ -89,6 +89,18 @@ test('a temporary related read failure keeps its branch for a later retry', asyn
   assert.equal(recovered.added, 1);
 });
 
+test('an access failure leaves the related branch retryable', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Second season', relation: 'Sequel' }] });
+  const failed = await expandFranchiseBatch({ explorer: view,
+    read: async () => { throw Object.assign(new Error('Unauthorized'),
+      { status: 401 }); } });
+  assert.equal(failed.state, 'temporarily_unavailable');
+  assert.equal(failed.hasMore, true);
+  assert.equal(view.next()?.anidbId, 20);
+});
+
 test('an unavailable metadata response keeps the next branch retryable', async () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
   view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
