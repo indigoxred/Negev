@@ -19,12 +19,14 @@ export function requestReleaseState(detail, currentDate) {
 // qBittorrent. The authenticated caller supplies requesterId.
 export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
   (input) => titleRegistry?.isKnownTitle(input) ?? false,
-  loadDetail, ledger, now, today, recentlyAvailable = () => false }) {
+  loadDetail, ledger, now, today, recentlyAvailable = () => false,
+  authorizeRequester }) {
   if (typeof confirmKnownTitle !== 'function' ||
       typeof loadDetail !== 'function' || typeof ledger?.submit !== 'function' ||
       typeof ledger?.findSubmission !== 'function' ||
       typeof now !== 'function' || typeof today !== 'function' ||
-      typeof recentlyAvailable !== 'function') {
+      typeof recentlyAvailable !== 'function' ||
+      typeof authorizeRequester !== 'function') {
     throw new TypeError('Invalid held-request configuration');
   }
   return async ({ requesterId, anidbId, scope, episodeIds, requestKey }) => {
@@ -47,6 +49,15 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
       return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');
     }
     if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
+    let policy;
+    try { policy = await authorizeRequester({ requesterId, anidbId,
+      restricted: detail.restricted }); }
+    catch { return held('authorization_unavailable'); }
+    if (policy?.active === false) return held('account_access_changed');
+    if (policy?.active !== true) return held('authorization_unavailable');
+    if (detail.restricted && policy.adultAllowed !== true) {
+      return held('adult_access_disabled');
+    }
     const title = detail.title.trim();
     if (!title || title.length > 300 || /[\x00-\x1f\x7f]/.test(title)) {
       return held('detail_unavailable');

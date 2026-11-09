@@ -59,6 +59,8 @@ export function createCatalogueTestService({
     });
     const submitHeld = createHeldRequestSubmitter({
       titleRegistry, loadDetail, ledger: requestLedger, now, today,
+      authorizeRequester: ({ requesterId }) => ({
+        active: requesterId === 1, adultAllowed: true }),
     });
     const readRequest = (id) => {
       const request = requestLedger.getRequest(id);

@@ -2,9 +2,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHeldRequestSubmitter } from '../src/requests/submit-held-request.mjs';
 
+const authorized = () => ({ active: true, adultAllowed: true });
+
+test('held submission requires an explicit account policy', () => {
+  assert.throws(() => createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => ({ state: 'detail_pending' }),
+    ledger: { findSubmission: () => null, submit: () => null },
+    now: () => 1, today: () => '2026-11-09',
+  }), /Invalid held-request configuration/);
+});
+
 test('request submission checks validated catalogue after observed search expires', async () => {
   const checked = [];
   const submit = createHeldRequestSubmitter({
+    authorizeRequester: authorized,
     titleRegistry: { isKnownTitle: () => false },
     confirmKnownTitle: async ({ anidbId }) => {
       checked.push(anidbId);
@@ -32,6 +44,7 @@ test('a recently verified whole installment is held before a duplicate request i
     episodeCount: 1, episodes: [{ id: 99, number: 1, type: 'Episode',
       title: 'Film', airDate: '2020-01-01' }] };
   const submit = createHeldRequestSubmitter({
+    authorizeRequester: authorized,
     confirmKnownTitle: async () => true,
     loadDetail: async () => detail,
     recentlyAvailable: ({ episodeId }) => episodeId === 99,
@@ -44,6 +57,32 @@ test('a recently verified whole installment is held before a duplicate request i
   assert.equal(saved, 0);
 });
 
+test('adult access restriction does not block an ordinary pending title', async () => {
+  let saved = 0;
+  const detail = { state: 'details', anidbId: 42, title: 'Ordinary film',
+    kind: 'movie', restricted: false, complete: true, page: 1, total: 1,
+    nextPage: null, airDate: '2020-01-01', endDate: '2020-01-01',
+    episodeCount: 1, episodes: [{ id: 99, number: 1, type: 'Episode',
+      title: 'Film', airDate: '2020-01-01' }] };
+  const submit = createHeldRequestSubmitter({
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => detail,
+    authorizeRequester: () => ({ active: true, adultAllowed: false }),
+    ledger: { findSubmission: () => null, submit: () => {
+      saved++;
+      return { state: 'held', requestId: saved };
+    } },
+    now: () => 1, today: () => '2026-11-09',
+  });
+  const command = { requesterId: 1, anidbId: 42,
+    scope: 'installment', requestKey: 'ordinary' };
+  assert.deepEqual(await submit(command), { state: 'held', requestId: 1 });
+  detail.restricted = true;
+  assert.deepEqual(await submit({ ...command, requestKey: 'restricted' }),
+    { state: 'held', reason: 'adult_access_disabled' });
+  assert.equal(saved, 1);
+});
+
 test('a fully aired and available series without an end date is not watched again', async () => {
   let saved = 0;
   const detail = { state: 'details', anidbId: 44, title: 'Completed installment',
@@ -53,6 +92,7 @@ test('a fully aired and available series without an end date is not watched agai
       id: 300 + number, number, type: 'Episode', title: `Episode ${number}`,
       airDate: `2026-10-0${number}` })) };
   const submit = createHeldRequestSubmitter({
+    authorizeRequester: authorized,
     confirmKnownTitle: async () => true, loadDetail: async () => detail,
     recentlyAvailable: async () => true,
     ledger: { findSubmission: () => null, submit: () => { saved++; } },
@@ -73,6 +113,7 @@ test('a partial installment request saves only episodes without recent playable 
       airDate: `2020-01-${String(number).padStart(2, '0')}` })) };
   let saved;
   const submit = createHeldRequestSubmitter({
+    authorizeRequester: authorized,
     confirmKnownTitle: async () => true,
     loadDetail: async () => detail,
     recentlyAvailable: ({ episodeId }) => episodeId !== 103,
@@ -96,6 +137,7 @@ test('an Airing request can watch future episodes without reacquiring verified c
       title: 'First', airDate: '2026-11-01' }] };
   let saved;
   const submit = createHeldRequestSubmitter({
+    authorizeRequester: authorized,
     confirmKnownTitle: async () => true,
     loadDetail: async () => detail,
     recentlyAvailable: async () => true,

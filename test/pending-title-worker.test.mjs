@@ -163,6 +163,7 @@ test('real exact submitter creates one completed film target only after detail a
       let nowMs = 1_000;
       const submitRequest = createHeldRequestSubmitter({
         confirmKnownTitle: async () => true,
+        authorizeRequester: () => ({ active: true, adultAllowed: false }),
         loadDetail: async () => ready ? { state: 'details', anidbId: 4158,
           title: 'Pale Cocoon', kind: 'movie', restricted: false,
           complete: true, page: 1, total: 1, nextPage: null,
@@ -198,6 +199,7 @@ test('real exact submitter keeps an Airing title watched for future episodes',
         title: 'Zombie Sagashitemasu' });
       const submitRequest = createHeldRequestSubmitter({
         confirmKnownTitle: async () => true,
+        authorizeRequester: () => ({ active: true, adultAllowed: true }),
         loadDetail: async () => ({ state: 'details', anidbId: 19586,
           title: 'Zombie Sagashitemasu', kind: 'series', restricted: false,
           complete: true, page: 1, total: 1, nextPage: null,
@@ -218,7 +220,7 @@ test('real exact submitter keeps an Airing title watched for future episodes',
     } finally { requests.close(); }
   }));
 
-test('revoked adult access prevents a queued request from resolving',
+test('deactivated account prevents a queued request from resolving',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);
     let submitted = 0;
@@ -232,4 +234,28 @@ test('revoked adult access prevents a queued request from resolving',
     assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
       reason: 'account_access_changed' });
     assert.equal(submitted, 0);
+  }));
+
+test('a restricted pending title cannot become a request after adult access is disabled',
+  async () => withLedger(async ({ ledger, dbPath }) => {
+    const requests = openRequestLedger(dbPath);
+    try {
+      ledger.enqueue(item);
+      const submitRequest = createHeldRequestSubmitter({
+        confirmKnownTitle: async () => true,
+        loadDetail: async () => ({ state: 'details', anidbId: item.anidbId,
+          title: item.title, kind: 'movie', restricted: true,
+          complete: true, page: 1, total: 1, nextPage: null,
+          airDate: '2020-01-01', endDate: '2020-01-01', episodeCount: 1,
+          episodes: [{ id: 777, number: 1, type: 'Episode',
+            title: 'Film', airDate: '2020-01-01' }] }),
+        authorizeRequester: () => ({ active: true, adultAllowed: false }),
+        ledger: requests, now: () => 1_000, today: () => '2026-11-09',
+      });
+      const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+        authorize: async () => true, submitRequest });
+      assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
+        reason: 'adult_access_disabled' });
+      assert.equal(requests.countRequests(), 0);
+    } finally { requests.close(); }
   }));

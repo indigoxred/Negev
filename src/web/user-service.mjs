@@ -371,6 +371,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const submitRequest = createHeldRequestSubmitter({
       titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
       ledger: requests, now, today,
+      authorizeRequester: ({ requesterId }) => {
+        const user = accounts.getActiveUser({ userId: requesterId });
+        return { active: user !== null,
+          adultAllowed: user?.adultAllowed === true };
+      },
       recentlyAvailable: ({ anidbId, episodeId }) => {
         const target = { anidbId, episodeId, nowMs: now() };
         return episodeDisplayAvailability({
@@ -383,7 +388,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const pendingTitleWorker = createPendingTitleWorker({
       ledger: pendingTitles, submitRequest, now,
       authorize: ({ requesterId }) =>
-        accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true,
+        accounts.getActiveUser({ userId: requesterId }) !== null,
       restoreKnownTitle: ({ anidbId, title }) =>
         titleRegistry.observe({ state: 'results', total: 1,
           items: [{ anidbId, title }] }),
