@@ -164,6 +164,24 @@ test('airing order visibly falls back to newest when schedule is unavailable', a
   assert.deepEqual(page.items.map((item) => item.anidbId), [2, 1]);
 });
 
+test('a slow schedule cannot hold an otherwise ready Airing catalogue page', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [
+        { ...row('Ready', 1), status: 'ONGOING' },
+      ] })
+      : reply({ anidb_id: 1, title: 'Ready', type: 'TV Series',
+        restricted: false }),
+  readSchedule: () => new Promise(() => {}), scheduleWaitMs: 20,
+  now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const start = performance.now();
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode' });
+  assert.ok(performance.now() - start < 500);
+  assert.equal(page.orderState, 'fallback');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;

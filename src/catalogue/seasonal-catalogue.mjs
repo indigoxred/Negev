@@ -163,12 +163,13 @@ async function parseMap(response) {
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   readSchedule = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
-  timeoutMs = 12_000 } = {}) {
+  timeoutMs = 12_000, scheduleWaitMs = 2_000 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       readSchedule !== null && typeof readSchedule !== 'function' ||
-      ![cacheMs, staleMs, timeoutMs].every((value) =>
+      ![cacheMs, staleMs, timeoutMs, scheduleWaitMs].every((value) =>
         Number.isSafeInteger(value) && value > 0) || staleMs <= cacheMs ||
-      staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000) {
+      staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000 ||
+      scheduleWaitMs > 5_000) {
     throw new TypeError('Invalid seasonal catalogue configuration');
   }
   let cached = null;
@@ -178,6 +179,16 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   const detailCache = new Map();
   const options = () => ({ method: 'GET', redirect: 'manual',
     headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+  async function timelySchedule() {
+    if (!readSchedule) return null;
+    let timer;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(readSchedule).catch(() => null),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), scheduleWaitMs); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
   async function loadMap(time) {
     if (cached && checkedMs + cacheMs > time) return 'ready';
     if (pendingMap) {
@@ -238,8 +249,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     // Read the weekly schedule beside the catalogue map so the first Airing
     // page does not pay for two sequential network requests.
     const [mapState, schedule] = await Promise.all([loadMap(time),
-      sort === 'next_episode' && readSchedule
-        ? Promise.resolve().then(readSchedule).catch(() => null) : null]);
+      sort === 'next_episode' ? timelySchedule() : null]);
     if (mapState === 'unavailable') return { state: 'unavailable' };
     const seasonEntries = year === 0 || season === 'ALL'
       ? cached.allEntries.filter((entry) =>
