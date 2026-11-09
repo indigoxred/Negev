@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from
   '../src/acquisition/acquisition-request-queue.mjs';
@@ -60,6 +61,21 @@ test('suspension cannot hide a request already claimed by a worker',
       assert.equal(worker.claimNext({ nowMs: 12 }).state, 'pass_complete');
       assert.equal(worker.claimNext({ nowMs: 12 }).requestId, 2);
     } finally { worker.close(); admin.close(); }
+  }));
+
+test('a saved download attempt cannot be disguised as an unstarted suspension',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      acquisitions.reserve({ requestId: 2,
+        candidate: { indexerId: 7, guid: 'already-selected' },
+        episodeIds: [1001], nowMs: 10 });
+      assert.deepEqual(queue.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'held', reason: 'request_started_or_unavailable' });
+      assert.equal(queue.getSuspension(2), null);
+    } finally { queue.close(); acquisitions.close(); }
   }));
 
 test('cancelled requests are not claimed while later requests continue', async () =>

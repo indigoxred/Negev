@@ -92,6 +92,9 @@ export function openAcquisitionRequestQueue(dbPath) {
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     WHERE r.id=? AND r.status='held' AND r.cancelled_ms IS NULL
       AND c.request_id IS NULL`);
+  const hasAttemptLedger = db.prepare(`SELECT 1 FROM sqlite_master
+    WHERE type='table' AND name='acquisition_attempts'`);
+  let attemptForRequest;
   const suspended = db.prepare(`SELECT request_id AS requestId,reason,
     recorded_ms AS recordedMs FROM acquisition_request_suspensions
     WHERE request_id=?`);
@@ -120,7 +123,12 @@ export function openAcquisitionRequestQueue(dbPath) {
       }
       return transact(() => {
         if (suspended.get(requestId)) return { state: 'suspended' };
-        if (!suspendable.get(requestId)) {
+        if (hasAttemptLedger.get()) {
+          attemptForRequest ??= db.prepare(`SELECT 1 FROM acquisition_attempts
+            WHERE request_id=? LIMIT 1`);
+        }
+        if (!suspendable.get(requestId) ||
+            attemptForRequest?.get(requestId)) {
           return held('request_started_or_unavailable');
         }
         insertSuspension.run(requestId, reason, nowMs);
