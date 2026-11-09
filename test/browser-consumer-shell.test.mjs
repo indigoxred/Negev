@@ -290,6 +290,11 @@ async function inspectMobile(url, profile, width = 390) {
         mode.value = 'all'; mode.dispatchEvent(new Event('change'));
       })()` });
       await wait(800);
+      const allWeeklyPresence = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `(() => [...document.querySelectorAll('#airing-list .result')]
+          .map((card) => ({title: card.querySelector('strong')?.textContent,
+            badge: card.querySelector('.presence')?.textContent})))()`,
+      });
       await send('Runtime.evaluate', { expression:
         `document.querySelector('.tracked-title button')?.click()` });
       await wait(300);
@@ -308,7 +313,8 @@ async function inspectMobile(url, profile, width = 390) {
       });
       airingTrack = { defaultMode: defaultMode.result.value,
         tracked: tracked.result.value, ...custom.result.value,
-        weeklyPresence: weeklyPresence.result.value };
+        weeklyPresence: weeklyPresence.result.value,
+        allWeeklyPresence: allWeeklyPresence.result.value };
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'library'; mode.dispatchEvent(new Event('change'));
@@ -705,6 +711,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.airingTrack.fits, true);
       assert.deepEqual(mobile.airingTrack.weeklyPresence, [
         { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
+      ]);
+      assert.deepEqual(mobile.airingTrack.allWeeklyPresence, [
+        { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
         { title: 'Psyren', badge: 'Local availability not checked' },
       ]);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
@@ -730,7 +739,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /★ 7\.8 · 3K members/);
       assert.match(airing, /✓ In library/);
-      assert.match(airing, /Psyren/);
+      assert.doesNotMatch(airing, /Psyren/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);
