@@ -1,6 +1,7 @@
 const terminalReasons = new Set(['already_available', 'invalid_request',
   'idempotency_key_conflict', 'request_cancelled',
-  'ambiguous_movie_scope']);
+  'ambiguous_movie_scope', 'account_access_changed',
+  'adult_access_disabled']);
 
 // One paced resolution attempt. The only way this worker creates an
 // acquisition-visible request is through the existing exact submitter.
