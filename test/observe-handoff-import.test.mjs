@@ -187,3 +187,19 @@ test('offline handoff accepts only Shoko’s exact imported Offline Importer lin
   assert.notEqual((await observeHandoffImport({ handoff: offlineRow,
     readEpisode })).state, 'shoko_files_identified');
 });
+
+test('offline content observation after uncertain publish does not claim the rename', async () => {
+  const unknown = { ...offlineRow, status: 'publish_unknown',
+    publishName: `negev-7-${offlineRow.evidenceDigest.slice(0, 16)}` };
+  let writes = 0;
+  const result = await reconcileHandoffContent({ attemptId: 7,
+    ledger: { getHandoff: () => unknown,
+      recordContentPresent: ({ fileIds }) => { writes++;
+        return { state: 'content_present', publicationProven: false, fileIds }; } },
+    nowMs: 500, readEpisode: async () => ({ state: 'ok', complete: true,
+      files: [{ ...observed(800, [1001]), anidbFileId: null,
+        releaseEvidence: 'shoko_offline_link', releaseId: 'offline://42-1001' }] }) });
+  assert.deepEqual(result, { state: 'content_present',
+    publicationProven: false, fileIds: [1800] });
+  assert.equal(writes, 1);
+});
