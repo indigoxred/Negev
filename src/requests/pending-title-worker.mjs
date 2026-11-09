@@ -57,7 +57,8 @@ export function createPendingTitleWorker({ ledger, submitRequest,
         return ledger.finish({ intentId: claim.id, version: claim.version,
           reason, nowMs: now() });
       }
-      if (reason === 'detail_pending' || reason === 'detail_unavailable') {
+      if (['detail_pending', 'detail_unavailable',
+        'detail_incomplete'].includes(reason)) {
         try { await prepareDetail({ anidbId: claim.anidbId }); }
         catch { /* The intent remains durable for a later retry. */ }
       }
