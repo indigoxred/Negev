@@ -1613,6 +1613,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       refreshAvailabilitySummary = () => {
         const season = summarizeSeasonAvailability({ kind: data.kind,
           episodes: pager.episodes, nextPage: pager.nextPage });
+        const fullSeason = data.kind === 'series' &&
+          Number.isSafeInteger(data.regularSeason?.total) &&
+          Number.isSafeInteger(data.regularSeason?.verified) &&
+          data.regularSeason.total > 0 &&
+          data.regularSeason.verified >= 0 &&
+          data.regularSeason.verified <= data.regularSeason.total
+          ? data.regularSeason : null;
         const film = summarizeFilmAvailability({ kind: data.kind,
           episodes: pager.episodes, nextPage: pager.nextPage });
         const pageCount = pager.episodes.filter((episode) =>
@@ -1622,6 +1629,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         ? `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`
         : film && film.total > 0
           ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
+        : fullSeason
+          ? `${fullSeason.verified} of ${fullSeason.total} regular episodes verified playable in Plex. Specials are separate.`
         : season?.completeList && season.total > 0
         ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
         : season && season.total > 0
@@ -1631,7 +1640,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           ? `film entr${verified === 1 ? 'y' : 'ies'}`
           : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
         : 'Current Plex availability has not been verified for this title.';
-        summary.className = film?.available || season?.verified > 0 ||
+        summary.className = film?.available || fullSeason?.verified > 0 ||
+          season?.verified > 0 ||
           (!film && verified > 0) ? 'presence available' : 'presence unknown';
       };
       refreshAvailabilitySummary();

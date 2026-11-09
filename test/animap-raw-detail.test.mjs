@@ -24,9 +24,12 @@ test('public raw AniDB record gives exact bounded episode pages', async () => {
       'https://animap.id/api/anidb/19586/raw');
       return { status: 200, text: async () => JSON.stringify(record) };
     } });
+  assert.equal(reader.cachedEpisodeIndex(19586), null);
   const first = await reader.read({ anidbId: 19586, page: 1 });
   const second = await reader.read({ anidbId: 19586, page: 2 });
   assert.equal(calls, 1);
+  assert.deepEqual(reader.cachedEpisodeIndex(19586),
+    { totalEntries: 3, regularIds: [316607, 316608] });
   assert.deepEqual(first.episodes, [
     { id: 316607, number: 1, type: 'Episode', title: 'First', airDate: '2026-10-03' },
     { id: 316608, number: 2, type: 'Episode', title: 'Second', airDate: '2026-10-10' },

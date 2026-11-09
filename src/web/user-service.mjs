@@ -62,6 +62,8 @@ import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs
 import { openFileBackfillCursor } from
   '../availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
+import { countVerifiedRegularEpisodes } from
+  '../availability/regular-season-proof.mjs';
 import { episodeDisplayAvailability } from
   '../availability/episode-display-availability.mjs';
 import { createFileBackfillWorker } from '../availability/file-backfill-worker.mjs';
@@ -446,12 +448,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
     let acquisitionRuntime;
-    const publicPresenceForTitle = (anidbId, checkedMs) => {
-      const ids = plexObserver ? new Set([
+    const publicAvailableIdsForTitle = (anidbId, checkedMs) =>
+      plexObserver ? new Set([
         ...directAvailability.getRecentAvailableIds({ anidbId, nowMs: checkedMs }),
         ...(titleChecks?.getRecentAvailableIds({ anidbId, nowMs: checkedMs }) ?? []),
         ...(fileProofs?.getRecentAvailableIds({ anidbId }) ?? []),
       ]) : new Set();
+    const publicPresenceForTitle = (anidbId, checkedMs) => {
+      const ids = publicAvailableIdsForTitle(anidbId, checkedMs);
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
         verifiedEpisodeCount: ids.size };
     };
@@ -615,8 +619,19 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           ? { monitorFuture: ['airing', 'upcoming'].includes(requestReleaseState(detail, today())) }
           : {};
         if (!plexObserver) return { ...detail, ...requestMode };
+        const checkedMs = now();
+        const index = detail.kind === 'series'
+          ? rawDetailReader.cachedEpisodeIndex(detail.anidbId) : null;
+        const regularIds = index?.totalEntries === detail.total &&
+          detail.episodes.every((episode) => episode.type !== 'Episode' ||
+            index.regularIds.includes(episode.id)) ? index.regularIds : null;
+        const verifiedIds = publicAvailableIdsForTitle(detail.anidbId, checkedMs);
+        const regularSeason = countVerifiedRegularEpisodes({ regularIds,
+          verifiedIds });
         return { ...detail, ...requestMode,
-          libraryPresence: publicPresenceForTitle(detail.anidbId, now()),
+          ...(regularSeason === null ? {} : { regularSeason }),
+          libraryPresence: { state: verifiedIds.size > 0 ? 'in_library' : 'unknown',
+            verifiedEpisodeCount: verifiedIds.size },
           episodes: detail.episodes.map((episode) => {
           const target = { anidbId: detail.anidbId,
             episodeId: episode.id, nowMs: now() };
