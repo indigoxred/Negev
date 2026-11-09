@@ -47,6 +47,32 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   assert.equal(archive.nextAfter, null);
 });
 
+test('Airing eligibility filters ongoing titles before pagination', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [
+        { ...row('First', 1), status: 'ONGOING' },
+        { ...row('Second', 2), status: 'ONGOING' },
+        { ...row('Third', 3), status: 'ONGOING' },
+      ] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: `Title ${url.split('/').at(-1)}`, type: 'TV Series', restricted: false }),
+    now: () => 1_000 });
+  const page = await reader.read({ year: 2026, season: 'FALL',
+    status: 'ongoing', eligibleIds: new Set([2, 3]), limit: 1 });
+  assert.equal(page.total, 2);
+  assert.deepEqual(page.items.map((item) => item.anidbId), [2]);
+  assert.equal(page.nextAfter, 1);
+  const next = await reader.read({ year: 2026, season: 'FALL',
+    status: 'ongoing', eligibleIds: new Set([2, 3]), limit: 1, after: 1 });
+  assert.deepEqual(next.items.map((item) => item.anidbId), [3]);
+  assert.equal(next.nextAfter, null);
+  const byProof = await reader.read({ year: 2026, season: 'FALL',
+    status: 'ongoing', eligibleTitle: (id) => id === 3, limit: 1 });
+  assert.equal(byProof.total, 1);
+  assert.deepEqual(byProof.items.map((item) => item.anidbId), [3]);
+});
+
 test('unknown restriction never displays a seasonal card and visibly marks partial data', async () => {
   const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
     url.endsWith('/api/v1/map')

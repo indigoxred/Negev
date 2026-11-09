@@ -49,6 +49,11 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       expires_ms INTEGER NOT NULL CHECK(expires_ms>=0),
       used_ms INTEGER CHECK(used_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS airing_preferences (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id),
+      mode TEXT NOT NULL CHECK(mode IN ('library','all','custom')),
+      tracked_ids TEXT NOT NULL
+    ) STRICT`);
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const countUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
@@ -63,6 +68,10 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const listAccounts = db.prepare(`SELECT id,username,role,disabled,adult_allowed
     FROM users ORDER BY id`);
   const updateAdult = db.prepare(`UPDATE users SET adult_allowed=? WHERE id=? AND disabled=0`);
+  const findAiring = db.prepare('SELECT mode,tracked_ids FROM airing_preferences WHERE user_id=?');
+  const saveAiring = db.prepare(`INSERT INTO airing_preferences
+    (user_id,mode,tracked_ids) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+    mode=excluded.mode,tracked_ids=excluded.tracked_ids`);
   const insertInvite = db.prepare(`INSERT INTO invitations
     (code_hash,created_by,expires_ms) VALUES (?,?,?)`);
   const findInvite = db.prepare('SELECT id,expires_ms,used_ms FROM invitations WHERE code_hash=?');
@@ -96,6 +105,28 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     }
   }
   return {
+    getAiringPreferences({ userId }) {
+      if (!validId(userId)) throw new TypeError('Invalid user ID');
+      const user = findUser.get(userId);
+      if (!user || user.disabled) return null;
+      const row = findAiring.get(userId);
+      return row ? { mode: row.mode, trackedAnidbIds: JSON.parse(row.tracked_ids) }
+        : { mode: 'library', trackedAnidbIds: [] };
+    },
+    setAiringPreferences({ userId, mode, trackedAnidbIds }) {
+      if (!validId(userId) || !['library', 'all', 'custom'].includes(mode) ||
+          !Array.isArray(trackedAnidbIds) || trackedAnidbIds.length > 200 ||
+          trackedAnidbIds.some((id) => !validId(id) || id > 2_147_483_647)) {
+        throw new TypeError('Invalid Airing preferences');
+      }
+      const normalized = [...new Set(trackedAnidbIds)].sort((a, b) => a - b);
+      return transact(() => {
+        const user = findUser.get(userId);
+        if (!user || user.disabled) return null;
+        saveAiring.run(userId, mode, JSON.stringify(normalized));
+        return { mode, trackedAnidbIds: normalized };
+      });
+    },
     async bootstrapAdmin({ username, password }) {
       if (!validUsername(username) || !validPassword(password)) {
         throw new TypeError('Invalid admin credentials');

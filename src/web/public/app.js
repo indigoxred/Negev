@@ -24,6 +24,7 @@ const state = { csrf: null, user: null, selected: null,
   lastSearchQuery: '', lastBrowseDestination: { href: '#/discover',
     label: 'Discover' }, searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
+  airingPreferences: null,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
   showAdult: true, usersLoaded: false,
@@ -212,6 +213,7 @@ function showSession(data) {
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
+    state.airingPreferences = null;
     airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
     genreSelections.airing.clear();
     genreSelections.season.clear();
@@ -268,6 +270,7 @@ function clearWorkspace() {
   state.libraryLoaded = false;
   state.libraryAfter = null;
   state.airingLoaded = false;
+  state.airingPreferences = null;
   airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
   genreSelections.airing.clear();
   genreSelections.season.clear();
@@ -931,9 +934,36 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
     for (const item of page.items ?? []) {
       const count = item.libraryPresence?.verifiedEpisodeCount ?? 0;
       const available = item.libraryPresence?.state === 'in_library' && count > 0;
-      list.append(discoveryCard(item, item.type || 'Anime', available
+      const card = discoveryCard(item, item.type || 'Anime', available
         ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
-        : 'Availability not checked', available));
+        : 'Availability not checked', available);
+      const wrapper = element('div', undefined, 'tracked-title');
+      const track = element('button', state.airingPreferences?.trackedAnidbIds
+        .includes(item.anidbId) ? 'Stop tracking' : 'Track this title', 'quiet');
+      track.type = 'button';
+      track.setAttribute('aria-label', `${track.textContent}: ${item.title}`);
+      track.addEventListener('click', async () => {
+        const current = state.airingPreferences;
+        if (!current) return;
+        const ids = new Set(current.trackedAnidbIds);
+        if (ids.has(item.anidbId)) ids.delete(item.anidbId);
+        else ids.add(item.anidbId);
+        track.disabled = true;
+        try {
+          state.airingPreferences = await api('/api/airing/preferences', {
+            method: 'PUT', body: JSON.stringify({ mode: current.mode,
+              trackedAnidbIds: [...ids] }) });
+          if (current.mode === 'custom') {
+            void loadAiring();
+          } else {
+            track.textContent = ids.has(item.anidbId) ? 'Stop tracking' : 'Track this title';
+            track.setAttribute('aria-label', `${track.textContent}: ${item.title}`);
+          }
+        } catch (error) { notice.textContent = error.message; }
+        finally { track.disabled = false; }
+      });
+      wrapper.append(card, track);
+      list.append(wrapper);
     }
     if (after === 0 && page.orderState === 'score_loading') {
       setTimeout(() => {
@@ -980,6 +1010,22 @@ async function loadAiring() {
   const userId = state.user?.id;
   const list = byId('airing-list');
   const notice = byId('airing-state');
+  try {
+    state.airingPreferences = await api('/api/airing/preferences');
+  } catch {
+    if (sessionResponses.isCurrent(session) && airingResponses.isCurrent(epoch)) {
+      byId('airing-season-state').textContent = 'Airing preferences are unavailable. Try again.';
+    }
+    return;
+  }
+  if (!sessionResponses.isCurrent(session) ||
+      !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+  byId('airing-view-mode').value = state.airingPreferences.mode;
+  byId('airing-mode-help').textContent = state.airingPreferences.mode === 'library'
+    ? 'Shows with verified playable items in Negev’s Library.'
+    : state.airingPreferences.mode === 'custom'
+    ? 'Your selected shows. Switch to All airing anime to track more.'
+    : 'All ongoing shows. Use Track this title to build a custom list.';
   void loadCurrentAiring(session, epoch, userId);
   notice.textContent = '';
   list.replaceChildren(element('p', 'Loading this week’s schedule…', 'muted'));
@@ -1007,7 +1053,9 @@ async function loadAiring() {
       const copy = element('span', undefined, 'result-copy');
       copy.append(element('strong', item.title),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
-        element('span', 'Local availability not checked', 'presence unknown'));
+        element('span', state.airingPreferences?.mode === 'library'
+          ? '✓ In library' : 'Local availability not checked',
+        `presence ${state.airingPreferences?.mode === 'library' ? 'available' : 'unknown'}`));
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(art, copy);
       button.addEventListener('click', () => {
@@ -1025,6 +1073,23 @@ async function loadAiring() {
       'empty-state'));
   }
 }
+byId('airing-view-mode').addEventListener('change', async (event) => {
+  const select = event.currentTarget;
+  const previous = state.airingPreferences;
+  if (!previous) return;
+  const mode = select.value;
+  select.disabled = true;
+  try {
+    state.airingPreferences = await api('/api/airing/preferences', {
+      method: 'PUT', body: JSON.stringify({ mode,
+        trackedAnidbIds: previous.trackedAnidbIds }) });
+    state.airingLoaded = false;
+    void loadAiring();
+  } catch (error) {
+    select.value = previous.mode;
+    byId('airing-season-state').textContent = error.message;
+  } finally { select.disabled = false; }
+});
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('refresh-library').addEventListener('click', () => { void loadLibrary(); });
 byId('more-requests').addEventListener('click', () => { void loadRequestView('history', true); });
