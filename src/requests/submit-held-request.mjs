@@ -9,7 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // current installment can still be watched for future episodes.
 export function requestReleaseState(detail, currentDate) {
   const release = inferReleaseState({ ...detail, today: currentDate });
-  if (!['airing', 'completed'].includes(release.state)) return release.state;
+  if (!['airing', 'upcoming', 'completed'].includes(release.state)) return release.state;
   return detail.kind === 'series' && release.state === 'completed' &&
     !hasStatedRegularEpisodes(detail)
     ? 'airing' : release.state;
@@ -53,7 +53,7 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     }
     const currentDate = today();
     const releaseState = requestReleaseState(detail, currentDate);
-    if (!['airing', 'completed'].includes(releaseState)) return held('release_state_unknown');
+    if (!['airing', 'upcoming', 'completed'].includes(releaseState)) return held('release_state_unknown');
     const intent = planRequest({ detail, releaseState,
       scope, episodeIds, today: currentDate });
     if (intent.state !== 'ready') return intent;

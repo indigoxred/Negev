@@ -8,6 +8,39 @@ import { createCatalogueTestService } from '../src/catalogue/catalogue-service.m
 const auth = { authorization: 'Bearer synthetic-private-token' };
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
 
+test('an upcoming series with zero listed episodes saves a future watch', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-upcoming-request-'));
+  const fetchImpl = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.endsWith('/Search')) return json({ Total: 1,
+      List: [{ ID: 777, Title: 'Upcoming Example' }] });
+    if (pathname.endsWith('/Episode')) return json({ Total: 0, List: [] });
+    if (pathname.endsWith('/AniDB/777')) return json({ ID: 777,
+      Title: 'Upcoming Example', Type: 'TV', AirDate: '2027-01-01',
+      EndDate: null, EpisodeCount: 12, Restricted: false });
+    throw Error('Unexpected provider request');
+  };
+  const service = createCatalogueTestService({
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-key',
+    dbPath: path.join(dir, 'state.sqlite'), testToken: 'synthetic-private-token',
+    fetchImpl, now: () => 1_000_000_000, today: () => '2026-11-09',
+  });
+  try {
+    await service.app.inject({ method: 'GET', url: '/api/catalogue/search?q=Upcoming', headers: auth });
+    const saved = await service.app.inject({ method: 'POST', url: '/api/requests',
+      headers: auth, payload: { anidbId: 777, scope: 'installment',
+        requestKey: 'upcoming-1' } });
+    assert.equal(saved.statusCode, 202, saved.body);
+    const request = await service.app.inject({ method: 'GET',
+      url: `/api/requests/${saved.json().requestId}`, headers: auth });
+    assert.equal(request.json().monitorFuture, true);
+    assert.deepEqual(request.json().episodeIds, []);
+  } finally {
+    await service.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('private search to exact held request never dispatches acquisition', async () => {
   const base = path.resolve(tmpdir());
   const dir = await mkdtemp(path.join(base, 'negev-private-request-'));

@@ -59,6 +59,25 @@ test('cold installment saves a preparation without client-supplied title or targ
     } finally { await app.close(); }
   });
 
+test('an installment with no trustworthy release date saves a pending watch', async () => {
+  const app = await buildUserApp({ accounts: accounts(),
+    sessionKey: randomBytes(32), publicOrigin: origin,
+    secureCookies: false, readRequest: () => null,
+    confirmKnownTitle: async () => true,
+    submitRequest: async () => ({ state: 'held', reason: 'release_state_unknown' }),
+    queuePendingTitle: () => ({ state: 'pending', intentId: 14, created: true }),
+  });
+  try {
+    const headers = await signedIn(app);
+    const saved = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 4158, scope: 'installment',
+        requestKey: 'unknown-date' } });
+    assert.equal(saved.statusCode, 202, saved.body);
+    assert.equal(saved.json().state, 'pending');
+    assert.equal(saved.json().waitingFor, 'release_schedule');
+  } finally { await app.close(); }
+});
+
 test('a restricted account cannot save an unknown-age pending title',
   async () => {
     let queued = 0;

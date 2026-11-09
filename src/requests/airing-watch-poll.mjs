@@ -50,14 +50,15 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
     const release = inferReleaseState({ today, kind: detail.kind,
       airDate: detail.airDate, endDate: detail.endDate,
       episodeCount: detail.episodeCount, episodes: detail.episodes });
-    if (!['airing', 'completed'].includes(release.state)) {
+    if (!['airing', 'upcoming', 'completed'].includes(release.state)) {
       results.push({ ...watch, ...held('release_state_unknown') });
       continue;
     }
     // AniDB episode-count inference may say Completed before a series has an
     // explicit end date. Continue adding aired episodes, but leave watch open.
     const completionUnconfirmed = release.state === 'completed' && detail.endDate == null;
-    const state = completionUnconfirmed ? 'airing' : release.state;
+    const state = completionUnconfirmed || release.state === 'upcoming'
+      ? 'airing' : release.state;
     let advanced;
     try {
       advanced = ledger.advanceAiring({ requestId: watch.requestId,

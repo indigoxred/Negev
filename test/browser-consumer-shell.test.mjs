@@ -15,7 +15,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
   ['/style.css', ['style.css', 'text/css']],
   ['/consumer.css', ['consumer.css', 'text/css']],
-  ...['request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+  ...['request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
@@ -170,6 +170,12 @@ async function inspectMobile(url, profile, width = 390) {
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
     });
+    const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        const select = action.querySelector('select'); select.value = '43';
+        select.dispatchEvent(new Event('change'));
+        return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent}; })()`,
+    });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
     await wait(700);
     const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
@@ -200,6 +206,7 @@ async function inspectMobile(url, profile, width = 390) {
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
       requestReview: requestReview.result.value,
+      requestSelection: requestSelection.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value };
   } finally {
@@ -356,6 +363,13 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'available' }] }));
         return;
       }
+      if (path === '/api/catalogue/42/related') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'related_titles', anidbId: 42,
+          completeness: 'unproven', items: [{ anidbId: 43,
+            title: 'Example Season Two', relation: 'Sequel' }] }));
+        return;
+      }
       if (path === '/api/catalogue/99' || path === '/api/catalogue/98') {
         const secondPage = new URL(request.url, 'http://localhost')
           .searchParams.get('page') === '2';
@@ -475,6 +489,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
+      assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
+        summary: 'Example Season Two · Negev will check its film or episodes before saving' });
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });

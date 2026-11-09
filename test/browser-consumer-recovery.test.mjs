@@ -12,7 +12,7 @@ const browser = [process.env.NEGEV_TEST_BROWSER,
   '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean).find(existsSync);
 const root = new URL('../src/web/public/', import.meta.url);
 const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
-  'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+  'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
   'request-progress-text.mjs', 'response-epoch.mjs', 'franchise-explorer.mjs',
   'acquisition-notice.mjs', 'consumer-route.mjs',
   'season-availability-presentation.mjs', 'detail-refresh.mjs',
