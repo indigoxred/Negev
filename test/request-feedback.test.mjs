@@ -20,6 +20,9 @@ test('request feedback explains a changed selection and has a safe generic fallb
 test('saved request feedback distinguishes a pending release schedule', () => {
   assert.equal(savedRequestMessage({ state: 'pending', waitingFor: 'release_schedule' }),
     'Request saved. Negev will watch for the release schedule and first episode. Follow it under My Requests.');
+  assert.equal(savedRequestMessage({ state: 'pending', requestId: 7,
+    waitingFor: 'release_schedule' }),
+  'Request #7 saved. Negev will watch for the release schedule and first episode. Follow it under My Requests.');
   assert.equal(savedRequestMessage({ state: 'held', requestId: 13 }),
     'Request #13 saved. View its progress under My Requests.');
 });

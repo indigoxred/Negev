@@ -14,13 +14,14 @@ export function requestFailureMessage(error) {
 }
 
 export function savedRequestMessage(saved) {
+  const hasId = Number.isSafeInteger(saved?.requestId) && saved.requestId > 0;
+  const receipt = hasId
+    ? `Request #${saved.requestId} saved.` : 'Request saved.';
   if (saved?.state === 'pending' && saved.waitingFor === 'release_schedule') {
-    return 'Request saved. Negev will watch for the release schedule and first episode. Follow it under My Requests.';
+    return `${receipt} Negev will watch for the release schedule and first episode. Follow it under My Requests.`;
   }
   if (saved?.state === 'pending') {
-    return 'Request saved. Negev will check the episode list and library before any download. Follow it under My Requests.';
+    return `${receipt} Negev will check the episode list and library before any download. Follow it under My Requests.`;
   }
-  return Number.isSafeInteger(saved?.requestId) && saved.requestId > 0
-    ? `Request #${saved.requestId} saved. View its progress under My Requests.`
-    : 'Request saved. Follow it under My Requests.';
+  return `${receipt} ${hasId ? 'View its progress' : 'Follow it'} under My Requests.`;
 }

@@ -1248,15 +1248,15 @@ function pendingTitleAction(item) {
   review.hidden = true;
   review.append(element('strong', 'Review your request'));
   review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
-  const back = element('button', 'Back', 'quiet');
-  back.type = 'button';
-  back.addEventListener('click', () => {
+  const cancelReview = element('button', 'Cancel', 'quiet');
+  cancelReview.type = 'button';
+  cancelReview.addEventListener('click', () => {
     action.dataset.reviewing = 'false';
     review.hidden = true;
     button.textContent = 'Request if missing';
     status.textContent = '';
   });
-  review.append(back);
+  review.append(cancelReview);
   action.append(review, button, status);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
@@ -1279,6 +1279,9 @@ function pendingTitleAction(item) {
       requestKeys.saved(scope);
       action.dataset.saving = 'false';
       action.dataset.saved = 'true';
+      action.dataset.reviewing = 'false';
+      review.hidden = true;
+      button.disabled = true;
       button.textContent = 'Requested';
       status.textContent = savedRequestMessage(saved);
       message('Request saved. Follow it under My Requests.');
@@ -1870,7 +1873,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         ? `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`
         : `${selected?.title ?? 'Selected installment'} · Negev will check its film or episodes before saving`;
     };
-    const cancelReview = element('button', 'Back', 'quiet');
+    const cancelReview = element('button', 'Cancel', 'quiet');
     cancelReview.type = 'button';
     cancelReview.addEventListener('click', () => {
       reviewingRequest = false;
@@ -1950,6 +1953,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         }) });
         requestKeys.saved(scope);
         requestSaved = true;
+        reviewingRequest = false;
+        requestReview.hidden = true;
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
         message(saved.state === 'pending'

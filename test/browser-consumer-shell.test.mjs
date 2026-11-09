@@ -174,7 +174,15 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `(() => { const action = document.querySelector('.request-action');
         const select = action.querySelector('select'); select.value = '43';
         select.dispatchEvent(new Event('change'));
-        return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent}; })()`,
+        return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent,
+          cancelLabel: action.querySelector('.request-review button')?.textContent}; })()`,
+    });
+    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    await wait(250);
+    const requestSaved = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {reviewHidden: action.querySelector('.request-review')?.hidden,
+          receipt: action.querySelector('.request-feedback')?.textContent}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
     await wait(700);
@@ -207,6 +215,7 @@ async function inspectMobile(url, profile, width = 390) {
         ...franchiseAfter.result.value },
       requestReview: requestReview.result.value,
       requestSelection: requestSelection.result.value,
+      requestSaved: requestSaved.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value };
   } finally {
@@ -238,6 +247,12 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/requests') {
+        if (request.method === 'POST') {
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'pending', requestId: 7,
+            waitingFor: 'release_schedule' }));
+          return;
+        }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
           id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
@@ -490,7 +505,10 @@ test('signed-in consumer routes render real shell with search, library and reque
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
       assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
-        summary: 'Example Season Two · Negev will check its film or episodes before saving' });
+        summary: 'Example Season Two · Negev will check its film or episodes before saving',
+        cancelLabel: 'Cancel' });
+      assert.equal(mobile.requestSaved.reviewHidden, true);
+      assert.match(mobile.requestSaved.receipt, /Request #7 saved/);
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
