@@ -167,15 +167,15 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
-      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       let handoff;
       try { handoff = handoffs.getHandoff(attemptId); }
       catch { return held('handoff_unavailable'); }
       if (handoff?.status === 'published_observed') {
         return processRecordedHandoff({ attemptId, ledger: handoffs,
-          holdingRoot, importRoot, lookup, readPacer,
-          verifyHandoffMounts, nowMs: now() });
+          holdingRoot, importRoot, lookup, offlineLookup,
+          readPacer, nowMs: now() });
       }
+      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       const ed2kMode = await selectedEd2kMode(handoff?.manifest?.videos);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,

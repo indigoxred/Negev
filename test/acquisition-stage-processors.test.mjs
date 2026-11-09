@@ -205,6 +205,29 @@ test('an already observed boundary handoff needs no fresh Shoko hash-mode read',
   assert.equal(modeReads, 0);
 });
 
+test('an observed offline handoff resumes after Shoko moves its watched source', async () => {
+  const evidence = evaluateHandoffEvidence({ anidbId: 42,
+    torrentHash: 'b'.repeat(40), files: [{ name: '01.mkv', size: 1000,
+      ed2k: 'A'.repeat(32), identitySource: 'shoko_offline',
+      releaseId: 'offline://42-1001', episodeIds: [1001] }], subtitles: [] });
+  const row = { status: 'published_observed',
+    holdingPath: '/srv/negev/holding/.negev-prep-example',
+    torrentHash: evidence.manifest.torrentHash,
+    evidenceDigest: evidence.digest, manifest: evidence.manifest,
+    publishName: `negev-1-${evidence.digest.slice(0, 16)}` };
+  let mountChecks = 0;
+  const stages = createAcquisitionStageProcessors({ ...options([]),
+    handoffs: { getHandoff: () => row, beginPublish: () => {
+      throw Error('already published'); }, markPublishedObserved: () => {
+      throw Error('already published'); } },
+    verifyHandoffMounts: async () => { mountChecks++;
+      return { state: 'held', reason: 'handoff_mount_unavailable' }; },
+    readEd2kMode: async () => { throw Error('no hash-mode read'); } });
+  assert.deepEqual(await stages.processPublish({ attemptId: 1 }),
+    { state: 'published_observed' });
+  assert.equal(mountChecks, 0);
+});
+
 test('movie request stage uses both public Plex sections before stopped submission', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-movie-stage-'));
   const dbPath = path.join(root, 'state.sqlite');
