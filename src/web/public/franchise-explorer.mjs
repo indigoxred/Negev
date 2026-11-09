@@ -107,7 +107,31 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
     const next = explorer.next();
     if (!next) break;
     reads++;
-    try { explorer.add(await read(next.anidbId)); }
+    let response;
+    try { response = await read(next.anidbId); }
+    catch (error) {
+      // Only a definite missing response can rule out this branch. Access,
+      // throttling, server, and transport failures leave it retryable.
+      if (![404, 410].includes(error?.status)) {
+        return { state: error?.status === 429 ? 'rate_limited' :
+          'temporarily_unavailable', reads,
+          added: explorer.items().length - before,
+          failures: failures + 1, hasMore: true };
+      }
+      if (next.anidbId === explorer.items()[0].anidbId) {
+        return { state: 'root_unavailable', reads, added: 0,
+          failures: 1, hasMore: true };
+      }
+      explorer.skip(next.anidbId);
+      failures++;
+      continue;
+    }
+    if (response?.state === 'unavailable') {
+      return { state: 'temporarily_unavailable', reads,
+        added: explorer.items().length - before,
+        failures: failures + 1, hasMore: true };
+    }
+    try { explorer.add(response); }
     catch {
       if (next.anidbId === explorer.items()[0].anidbId) {
         return { state: 'root_unavailable', reads, added: 0,
