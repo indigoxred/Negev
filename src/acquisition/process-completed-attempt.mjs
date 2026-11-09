@@ -16,10 +16,12 @@ export async function processCompletedAttempt({
   ed2kMode,
   verifyHandoffMounts,
   verifyStagingRoot,
+  checkExisting,
 }) {
   if (typeof fetchImpl !== 'function' ||
       typeof shokoFetchImpl !== 'function' ||
       (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
+      (checkExisting !== undefined && typeof checkExisting !== 'function') ||
       typeof qbittorrent?.baseUrl !== 'string' ||
       typeof qbittorrent?.sessionId !== 'string' ||
       typeof shoko?.baseUrl !== 'string' ||
@@ -34,6 +36,7 @@ export async function processCompletedAttempt({
     ed2kMode,
     verifyHandoffMounts,
     verifyStagingRoot,
+    checkExisting,
     observe: async ({ expected, phase }) => {
       let sessionId = qbittorrent.sessionId;
       let scopedFetch = fetchImpl;

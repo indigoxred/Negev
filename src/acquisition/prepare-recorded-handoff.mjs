@@ -12,12 +12,14 @@ export async function prepareRecordedHandoff({
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
   observe, lookup, offlineLookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
+  checkExisting,
   verifyHandoffMounts,
   verifyStagingRoot,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
       typeof acquisitions?.recordTerminalRejection !== 'function' ||
+      (checkExisting !== undefined && typeof checkExisting !== 'function') ||
       !Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError('Invalid handoff coordinator configuration');
   }
@@ -39,6 +41,14 @@ export async function prepareRecordedHandoff({
         return held('staging_root_unverified');
       }
     } catch { return held('staging_root_unverified'); }
+  }
+  if (checkExisting) {
+    let existing;
+    try { existing = await checkExisting(verified); }
+    catch { return held('shoko_unavailable'); }
+    if (existing?.state !== 'no_matching_import') {
+      return existing?.state === 'held' ? existing : held('shoko_unavailable');
+    }
   }
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,

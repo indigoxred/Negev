@@ -97,6 +97,25 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
   });
 });
 
+test('completion consults exact Shoko import before allocating holding space', async () => {
+  await fixture(async (context) => {
+    const { handoffs, holdingRoot, attemptId, config, ...stores } = context;
+    let checked = false;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      holdingRoot, attemptId, ...config,
+      checkExisting: async (verified) => {
+        checked = true;
+        assert.equal(verified.anidbId, 42);
+        assert.deepEqual(verified.files[0].episodeIds, [1001]);
+        return { state: 'held', reason: 'already_imported' };
+      } });
+    assert.equal(checked, true);
+    assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
+    assert.deepEqual(await readdir(holdingRoot), []);
+    assert.equal(handoffs.getHandoff(attemptId), null);
+  });
+});
+
 test('AniDB 204 with exact installed Offline Importer preview journals only private holding', async () => {
   await fixture(async (context) => {
     const { handoffs, importRoot, attemptId, config, identity, ...stores } = context;

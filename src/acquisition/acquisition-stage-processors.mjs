@@ -2,6 +2,8 @@ import { createAcquisitionRequestProcessor } from './acquisition-request-process
 import { submitMissingCandidate } from './submit-missing-candidate.mjs';
 import { processRecordedStart } from './process-recorded-start.mjs';
 import { processCompletedAttempt } from './process-completed-attempt.mjs';
+import { checkExistingShokoBatch } from './existing-shoko-batch.mjs';
+import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
@@ -153,6 +155,12 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl, renewQbittorrent,
         readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
+        checkExisting: (verified) => checkExistingShokoBatch({ verified,
+          readEpisode: ({ anidbId, episodeId }) => readShokoEpisodeFiles({
+            baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, anidbId, episodeId,
+            purpose: 'handoff', fetchImpl: shokoFetchImpl ?? providerFetchImpl,
+          }),
+        }),
         nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
