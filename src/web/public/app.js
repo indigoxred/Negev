@@ -1662,6 +1662,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const relatedList = element('div', undefined, 'related-list');
     let installmentSelect = null;
     let selectedInstallmentId = item.anidbId;
+    let selectedAvailability = 'unknown';
+    let selectedCheckVersion = 0;
     let updateRequestReview = () => {};
     const syncInstallmentChoice = () => {
       if (!installmentSelect) return;
@@ -1995,9 +1997,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             requestReview.hidden = true;
           }
           selectedInstallmentId = selectedId;
+          selectedAvailability = selectedId === item.anidbId ? 'unknown' : 'checking';
+          const checkVersion = ++selectedCheckVersion;
           requestStatus.textContent = '';
           updateRequestReview();
           refreshRequestAction();
+          if (selectedId !== item.anidbId) {
+            void checkSelectedAvailability(selectedId, checkVersion);
+          }
         }
       });
       installmentLabel.append(installmentSelect);
@@ -2007,11 +2014,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.insertBefore(requestAction, relatedHeading);
     const requestStatus = element('p', '', 'muted request-feedback');
     requestStatus.setAttribute('role', 'status');
-    const alreadyAvailable = () => selectedInstallmentId === item.anidbId &&
-      installmentRequestState({ kind: data.kind,
-      episodes: pager.episodes, nextPage: pager.nextPage,
-      monitorFuture: data.monitorFuture,
-      regularSeason: data.regularSeason }) === 'already_available';
+    const alreadyAvailable = () => selectedInstallmentId === item.anidbId
+      ? installmentRequestState({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage,
+        monitorFuture: data.monitorFuture,
+        regularSeason: data.regularSeason }) === 'already_available'
+      : selectedAvailability === 'already_available';
     const requestLabel = () => data.kind === 'movie' ? 'Request film' :
       selectedInstallmentId !== item.anidbId ? 'Request selected installment' :
       data.monitorFuture === true && pager.episodes.some((episode) =>
@@ -2046,16 +2054,41 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     refreshRequestAction = () => {
       if (requestSaving || requestSaved) return;
       const blocked = alreadyAvailable();
-      const checkingSelected = selectedInstallmentId === item.anidbId &&
-        checkingCompleteSeries;
+      const checkingSelected = selectedInstallmentId === item.anidbId
+        ? checkingCompleteSeries : selectedAvailability === 'checking';
       button.disabled = blocked || checkingSelected;
       button.textContent = blocked ? 'Already available' :
-        checkingSelected ? 'Checking availability…' :
+        checkingSelected ? selectedInstallmentId === item.anidbId
+          ? 'Checking availability…' : 'Checking selected installment…' :
           reviewingRequest ? 'Confirm request' : requestLabel();
       if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
+      else if (checkingSelected && selectedInstallmentId !== item.anidbId) {
+        requestStatus.textContent = 'Checking this installment’s current Plex availability…';
+      }
       else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
         requestStatus.textContent = '';
       }
+    };
+    const checkSelectedAvailability = async (selectedId, checkVersion) => {
+      let result = 'unknown';
+      try {
+        const selected = await api(`/api/catalogue/${selectedId}`, {
+          signal: AbortSignal.timeout(4_000) });
+        if (selected.state === 'details' && selected.anidbId === selectedId &&
+            ['series', 'movie'].includes(selected.kind) &&
+            Array.isArray(selected.episodes)) {
+          result = installmentRequestState({ kind: selected.kind,
+            episodes: selected.episodes, nextPage: selected.nextPage,
+            monitorFuture: selected.monitorFuture,
+            regularSeason: selected.regularSeason });
+        }
+      } catch { /* The final request check remains authoritative. */ }
+      if (!isCurrentDetail() || checkVersion !== selectedCheckVersion ||
+          selectedInstallmentId !== selectedId) return;
+      selectedAvailability = result;
+      requestStatus.textContent = result === 'unknown'
+        ? 'Availability could not be confirmed here. Negev will check before saving.' : '';
+      refreshRequestAction();
     };
     refreshRequestAction();
     const filmEntries = data.kind === 'movie'
@@ -2083,7 +2116,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       requestAction.append(filmChoice);
     }
     button.addEventListener('click', async () => {
-      if (alreadyAvailable() || requestSaving || requestSaved) return;
+      if (alreadyAvailable() || selectedAvailability === 'checking' ||
+          requestSaving || requestSaved) return;
       if (needsFilmChoice && !filmChoiceSelect.value) {
         filmChoice.hidden = false;
         button.textContent = 'Request selected film';
