@@ -106,7 +106,9 @@ test('a measured transfer is request-scoped, durable, and expires before it can 
   });
 });
 
-test('repeated inconclusive AniDB lookups back off without losing a restart', async () => {
+test('repeated inconclusive release lookups back off without losing a restart', async () => {
+  for (const reason of ['file_lookup_inconclusive',
+    'file_offline_lookup_inconclusive']) {
   await fixture(async (ctx) => {
     for (let i = 1; i < 3; i++) {
       ctx.acquisitions.requestStalledRetirement({ attemptId: ctx.attemptIds[i],
@@ -118,7 +120,7 @@ test('repeated inconclusive AniDB lookups back off without losing a restart', as
       const claim = ctx.queue.claimNext({ nowMs: checkedMs });
       assert.equal(claim.attemptId, ctx.attemptIds[0]);
       assert.deepEqual(ctx.queue.recordResult({ attemptId: claim.attemptId,
-        pass: claim.pass, state: 'held', reason: 'file_lookup_inconclusive',
+        pass: claim.pass, state: 'held', reason,
         checkedMs }), { state: 'recorded' });
       assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,
         checkedMs + delay);
@@ -130,6 +132,7 @@ test('repeated inconclusive AniDB lookups back off without losing a restart', as
       checkedMs += delay;
     }
   });
+  }
 });
 
 test('a different completion hold resets the inconclusive lookup delay', async () => {
