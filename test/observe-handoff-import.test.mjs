@@ -118,6 +118,16 @@ test('one multi-episode file needs a stable Shoko file identity across episodes'
   assert.deepEqual(exact, { state: 'shoko_files_identified', fileIds: [1800] });
 });
 
+test('a duplicated Shoko episode ID cannot stand in for another covered episode', async () => {
+  const multi = withEvidence({ ...row.manifest,
+    videos: [video(800, [1001, 1002])] });
+  const result = await observeHandoffImport({ handoff: multi,
+    readEpisode: async () => ({ state: 'ok', complete: true,
+      files: [{ ...observed(800, [1001, 1002]),
+        episodeIds: [1001, 1001] }] }) });
+  assert.deepEqual(result, { state: 'awaiting_shoko', episodeId: 1001 });
+});
+
 test('a merely published-unknown handoff cannot claim import completion', async () => {
   let calls = 0;
   assert.deepEqual(await observeHandoffImport({

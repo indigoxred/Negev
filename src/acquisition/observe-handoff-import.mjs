@@ -4,7 +4,8 @@ import path from 'node:path';
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const sameIds = (left, right) => Array.isArray(left) &&
-  left.length === right.length && left.every((id) => right.includes(id));
+  left.length === right.length && new Set(left).size === left.length &&
+  left.every((id) => right.includes(id));
 
 // Read-only, bounded check of a previously published handoff. A positive
 // result proves Shoko has identified each exact video and has an
