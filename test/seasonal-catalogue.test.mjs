@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createSeasonalCatalogue } from '../src/catalogue/seasonal-catalogue.mjs';
+import { openSeasonalSnapshot } from '../src/catalogue/seasonal-snapshot.mjs';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const row = (title, ...anidbIds) => ({
   title, type: 'TV', status: 'RELEASING',
@@ -300,6 +304,38 @@ test('provider outage uses a visibly stale cached map and cold failure is unavai
   const cold = createSeasonalCatalogue({ fetchImpl, now: () => time });
   assert.deepEqual(await cold.read({ year: 2026, season: 'FALL' }),
     { state: 'unavailable' });
+});
+
+test('a restart serves a recent saved catalogue during a provider outage', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'negev-seasonal-'));
+  const dbPath = join(directory, 'catalogue.sqlite');
+  let failed = false;
+  try {
+    const fetchImpl = async (url) => {
+      if (url.endsWith('/api/v1/map')) {
+        return failed ? new Response('', { status: 503 }) :
+          reply({ lastUpdate: '2026-11-05', data: [row('One', 1)] });
+      }
+      return reply({ anidb_id: 1, title: 'One', type: 'TV Series',
+        restricted: false });
+    };
+    const firstStore = openSeasonalSnapshot(dbPath);
+    const first = createSeasonalCatalogue({ fetchImpl, now: () => 1000,
+      snapshotStore: firstStore });
+    assert.equal((await first.read({ year: 2026, season: 'FALL' })).state,
+      'ready');
+    firstStore.close();
+    failed = true;
+    const secondStore = openSeasonalSnapshot(dbPath);
+    const second = createSeasonalCatalogue({ fetchImpl, now: () => 3000,
+      cacheMs: 1000, staleMs: 10_000, snapshotStore: secondStore });
+    const page = await second.read({ year: 2026, season: 'FALL' });
+    assert.equal(page.state, 'stale');
+    assert.equal(page.items[0].title, 'One');
+    secondStore.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('streamed map handles split Unicode and nested JSON without buffering the full map', async () => {
