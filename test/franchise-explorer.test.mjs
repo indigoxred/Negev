@@ -44,7 +44,8 @@ test('an unavailable branch is skipped and the next branch still expands', async
       { anidbId: 30, title: 'Part 30', relation: 'Sequel' }] });
   const result = await expandFranchiseBatch({ explorer: view,
     read: async (anidbId) => {
-      if (anidbId === 20) throw new Error('Source unavailable');
+      if (anidbId === 20) throw Object.assign(new Error('Not Found'),
+        { status: 404 });
       return { anidbId, state: 'related_titles', completeness: 'unproven',
         items: [] };
     }, maxReads: 2, minNewItems: 8 });
@@ -69,6 +70,23 @@ test('a rate-limited related read keeps its branch for a later retry', async () 
         title: 'Third season', relation: 'Sequel' }] }), maxReads: 1 });
   assert.equal(recovered.added, 1);
   assert.equal(view.items().at(-1).anidbId, 30);
+});
+
+test('a temporary related read failure keeps its branch for a later retry', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Second season', relation: 'Sequel' }] });
+  const unavailable = await expandFranchiseBatch({ explorer: view,
+    read: async () => { throw Object.assign(new Error('Gateway Timeout'),
+      { status: 504 }); } });
+  assert.deepEqual(unavailable, { state: 'temporarily_unavailable', reads: 1,
+    added: 0, failures: 1, hasMore: true });
+  assert.equal(view.next()?.anidbId, 20);
+  const recovered = await expandFranchiseBatch({ explorer: view,
+    read: async (anidbId) => ({ anidbId, state: 'related_titles',
+      completeness: 'unproven', items: [{ anidbId: 30,
+        title: 'Third season', relation: 'Sequel' }] }), maxReads: 1 });
+  assert.equal(recovered.added, 1);
 });
 
 test('show more still expands when the first page already contains many cards', async () => {

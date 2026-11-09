@@ -107,15 +107,28 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
     const next = explorer.next();
     if (!next) break;
     reads++;
-    try { explorer.add(await read(next.anidbId)); }
+    let response;
+    try { response = await read(next.anidbId); }
     catch (error) {
-      // The API may throttle a large franchise during an explicit batch.
-      // Keep this branch unexpanded so a later click can resume it.
-      if (error?.status === 429) {
-        return { state: 'rate_limited', reads,
+      // Throttling, server failures, and transport errors do not prove a
+      // branch has no links. Leave it at the cursor for an explicit retry.
+      if (error?.status === 429 || !Number.isInteger(error?.status) ||
+          error.status >= 500) {
+        return { state: error?.status === 429 ? 'rate_limited' :
+          'temporarily_unavailable', reads,
           added: explorer.items().length - before,
           failures: failures + 1, hasMore: true };
       }
+      if (next.anidbId === explorer.items()[0].anidbId) {
+        return { state: 'root_unavailable', reads, added: 0,
+          failures: 1, hasMore: true };
+      }
+      explorer.skip(next.anidbId);
+      failures++;
+      continue;
+    }
+    try { explorer.add(response); }
+    catch {
       if (next.anidbId === explorer.items()[0].anidbId) {
         return { state: 'root_unavailable', reads, added: 0,
           failures: 1, hasMore: true };
