@@ -21,7 +21,8 @@ const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) 
 test('a first title view counts a complete multi-page regular season from current proof', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-season-roster-'));
   const dbPath = path.join(dir, 'negev.sqlite');
-  const clock = 1_000;
+  let clock = 1_000;
+  let expireDuringPageRead = false;
   const accounts = openAccountLedger(dbPath, { now: () => clock });
   await accounts.bootstrapAdmin({ username: 'Owner',
     password: 'long-owner-passphrase' });
@@ -50,6 +51,7 @@ test('a first title view counts a complete multi-page regular season from curren
       if (endpoint.pathname === '/api/v3/Series/AniDB/144/Episode') {
         const page = Number(endpoint.searchParams.get('page'));
         pageReads.push(page);
+        if (page === 2 && expireDuringPageRead) clock = 30 * 60_000 + 1_000;
         return Response.json({ Total: 102, List: page === 1
           ? Array.from({ length: 100 }, (_, offset) => ({
             ID: offset + 1, AnimeID: 144, EpisodeNumber: offset + 1,
@@ -71,6 +73,12 @@ test('a first title view counts a complete multi-page regular season from curren
     assert.equal(response.statusCode, 200, response.body);
     assert.deepEqual(response.json().regularSeason, { verified: 2, total: 101 });
     assert.deepEqual(pageReads, [1, 2]);
+    expireDuringPageRead = true;
+    const expired = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/144', headers: { cookie } });
+    assert.equal(expired.statusCode, 200, expired.body);
+    assert.equal(expired.json().regularSeason?.verified, 0,
+      'a proof expiring during metadata reads must not stay Available');
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
