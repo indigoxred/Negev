@@ -222,22 +222,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
     if (plex) {
       plexObserver = createPlexAvailabilityService({ dbPath,
-        shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now,
-        onCardIndexed: ({ libraryId, ratingKey }) => {
-          if (!fileCursor || !fileProofs) return;
-          const observedMs = now();
-          const files = new Set();
-          for (const target of directAvailability.getRecentAvailableTargetsForCard({
-            libraryId, ratingKey, nowMs: observedMs })) {
-            if (fileProofs.getCurrent(target).state !== 'available') {
-              files.add(target.fileId);
-            }
-          }
-          for (const fileId of files) {
-            fileCursor.prioritizeFile({ fileId, observedMs });
-          }
-        },
-      });
+        shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
     }
     if (fileBackfill) {
       // Resume the saved sweep and bounded proofs after restart. Accepted

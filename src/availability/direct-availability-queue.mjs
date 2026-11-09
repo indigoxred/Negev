@@ -119,12 +119,6 @@ export function openDirectAvailabilityQueue(dbPath) {
   const positiveForAnime = db.prepare(`SELECT episode_id AS episodeId
     FROM direct_availability_targets WHERE anidb_id=? AND state='available'
     AND verified_ms>? AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
-  const positiveForCard = db.prepare(`SELECT anidb_id AS anidbId,
-    episode_id AS episodeId,proof_file_id AS fileId
-    FROM direct_availability_targets
-    WHERE proof_library_id=? AND proof_rating_key=? AND state='available'
-      AND verified_ms>? AND verified_ms<=? AND proof_file_id>0
-    ORDER BY proof_file_id,anidb_id,episode_id LIMIT 101`);
   return {
     getObservation({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {
@@ -183,14 +177,6 @@ export function openDirectAvailabilityQueue(dbPath) {
       const rows = positiveForAnime.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
-    },
-    getRecentAvailableTargetsForCard({ libraryId, ratingKey, nowMs } = {}) {
-      if (!validId(libraryId) || !validId(ratingKey) || !validTime(nowMs)) {
-        throw new TypeError('Invalid public card proof query');
-      }
-      const rows = positiveForCard.all(libraryId, ratingKey,
-        nowMs - positiveLifetimeMs, nowMs);
-      return rows.length > 100 ? [] : rows.map((row) => ({ ...row }));
     },
     claimNext({ nowMs }) {
       if (!validTime(nowMs)) throw new TypeError('Invalid availability clock');

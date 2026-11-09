@@ -31,14 +31,13 @@ const validSections = (sections) => sections &&
 export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   shokoApiKey, plexBaseUrl, plexToken, publicSections, shokoMount,
   plexMount, plexMounts, guidProbe = false, sourcePolicy = null,
-  fetchImpl = fetch, now = Date.now, onCardIndexed } = {}) {
+  fetchImpl = fetch, now = Date.now } = {}) {
   if (!validSections(publicSections) ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof plexBaseUrl !== 'string' || !plexBaseUrl ||
       typeof plexToken !== 'string' || !plexToken ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
-      (onCardIndexed !== undefined && typeof onCardIndexed !== 'function') ||
       typeof guidProbe !== 'boolean' ||
       (sourcePolicy !== null && (!Array.isArray(sourcePolicy) ||
         sourcePolicy.length < 1 || sourcePolicy.length > 4)) ||
@@ -46,17 +45,6 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     throw new TypeError('Invalid Plex availability service');
   }
   const index = openPlexCardIndex(dbPath);
-  const indexing = onCardIndexed ? { ...index,
-    recordCard(input) {
-      const saved = index.recordCard(input);
-      if (saved?.state === 'recorded_card') {
-        try { onCardIndexed({ libraryId: input.libraryId,
-          ratingKey: input.ratingKey, kind: input.kind }); }
-        catch { /* A retry notification cannot invalidate a saved Plex card. */ }
-      }
-      return saved;
-    },
-  } : index;
   const allowed = ({ libraryId, kind }) =>
     ['episode', 'movie'].includes(kind) && publicSections[kind].includes(libraryId);
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
@@ -162,14 +150,14 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       const load = { sectionPages: 0, exactCardReads: 0,
         candidateProbes: 0 };
       const readers = indexReaders(load);
-      const worker = createPlexCardPageWorker({ libraryId, kind, index: indexing, now,
+      const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
         ...readers });
       const page = await worker.tick();
       // A changing addedAt page can invalidate every full sweep. Recheck one
       // older indexed card directly instead of treating a page omission as
       // proof of removal; the existing retry worker enforces the read cap.
       index.scheduleOldestCardRecheck({ libraryId, kind, nowMs: now() });
-      const retry = await retryOnePlexCard({ libraryId, kind, index: indexing, now,
+      const retry = await retryOnePlexCard({ libraryId, kind, index, now,
         readCard: readers.readCard });
       const result = retry.state === 'no_due_retry' ? page :
         { ...page, retry: retry.state };
@@ -184,7 +172,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       const load = { sectionPages: 0, exactCardReads: 0,
         candidateProbes: 0 };
       const result = await indexPlexCardPage({ libraryId, kind, offset: 0,
-        index: indexing, now, ...indexReaders(load) });
+        index, now, ...indexReaders(load) });
       return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
         result;
     },

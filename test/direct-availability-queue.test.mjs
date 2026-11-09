@@ -70,29 +70,6 @@ test('a direct alternate-card proof keeps its presentation across restart and in
   });
 });
 
-test('a newly indexed card can find only its current direct file proof', async () => {
-  await fixture(async (ctx) => {
-    const index = openPlexCardIndex(ctx.dbPath);
-    try {
-      index.recordCard({ libraryId: 102, ratingKey: 500,
-        kind: 'episode', observedMs: 10,
-        parts: [{ libraryId: 102, partId: 600, size: 5,
-          plexPath: '/source-pure/500.mkv' }] });
-      ctx.queue.enqueue({ anidbId: 42, episodeId: 1001, observedMs: 20 });
-      const claim = ctx.queue.claimNext({ nowMs: 20 });
-      ctx.queue.recordResult({ claim, state: 'available', checkedMs: 21,
-        proof: { fileId: 51, libraryId: 102, ratingKey: 500, partId: 600 } });
-      assert.deepEqual(ctx.queue.getRecentAvailableTargetsForCard({
-        libraryId: 102, ratingKey: 500, nowMs: 22 }),
-      [{ anidbId: 42, episodeId: 1001, fileId: 51 }]);
-      assert.deepEqual(ctx.queue.getRecentAvailableTargetsForCard({
-        libraryId: 102, ratingKey: 501, nowMs: 22 }), []);
-      assert.deepEqual(ctx.queue.getRecentAvailableTargetsForCard({
-        libraryId: 102, ratingKey: 500, nowMs: 21 + 30 * 60_000 }), []);
-    } finally { index.close(); }
-  });
-});
-
 test('a direct proof rejects an unsupported presentation', async () => {
   await fixture(async (ctx) => {
     const target = { anidbId: 42, episodeId: 1001 };
