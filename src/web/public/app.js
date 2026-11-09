@@ -1532,6 +1532,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     detailArt.append(detailPoster);
     panel.replaceChildren(detailArt,
       element('h1', data.title || item.title, 'detail-title'));
+    const pendingSummary = earlyRequest?.querySelector('.request-review p');
+    if (pendingSummary) pendingSummary.textContent =
+      `${data.title || item.title} · Negev will identify the film or episodes and check the library first`;
     panel.append(displaySummary);
     void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
