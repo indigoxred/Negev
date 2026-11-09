@@ -163,13 +163,14 @@ async function parseMap(response) {
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   readSchedule = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
-  timeoutMs = 12_000, scheduleWaitMs = 2_000 } = {}) {
+  timeoutMs = 12_000, detailTimeoutMs = 2_500,
+  scheduleWaitMs = 2_000 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       readSchedule !== null && typeof readSchedule !== 'function' ||
-      ![cacheMs, staleMs, timeoutMs, scheduleWaitMs].every((value) =>
+      ![cacheMs, staleMs, timeoutMs, detailTimeoutMs, scheduleWaitMs].every((value) =>
         Number.isSafeInteger(value) && value > 0) || staleMs <= cacheMs ||
       staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000 ||
-      scheduleWaitMs > 5_000) {
+      detailTimeoutMs > timeoutMs || scheduleWaitMs > 5_000) {
     throw new TypeError('Invalid seasonal catalogue configuration');
   }
   let cached = null;
@@ -177,8 +178,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   let attemptedMs = null;
   let pendingMap = null;
   const detailCache = new Map();
-  const options = () => ({ method: 'GET', redirect: 'manual',
-    headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+  const options = (waitMs = timeoutMs) => ({ method: 'GET', redirect: 'manual',
+    headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(waitMs) });
   async function timelySchedule() {
     if (!readSchedule) return null;
     let timer;
@@ -218,7 +219,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       return saved.value;
     }
     try {
-      const response = await fetchImpl(`${ANIDB_URL}${id}`, options());
+      const response = await fetchImpl(`${ANIDB_URL}${id}`,
+        options(detailTimeoutMs));
       if (response.status !== 200) return { kind: 'unknown' };
       const data = await readBoundedJson(response, MAX_DETAIL_BYTES);
       if (data?.anidb_id !== id || typeof data.restricted !== 'boolean') {

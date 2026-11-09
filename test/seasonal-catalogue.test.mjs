@@ -182,6 +182,32 @@ test('a slow schedule cannot hold an otherwise ready Airing catalogue page', asy
   assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
 });
 
+test('a cold catalogue page bounds detail fanout and finishes despite slow cards', async () => {
+  const entries = Array.from({ length: 12 }, (_, index) =>
+    row(`Title ${index + 1}`, index + 1));
+  let active = 0;
+  let peak = 0;
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url, options) => {
+    if (url.endsWith('/api/v1/map')) {
+      return reply({ lastUpdate: '2026-11-05', data: entries });
+    }
+    active++;
+    peak = Math.max(peak, active);
+    try {
+      if (url.endsWith('/1')) return reply({ anidb_id: 1,
+        title: 'Ready', type: 'TV Series', restricted: false });
+      return await new Promise((_, reject) => options.signal.addEventListener(
+        'abort', () => reject(options.signal.reason), { once: true }));
+    } finally { active--; }
+  }, detailTimeoutMs: 30, now: () => 1000 });
+  const start = performance.now();
+  const page = await reader.read({ year: 2026, season: 'FALL' });
+  assert.ok(performance.now() - start < 300);
+  assert.ok(peak <= 4);
+  assert.equal(page.state, 'partial');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;
