@@ -459,6 +459,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
         verifiedEpisodeCount: ids.size };
     };
+    // Airing's "In library" preset must use the same current file evidence
+    // as Negev's Library page. A short-lived title or direct check may inform
+    // availability, but it does not place a title in the library catalogue.
+    const libraryPresenceForTitle = (anidbId) => {
+      const count = fileProofs?.getRecentAvailableIds({ anidbId }).length ?? 0;
+      return { state: count > 0 ? 'in_library' : 'unknown',
+        verifiedEpisodeCount: count };
+    };
     const cachedDisplayRelations = createCachedDisplayRelations({ now,
       read: ({ anidbId }) => readDisplayRelations({
         readLocal: () => metadata.run(() => readAniDbRelatedTitles({
@@ -572,9 +580,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const schedule = await weeklySchedule.read();
         if (!Array.isArray(schedule.items)) return schedule;
         const tracked = new Set(airingPreference?.trackedAnidbIds ?? []);
-        const checkedMs = now();
         const items = schedule.items.map((item) => ({ ...item,
-          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) }));
+          libraryPresence: libraryPresenceForTitle(item.anidbId) }));
         return { ...schedule, items: items.filter((item) =>
           airingPreference?.mode === 'custom' ? tracked.has(item.anidbId)
             : airingPreference?.mode === 'library'
@@ -582,8 +589,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       listSeasonalTitles: async ({ airingPreference, ...input }) => {
         const checkedMs = now();
+        const presence = airingPreference ? libraryPresenceForTitle
+          : (anidbId) => publicPresenceForTitle(anidbId, checkedMs);
         const eligibleTitle = airingPreference?.mode === 'library'
-          ? (anidbId) => publicPresenceForTitle(anidbId, checkedMs).state === 'in_library'
+          ? (anidbId) => presence(anidbId).state === 'in_library'
           : undefined;
         const eligibleIds = airingPreference?.mode === 'custom'
           ? new Set(airingPreference.trackedAnidbIds) : undefined;
@@ -592,7 +601,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           ...(eligibleIds ? { eligibleIds } : {}) });
         if (!Array.isArray(page.items)) return page;
         return { ...page, items: page.items.map((item) => ({ ...item,
-          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
+          libraryPresence: presence(item.anidbId) })) };
       },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
