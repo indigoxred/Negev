@@ -1,4 +1,32 @@
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
+const relationGroups = [
+  ['prequel', 'Prequels'], ['sequel', 'Sequels'],
+  ['mainstory', 'Main stories'], ['sidestory', 'Side stories'],
+  ['alternative', 'Alternatives'], ['alternativeversion', 'Alternate versions'],
+];
+
+// Relations found through another installment describe that hop, not a direct
+// relationship to the title being viewed. Keep those cards in a separate group.
+export function groupFranchiseItems(items, rootId) {
+  if (!Array.isArray(items) || !validId(rootId)) {
+    throw new TypeError('Invalid franchise group input');
+  }
+  const direct = new Map(relationGroups.map(([key]) => [key, []]));
+  const other = [];
+  const indirect = [];
+  for (const item of items) {
+    if (item?.anidbId === rootId) continue;
+    if (item?.relatedFrom !== rootId) { indirect.push(item); continue; }
+    const key = item.relation?.replace(/[_\s-]/g, '').toLowerCase();
+    (direct.get(key) ?? other).push(item);
+  }
+  return [
+    ...relationGroups.filter(([key]) => direct.get(key).length > 0)
+      .map(([key, heading]) => ({ heading, items: direct.get(key) })),
+    ...(other.length ? [{ heading: 'Other relations', items: other }] : []),
+    ...(indirect.length ? [{ heading: 'More linked titles', items: indirect }] : []),
+  ];
+}
 
 // A bounded, opt-in walk of Shoko's verified outgoing relations. The result
 // never claims that the AniDB franchise is complete or joins request targets.
@@ -51,7 +79,7 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
       }
       for (const item of newItems) members.set(item.anidbId, {
         anidbId: item.anidbId, title: item.title.trim(),
-        relation: item.relation.trim(),
+        relation: item.relation.trim(), relatedFrom: result.anidbId,
         ...(item.libraryPresence ? { libraryPresence: item.libraryPresence } : {}) });
       expanded.add(result.anidbId);
     },

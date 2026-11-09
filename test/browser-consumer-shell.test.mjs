@@ -198,12 +198,15 @@ async function inspectMobile(url, profile, width = 390) {
           posterCards: document.querySelectorAll('.related-list .related-card img').length,
           relationLabels: [...document.querySelectorAll('.related-relation')]
             .map((label) => label.textContent),
+          groupHeadings: [...document.querySelectorAll('.related-group-heading')]
+            .map((heading) => heading.textContent),
           relationBelowPoster: cards.every((card) => {
             const poster = card.querySelector('.related-art')?.getBoundingClientRect();
             const relation = card.querySelector('.related-relation')?.getBoundingClientRect();
             return poster && relation && relation.top >= poster.bottom - 1;
           }),
           firstRowCount: cards.filter((card) => Math.abs(card.getBoundingClientRect().top - firstTop) < 2).length,
+          right: document.querySelector('.related-list')?.getBoundingClientRect().right,
           next: document.querySelector('.related-trigger')?.textContent}; })()`,
     });
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 1200) {
@@ -757,8 +760,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.franchise.listed, /1 verified item in library/);
       assert.equal(mobile.franchise.posterCards, 7);
       assert.deepEqual(mobile.franchise.relationLabels,
-        ['Prequel', 'Sequel', 'Sequel', 'Side story', 'Side story',
-          'Side story', 'Alternative']);
+        ['Prequel', 'Sequel', 'Side story', 'Side story', 'Alternative',
+          'Sequel · via The Garden of Words',
+          'Side story · via The Garden of Words']);
+      assert.deepEqual(mobile.franchise.groupHeadings, ['More linked titles']);
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
       assert.equal(mobile.franchise.next, 'No more cached links to explore');
@@ -797,8 +802,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       ]);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
+      assert.equal(desktopRelated.franchise.posterCards, 7);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
         'related anime use the desktop page width');
+      assert.ok(desktopRelated.franchise.right <= 1200,
+        'related anime stay within the desktop page width');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);
       assert.ok(tablet.accountTop < tablet.headerBottom,
         'Account control stays inside the tablet header');

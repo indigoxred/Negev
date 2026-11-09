@@ -5,7 +5,8 @@ import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
-import { createFranchiseExplorer, expandFranchiseBatch } from './franchise-explorer.mjs';
+import { createFranchiseExplorer, expandFranchiseBatch,
+  groupFranchiseItems } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
@@ -1665,10 +1666,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const syncInstallmentChoice = () => {
       if (!installmentSelect) return;
       installmentSelect.replaceChildren();
+      const titles = new Map(family.items().map((entry) =>
+        [entry.anidbId, entry.title]));
       for (const entry of family.items()) {
+        const source = entry.relatedFrom && entry.relatedFrom !== item.anidbId
+          ? titles.get(entry.relatedFrom) : null;
         const option = element('option', entry.anidbId === item.anidbId
           ? `${entry.title} · this installment`
-          : `${entry.title} · ${relationLabel(entry.relation)}`);
+          : `${entry.title} · ${relationLabel(entry.relation)}` +
+            (source ? ` via ${source}` : ''));
         option.value = String(entry.anidbId);
         installmentSelect.append(option);
       }
@@ -1676,41 +1682,41 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     };
     const renderFamily = () => {
       relatedList.replaceChildren();
-      const relationOrder = ['Prequel', 'Sequel', 'MainStory', 'SideStory',
-        'Alternative', 'AlternativeVersion'];
-      const installments = family.items().filter((entry) => entry.anidbId !== item.anidbId)
-        .sort((a, b) => {
-          const rank = (entry) => {
-            const value = entry.relation?.replace(/[_\s-]/g, '').toLowerCase();
-            const index = relationOrder.findIndex((relation) =>
-              relation.toLowerCase() === value);
-            return index < 0 ? relationOrder.length : index;
-          };
-          return rank(a) - rank(b);
-        });
-      if (installments.length === 0) relatedList.append(element('p',
+      const groups = groupFranchiseItems(family.items(), item.anidbId);
+      const titles = new Map(family.items().map((entry) =>
+        [entry.anidbId, entry.title]));
+      if (groups.length === 0) relatedList.append(element('p',
         'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.', 'muted'));
-      for (const installment of installments) {
-        const open = element('button', undefined, 'related-card');
-        const art = element('span', 'N', 'related-art poster-fallback');
-        const image = posterImage(installment);
-        image.addEventListener('load', () => art.classList.add('has-poster'));
-        art.append(image);
-        const copy = element('span', undefined, 'related-copy');
-        copy.append(element('small', relationLabel(installment.relation),
-          'related-relation'));
-        copy.append(element('strong', installment.title));
-        const count = installment.libraryPresence?.state === 'in_library'
-          ? installment.libraryPresence.verifiedEpisodeCount : 0;
-        if (count > 0) copy.append(element('span',
-          `${count} verified item${count === 1 ? '' : 's'} in library`,
-          'related-presence'));
-        open.append(art, copy);
-        open.addEventListener('click', () => {
-          state.searchItems.set(installment.anidbId, installment);
-          location.hash = titleRoute(installment.anidbId);
-        });
-        relatedList.append(open);
+      for (const group of groups) {
+        // Direct relation labels already appear on each card. Keep those
+        // cards together in one compact grid; only separate indirect hops.
+        if (group.heading === 'More linked titles') relatedList.append(
+          element('h3', group.heading, 'related-group-heading'));
+        for (const installment of group.items) {
+          const open = element('button', undefined, 'related-card');
+          const art = element('span', 'N', 'related-art poster-fallback');
+          const image = posterImage(installment);
+          image.addEventListener('load', () => art.classList.add('has-poster'));
+          art.append(image);
+          const copy = element('span', undefined, 'related-copy');
+          const relation = relationLabel(installment.relation);
+          const source = installment.relatedFrom === item.anidbId ? null
+            : titles.get(installment.relatedFrom);
+          copy.append(element('small', source
+            ? `${relation} · via ${source}` : relation, 'related-relation'));
+          copy.append(element('strong', installment.title));
+          const count = installment.libraryPresence?.state === 'in_library'
+            ? installment.libraryPresence.verifiedEpisodeCount : 0;
+          if (count > 0) copy.append(element('span',
+            `${count} verified item${count === 1 ? '' : 's'} in library`,
+            'related-presence'));
+          open.append(art, copy);
+          open.addEventListener('click', () => {
+            state.searchItems.set(installment.anidbId, installment);
+            location.hash = titleRoute(installment.anidbId);
+          });
+          relatedList.append(open);
+        }
       }
       relatedButton.textContent = family.next() ? 'Show more related titles' :
         'No more cached links to explore';
