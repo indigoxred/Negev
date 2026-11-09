@@ -127,6 +127,11 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
       failures++;
       continue;
     }
+    if (response?.state === 'unavailable') {
+      return { state: 'temporarily_unavailable', reads,
+        added: explorer.items().length - before,
+        failures: failures + 1, hasMore: true };
+    }
     try { explorer.add(response); }
     catch {
       if (next.anidbId === explorer.items()[0].anidbId) {

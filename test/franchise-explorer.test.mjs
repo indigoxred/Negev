@@ -89,6 +89,17 @@ test('a temporary related read failure keeps its branch for a later retry', asyn
   assert.equal(recovered.added, 1);
 });
 
+test('an unavailable metadata response keeps the next branch retryable', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Second season', relation: 'Sequel' }] });
+  const unavailable = await expandFranchiseBatch({ explorer: view,
+    read: async () => ({ state: 'unavailable' }) });
+  assert.deepEqual(unavailable, { state: 'temporarily_unavailable', reads: 1,
+    added: 0, failures: 1, hasMore: true });
+  assert.equal(view.next()?.anidbId, 20);
+});
+
 test('show more still expands when the first page already contains many cards', async () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
   view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
