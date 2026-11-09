@@ -13,7 +13,7 @@ test('map facts give a title compact season, status, studio and runtime', async 
   } });
   const first = await reader.read({ anidbId: 19586 });
   assert.deepEqual(first, { state: 'facts', anidbId: 19586,
-    season: 'Fall 2026', status: 'Airing', studio: 'studio comet',
+    season: 'Fall 2026', year: 2026, status: 'Airing', studio: 'studio comet',
     durationMinutes: 23 });
   assert.deepEqual(await reader.read({ anidbId: 19586 }), first);
   assert.equal(calls, 1);
@@ -28,6 +28,6 @@ test('map facts reject a different AniDB identity and ignore malformed fields', 
       animeSeason: { season: 'UNKNOWN', year: 99999 }, status: 'UNKNOWN',
       studios: ['x'.repeat(500)], duration: { value: -1, unit: 'SECONDS' } })) });
   assert.deepEqual(await partial.read({ anidbId: 19586 }),
-    { state: 'facts', anidbId: 19586, season: null,
+    { state: 'facts', anidbId: 19586, season: null, year: null,
       status: null, studio: null, durationMinutes: null });
 });

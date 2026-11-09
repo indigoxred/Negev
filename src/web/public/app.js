@@ -10,7 +10,7 @@ import { summarizeSeasonAvailability, summarizeFilmAvailability,
 import { detailRefreshDelay, detailHydrationFollowup } from './detail-refresh.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
-  seasonRoute } from './consumer-route.mjs';
+  seasonRoute, browseReturnDestination } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -19,7 +19,8 @@ const state = { csrf: null, user: null, selected: null,
   nextBeforeId: { watching: null, history: null, preparing: null },
   releaseSearch: false, detailLoad: false,
   titleChecks: false, acquisitionState: 'disabled', searchToken: 0,
-  lastSearchQuery: '', searchItems: new Map(),
+  lastSearchQuery: '', lastBrowseDestination: { href: '#/discover',
+    label: 'Discover' }, searchItems: new Map(),
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
@@ -101,6 +102,8 @@ function renderRoute() {
     ? 'discover' : route.page;
   const returning = state.routePage !== null && state.routePage !== page;
   state.routePage = page;
+  const browseDestination = browseReturnDestination(route);
+  if (browseDestination) state.lastBrowseDestination = browseDestination;
   for (const name of ['discover', 'airing', 'library', 'requests', 'title', 'admin']) {
     byId(`view-${name}`).hidden = name !== page;
   }
@@ -110,7 +113,9 @@ function renderRoute() {
   }
   document.title = `Negev · ${page[0].toUpperCase()}${page.slice(1)}`;
   if (page === 'title') {
-    byId('back-to-discover').href = searchRoute(state.lastSearchQuery);
+    byId('back-to-discover').href = state.lastBrowseDestination.href;
+    byId('back-to-discover').textContent =
+      `← Back to ${state.lastBrowseDestination.label}`;
     if (state.selected !== route.anidbId) {
       const item = state.searchItems.get(route.anidbId) ??
         { anidbId: route.anidbId, title: `Anime ${route.anidbId}` };
@@ -251,6 +256,7 @@ function clearWorkspace() {
   displayCache.clear();
   state.searchToken++;
   state.lastSearchQuery = '';
+  state.lastBrowseDestination = { href: '#/discover', label: 'Discover' };
   state.searchItems.clear();
   state.libraryLoaded = false;
   state.libraryAfter = null;

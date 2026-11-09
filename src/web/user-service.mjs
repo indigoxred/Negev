@@ -22,6 +22,7 @@ import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs'
 import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
 import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
 import { createAniDbMapFactsReader } from '../catalogue/anidb-map-facts.mjs';
+import { mergeDisplayFacts } from '../catalogue/merge-display-facts.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
 import { createShokoPosterReader } from '../catalogue/shoko-poster-reader.mjs';
@@ -570,10 +571,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const [display, facts] = await Promise.all([
           displayReader.read({ anidbId }), mapFacts.read({ anidbId }),
         ]);
-        return display.state === 'display' && facts.state === 'facts'
-          ? { ...display, season: facts.season, releaseStatus: facts.status,
-            studio: facts.studio, durationMinutes: facts.durationMinutes }
-          : display;
+        return mergeDisplayFacts(display, facts);
       },
       loadRelatedTitles: async ({ anidbId }) => {
         const related = await cachedDisplayRelations({ anidbId });
