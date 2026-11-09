@@ -237,6 +237,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         availableTags: seasonalTags,
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
+          rating: { score: 8.2, votes: 100, members: 500 },
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
         nextAfter: null,
         requestedPage: { after, limit } };
@@ -401,6 +402,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       availableTags: ['action', 'fantasy'], items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
         releaseStatus: 'RELEASING', adult: false,
+        rating: { score: 8.2, votes: 100, members: 500 },
         libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
       nextAfter: null });
     assert.equal((await app.inject({ method: 'GET',
@@ -424,6 +426,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=next_episode',
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).sort, 'next_episode');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=score_desc',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).sort, 'score_desc');
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=popular_desc',
+      headers: { cookie } })).statusCode, 200);
+    assert.equal(seasonalInputs.at(-1).sort, 'popular_desc');
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=popularity',
       headers: { cookie } })).statusCode, 400);

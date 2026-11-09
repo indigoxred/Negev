@@ -45,7 +45,7 @@ const seasonalResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 let detailPollTimer = null;
 const genreSelections = { season: new Set(), airing: new Set() };
-let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
+let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
 function message(text, error = false) {
   const node = byId('message');
   node.textContent = text;
@@ -205,7 +205,7 @@ function showSession(data) {
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
-    airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
+    airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
     genreSelections.airing.clear();
     genreSelections.season.clear();
     state.seasonalRouteKey = null;
@@ -261,7 +261,7 @@ function clearWorkspace() {
   state.libraryLoaded = false;
   state.libraryAfter = null;
   state.airingLoaded = false;
-  airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'next_episode' };
+  airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
   genreSelections.airing.clear();
   genreSelections.season.clear();
   state.seasonalRouteKey = null;
@@ -654,6 +654,10 @@ function discoveryCard(item, note, badge, available = false) {
   const copy = element('span', undefined, 'poster-copy');
   copy.append(element('strong', item.title), element('small', note),
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
+  if (item.rating) copy.append(element('small', item.rating.score === null
+    ? `${item.rating.members.toLocaleString()} MAL members · Unrated`
+    : `★ ${item.rating.score.toFixed(1)}/10 · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members`,
+  'muted'));
   if (item.adult) copy.append(element('span', '18+', 'badge partial'));
   card.append(frame, copy);
   state.searchItems.set(item.anidbId, entry);
@@ -889,7 +893,15 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
       return;
     }
     if (after === 0) renderGenres('airing', page.availableTags ?? [], tag);
-    notice.textContent = page.orderState === 'fallback'
+    notice.textContent = page.orderState === 'score_loading'
+      ? 'Ratings are loading in the background. Showing season order until ranking is ready; this page refreshes automatically.'
+      : page.orderState === 'score_unavailable'
+      ? 'Ratings are unavailable. Showing season order.'
+      : page.orderState === 'score'
+      ? 'Highest rated first · MAL score snapshot via AniMap. Unrated titles appear last.'
+      : page.orderState === 'popularity'
+      ? 'Most popular first · MAL member snapshot via AniMap.'
+      : page.orderState === 'fallback'
       ? 'This week’s episode dates are unavailable; showing newest ongoing titles first.'
       : page.state === 'stale'
       ? 'Showing a saved ongoing-title list; release status may have changed.'
@@ -900,6 +912,15 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
       list.append(discoveryCard(item, item.type || 'Anime', available
         ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
         : 'Availability not checked', available));
+    }
+    if (after === 0 && page.orderState === 'score_loading') {
+      setTimeout(() => {
+        if (sessionResponses.isCurrent(session) &&
+            airingResponses.isCurrent(epoch) &&
+            state.user?.id === userId && state.routePage === 'airing') {
+          void loadCurrentAiring(session, epoch, userId);
+        }
+      }, 30_000);
     }
     if (page.nextAfter !== null && page.nextAfter !== undefined) {
       more.hidden = false;
@@ -925,7 +946,8 @@ byId('airing-form').addEventListener('submit', (event) => {
   if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
       !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(season) ||
       !['all', 'series', 'movies'].includes(kind) ||
-      !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode'].includes(sort)) return;
+      !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode',
+        'score_desc', 'popular_desc'].includes(sort)) return;
   airingFilters = { year, season, kind, tag, sort };
   const epoch = airingResponses.invalidate();
   void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);
