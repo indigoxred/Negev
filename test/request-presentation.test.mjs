@@ -2,6 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { requestPresentation } from '../src/web/public/request-progress-text.mjs';
 
+test('a held migration request is plainly waiting for owner review', () => {
+  assert.deepEqual(requestPresentation({ ...base,
+    state: 'owner_review_pending' }, 'series'), {
+    stage: 'Awaiting owner review',
+    detail: 'This saved request is not starting a new download yet.',
+    note: 'The owner will review it before acquisition resumes.',
+    group: 'attention',
+  });
+});
+
 const base = { state: 'saved', targetCount: 12,
   publicAvailability: 'unverified', publicVerifiedTargets: 0 };
 

@@ -11,11 +11,14 @@ export function requestPresentation(progress, kind,
     return unavailable;
   }
   const watching = monitorFuture && !watchClosed;
-  const attention = ['review_needed', 'request_interrupted'].includes(progress.state);
+  const attention = ['review_needed', 'request_interrupted',
+    'owner_review_pending'].includes(progress.state);
   const attentionNote = progress.state === 'review_needed'
     ? 'An earlier download needs owner review.' :
     progress.state === 'request_interrupted'
-      ? 'A previous check was interrupted.' : '';
+      ? 'A previous check was interrupted.' :
+      progress.state === 'owner_review_pending'
+        ? 'The owner will review it before acquisition resumes.' : '';
   const publicCount = progress.publicAvailability === 'verified_recently' &&
     Number.isSafeInteger(progress.publicVerifiedTargets) &&
     progress.publicVerifiedTargets > 0 &&
@@ -57,6 +60,11 @@ export function requestPresentation(progress, kind,
       detail: watching && progress.targetCount === 0
         ? 'No episode is included in this request yet.' :
           'No download is confirmed in progress.', note: '' };
+      case 'owner_review_pending': return {
+        stage: 'Awaiting owner review',
+        detail: 'This saved request is not starting a new download yet.',
+        note: attentionNote,
+      };
       case 'release_preparing': return { stage: 'Finding a download',
         detail: 'Negev is checking a release for this request.', note: '' };
       case 'torrent_unverified': return { stage: 'Checking download submission',
