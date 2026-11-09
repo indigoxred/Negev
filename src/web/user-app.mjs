@@ -322,7 +322,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           !/^\d{4}-\d{2}-\d{2}$/.test(item.scheduledDate) ||
           typeof item.episodeNumber !== 'string' ||
           item.episodeNumber.length > 24 ||
-          typeof item.adult !== 'boolean')) {
+          typeof item.adult !== 'boolean' ||
+          !['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
+          !Number.isSafeInteger(item.libraryPresence.verifiedEpisodeCount) ||
+          item.libraryPresence.verifiedEpisodeCount < 0 ||
+          (item.libraryPresence.state === 'in_library') !==
+            (item.libraryPresence.verifiedEpisodeCount > 0))) {
       return reply.code(503).send({ error: 'Airing schedule unavailable' });
     }
     return { state: schedule.state, week: schedule.week,
@@ -330,7 +335,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       items: schedule.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({ anidbId: item.anidbId,
         title: item.title, scheduledDate: item.scheduledDate,
-        episodeNumber: item.episodeNumber, adult: item.adult })) };
+        episodeNumber: item.episodeNumber, adult: item.adult,
+        libraryPresence: item.libraryPresence })) };
   });
   app.get('/api/airing/preferences', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

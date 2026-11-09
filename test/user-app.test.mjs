@@ -290,7 +290,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     nextAfterAnidbId: null }),
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
-        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] }),
+        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false,
+        libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] }),
     listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status, sort }) => {
       seasonalInputs.push({ year, season, after, limit, kind, tag, status, sort });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
@@ -453,7 +454,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(airing.statusCode, 200);
     assert.deepEqual(airing.json(), { state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
-        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false }] });
+        scheduledDate: '2026-11-02', episodeNumber: '3', adult: false,
+        libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] });
     const seasonal = await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } });
     assert.equal(seasonal.statusCode, 200);

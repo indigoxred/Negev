@@ -1058,11 +1058,13 @@ async function loadAiring() {
       poster.addEventListener('load', () => art.classList.add('has-poster'));
       art.append(poster);
       const copy = element('span', undefined, 'result-copy');
+      const available = item.libraryPresence?.state === 'in_library' &&
+        item.libraryPresence.verifiedEpisodeCount > 0;
       copy.append(element('strong', item.title),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
-        element('span', state.airingPreferences?.mode === 'library'
+        element('span', available
           ? '✓ In library' : 'Local availability not checked',
-        `presence ${state.airingPreferences?.mode === 'library' ? 'available' : 'unknown'}`));
+        `presence ${available ? 'available' : 'unknown'}`));
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(art, copy);
       button.addEventListener('click', () => {
