@@ -198,6 +198,8 @@ async function inspectMobile(url, profile, width = 390) {
           posterCards: document.querySelectorAll('.related-list .related-card img').length,
           relationLabels: [...document.querySelectorAll('.related-relation')]
             .map((label) => label.textContent),
+          groupHeadings: [...document.querySelectorAll('.related-group-heading')]
+            .map((heading) => heading.textContent),
           relationBelowPoster: cards.every((card) => {
             const poster = card.querySelector('.related-art')?.getBoundingClientRect();
             const relation = card.querySelector('.related-relation')?.getBoundingClientRect();
@@ -761,6 +763,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         ['Prequel', 'Sequel', 'Side story', 'Side story', 'Alternative',
           'Sequel · via The Garden of Words',
           'Side story · via The Garden of Words']);
+      assert.deepEqual(mobile.franchise.groupHeadings, ['More linked titles']);
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
       assert.equal(mobile.franchise.next, 'No more cached links to explore');

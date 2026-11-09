@@ -1688,7 +1688,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       if (groups.length === 0) relatedList.append(element('p',
         'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.', 'muted'));
       for (const group of groups) {
-        relatedList.append(element('h3', group.heading, 'related-group-heading'));
+        // Direct relation labels already appear on each card. Keep those
+        // cards together in one compact grid; only separate indirect hops.
+        if (group.heading === 'More linked titles') relatedList.append(
+          element('h3', group.heading, 'related-group-heading'));
         for (const installment of group.items) {
           const open = element('button', undefined, 'related-card');
           const art = element('span', 'N', 'related-art poster-fallback');
