@@ -1346,10 +1346,17 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const displaySummary = element('div', undefined, 'detail-display');
   panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
     element('p', 'Loading episode details…', 'muted'), displaySummary);
-  // A cold title can take time to gain an episode list. Keep the request
-  // action available while that independent read is in flight.
+  // Only offer a fallback if the first detail read is still loading after
+  // ten seconds. Once it returns pending, the normal request action appears.
   const earlyRequest = previousAction ?? pendingTitleAction(item);
-  if (earlyRequest) panel.append(earlyRequest);
+  if (previousAction && (state.showAdult || item.adult === false)) {
+    panel.append(previousAction);
+  }
+  const fallbackTimer = earlyRequest && !previousAction ? setTimeout(() => {
+    if (!isCurrentDetail() || !panel.contains(loadingArt) ||
+        !state.showAdult && state.searchItems.get(item.anidbId)?.adult !== false) return;
+    panel.append(earlyRequest);
+  }, 10_000) : null;
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
     displayRead = api(`/api/catalogue/${item.anidbId}/display`)
@@ -1415,9 +1422,17 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     displaySummary.append(main);
     if (quickFacts.childElementCount) displaySummary.append(quickFacts);
   };
-  void displayRead.then((display) => renderDisplay(display, item.title));
+  void displayRead.then((display) => {
+    if (isCurrentDetail() && typeof display?.restricted === 'boolean') {
+      state.searchItems.set(item.anidbId,
+        { ...item, adult: display.restricted });
+      applyAdultVisibility();
+    }
+    renderDisplay(display, item.title);
+  });
   try {
-    const data = await api(`/api/catalogue/${item.anidbId}`);
+    const data = await api(`/api/catalogue/${item.anidbId}`)
+      .finally(() => { if (fallbackTimer !== null) clearTimeout(fallbackTimer); });
     if (!isCurrentDetail()) return;
     if (typeof data.restricted === 'boolean') {
       state.searchItems.set(item.anidbId, { ...item, adult: data.restricted });

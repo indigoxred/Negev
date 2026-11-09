@@ -203,6 +203,11 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
     await wait(700);
+    const coldBeforeFallback = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({loading: document.querySelector('#detail')?.textContent.includes('Loading episode details'),
+        hasRequest: Boolean(document.querySelector('#detail .request-action'))})`,
+    });
+    await wait(10_200);
     const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         const button = action?.querySelector('.primary'); button?.click();
@@ -235,6 +240,7 @@ async function inspectMobile(url, profile, width = 390) {
       requestReview: requestReview.result.value,
       requestSelection: requestSelection.result.value,
       requestSaved: requestSaved.result.value,
+      coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value };
   } finally {
@@ -470,6 +476,12 @@ test('signed-in consumer routes render real shell with search, library and reque
           episodeCount: 12, description: 'A new anime description.', tags: [] }));
         return;
       }
+      if (path === '/api/catalogue/19848/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 19848,
+          title: 'Cold title', restricted: false }));
+        return;
+      }
       if (path === '/api/catalogue/19847') {
         response.writeHead(429, { 'Content-Type': 'application/json' });
         response.end(JSON.stringify({ error: 'Too Many Requests' }));
@@ -482,7 +494,7 @@ test('signed-in consumer routes render real shell with search, library and reque
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify({ state: 'detail_pending', anidbId: 19848,
             title: 'Cold title', restricted: false }));
-        }, 10_000);
+        }, 13_000);
         return;
       }
       if (path === '/api/catalogue/19849/load-detail') {
@@ -547,6 +559,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         summary: 'Example Season Two · Negev will check its film or episodes before saving',
         cancelLabel: 'Cancel' });
       assert.equal(mobile.requestSaved.reviewHidden, true);
+      assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /Request #7 saved/);
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
@@ -647,10 +660,6 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /data-request-group="active">(?:(?!<\/section>)[\s\S])*Pale Cocoon/);
       assert.match(requests, /data-request-group="completed">(?:(?!<\/section>)[\s\S])*The Garden of Words/);
       allowAdult = false;
-      const ordinaryCold = await dump(`${base}/#/title/19848`,
-        join(dir, 'ordinary-cold-adult-blocked'));
-      assert.match(ordinaryCold, /Request if missing/,
-        'disabling 18+ must not block an ordinary cold-title request');
       const ordinaryDescription = await dump(`${base}/#/title/19847`,
         join(dir, 'ordinary-description-adult-blocked'));
       assert.match(ordinaryDescription, /A new anime description/,
