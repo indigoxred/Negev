@@ -118,6 +118,23 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url });
     await wait(300);
+    const tagBrowse = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const picker = document.querySelector('#season-form .genre-picker');
+        picker.open = true;
+        const choices = document.querySelector('#season-tags');
+        const more = document.querySelector('#season-tag-more');
+        const before = choices.querySelectorAll('input').length;
+        more?.click();
+        const after = choices.querySelectorAll('input').length;
+        const late = [...choices.querySelectorAll('input')]
+          .find((input) => input.value === 'genre 55');
+        late?.click();
+        const search = document.querySelector('#season-tag-search');
+        search.value = 'genre 55'; search.dispatchEvent(new Event('input'));
+        return {before, after, moreHidden: more?.hidden,
+          selected: choices.querySelector('input[value="genre 55"]')?.checked,
+          summary: picker.querySelector('summary')?.textContent}; })()`,
+    });
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 390) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
       await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'discover-mobile.png'),
@@ -291,6 +308,7 @@ async function inspectMobile(url, profile, width = 390) {
       await wait(300);
     }
     return { ...result.value, mobilePager: mobilePager.result.value,
+      tagBrowse: tagBrowse.result.value,
       menu: menu.result.value,
       adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
       searchAdultLabels: searchAdultLabels.result.value,
@@ -438,7 +456,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'ready', year: 2026, season: 'FALL',
-          sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance'],
+          sourceDate: '2026-11-05', availableTags: ['action', 'fantasy', 'romance',
+            ...Array.from({ length: 65 }, (_, index) => `genre ${index + 1}`)],
           ...(ongoing ? { orderState: 'score_loading' } : {}),
           items: ongoing ? [{ anidbId: 19847, title: 'FX Senshi Kurumi-chan',
             type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
@@ -619,6 +638,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
       assert.deepEqual(mobile.mobilePager, { label: 'Page 2 of 3',
         visible: true, fits: true, previousEnabled: true, nextEnabled: true });
+      assert.deepEqual(mobile.tagBrowse, { before: 40, after: 68,
+        moreHidden: true, selected: true, summary: 'Genres & themes · 1' });
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
