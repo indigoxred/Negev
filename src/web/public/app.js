@@ -1636,7 +1636,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     if (pager?.episodes.length === 0) panel.append(element('p',
       data.kind === 'movie'
-        ? 'AniDB has no film target listed yet, so this film cannot be requested.'
+        ? 'AniDB has no exact film entry listed yet. You can save a request; Negev will wait for an exact film entry before any download.'
         : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
       'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
@@ -1936,7 +1936,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       return;
     }
     if (data.restricted) panel.append(element('p', '18+ title', 'badge partial'));
-    if (data.kind === 'movie' && pager.episodes.length === 0) return;
+    if (data.kind === 'movie' && pager.episodes.length === 0) {
+      const pendingFilmAction = earlyRequest ?? pendingTitleAction({ ...item,
+        adult: data.restricted });
+      if (pendingFilmAction) panel.insertBefore(pendingFilmAction, relatedHeading);
+      return;
+    }
     // Keep the original control mounted while its save is in flight so the
     // asynchronous result and request number remain visible after hydration.
     if (earlyRequest?.dataset.saving === 'true' ||

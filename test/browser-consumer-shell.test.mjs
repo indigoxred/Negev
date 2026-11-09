@@ -273,6 +273,12 @@ async function inspectMobile(url, profile, width = 390) {
         return {button: action?.querySelector('.primary')?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/20291') });
+    await wait(700);
+    const unlistedFilm = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({message: document.querySelector('#detail')?.textContent,
+        action: document.querySelector('#detail .request-action .primary')?.textContent})`,
+    });
     let airingTrack = null;
     if (width === 390) {
       await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
@@ -336,7 +342,8 @@ async function inspectMobile(url, profile, width = 390) {
       requestSaved: requestSaved.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
-      reviewAfterRetry: reviewAfterRetry.result.value, airingTrack };
+      reviewAfterRetry: reviewAfterRetry.result.value,
+      unlistedFilm: unlistedFilm.result.value, airingTrack };
   } finally {
     socket?.close();
     child.kill();
@@ -528,6 +535,13 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'unknown' }] }));
         return;
       }
+      if (path === '/api/catalogue/20291') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 20291,
+          title: 'Unlisted future film', kind: 'movie', restricted: false,
+          page: 1, total: 0, nextPage: null, episodes: [] }));
+        return;
+      }
       if (path === '/api/catalogue/7') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 7,
@@ -704,6 +718,9 @@ test('signed-in consumer routes render real shell with search, library and reque
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
       assert.equal(mobile.reviewAfterRetry.button, 'Confirm request');
       assert.equal(mobile.reviewAfterRetry.reviewVisible, true);
+      assert.equal(mobile.unlistedFilm.action, 'Request if missing');
+      assert.match(mobile.unlistedFilm.message,
+        /wait for an exact film entry before any download/i);
       assert.equal(mobile.airingTrack.defaultMode, 'library');
       assert.equal(mobile.airingTrack.tracked, 'Stop tracking');
       assert.equal(mobile.airingTrack.mode, 'custom');

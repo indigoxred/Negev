@@ -899,7 +899,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(202).send(result);
     }
     if (body.scope === 'installment' &&
-        ['detail_pending', 'detail_unavailable', 'release_state_unknown'].includes(result.reason) &&
+        ['detail_pending', 'detail_unavailable', 'detail_incomplete',
+          'release_state_unknown'].includes(result.reason) &&
         typeof queuePendingTitle === 'function') {
       const pending = await queuePendingTitle({
         requesterId: request.negevUser.id, anidbId: body.anidbId,
