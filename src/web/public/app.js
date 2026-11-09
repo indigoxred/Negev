@@ -763,6 +763,8 @@ for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
 function renderGenres(prefix, availableTags, selected) {
   const choices = byId(`${prefix}-tags`);
   const search = byId(`${prefix}-tag-search`);
+  const more = byId(`${prefix}-tag-more`);
+  let expanded = false;
   genreSelections[prefix] = new Set(selected ? selected.split(',') : []);
   const featured = ['action', 'adventure', 'comedy', 'drama', 'fantasy',
     'romance', 'sci-fi', 'slice of life', 'supernatural', 'sports', 'horror',
@@ -773,8 +775,9 @@ function renderGenres(prefix, availableTags, selected) {
       ? availableTags.filter((tag) => tag.includes(query))
       : [...new Set([...genreSelections[prefix],
         ...featured.filter((tag) => availableTags.includes(tag)), ...availableTags])];
-    choices.replaceChildren();
-    for (const tag of matching.slice(0, 40)) {
+    const visible = expanded ? matching : matching.slice(0, 40);
+    const options = document.createDocumentFragment();
+    for (const tag of visible) {
       const label = element('label', undefined, 'genre-option');
       const box = element('input');
       box.type = 'checkbox';
@@ -789,17 +792,21 @@ function renderGenres(prefix, availableTags, selected) {
           `Genres & themes · ${genreSelections[prefix].size || 'All'}`;
       });
       label.append(box, document.createTextNode(tag));
-      choices.append(label);
+      options.append(label);
     }
-    byId(`${prefix}-tag-count`).textContent = matching.length > 40
-      ? `Showing 40 of ${matching.length} matches. Search to narrow; select up to five.`
+    choices.replaceChildren(options);
+    more.hidden = expanded || matching.length <= 40;
+    more.textContent = `Show all ${matching.length.toLocaleString()} matches`;
+    byId(`${prefix}-tag-count`).textContent = matching.length > visible.length
+      ? `Showing ${visible.length} of ${matching.length} matches. Search or show all; select up to five.`
       : `${matching.length} matching genres and themes. Select up to five.`;
     byId(`${prefix}-form`).querySelector('.genre-picker summary').textContent =
       `Genres & themes · ${genreSelections[prefix].size || 'All'}`;
   };
   search.value = '';
-  search.oninput = render;
+  search.oninput = () => { expanded = false; render(); };
   search.onkeydown = (event) => { if (event.key === 'Enter') event.preventDefault(); };
+  more.onclick = () => { expanded = true; render(); };
   render();
 }
 async function loadSeasonal({ year, season, after, kind, tag }) {
