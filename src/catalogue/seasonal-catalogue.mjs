@@ -12,7 +12,8 @@ const browseSeasons = new Set(['ALL', ...seasons]);
 const seasonOrder = new Map(['WINTER', 'SPRING', 'SUMMER', 'FALL'].map((value, index) => [value, index]));
 const kinds = new Set(['all', 'series', 'movies']);
 const statuses = new Set(['all', 'ongoing']);
-const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode']);
+const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc',
+  'next_episode', 'score_desc', 'popular_desc']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
 const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
@@ -46,9 +47,14 @@ async function parseMap(response) {
       /^https:\/\/anidb\.net\/anime\/([1-9]\d*)$/.exec(source)?.[1])
       .filter(Boolean).map(Number);
     if (ids.length !== 1 || !validId(ids[0])) return;
+    const malIds = entry.sources.map((source) =>
+      /^https:\/\/myanimelist\.net\/anime\/([1-9]\d*)$/.exec(source)?.[1])
+      .filter(Boolean).map(Number);
     const key = `${year}-${season}`;
     if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push({ anidbId: ids[0], title: entry.title.trim(),
+    groups.get(key).push({ anidbId: ids[0],
+      malId: malIds.length === 1 && validId(malIds[0]) ? malIds[0] : null,
+      title: entry.title.trim(),
       type: typeof entry.type === 'string' ? entry.type.toUpperCase() : '',
       tags: Array.isArray(entry.tags) && entry.tags.length <= 100
         ? entry.tags.filter((tag) => validTag(tag) && tag !== '')
@@ -162,11 +168,14 @@ async function parseMap(response) {
 // consume this reader or treat a seasonal map as proof of an exact file.
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   readSchedule = null,
+  scoreCache = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
   timeoutMs = 12_000, detailTimeoutMs = 2_500,
   scheduleWaitMs = 2_000 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof now !== 'function' ||
       readSchedule !== null && typeof readSchedule !== 'function' ||
+      scoreCache !== null && (typeof scoreCache.prime !== 'function' ||
+        typeof scoreCache.get !== 'function') ||
       ![cacheMs, staleMs, timeoutMs, detailTimeoutMs, scheduleWaitMs].every((value) =>
         Number.isSafeInteger(value) && value > 0) || staleMs <= cacheMs ||
       staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000 ||
@@ -271,6 +280,31 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
         selectedTags.every((selected) => entry.tags.includes(selected)));
     let orderState;
+    if (status === 'ongoing' && scoreCache) {
+      const eligible = entries.filter((entry) => entry.malId !== null)
+        .map(({ anidbId, malId }) => ({ anidbId, malId }));
+      const scoreProgress = scoreCache.prime(eligible);
+      if (sort === 'score_desc' || sort === 'popular_desc') {
+        const metric = sort === 'score_desc' ? 'score' : 'members';
+        const anyEvidence = eligible.some(({ anidbId, malId }) =>
+          typeof scoreCache.get(anidbId, malId)?.[metric] === 'number');
+        orderState = !scoreProgress.ready ? 'score_loading'
+          : !anyEvidence ? 'score_unavailable'
+          : sort === 'score_desc' ? 'score' : 'popularity';
+        if (orderState === 'score' || orderState === 'popularity') entries.sort((a, b) => {
+          const left = a.malId === null ? null : scoreCache.get(a.anidbId, a.malId);
+          const right = b.malId === null ? null : scoreCache.get(b.anidbId, b.malId);
+          const leftValue = typeof left?.[metric] === 'number'
+            ? left[metric] : -1;
+          const rightValue = typeof right?.[metric] === 'number'
+            ? right[metric] : -1;
+          return rightValue - leftValue || a.title.localeCompare(b.title) ||
+            a.anidbId - b.anidbId;
+        });
+      }
+    } else if (sort === 'score_desc' || sort === 'popular_desc') {
+      orderState = 'score_unavailable';
+    }
     if (sort === 'next_episode') {
       const today = new Date(time).toISOString().slice(0, 10);
       const dates = new Map();
@@ -317,9 +351,16 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     }
     const partial = found.some(({ verification }) => verification.kind === 'unknown');
     const items = found.filter(({ verification }) => verification.kind === 'verified')
-      .map(({ entry, verification }) => ({ anidbId: entry.anidbId,
-        title: verification.title, type: verification.type,
-        releaseStatus: entry.releaseStatus, adult: verification.adult }));
+      .map(({ entry, verification }) => {
+        const snapshot = scoreCache && entry.malId !== null
+          ? scoreCache.get(entry.anidbId, entry.malId) : null;
+        return { anidbId: entry.anidbId,
+          title: verification.title, type: verification.type,
+          releaseStatus: entry.releaseStatus, adult: verification.adult,
+          ...(['rated', 'unrated'].includes(snapshot?.state)
+            ? { rating: { score: snapshot.score, votes: snapshot.votes,
+              members: snapshot.members, checkedMs: snapshot.checkedMs } } : {}) };
+      });
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
       year, season, sourceDate: cached.sourceDate, items, availableTags,
       ...(orderState ? { orderState } : {}),

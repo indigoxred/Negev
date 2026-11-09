@@ -339,7 +339,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         !['ALL', 'WINTER', 'SPRING', 'SUMMER', 'FALL'].includes(query.season) ||
         !['all', 'series', 'movies'].includes(query.kind ?? 'all') ||
         !['all', 'ongoing'].includes(query.status ?? 'all') ||
-        !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode'].includes(query.sort ?? 'newest') ||
+        !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode',
+          'score_desc', 'popular_desc'].includes(query.sort ?? 'newest') ||
         (query.tag !== undefined && (typeof query.tag !== 'string' ||
           query.tag.length > 200 || query.tag.split(',').length > 5 ||
           query.tag.split(',').some((tag) =>
@@ -382,8 +383,20 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
                 item.libraryPresence.verifiedEpisodeCount !== 0)) ||
           item.releaseStatus !== null && (typeof item.releaseStatus !== 'string' ||
             item.releaseStatus.length > 80)) ||
+        page.items.some((item) => item.rating !== undefined &&
+          (item.rating?.score !== null &&
+            (typeof item.rating?.score !== 'number' ||
+              !Number.isFinite(item.rating.score) || item.rating.score < 0 ||
+              item.rating.score > 10) ||
+            !Number.isSafeInteger(item.rating.votes) || item.rating.votes < 0 ||
+            item.rating.score !== null && item.rating.votes === 0 ||
+            !Number.isSafeInteger(item.rating.members) ||
+            item.rating.members < 0 ||
+            !Number.isSafeInteger(item.rating.checkedMs) ||
+            item.rating.checkedMs < 0)) ||
         page.orderState !== undefined &&
-          !['schedule', 'fallback'].includes(page.orderState) ||
+          !['schedule', 'fallback', 'score', 'popularity',
+            'score_loading', 'score_unavailable'].includes(page.orderState) ||
         page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
           page.nextAfter <= after || page.nextAfter > 100_000)) {
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
@@ -395,6 +408,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
         releaseStatus: item.releaseStatus, adult: item.adult,
+        ...(item.rating === undefined ? {} : { rating: item.rating }),
         ...(item.libraryPresence === undefined ? {} :
           { libraryPresence: item.libraryPresence }) })),
       nextAfter: page.nextAfter };

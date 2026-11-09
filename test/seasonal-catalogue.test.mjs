@@ -208,6 +208,78 @@ test('a cold catalogue page bounds detail fanout and finishes despite slow cards
   assert.deepEqual(page.items.map((item) => item.anidbId), [1]);
 });
 
+test('Airing sorts the full eligible set by mapped MAL score or members', async () => {
+  const entries = [1, 2, 3].map((id) => ({
+    ...row(`Title ${id}`, id), status: 'ONGOING',
+    sources: [`https://anidb.net/anime/${id}`,
+      `https://myanimelist.net/anime/${id + 10}`],
+  }));
+  const observations = new Map([
+    [1, { state: 'rated', score: 7.1, votes: 100, members: 9000, checkedMs: 1000 }],
+    [2, { state: 'rated', score: 8.2, votes: 200, members: 4000, checkedMs: 1000 }],
+    [3, { state: 'unrated', score: null, votes: 0, members: 1000, checkedMs: 1000 }],
+  ]);
+  const primed = [];
+  const scoreCache = { prime(pairs) { primed.push(pairs); return {
+    ready: true, checked: pairs.length, total: pairs.length }; },
+  get(id) { return observations.get(id) ?? null; } };
+  const reader = createSeasonalCatalogue({ scoreCache,
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const byScore = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'score_desc' });
+  assert.equal(byScore.orderState, 'score');
+  assert.deepEqual(byScore.items.map((item) => item.anidbId), [2, 1, 3]);
+  assert.deepEqual(primed[0], [
+    { anidbId: 1, malId: 11 }, { anidbId: 2, malId: 12 },
+    { anidbId: 3, malId: 13 }]);
+  const byPopularity = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'popular_desc' });
+  assert.equal(byPopularity.orderState, 'popularity');
+  assert.deepEqual(byPopularity.items.map((item) => item.anidbId), [1, 2, 3]);
+  assert.deepEqual(byScore.items[0].rating, { score: 8.2,
+    votes: 200, members: 4000, checkedMs: 1000 });
+  assert.deepEqual(byPopularity.items[2].rating, { score: null,
+    votes: 0, members: 1000, checkedMs: 1000 });
+});
+
+test('Airing keeps its fast fallback while scores warm in the background', async () => {
+  const entries = [1, 2].map((id) => ({ ...row(`Title ${id}`, id),
+    status: 'ONGOING', sources: [`https://anidb.net/anime/${id}`,
+      `https://myanimelist.net/anime/${id + 10}`] }));
+  const reader = createSeasonalCatalogue({
+    scoreCache: { prime: () => ({ ready: false, checked: 0, total: 2 }),
+      get: () => null },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const result = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'score_desc' });
+  assert.equal(result.orderState, 'score_loading');
+  assert.deepEqual(result.items.map((item) => item.anidbId), [1, 2]);
+});
+
+test('missing mapped ratings do not pretend to rank ongoing titles', async () => {
+  const entries = [{ ...row('Unmapped', 1), status: 'ONGOING' }];
+  const reader = createSeasonalCatalogue({
+    scoreCache: { prime: () => ({ ready: true, checked: 0, total: 0 }),
+      get: () => null },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: 1, title: 'Unmapped',
+        type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'score_desc' });
+  assert.equal(page.orderState, 'score_unavailable');
+  assert.equal(page.items[0].rating, undefined);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;
