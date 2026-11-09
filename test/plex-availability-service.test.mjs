@@ -113,6 +113,19 @@ test('first-time section probe reports only Plex health even when a card exists'
   service.close();
 });
 
+test('a newly indexed exact card notifies the recent-file proof retry', async () => {
+  const { config } = await fixture();
+  const indexed = [];
+  const service = createPlexAvailabilityService({ ...config,
+    onCardIndexed: (card) => indexed.push(card) });
+  try {
+    assert.equal((await service.tick({ libraryId: 102,
+      kind: 'episode' })).state, 'page_indexed');
+    assert.deepEqual(indexed, [{ libraryId: 102, ratingKey: 500,
+      kind: 'episode' }]);
+  } finally { service.close(); }
+});
+
 test('first-time source policy verifies the public Plex library before page reads', async () => {
   const { config, calls } = await fixture();
   config.sourcePolicy = [{ libraryId: 102, type: 'show',
