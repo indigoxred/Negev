@@ -1933,6 +1933,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     cancelReview.addEventListener('click', () => {
       reviewingRequest = false;
       requestReview.hidden = true;
+      requestStatus.textContent = '';
       refreshRequestAction();
     });
     requestReview.append(cancelReview);

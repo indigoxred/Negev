@@ -103,6 +103,21 @@ async function inspectMobile(url, profile, width = 390) {
         searchRight: document.querySelector('#search-form').getBoundingClientRect().right,
         hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover',
+      '#/discover?year=2025&season=ALL&after=12') });
+    await wait(800);
+    const mobilePager = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const pager = document.querySelector('.season-pages');
+        const previous = document.querySelector('#season-previous');
+        const next = document.querySelector('#season-next');
+        return {label: document.querySelector('#season-page-position')?.textContent,
+          visible: !pager?.hidden,
+          fits: pager?.getBoundingClientRect().right <= innerWidth &&
+            pager?.getBoundingClientRect().left >= 0,
+          previousEnabled: !previous?.disabled, nextEnabled: !next?.disabled}; })()`,
+    });
+    await send('Page.navigate', { url });
+    await wait(300);
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 390) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
       await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'discover-mobile.png'),
@@ -187,6 +202,15 @@ async function inspectMobile(url, profile, width = 390) {
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
     });
+    const requestCancelled = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        action.querySelector('.request-review button').click();
+        return {reviewHidden: action.querySelector('.request-review').hidden,
+          button: action.querySelector('.primary').textContent,
+          status: action.querySelector('.request-feedback').textContent}; })()`,
+    });
+    await send('Runtime.evaluate', { expression:
+      `document.querySelector('.request-action .primary').click()` });
     const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         const select = action.querySelector('select'); select.value = '43';
@@ -230,7 +254,8 @@ async function inspectMobile(url, profile, width = 390) {
         return {button: action?.querySelector('.primary')?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
-    return { ...result.value, menu: menu.result.value,
+    return { ...result.value, mobilePager: mobilePager.result.value,
+      menu: menu.result.value,
       adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
       searchAdultLabels: searchAdultLabels.result.value,
       filtered: filtered.result.value,
@@ -239,6 +264,7 @@ async function inspectMobile(url, profile, width = 390) {
         ...franchiseAfter.result.value },
       requestReview: requestReview.result.value,
       requestSelection: requestSelection.result.value,
+      requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
@@ -544,6 +570,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
+      assert.deepEqual(mobile.mobilePager, { label: 'Page 2 of 3',
+        visible: true, fits: true, previousEnabled: true, nextEnabled: true });
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
@@ -568,6 +596,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
         summary: 'Example Season Two · Negev will check its film or episodes before saving',
         cancelLabel: 'Cancel' });
+      assert.deepEqual(mobile.requestCancelled, { reviewHidden: true,
+        button: 'Watch future episodes', status: '' });
       assert.equal(mobile.requestSaved.reviewHidden, true);
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /Request #7 saved/);
