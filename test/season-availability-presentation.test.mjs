@@ -42,6 +42,16 @@ test('verified complete installments are not offered as new requests', () => {
     episodes: [{ type: 'Episode', availability: 'available' }] }), 'already_available');
   assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,
     episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,
+    regularSeason: { verified: 10, total: 10 },
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'already_available',
+  'complete cached regular-season proof must close a multi-page request immediately');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,
+    regularSeason: { verified: 9, total: 10 },
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable');
+  assert.equal(installmentRequestState({ kind: 'series', nextPage: 2,
+    monitorFuture: true, regularSeason: { verified: 10, total: 10 },
+    episodes: [{ type: 'Episode', availability: 'available' }] }), 'requestable');
   assert.equal(installmentRequestState({ kind: 'series', nextPage: null,
     episodes: [{ type: 'Episode', availability: 'unknown' }] }), 'requestable');
 });

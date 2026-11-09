@@ -1792,6 +1792,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     let refreshSelectedRequestAction = () => {};
     const likelyCompleteSeries = data.kind === 'series' &&
       data.monitorFuture !== true &&
+      installmentRequestState({ kind: data.kind,
+        episodes: pager.episodes, nextPage: pager.nextPage,
+        regularSeason: data.regularSeason }) !== 'already_available' &&
       data.endDate && data.endDate < new Date().toISOString().slice(0, 10) &&
       Number.isSafeInteger(data.episodeCount) && data.episodeCount > 0 &&
       data.libraryPresence?.state === 'in_library' &&
@@ -2022,7 +2025,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const alreadyAvailable = () => selectedInstallmentId === item.anidbId &&
       installmentRequestState({ kind: data.kind,
       episodes: pager.episodes, nextPage: pager.nextPage,
-      monitorFuture: data.monitorFuture }) === 'already_available';
+      monitorFuture: data.monitorFuture,
+      regularSeason: data.regularSeason }) === 'already_available';
     const requestLabel = () => data.kind === 'movie' ? 'Request film' :
       selectedInstallmentId !== item.anidbId ? 'Request selected installment' :
       data.monitorFuture === true && pager.episodes.some((episode) =>
