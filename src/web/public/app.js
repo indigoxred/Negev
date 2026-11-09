@@ -1,4 +1,4 @@
-import { createRequestKeyStore } from './request-key.mjs';
+import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
@@ -14,7 +14,7 @@ import { parseConsumerRoute, searchRoute, titleRoute,
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
-  createKey: () => crypto.randomUUID() });
+  createKey: generateRequestKey });
 const state = { csrf: null, user: null, selected: null,
   nextBeforeId: { watching: null, history: null, preparing: null },
   releaseSearch: false, detailLoad: false,
@@ -1927,8 +1927,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       const selectedFilmId = needsFilmChoice ? Number(filmChoiceSelect.value) : null;
       const scope = { userId: state.user.id, anidbId: item.anidbId,
         ...(selectedFilmId ? { selection: `film-entry-${selectedFilmId}` } : {}) };
-      const requestKey = requestKeys.pending(scope);
       try {
+        const requestKey = requestKeys.pending(scope);
         const saved = await api('/api/requests', { method: 'POST', body: JSON.stringify({
           anidbId: item.anidbId,
           scope: selectedFilmId ? 'episodes' : 'installment',
