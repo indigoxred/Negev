@@ -347,6 +347,16 @@ test('signed-in consumer routes render real shell with search, library and reque
       }
       if (path === '/api/seasons') {
         const params = new URL(request.url, 'http://localhost').searchParams;
+        if (params.get('year') === '2025') {
+          const after = Number(params.get('after') ?? 0);
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'ready', year: 2025,
+            season: 'ALL', sourceDate: '2026-11-05', availableTags: [], total: 25,
+            items: [{ anidbId: 4158, title: `Page ${after / 12 + 1}`,
+              type: 'OVA', adult: false }],
+            nextAfter: after + 12 < 25 ? after + 12 : null }));
+          return;
+        }
         const ongoing = params.get('status') === 'ongoing';
         if (ongoing && params.get('sort') !== 'popular_desc') {
           response.statusCode = 400;
@@ -594,6 +604,18 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(season, /The Garden of Words/);
       assert.match(season, /18\+/);
       assert.match(season, /✓ In library · 1 verified item/);
+      const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
+        join(dir, 'page-one'));
+      assert.match(pageOne, /Page 1 of 3/);
+      assert.match(pageOne, /id="season-previous"[^>]*disabled/);
+      const pageTwo = await dump(`${base}/#/discover?year=2025&season=ALL&after=12`,
+        join(dir, 'page-two'));
+      assert.match(pageTwo, /Page 2 of 3/);
+      assert.doesNotMatch(pageTwo, /id="season-previous"[^>]*disabled/);
+      const pageThree = await dump(`${base}/#/discover?year=2025&season=ALL&after=24`,
+        join(dir, 'page-three'));
+      assert.match(pageThree, /Page 3 of 3/);
+      assert.match(pageThree, /id="season-next"[^>]*disabled/);
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);

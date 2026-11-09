@@ -30,7 +30,7 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   }, now: () => 1000 });
   const first = await reader.read({ year: 2026, season: 'FALL', limit: 2 });
   assert.deepEqual(first, { state: 'ready', year: 2026, season: 'FALL',
-    sourceDate: '2026-11-05', availableTags: [],
+    sourceDate: '2026-11-05', availableTags: [], total: 3,
     items: [{ anidbId: 1, title: 'AniDB 1',
       type: 'TV Series', releaseStatus: 'RELEASING', adult: false },
     { anidbId: 2, title: 'AniDB 2', type: 'TV Series',
@@ -38,6 +38,7 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   const second = await reader.read({ year: 2026, season: 'FALL',
     after: first.nextAfter, limit: 2 });
   assert.deepEqual(second.items.map((item) => item.anidbId), [3]);
+  assert.equal(second.total, 3);
   assert.equal(second.nextAfter, null);
   assert.equal(calls.filter((url) => url.endsWith('/api/v1/map')).length, 1);
   assert.equal(calls.some((url) => url.endsWith('/4') || url.endsWith('/5')), false);
