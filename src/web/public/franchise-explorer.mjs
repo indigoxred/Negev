@@ -57,3 +57,39 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
     },
   };
 }
+
+// One user action may need several one-hop reads to show a useful group of
+// installments. Bound the walk so a large or cyclic franchise stays cheap.
+export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
+  minNewItems = 8, shouldContinue = () => true } = {}) {
+  if (typeof explorer?.next !== 'function' ||
+      typeof explorer?.items !== 'function' ||
+      typeof explorer?.add !== 'function' ||
+      typeof explorer?.skip !== 'function' || typeof read !== 'function' ||
+      typeof shouldContinue !== 'function' ||
+      !Number.isSafeInteger(maxReads) || maxReads < 1 || maxReads > 12 ||
+      !Number.isSafeInteger(minNewItems) || minNewItems < 1 || minNewItems > 49) {
+    throw new TypeError('Invalid franchise expansion');
+  }
+  const before = explorer.items().length;
+  let reads = 0;
+  let failures = 0;
+  while (reads < maxReads && explorer.items().length - before < minNewItems &&
+      shouldContinue()) {
+    const next = explorer.next();
+    if (!next) break;
+    reads++;
+    try { explorer.add(await read(next.anidbId)); }
+    catch {
+      if (next.anidbId === explorer.items()[0].anidbId) {
+        return { state: 'root_unavailable', reads, added: 0,
+          failures: 1, hasMore: true };
+      }
+      explorer.skip(next.anidbId);
+      failures++;
+    }
+  }
+  return { state: shouldContinue() ? 'expanded' : 'cancelled',
+    reads, added: explorer.items().length - before, failures,
+    hasMore: explorer.next() !== null };
+}

@@ -1,6 +1,56 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFranchiseExplorer } from '../src/web/public/franchise-explorer.mjs';
+import { createFranchiseExplorer, expandFranchiseBatch } from '../src/web/public/franchise-explorer.mjs';
+
+test('one explicit expansion gathers several separate relation pages', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Part 20', relation: 'Sequel' }] });
+  const calls = [];
+  const result = await expandFranchiseBatch({ explorer: view,
+    read: async (anidbId) => {
+      calls.push(anidbId);
+      return { anidbId, state: 'related_titles', completeness: 'unproven',
+        items: [{ anidbId: anidbId + 10,
+          title: `Part ${anidbId + 10}`, relation: 'Sequel' }] };
+    }, maxReads: 6, minNewItems: 8 });
+  assert.deepEqual(calls, [20, 30, 40, 50, 60, 70]);
+  assert.deepEqual(view.items().map((item) => item.anidbId),
+    [10, 20, 30, 40, 50, 60, 70, 80]);
+  assert.deepEqual(result, { state: 'expanded', reads: 6, added: 6,
+    failures: 0, hasMore: true });
+});
+
+test('an unavailable branch is skipped and the next branch still expands', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Part 20', relation: 'Prequel' },
+      { anidbId: 30, title: 'Part 30', relation: 'Sequel' }] });
+  const result = await expandFranchiseBatch({ explorer: view,
+    read: async (anidbId) => {
+      if (anidbId === 20) throw new Error('Source unavailable');
+      return { anidbId, state: 'related_titles', completeness: 'unproven',
+        items: [] };
+    }, maxReads: 2, minNewItems: 8 });
+  assert.equal(result.failures, 1);
+  assert.equal(result.reads, 2);
+  assert.equal(view.next(), null);
+});
+
+test('show more still expands when the first page already contains many cards', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: Array.from({ length: 15 }, (_, index) => ({
+      anidbId: 20 + index, title: `Part ${20 + index}`, relation: 'Sequel' })) });
+  const result = await expandFranchiseBatch({ explorer: view,
+    read: async (anidbId) => ({ anidbId, state: 'related_titles',
+      completeness: 'unproven', items: [{ anidbId: 99,
+        title: 'Another part', relation: 'Sequel' }] }),
+    maxReads: 1 });
+  assert.equal(result.reads, 1);
+  assert.equal(result.added, 1);
+  assert.equal(view.items().at(-1).anidbId, 99);
+});
 
 test('expands verified installments one title at a time without merging request identities', () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });

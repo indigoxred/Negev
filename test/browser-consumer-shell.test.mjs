@@ -186,7 +186,9 @@ async function inspectMobile(url, profile, width = 390) {
     await wait(800);
     const franchiseBefore = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const button = document.querySelector('.related-trigger');
-        const before = button?.textContent; button?.click(); return before; })()`,
+        const before = {button: button?.textContent,
+          count: document.querySelectorAll('.related-card').length};
+        button?.click(); return before; })()`,
     });
     await wait(300);
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
@@ -491,6 +493,16 @@ test('signed-in consumer routes render real shell with search, library and reque
           { anidbId: 9603, title: 'Another installment', relation: 'Alternative' }] }));
         return;
       }
+      if (/^\/api\/catalogue\/(9589|9600|9601|9602|9603|9604|9605)\/related$/.test(path)) {
+        const anidbId = Number(path.split('/')[3]);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'related_titles', anidbId,
+          completeness: 'unproven', items: anidbId === 9589 ? [
+            { anidbId: 9604, title: 'Next film', relation: 'Sequel' },
+            { anidbId: 9605, title: 'Extra episode', relation: 'SideStory' },
+          ] : [] }));
+        return;
+      }
       if (path === '/api/catalogue/4158') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 4158,
@@ -648,16 +660,18 @@ test('signed-in consumer routes render real shell with search, library and reque
         { id: 14974, label: '18+' }, { id: 11003, label: '18+' }]);
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
-      assert.equal(mobile.franchise.before, 'Show more related titles');
+      assert.deepEqual(mobile.franchise.before,
+        { button: 'Show more related titles', count: 5 });
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
       assert.match(mobile.franchise.listed, /1 verified item in library/);
-      assert.equal(mobile.franchise.posterCards, 5);
+      assert.equal(mobile.franchise.posterCards, 7);
       assert.deepEqual(mobile.franchise.relationLabels,
-        ['Prequel', 'Sequel', 'Side story', 'Side story', 'Alternative']);
+        ['Prequel', 'Sequel', 'Sequel', 'Side story', 'Side story',
+          'Side story', 'Alternative']);
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
-      assert.equal(mobile.franchise.next, 'Show more related titles');
+      assert.equal(mobile.franchise.next, 'No more cached links to explore');
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });

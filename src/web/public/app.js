@@ -5,7 +5,7 @@ import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
-import { createFranchiseExplorer } from './franchise-explorer.mjs';
+import { createFranchiseExplorer, expandFranchiseBatch } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
@@ -1705,24 +1705,22 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedButton.disabled = true;
     }
     let relatedLoading = false;
-    const loadRelated = async () => {
+    const loadRelated = async ({ batch = false } = {}) => {
       const next = family.next();
       if (!next || relatedLoading) return;
       relatedLoading = true;
       relatedButton.disabled = true;
       relatedButton.textContent = 'Loading related titles…';
       try {
-        const related = await api(`/api/catalogue/${next.anidbId}/related`);
-        family.add(related);
-        if (isCurrentDetail()) renderFamily();
-      } catch {
+        const result = await expandFranchiseBatch({ explorer: family,
+          read: (anidbId) => api(`/api/catalogue/${anidbId}/related`),
+          maxReads: batch ? 8 : 1, minNewItems: batch ? 8 : 1,
+          shouldContinue: isCurrentDetail });
         if (isCurrentDetail()) {
-          if (next.anidbId !== item.anidbId) {
-            family.skip(next.anidbId);
-            renderFamily();
-          }
+          renderFamily();
+          if (result.failures === 0) return;
           const error = element('p',
-            next.anidbId === item.anidbId
+            result.state === 'root_unavailable'
               ? 'Related titles could not be loaded. Try again or search for another installment.'
               : 'Some relationships could not be loaded. You can open that title directly or continue exploring.',
             'muted related-error');
@@ -1731,7 +1729,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedList.append(error);
           } else relatedList.replaceChildren(error);
           if (family.next()) {
-            relatedButton.textContent = next.anidbId === item.anidbId ?
+            relatedButton.textContent = result.state === 'root_unavailable' ?
               'Try related titles again' : 'Show more related titles';
             relatedButton.hidden = false;
             relatedButton.disabled = false;
@@ -1739,7 +1737,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         }
       } finally { relatedLoading = false; }
     };
-    relatedButton.addEventListener('click', () => { void loadRelated(); });
+    relatedButton.addEventListener('click', () => { void loadRelated({ batch: true }); });
     const relatedHeading = element('h2', 'Related titles', 'related-heading');
     panel.append(relatedHeading, relatedList, relatedButton);
     if (!franchise) void loadRelated();
