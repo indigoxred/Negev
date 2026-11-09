@@ -31,6 +31,29 @@ test('keeps Shoko 204 inconclusive and does not parse a response body', async ()
   assert.deepEqual(result, { status: 204 });
 });
 
+test('allows 204 fallback only while Shoko reports AniDB UDP reachable and not banned', async () => {
+  for (const [connectivity, ready] of [
+    [{ IsAniDBUdpReachable: true, IsAniDBUdpBanned: false }, true],
+    [{ IsAniDBUdpReachable: false, IsAniDBUdpBanned: false }, false],
+    [{ IsAniDBUdpReachable: true, IsAniDBUdpBanned: true }, false],
+    [{ IsAniDBUdpReachable: true }, false],
+  ]) {
+    const paths = [];
+    const result = await previewAniDbRelease({ ...options,
+      fetchImpl: async (url) => {
+        paths.push(new URL(url).pathname);
+        return paths.length === 1 ? { status: 204 } :
+          { status: 200, text: async () => JSON.stringify(connectivity) };
+      } });
+    assert.deepEqual(paths, [
+      '/api/v3/ReleaseInfo/Provider/11111111-2222-4333-8444-555555555555/Preview/By-Release',
+      '/api/v3/Init/Connectivity',
+    ]);
+    assert.deepEqual(result, ready
+      ? { status: 204, aniDbReady: true } : { status: 204 });
+  }
+});
+
 test('converts transport failure and malformed JSON to provider-unavailable evidence', async () => {
   assert.deepEqual(await previewAniDbRelease({ ...options, fetchImpl: async () => { throw Error('network down'); } }), { status: 0 });
   assert.deepEqual(await previewAniDbRelease({ ...options, fetchImpl: async () => ({ status: 200, text: async () => 'not-json' }) }), { status: 0 });

@@ -28,6 +28,26 @@ export async function previewAniDbRelease({
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status === 204) {
+      // This Shoko build returns 204 both for a missing AniDB file and while
+      // its UDP provider is banned. Only offer the filename fallback when its
+      // separate supported connectivity endpoint reports a usable provider.
+      try {
+        const health = await fetchImpl(new URL('/api/v3/Init/Connectivity', base), {
+          method: 'GET', redirect: 'manual',
+          headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+        if (health.status === 200) {
+          const state = await readBoundedJson(health, 8_192);
+          if (state?.IsAniDBUdpReachable === true &&
+              state.IsAniDBUdpBanned === false) {
+            return { status: 204, aniDbReady: true };
+          }
+        }
+      } catch { /* An unavailable status cannot authorize fallback. */ }
+      return { status: 204 };
+    }
     if (response.status !== 200) return { status: response.status };
     return { status: 200, release: await readBoundedJson(response, 1_000_000) };
   } catch {

@@ -128,6 +128,9 @@ test('AniDB 204 with exact installed Offline Importer preview journals only priv
           return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
             ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
         }
+        if (endpoint.pathname === '/api/v3/Init/Connectivity') {
+          return Response.json({ IsAniDBUdpReachable: true, IsAniDBUdpBanned: false });
+        }
         const id = endpoint.searchParams.get('id');
         if (id === `anidb://${identity.ed2k}+${identity.size}`) {
           return new Response(null, { status: 204 });
@@ -168,6 +171,9 @@ test('one offline attempt survives private preparation, publish and Shoko placem
         return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
           ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
       }
+      if (endpoint.pathname === '/api/v3/Init/Connectivity') {
+        return Response.json({ IsAniDBUdpReachable: true, IsAniDBUdpBanned: false });
+      }
       if (endpoint.searchParams.get('id') ===
           `anidb://${identity.ed2k}+${identity.size}`) {
         return new Response(null, { status: 204 });
@@ -182,7 +188,7 @@ test('one offline attempt survives private preparation, publish and Shoko placem
     assert.equal(prepared.state, 'handoff_prepared', JSON.stringify(prepared));
     const published = await processRecordedHandoff({ attemptId,
       ledger: handoffs, holdingRoot, importRoot, nowMs: 207,
-      lookup: async () => ({ status: 204 }),
+      lookup: async () => ({ status: 204, aniDbReady: true }),
       offlineLookup: async ({ filename }) => ({ status: 200,
         release: { ...offlineRelease, OriginalFilename: filename } }),
       readPacer: { afterBytes: async () => {} },
@@ -308,7 +314,7 @@ test('AniDB provider uncertainty stays retryable and a wrong-show match is termi
           return { status: 200, text: async () => JSON.stringify(body) };
         } });
       assert.deepEqual(result, outcome === 'unavailable'
-        ? { state: 'held', reason: 'file_provider_unavailable' }
+        ? { state: 'held', reason: 'file_lookup_inconclusive' }
         : { state: 'rejected_held', reason: 'file_wrong_identity' });
       assert.equal(acquisitions.getAttempt(attemptId).status,
         outcome === 'unavailable' ? 'torrent_observed' : 'rejected_held');

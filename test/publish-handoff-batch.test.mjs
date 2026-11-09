@@ -72,7 +72,7 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
 test('offline handoff rechecks exact preview and bytes before watched Import', async () =>
   withBatch(async (sample) => {
     const result = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500,
       readPacer: { afterBytes: async () => {} },
       renamePrepared: async (source, destination) => {
         await cp(source, destination, { recursive: true });
@@ -122,7 +122,7 @@ test('offline handoff holds when preview is unavailable or changes target', asyn
   for (const changed of ['unavailable', 'wrong_episode']) {
     await withBatch(async (sample) => {
       const result = await publishPreparedHandoff({ ...sample,
-        lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+        lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500,
         readPacer: { afterBytes: async () => {} },
         offlineLookup: async (input) => {
           if (changed === 'unavailable') return { status: 0 };
@@ -141,7 +141,7 @@ test('offline handoff rechecks an intervening Shoko import before the watched re
   withBatch(async (sample) => {
     let checked = false;
     const result = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500,
       checkExisting: async (verified) => {
         checked = true;
         assert.equal(verified.anidbId, 42);
@@ -161,7 +161,7 @@ test('offline handoff holds a changed private video before publishing', async ()
     await writeFile(path.join(sample.prepared.holdingPath, '01.mkv'),
       Buffer.from('xyz'));
     const result = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500 });
     assert.equal(result.state, 'held');
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
@@ -290,7 +290,7 @@ test('offline publish-unknown recovery requires the same file and Shoko predicti
     await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
     await rm(sample.prepared.holdingPath, { recursive: true });
     const unchanged = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500 });
     assert.deepEqual(unchanged, { state: 'published_observed', destination });
     assert.equal(sample.getObservations(), 1);
   }, { offline: true }));
@@ -321,7 +321,7 @@ test('Shoko moving an unknown published handoff records exact content without cl
       return { state: 'content_present', publicationProven: false, fileIds };
     };
     const result = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500,
       readEpisode: async () => ({ state: 'ok', complete: true, files: [{
         anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
         releaseId: expected.releaseId, ed2k: expected.ed2k,
@@ -343,7 +343,7 @@ test('an unrelated Shoko file cannot resolve an unknown publish', async () =>
       throw new Error('unrelated file must never be recorded');
     };
     const result = await publishPreparedHandoff({ ...sample,
-      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      lookup: async () => ({ status: 204, aniDbReady: true }), attemptId: 1, nowMs: 500,
       readEpisode: async () => ({ state: 'ok', complete: true, files: [{
         anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
         releaseId: 'offline://42-1001', ed2k: '0'.repeat(32),

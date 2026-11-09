@@ -48,7 +48,7 @@ test('AniDB 204 can use a separate exact Shoko offline episode preview', async (
   await withStage(async (root) => {
     await writeFile(path.join(root, 'episode.mkv'), 'abc');
     const result = await verifyStagedFile({ root, relativePath: 'episode.mkv',
-      expected, lookup: async () => ({ status: 204 }),
+      expected, lookup: async () => ({ status: 204, aniDbReady: true }),
       offlineLookup: async ({ filename, ed2k: hash, size }) => {
         assert.equal(filename, 'episode.mkv');
         assert.equal(hash, ed2k);
@@ -64,6 +64,19 @@ test('AniDB 204 can use a separate exact Shoko offline episode preview', async (
       identitySource: 'shoko_offline', releaseId: 'offline://42-1001',
       coverage: [{ episodeId: 1001, start: 0, end: 100 }],
       ed2k, size: 3 });
+  });
+});
+
+test('AniDB 204 without healthy UDP evidence cannot activate filename fallback', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    let offlineCalls = 0;
+    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup: async () => ({ status: 204 }),
+      offlineLookup: async () => { offlineCalls++; throw Error('must not call'); },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'lookup_inconclusive' });
+    assert.equal(offlineCalls, 0);
   });
 });
 
