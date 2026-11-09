@@ -58,6 +58,8 @@ test('weekly Airing applies saved tracking mode after the async schedule read', 
     const custom = await read();
     assert.equal(custom.statusCode, 200, custom.body);
     assert.deepEqual(custom.json().items.map((item) => item.anidbId), [50]);
+    assert.deepEqual(custom.json().items[0].libraryPresence,
+      { state: 'unknown', verifiedEpisodeCount: 0 });
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

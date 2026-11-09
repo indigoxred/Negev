@@ -566,13 +566,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         } : undefined,
       listAiringSchedule: async ({ airingPreference } = {}) => {
         const schedule = await weeklySchedule.read();
-        if (!Array.isArray(schedule.items) || !airingPreference ||
-            airingPreference.mode === 'all') return schedule;
-        const tracked = new Set(airingPreference.trackedAnidbIds);
+        if (!Array.isArray(schedule.items)) return schedule;
+        const tracked = new Set(airingPreference?.trackedAnidbIds ?? []);
         const checkedMs = now();
-        return { ...schedule, items: schedule.items.filter((item) =>
-          airingPreference.mode === 'custom' ? tracked.has(item.anidbId)
-            : publicPresenceForTitle(item.anidbId, checkedMs).state === 'in_library') };
+        const items = schedule.items.map((item) => ({ ...item,
+          libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) }));
+        return { ...schedule, items: items.filter((item) =>
+          airingPreference?.mode === 'custom' ? tracked.has(item.anidbId)
+            : airingPreference?.mode === 'library'
+            ? item.libraryPresence.state === 'in_library' : true) };
       },
       listSeasonalTitles: async ({ airingPreference, ...input }) => {
         const checkedMs = now();

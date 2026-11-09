@@ -277,6 +277,11 @@ async function inspectMobile(url, profile, width = 390) {
     if (width === 390) {
       await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
       await wait(800);
+      const weeklyPresence = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `(() => [...document.querySelectorAll('#airing-list .result')]
+          .map((card) => ({title: card.querySelector('strong')?.textContent,
+            badge: card.querySelector('.presence')?.textContent})))()`,
+      });
       const defaultMode = await send('Runtime.evaluate', { returnByValue: true,
         expression: `document.querySelector('#airing-view-mode')?.value`,
       });
@@ -285,6 +290,11 @@ async function inspectMobile(url, profile, width = 390) {
         mode.value = 'all'; mode.dispatchEvent(new Event('change'));
       })()` });
       await wait(800);
+      const allWeeklyPresence = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `(() => [...document.querySelectorAll('#airing-list .result')]
+          .map((card) => ({title: card.querySelector('strong')?.textContent,
+            badge: card.querySelector('.presence')?.textContent})))()`,
+      });
       await send('Runtime.evaluate', { expression:
         `document.querySelector('.tracked-title button')?.click()` });
       await wait(300);
@@ -302,7 +312,9 @@ async function inspectMobile(url, profile, width = 390) {
           fits: document.documentElement.scrollWidth <= innerWidth})`,
       });
       airingTrack = { defaultMode: defaultMode.result.value,
-        tracked: tracked.result.value, ...custom.result.value };
+        tracked: tracked.result.value, ...custom.result.value,
+        weeklyPresence: weeklyPresence.result.value,
+        allWeeklyPresence: allWeeklyPresence.result.value };
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'library'; mode.dispatchEvent(new Event('change'));
@@ -425,7 +437,11 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'ready', week: '2026-W45',
           checkedMs: 1_000, items: [{ anidbId: 19847,
             title: 'FX Senshi Kurumi-chan', scheduledDate: '2026-11-05',
-            episodeNumber: '4', adult: false }] }));
+            episodeNumber: '4', adult: false,
+            libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } },
+          { anidbId: 19765, title: 'Psyren',
+            scheduledDate: '2026-11-05', episodeNumber: '5', adult: false,
+            libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] }));
         return;
       }
       if (path === '/api/airing/preferences') {
@@ -693,6 +709,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.airingTrack.mode, 'custom');
       assert.match(mobile.airingTrack.card, /FX Senshi Kurumi-chan/);
       assert.equal(mobile.airingTrack.fits, true);
+      assert.deepEqual(mobile.airingTrack.weeklyPresence, [
+        { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
+      ]);
+      assert.deepEqual(mobile.airingTrack.allWeeklyPresence, [
+        { title: 'FX Senshi Kurumi-chan', badge: '✓ In library' },
+        { title: 'Psyren', badge: 'Local availability not checked' },
+      ]);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
@@ -716,6 +739,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /★ 7\.8 · 3K members/);
       assert.match(airing, /✓ In library/);
+      assert.doesNotMatch(airing, /Psyren/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);
