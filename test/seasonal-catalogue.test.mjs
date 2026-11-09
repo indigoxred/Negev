@@ -119,6 +119,51 @@ test('ongoing titles span seasons and sort before pagination', async () => {
     status: 'ongoing', sort: 'popularity' }), TypeError);
 });
 
+test('airing order puts scheduled episodes first across catalogue pages', async () => {
+  const entries = [
+    { ...row('Old scheduled', 1), status: 'ONGOING',
+      animeSeason: { season: 'SPRING', year: 2024 } },
+    { ...row('New unscheduled', 2), status: 'ONGOING' },
+    { ...row('Soon scheduled', 3), status: 'ONGOING' },
+  ];
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: `Title ${url.split('/').at(-1)}`, type: 'TV Series',
+        restricted: false }),
+  readSchedule: async () => ({ state: 'ready', items: [
+    { anidbId: 1, scheduledDate: '2026-11-12' },
+    { anidbId: 3, scheduledDate: '2026-11-10' },
+  ] }), now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const first = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode', limit: 1 });
+  assert.deepEqual(first.items.map((item) => item.anidbId), [3]);
+  assert.equal(first.orderState, 'schedule');
+  const second = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode', after: first.nextAfter, limit: 2 });
+  assert.deepEqual(second.items.map((item) => item.anidbId), [1, 2]);
+  assert.equal(second.nextAfter, null);
+});
+
+test('airing order visibly falls back to newest when schedule is unavailable', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [
+        { ...row('Older', 1), status: 'ONGOING',
+          animeSeason: { season: 'SPRING', year: 2024 } },
+        { ...row('Newer', 2), status: 'ONGOING' },
+      ] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+  readSchedule: async () => ({ state: 'unavailable' }),
+  now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'next_episode' });
+  assert.equal(page.orderState, 'fallback');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [2, 1]);
+});
+
 test('provider outage uses a visibly stale cached map and cold failure is unavailable', async () => {
   let time = 1000;
   let fail = false;

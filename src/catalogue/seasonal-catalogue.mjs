@@ -12,7 +12,7 @@ const browseSeasons = new Set(['ALL', ...seasons]);
 const seasonOrder = new Map(['WINTER', 'SPRING', 'SUMMER', 'FALL'].map((value, index) => [value, index]));
 const kinds = new Set(['all', 'series', 'movies']);
 const statuses = new Set(['all', 'ongoing']);
-const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc']);
+const sorts = new Set(['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode']);
 const validTag = (value) => typeof value === 'string' &&
   (value === '' || /^[a-z0-9][a-z0-9 -]{0,39}$/i.test(value));
 const validTags = (value) => typeof value === 'string' && value.length <= 200 &&
@@ -161,9 +161,11 @@ async function parseMap(response) {
 // Presentation data only. The acquisition and availability pipelines do not
 // consume this reader or treat a seasonal map as proof of an exact file.
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
+  readSchedule = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
   timeoutMs = 12_000 } = {}) {
   if (typeof fetchImpl !== 'function' || typeof now !== 'function' ||
+      readSchedule !== null && typeof readSchedule !== 'function' ||
       ![cacheMs, staleMs, timeoutMs].every((value) =>
         Number.isSafeInteger(value) && value > 0) || staleMs <= cacheMs ||
       staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000) {
@@ -233,7 +235,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     }
     const time = now();
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
-    const mapState = await loadMap(time);
+    // Read the weekly schedule beside the catalogue map so the first Airing
+    // page does not pay for two sequential network requests.
+    const [mapState, schedule] = await Promise.all([loadMap(time),
+      sort === 'next_episode' && readSchedule
+        ? Promise.resolve().then(readSchedule).catch(() => null) : null]);
     if (mapState === 'unavailable') return { state: 'unavailable' };
     const seasonEntries = year === 0 || season === 'ALL'
       ? cached.allEntries.filter((entry) =>
@@ -252,6 +258,34 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
         selectedTags.every((selected) => entry.tags.includes(selected)));
+    let orderState;
+    if (sort === 'next_episode') {
+      const today = new Date(time).toISOString().slice(0, 10);
+      const dates = new Map();
+      if (['ready', 'stale'].includes(schedule?.state) &&
+          Array.isArray(schedule.items)) {
+        for (const item of schedule.items) {
+          if (validId(item?.anidbId) && validDate(item?.scheduledDate)) {
+            dates.set(item.anidbId, item.scheduledDate);
+          }
+        }
+      }
+      orderState = dates.size ? 'schedule' : 'fallback';
+      if (dates.size) entries.sort((a, b) => {
+        const left = dates.get(a.anidbId);
+        const right = dates.get(b.anidbId);
+        const group = (date) => !date ? 2 : date >= today ? 0 : 1;
+        const delta = group(left) - group(right);
+        if (delta) return delta;
+        if (left && right && left !== right) {
+          return group(left) === 1 ? right.localeCompare(left)
+            : left.localeCompare(right);
+        }
+        return b.year - a.year ||
+          seasonOrder.get(b.season) - seasonOrder.get(a.season) ||
+          a.title.localeCompare(b.title) || a.anidbId - b.anidbId;
+      });
+    }
     if (sort === 'oldest') entries.sort((a, b) =>
       (a.year ?? year) - (b.year ?? year) ||
       (seasonOrder.get(a.season ?? season) ?? 0) -
@@ -276,6 +310,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         releaseStatus: entry.releaseStatus, adult: verification.adult }));
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
       year, season, sourceDate: cached.sourceDate, items, availableTags,
+      ...(orderState ? { orderState } : {}),
       nextAfter: after + limit < entries.length ? after + limit : null };
   } };
 }

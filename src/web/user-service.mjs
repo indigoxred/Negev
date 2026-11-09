@@ -204,7 +204,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const mapFacts = createAniDbMapFactsReader({ fetchImpl, now });
     const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
-    const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now });
+    const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now,
+      readSchedule: weeklySchedule.read });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
