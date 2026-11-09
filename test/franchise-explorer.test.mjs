@@ -1,6 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createFranchiseExplorer, expandFranchiseBatch } from '../src/web/public/franchise-explorer.mjs';
+import { createFranchiseExplorer, expandFranchiseBatch,
+  groupFranchiseItems } from '../src/web/public/franchise-explorer.mjs';
+
+test('direct relationships stay grouped while discovered hops have their own group', () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Film', relation: 'SideStory' },
+      { anidbId: 30, title: 'Second season', relation: 'Sequel' },
+      { anidbId: 40, title: 'First season', relation: 'Prequel' }] });
+  view.add({ anidbId: 20, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 50, title: 'Film sequel', relation: 'Sequel' }] });
+  assert.deepEqual(groupFranchiseItems(view.items(), 10).map((group) =>
+    [group.heading, group.items.map((item) => item.anidbId)]), [
+    ['Prequels', [40]], ['Sequels', [30]], ['Side stories', [20]],
+    ['More linked titles', [50]],
+  ]);
+});
 
 test('one explicit expansion gathers several separate relation pages', async () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
@@ -64,6 +80,8 @@ test('expands verified installments one title at a time without merging request 
   assert.deepEqual(view.items().map((item) => item.anidbId), [10, 20, 30]);
   assert.equal(view.next()?.anidbId, 30);
   assert.equal(view.items()[0].relation, null);
+  assert.equal(view.items()[1].relatedFrom, 10);
+  assert.equal(view.items()[2].relatedFrom, 20);
 });
 
 test('does not accept an unrelated, invalid, or oversized response', () => {
