@@ -238,7 +238,16 @@ async function inspectMobile(url, profile, width = 390) {
         const select = action.querySelector('select'); select.value = '43';
         select.dispatchEvent(new Event('change'));
         return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent,
-          cancelLabel: action.querySelector('.request-review button')?.textContent}; })()`,
+          cancelLabel: action.querySelector('.request-review button')?.textContent,
+          reviewHidden: action.querySelector('.request-review')?.hidden,
+          button: action.querySelector('.primary')?.textContent}; })()`,
+    });
+    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    const reviewAfterSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {reviewVisible: !action.querySelector('.request-review')?.hidden,
+          button: action.querySelector('.primary')?.textContent,
+          status: action.querySelector('.request-feedback')?.textContent}; })()`,
     });
     await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
     await wait(250);
@@ -346,6 +355,7 @@ async function inspectMobile(url, profile, width = 390) {
         ...franchiseAfter.result.value },
       requestReview: requestReview.result.value,
       requestSelection: requestSelection.result.value,
+      reviewAfterSelection: reviewAfterSelection.result.value,
       requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
@@ -772,7 +782,10 @@ test('signed-in consumer routes render real shell with search, library and reque
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
       assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
         summary: 'Example Season Two · Negev will check its film or episodes before saving',
-        cancelLabel: 'Cancel' });
+        cancelLabel: 'Cancel', reviewHidden: true,
+        button: 'Request selected installment' });
+      assert.deepEqual(mobile.reviewAfterSelection, { reviewVisible: true,
+        button: 'Confirm request', status: 'Review this installment, then confirm.' });
       assert.deepEqual(mobile.requestCancelled, { reviewHidden: true,
         button: 'Watch future episodes', status: '' });
       assert.equal(mobile.requestSaved.reviewHidden, true);
