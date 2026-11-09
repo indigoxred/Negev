@@ -68,6 +68,7 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 /* Show related installments together, with their relationship on each cover. */
 .title-detail .related-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:14px}
 .title-detail .related-list>p{grid-column:1/-1;margin:8px 0;color:var(--muted)}
+.title-detail .related-group-heading{grid-column:1/-1;margin:12px 0 0;color:var(--muted);font-size:14px;font-weight:700}
 .related-list .related-card{display:flex;flex-direction:column;align-items:stretch;gap:0;min-height:0;padding:0;border:0;background:transparent;box-shadow:none;text-align:left}
 .related-list .related-card:hover .related-art{outline:2px solid var(--accent);outline-offset:2px}
 .related-list .related-art{width:100%;height:auto;aspect-ratio:2/3;border-radius:8px}
