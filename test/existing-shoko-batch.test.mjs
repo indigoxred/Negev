@@ -20,6 +20,14 @@ test('an existing exact Shoko import prevents a second handoff copy', async () =
   assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
 });
 
+test('an existing exact file still prevents a copy after Shoko changes its release provider', async () => {
+  const result = await checkExistingShokoBatch({ verified,
+    readEpisode: async () => ({ state: 'ok', complete: true,
+      files: [{ ...imported, anidbFileId: 8842,
+        releaseEvidence: 'anidb_file', releaseId: null }] }) });
+  assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
+});
+
 test('an empty exact episode permits the first handoff', async () => {
   const result = await checkExistingShokoBatch({ verified,
     readEpisode: async () => ({ state: 'ok', complete: true, files: [] }) });

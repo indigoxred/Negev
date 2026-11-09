@@ -5,9 +5,10 @@ const sameIds = (left, right) => Array.isArray(left) &&
 
 // This check runs after the source bytes have been verified but before a
 // private holding copy is made. It protects the new Offline Importer fallback
-// from repeating an exact prior import. AniDB-registered first imports retain
-// their existing route, including titles whose local Shoko episode does not
-// exist yet.
+// from repeating an exact prior import, even if Shoko later recognizes those
+// same bytes through a different release provider. AniDB-registered first
+// imports retain their existing route, including titles whose local Shoko
+// episode does not exist yet.
 export async function checkExistingShokoBatch({ verified, readEpisode } = {}) {
   if (verified?.state !== 'batch_identity_verified' ||
       !validId(verified.anidbId) || !Array.isArray(verified.files) ||
@@ -43,9 +44,6 @@ export async function checkExistingShokoBatch({ verified, readEpisode } = {}) {
         file.size === expected.size && validId(file.fileId) &&
         sameIds(file.episodeIds, expected.episodeIds) &&
         Array.isArray(file.sourcePaths) && file.sourcePaths.length > 0 &&
-        file.anidbFileId === null &&
-        file.releaseEvidence === 'shoko_offline_link' &&
-        file.releaseId === expected.releaseId &&
         expected.episodeIds.every((id) => file.coverage?.some((range) =>
           range.episodeId === id && range.start === 0 && range.end === 100)));
       if (candidates.length > 1) return held('ambiguous_shoko_file');
