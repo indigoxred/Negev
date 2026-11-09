@@ -372,6 +372,19 @@ test('signed-in consumer routes render real shell with search, library and reque
           })) }));
         return;
       }
+      if (path === '/api/catalogue/97') {
+        const page = Number(new URL(request.url, 'http://localhost')
+          .searchParams.get('page') ?? 1);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 97,
+          title: 'Long complete series', kind: 'series', restricted: false,
+          monitorFuture: false, episodeCount: 10, endDate: '2020-01-01',
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 10 },
+          page, total: 10, nextPage: page === 10 ? null : page + 1,
+          episodes: [{ id: 9700 + page, number: page, type: 'Episode',
+            title: `Episode ${page}`, availability: 'available' }] }));
+        return;
+      }
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
@@ -519,6 +532,10 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'incomplete-paginated'));
       assert.match(incompletePaginated, /3 of 4 regular episodes verified playable in Plex/);
       assert.match(incompletePaginated, /<button class="primary">Request series<\/button>/);
+      const longComplete = await dump(`${base}/#/title/97`,
+        join(dir, 'long-complete'));
+      assert.match(longComplete,
+        /<button class="primary" disabled="">Already available<\/button>/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);

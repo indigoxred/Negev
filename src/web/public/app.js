@@ -1919,16 +1919,36 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     });
     requestAction.append(requestReview, button, requestStatus);
     if (checkingCompleteSeries && loadNextEpisodePage) {
-      // A saved count only suggests full coverage. Load exact episode pages
-      // before disabling requests; keep this bounded for the title UI.
-      void (async () => {
-        for (let page = 0; page < 8 && pager.nextPage !== null; page++) {
-          if (!isCurrentDetail() || !await loadNextEpisodePage(false)) break;
+      // A title-level count is only a hint. Keep the request closed until
+      // every exact regular episode has been checked, even after page eight.
+      const continueCheck = element('button', 'Continue availability check', 'quiet');
+      continueCheck.hidden = true;
+      continueCheck.type = 'button';
+      requestAction.append(continueCheck);
+      const checkPages = async () => {
+        continueCheck.hidden = true;
+        requestStatus.textContent = 'Checking the complete episode list…';
+        for (let page = 0; page < 20 && pager.nextPage !== null; page++) {
+          if (!isCurrentDetail()) return;
+          if (!await loadNextEpisodePage(false)) {
+            if (!isCurrentDetail()) return;
+            requestStatus.textContent = 'The full availability check could not finish. Try again.';
+            continueCheck.hidden = false;
+            return;
+          }
         }
         if (!isCurrentDetail()) return;
+        if (pager.nextPage !== null) {
+          requestStatus.textContent = 'More episodes remain to check before a new request can be made.';
+          continueCheck.hidden = false;
+          return;
+        }
         checkingCompleteSeries = false;
+        requestStatus.textContent = '';
         refreshRequestAction();
-      })();
+      };
+      continueCheck.addEventListener('click', () => { void checkPages(); });
+      void checkPages();
     }
   } catch (error) {
     if (!isCurrentDetail()) return;
