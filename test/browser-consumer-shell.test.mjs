@@ -295,6 +295,8 @@ test('signed-in consumer routes render real shell with search, library and reque
           ...(ongoing ? { orderState: 'score_loading' } : {}),
           items: ongoing ? [{ anidbId: 19847, title: 'FX Senshi Kurumi-chan',
             type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
+            rating: { score: 7.8, votes: 1400, members: 3000,
+              checkedMs: 1_000 },
             libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] :
             [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
@@ -498,6 +500,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(airing, /id="airing-sort"/);
       assert.match(airing, /id="airing-kind"/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
+      assert.match(airing, /★ 7\.8 · 3K members/);
       assert.match(airing, /Local availability not checked/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
