@@ -146,7 +146,7 @@ export async function publishPreparedHandoff({
   attemptId, prepared, ledger, holdingRoot, importRoot, lookup, offlineLookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename, verifyHandoffMounts, ed2kMode,
+  renamePrepared = rename, verifyHandoffMounts, ed2kMode, checkExisting,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -158,6 +158,7 @@ export async function publishPreparedHandoff({
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
+      (checkExisting !== undefined && typeof checkExisting !== 'function') ||
       (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
@@ -266,6 +267,15 @@ export async function publishPreparedHandoff({
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
   if (!await mountReady()) return held('handoff_mount_unavailable');
+  if (checkExisting) {
+    let existing;
+    try { existing = await checkExisting({ state: 'batch_identity_verified',
+      anidbId: evidence.manifest.anidbId, files: evidence.manifest.videos }); }
+    catch { return held('shoko_unavailable'); }
+    if (existing?.state !== 'no_matching_import') {
+      return existing?.state === 'held' ? existing : held('shoko_unavailable');
+    }
+  }
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');

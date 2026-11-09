@@ -103,6 +103,25 @@ test('offline handoff holds when preview is unavailable or changes target', asyn
   }
 });
 
+test('offline handoff rechecks an intervening Shoko import before the watched rename', async () =>
+  withBatch(async (sample) => {
+    let checked = false;
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      checkExisting: async (verified) => {
+        checked = true;
+        assert.equal(verified.anidbId, 42);
+        assert.equal(verified.files[0].releaseId, 'offline://42-1001');
+        return { state: 'held', reason: 'already_imported' };
+      } });
+    assert.equal(checked, true);
+    assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+    assert.deepEqual(await readFile(path.join(sample.prepared.holdingPath,
+      '01.mkv')), sample.video);
+  }, { offline: true }));
+
 test('offline handoff holds a changed private video before publishing', async () =>
   withBatch(async (sample) => {
     await writeFile(path.join(sample.prepared.holdingPath, '01.mkv'),
