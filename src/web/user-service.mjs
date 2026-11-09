@@ -594,7 +594,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (detail?.state !== 'details' || !Array.isArray(detail.episodes) ||
             detail.episodes.length > 100) return detail;
         const requestMode = detail.nextPage === null && detail.complete === true
-          ? { monitorFuture: requestReleaseState(detail, today()) === 'airing' }
+          ? { monitorFuture: ['airing', 'upcoming'].includes(requestReleaseState(detail, today())) }
           : {};
         if (!plexObserver) return { ...detail, ...requestMode };
         return { ...detail, ...requestMode,

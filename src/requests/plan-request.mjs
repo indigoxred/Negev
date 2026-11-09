@@ -12,13 +12,13 @@ const fullDate = (value) => typeof value === 'string' &&
 export function planRequest({ detail, releaseState, scope, episodeIds, today } = {}) {
   const anidbId = detail?.anidbId;
   if (!isCompleteAniDbDetail(detail, anidbId, {
-    allowEmptySeries: releaseState === 'airing' && scope === 'installment',
+    allowEmptySeries: ['airing', 'upcoming'].includes(releaseState) && scope === 'installment',
   }) ||
       !['series', 'movie'].includes(detail.kind)) return held('detail_incomplete');
-  if (!['airing', 'completed'].includes(releaseState) ||
+  if (!['airing', 'upcoming', 'completed'].includes(releaseState) ||
       (detail.kind === 'movie' && releaseState !== 'completed')) return held('release_state_unknown');
   if (!['installment', 'episodes'].includes(scope)) return held('invalid_scope');
-  if (releaseState === 'airing' && !fullDate(today)) return held('invalid_current_date');
+  if (['airing', 'upcoming'].includes(releaseState) && !fullDate(today)) return held('invalid_current_date');
 
   let selected;
   if (scope === 'installment') {
@@ -33,7 +33,7 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
     if (episodeIds.some((id) => !selectable.has(byId.get(id)?.type))) {
       return held('invalid_episode_selection');
     }
-    if (releaseState === 'airing' && episodeIds.some((id) => {
+    if (['airing', 'upcoming'].includes(releaseState) && episodeIds.some((id) => {
       const episode = byId.get(id);
       return episode.type === 'Episode' &&
         (!fullDate(episode.airDate) || episode.airDate > today);
@@ -45,13 +45,14 @@ export function planRequest({ detail, releaseState, scope, episodeIds, today } =
   if (detail.kind === 'movie' && selected.length !== 1) {
     return held('ambiguous_movie_scope');
   }
-  if (selected.length === 0 && !(releaseState === 'airing' &&
+  if (selected.length === 0 && !(['airing', 'upcoming'].includes(releaseState) &&
     detail.kind === 'series' && scope === 'installment')) {
     return held('invalid_episode_selection');
   }
   return {
     state: 'ready', anidbId, kind: detail.kind,
     episodeIds: [...selected].sort((a, b) => a - b),
-    monitorFuture: detail.kind === 'series' && releaseState === 'airing' && scope === 'installment',
+    monitorFuture: detail.kind === 'series' &&
+      ['airing', 'upcoming'].includes(releaseState) && scope === 'installment',
   };
 }

@@ -37,6 +37,16 @@ test('a complete empty airing series can watch for its first listed episode', ()
   { state: 'held', reason: 'detail_incomplete' });
 });
 
+test('a dated upcoming installment can be requested before AniDB lists episodes', () => {
+  const upcoming = { ...detail, total: 0, episodes: [],
+    airDate: '2027-01-01', episodeCount: 12 };
+  assert.deepEqual(planRequest({ detail: upcoming, releaseState: 'upcoming',
+    scope: 'installment', today: '2026-11-09' }), {
+    state: 'ready', anidbId: 1234, kind: 'series',
+    episodeIds: [], monitorFuture: true,
+  });
+});
+
 test('completed installment and movie are one-time exact acquisitions', () => {
   assert.equal(planRequest({ detail, releaseState: 'completed', scope: 'installment' }).monitorFuture, false);
   const movie = { ...detail, kind: 'movie', total: 1, episodes: [detail.episodes[0]] };

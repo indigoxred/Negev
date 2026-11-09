@@ -2,6 +2,7 @@ import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
+import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
@@ -175,6 +176,7 @@ async function api(url, options = {}) {
   if (!response.ok) {
     const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
     error.status = response.status;
+    error.reason = data.reason;
     throw error;
   }
   return data;
@@ -1246,15 +1248,15 @@ function pendingTitleAction(item) {
   review.hidden = true;
   review.append(element('strong', 'Review your request'));
   review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
-  const back = element('button', 'Back', 'quiet');
-  back.type = 'button';
-  back.addEventListener('click', () => {
+  const cancelReview = element('button', 'Cancel', 'quiet');
+  cancelReview.type = 'button';
+  cancelReview.addEventListener('click', () => {
     action.dataset.reviewing = 'false';
     review.hidden = true;
     button.textContent = 'Request if missing';
     status.textContent = '';
   });
-  review.append(back);
+  review.append(cancelReview);
   action.append(review, button, status);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
@@ -1277,18 +1279,19 @@ function pendingTitleAction(item) {
       requestKeys.saved(scope);
       action.dataset.saving = 'false';
       action.dataset.saved = 'true';
+      action.dataset.reviewing = 'false';
+      review.hidden = true;
+      button.disabled = true;
       button.textContent = 'Requested';
-      status.textContent = saved.state === 'pending'
-        ? 'Request received. Negev will check the episode list and library before accepting any missing episodes or starting a download. Follow it under My Requests.'
-        : `Request #${saved.requestId} saved. Follow it under My Requests.`;
+      status.textContent = savedRequestMessage(saved);
       message('Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
       action.dataset.saving = 'false';
       button.disabled = false;
       button.textContent = 'Confirm request';
-      status.textContent = error.message;
-      message(error.message, true);
+      status.textContent = requestFailureMessage(error);
+      message(status.textContent, true);
     }
   });
   return action;
@@ -1513,6 +1516,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const relatedButton = element('button', 'Show more related titles', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
     let installmentSelect = null;
+    let selectedInstallmentId = item.anidbId;
+    let updateRequestReview = () => {};
     const syncInstallmentChoice = () => {
       if (!installmentSelect) return;
       installmentSelect.replaceChildren();
@@ -1523,7 +1528,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         option.value = String(entry.anidbId);
         installmentSelect.append(option);
       }
-      installmentSelect.value = String(item.anidbId);
+      installmentSelect.value = String(selectedInstallmentId);
     };
     const renderFamily = () => {
       relatedList.replaceChildren();
@@ -1827,12 +1832,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       installmentSelect = element('select');
       installmentSelect.addEventListener('change', () => {
         const selectedId = Number(installmentSelect.value);
-        if (selectedId !== item.anidbId && Number.isSafeInteger(selectedId)) {
-          const selected = family.items().find((entry) => entry.anidbId === selectedId);
-          if (selected) {
-            state.searchItems.set(selectedId, selected);
-            location.hash = titleRoute(selectedId);
-          }
+        if (Number.isSafeInteger(selectedId) &&
+            family.items().some((entry) => entry.anidbId === selectedId)) {
+          selectedInstallmentId = selectedId;
+          requestStatus.textContent = '';
+          updateRequestReview();
+          refreshRequestAction();
         }
       });
       installmentLabel.append(installmentSelect);
@@ -1842,10 +1847,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.insertBefore(requestAction, relatedHeading);
     const requestStatus = element('p', '', 'muted request-feedback');
     requestStatus.setAttribute('role', 'status');
-    const alreadyAvailable = () => installmentRequestState({ kind: data.kind,
+    const alreadyAvailable = () => selectedInstallmentId === item.anidbId &&
+      installmentRequestState({ kind: data.kind,
       episodes: pager.episodes, nextPage: pager.nextPage,
       monitorFuture: data.monitorFuture }) === 'already_available';
     const requestLabel = () => data.kind === 'movie' ? 'Request film' :
+      selectedInstallmentId !== item.anidbId ? 'Request selected installment' :
       data.monitorFuture === true && pager.episodes.some((episode) =>
         episode.type === 'Episode' && episode.availability === 'available')
         ? 'Watch future episodes' : 'Request series';
@@ -1856,10 +1863,17 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const requestReview = element('div', undefined, 'request-review');
     requestReview.hidden = !reviewingRequest;
     requestReview.append(element('strong', 'Review your request'));
-    requestReview.append(element('p', data.kind === 'movie'
+    const reviewSummary = element('p', data.kind === 'movie'
       ? `${data.title || item.title} · one film entry`
-      : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`));
-    const cancelReview = element('button', 'Back', 'quiet');
+      : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
+    requestReview.append(reviewSummary);
+    updateRequestReview = () => {
+      const selected = family.items().find((entry) => entry.anidbId === selectedInstallmentId);
+      reviewSummary.textContent = selectedInstallmentId === item.anidbId
+        ? `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`
+        : `${selected?.title ?? 'Selected installment'} · Negev will check its film or episodes before saving`;
+    };
+    const cancelReview = element('button', 'Cancel', 'quiet');
     cancelReview.type = 'button';
     cancelReview.addEventListener('click', () => {
       reviewingRequest = false;
@@ -1870,9 +1884,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     refreshRequestAction = () => {
       if (requestSaving || requestSaved) return;
       const blocked = alreadyAvailable();
-      button.disabled = blocked || checkingCompleteSeries;
+      const checkingSelected = selectedInstallmentId === item.anidbId &&
+        checkingCompleteSeries;
+      button.disabled = blocked || checkingSelected;
       button.textContent = blocked ? 'Already available' :
-        checkingCompleteSeries ? 'Checking availability…' :
+        checkingSelected ? 'Checking availability…' :
           reviewingRequest ? 'Confirm request' : requestLabel();
       if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
       else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
@@ -1921,33 +1937,36 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         return;
       }
       requestSaving = true;
+      if (installmentSelect) installmentSelect.disabled = true;
       button.disabled = true;
       button.textContent = 'Saving request…';
       requestStatus.textContent = 'Saving your request…';
       const selectedFilmId = needsFilmChoice ? Number(filmChoiceSelect.value) : null;
-      const scope = { userId: state.user.id, anidbId: item.anidbId,
+      const scope = { userId: state.user.id, anidbId: selectedInstallmentId,
         ...(selectedFilmId ? { selection: `film-entry-${selectedFilmId}` } : {}) };
       try {
         const requestKey = requestKeys.pending(scope);
         const saved = await api('/api/requests', { method: 'POST', body: JSON.stringify({
-          anidbId: item.anidbId,
+          anidbId: selectedInstallmentId,
           scope: selectedFilmId ? 'episodes' : 'installment',
           ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
         }) });
         requestKeys.saved(scope);
         requestSaved = true;
+        reviewingRequest = false;
+        requestReview.hidden = true;
         button.textContent = 'Requested';
-        requestStatus.textContent = saved.state === 'pending'
-          ? 'Request saved. Episode details are being prepared. Follow it under My Requests.'
-          : `Request #${saved.requestId} saved. View its progress under My Requests.`;
+        requestStatus.textContent = savedRequestMessage(saved);
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'
           : `Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
         loadRequests();
       } catch (error) {
-        requestStatus.textContent = error.message;
-        message(error.message, true);
+        const feedback = requestFailureMessage(error);
+        requestStatus.textContent = feedback;
+        message(feedback, true);
         requestSaving = false;
+        if (installmentSelect) installmentSelect.disabled = false;
         refreshRequestAction();
       }
     });

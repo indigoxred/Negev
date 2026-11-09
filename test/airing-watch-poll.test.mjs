@@ -30,6 +30,18 @@ test('one unavailable show holds while the next airing show advances', async () 
   assert.equal(result.nextAfterId, null);
 });
 
+test('an upcoming watch stays open until its first episode airs', async () => {
+  const calls = [];
+  const result = await pollAiringWatches({ today: '2026-11-09', intervalMs: 0,
+    ledger: { listActiveAirings: () => [{ requestId: 1, anidbId: 42 }],
+      advanceAiring: (value) => { calls.push(value); return { state: 'advanced',
+        addedEpisodeIds: [], watchClosed: false }; } },
+    loadDetail: async () => details(42, { airDate: '2027-01-01',
+      total: 0, episodes: [] }) });
+  assert.equal(result.results[0].state, 'advanced');
+  assert.equal(calls[0].releaseState, 'airing');
+});
+
 test('one failed watch write holds while the next watch advances', async () => {
   const advanced = [];
   const result = await pollAiringWatches({ today: '2026-01-20',
