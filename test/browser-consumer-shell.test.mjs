@@ -561,6 +561,29 @@ test('signed-in consumer routes render real shell with search, library and reque
           ] }));
         return;
       }
+      if (path === '/api/catalogue/8' || path === '/api/catalogue/9') {
+        const movie = path.endsWith('/8');
+        const anidbId = movie ? 8 : 9;
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId,
+          title: movie ? 'Film extras only' : 'Series Special only',
+          kind: movie ? 'movie' : 'series', restricted: false,
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
+          page: 1, total: 2, nextPage: 2,
+          episodes: [{ id: anidbId * 100 + 1, number: 1,
+            type: 'Special', title: 'Extra', availability: 'available' }] }));
+        return;
+      }
+      if (path === '/api/catalogue/8/display' ||
+          path === '/api/catalogue/9/display') {
+        const movie = path.includes('/8/');
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display',
+          anidbId: movie ? 8 : 9,
+          title: movie ? 'Film extras only' : 'Series Special only',
+          restricted: false }));
+        return;
+      }
       if (path === '/api/catalogue/42') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 42,
@@ -880,6 +903,16 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(alternateFilm, /Request selected film entry/);
       assert.match(alternateFilm, /<button class="primary" disabled="">Already available<\/button>/);
       assert.match(alternateFilm, /Choose the film version or part/);
+      const specialOnlySeries = await dump(`${base}/#/title/9`,
+        join(dir, 'special-only-series'));
+      assert.match(specialOnlySeries,
+        /Regular-season availability is not confirmed yet; Specials are separate/);
+      assert.doesNotMatch(specialOnlySeries, /1 episode verified playable/);
+      const filmExtrasOnly = await dump(`${base}/#/title/8`,
+        join(dir, 'film-extras-only'));
+      assert.match(filmExtrasOnly,
+        /A main film entry is not confirmed on this page/);
+      assert.doesNotMatch(filmExtrasOnly, /1 film entry verified playable/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
       assert.match(requests, /FX Senshi Kurumi-chan/);

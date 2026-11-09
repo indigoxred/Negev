@@ -1,8 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { summarizeSeasonAvailability, summarizeFilmAvailability,
-  installmentRequestState, filmEntryRequestState } from
+  installmentRequestState, filmEntryRequestState, titleAvailabilitySummary } from
   '../src/web/public/season-availability-presentation.mjs';
+
+test('a verified Special does not become a regular episode or main film claim', () => {
+  const episodes = [{ type: 'Special', availability: 'available' }];
+  assert.deepEqual(titleAvailabilitySummary({ kind: 'series', episodes,
+    nextPage: 2, verifiedTitleItems: 1 }), {
+    text: 'Some items for this title are verified playable in Plex. Regular-season availability is not confirmed yet; Specials are separate.',
+    available: false });
+  assert.deepEqual(titleAvailabilitySummary({ kind: 'movie', episodes,
+    nextPage: 2, verifiedTitleItems: 1 }), {
+    text: 'Some items for this title are verified playable in Plex. A main film entry is not confirmed on this page.',
+    available: false });
+});
+
+test('title headline keeps exact regular-season and main-film proof', () => {
+  assert.deepEqual(titleAvailabilitySummary({ kind: 'series',
+    episodes: [{ type: 'Episode', availability: 'available' }],
+    nextPage: 2, regularSeason: { verified: 9, total: 12 },
+    verifiedTitleItems: 10 }), {
+    text: '9 of 12 regular episodes verified playable in Plex. Specials are separate.',
+    available: true });
+  assert.deepEqual(titleAvailabilitySummary({ kind: 'movie',
+    episodes: [{ type: 'Episode', availability: 'available' },
+      { type: 'Special', availability: 'available' }],
+    nextPage: null, verifiedTitleItems: 2 }), {
+    text: 'Available in Plex · 1 verified main film entry. Other editions and extras are separate.',
+    available: true });
+});
 
 test('season summary counts regular episodes, not trailers or Specials', () => {
   assert.deepEqual(summarizeSeasonAvailability({ kind: 'series',

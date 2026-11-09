@@ -7,7 +7,7 @@ import { requestFailureMessage, savedRequestMessage } from './request-feedback.m
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer, expandFranchiseBatch } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
-import { summarizeSeasonAvailability, summarizeFilmAvailability,
+import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { detailRefreshDelay, detailHydrationFollowup } from './detail-refresh.mjs';
 import { relationLabel } from './relation-label.mjs';
@@ -1611,38 +1611,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         ? data.libraryPresence.verifiedEpisodeCount : 0;
       const summary = element('p');
       refreshAvailabilitySummary = () => {
-        const season = summarizeSeasonAvailability({ kind: data.kind,
-          episodes: pager.episodes, nextPage: pager.nextPage });
-        const fullSeason = data.kind === 'series' &&
-          Number.isSafeInteger(data.regularSeason?.total) &&
-          Number.isSafeInteger(data.regularSeason?.verified) &&
-          data.regularSeason.total > 0 &&
-          data.regularSeason.verified >= 0 &&
-          data.regularSeason.verified <= data.regularSeason.total
-          ? data.regularSeason : null;
-        const film = summarizeFilmAvailability({ kind: data.kind,
-          episodes: pager.episodes, nextPage: pager.nextPage });
-        const pageCount = pager.episodes.filter((episode) =>
-          episode.availability === 'available').length;
-        const verified = Math.max(savedCount, pageCount);
-        summary.textContent = film?.available
-        ? `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`
-        : film && film.total > 0
-          ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
-        : fullSeason
-          ? `${fullSeason.verified} of ${fullSeason.total} regular episodes verified playable in Plex. Specials are separate.`
-        : season?.completeList && season.total > 0
-        ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
-        : season && season.total > 0
-          ? `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`
-        : verified > 0
-        ? `${verified} ${data.kind === 'movie'
-          ? `film entr${verified === 1 ? 'y' : 'ies'}`
-          : `episode${verified === 1 ? '' : 's'}`} verified playable in Plex for this title. Other entries are not confirmed.`
-        : 'Current Plex availability has not been verified for this title.';
-        summary.className = film?.available || fullSeason?.verified > 0 ||
-          season?.verified > 0 ||
-          (!film && verified > 0) ? 'presence available' : 'presence unknown';
+        const headline = titleAvailabilitySummary({ kind: data.kind,
+          episodes: pager.episodes, nextPage: pager.nextPage,
+          regularSeason: data.regularSeason,
+          verifiedTitleItems: savedCount });
+        summary.textContent = headline.text;
+        summary.className = headline.available
+          ? 'presence available' : 'presence unknown';
       };
       refreshAvailabilitySummary();
       panel.append(summary);
