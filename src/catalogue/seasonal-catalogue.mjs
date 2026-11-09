@@ -192,7 +192,17 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   let checkedMs = restored?.checkedMs ?? null;
   let attemptedMs = null;
   let pendingMap = null;
+  let snapshotPending = false;
+  let snapshotAttemptMs = null;
   const detailCache = new Map();
+  const saveSnapshot = (time) => {
+    if (!snapshotStore || !cached) return;
+    snapshotAttemptMs = time;
+    try {
+      snapshotStore.save({ checkedMs, map: cached });
+      snapshotPending = false;
+    } catch { snapshotPending = true; }
+  };
   const options = (waitMs = timeoutMs) => ({ method: 'GET', redirect: 'manual',
     headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(waitMs) });
   async function timelySchedule() {
@@ -206,6 +216,9 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     } finally { clearTimeout(timer); }
   }
   async function loadMap(time) {
+    if (snapshotPending && snapshotAttemptMs + 60_000 <= time) {
+      saveSnapshot(time);
+    }
     if (cached && checkedMs + cacheMs > time) return 'ready';
     if (pendingMap) {
       try { await pendingMap; return 'ready'; }
@@ -220,8 +233,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           const parsed = await parseMap(response);
           cached = parsed;
           checkedMs = time;
-          try { snapshotStore?.save({ checkedMs: time, map: parsed }); }
-          catch { /* Live catalogue remains usable. */ }
+          saveSnapshot(time);
         })().finally(() => { pendingMap = null; });
       }
       try { await pendingMap; return 'ready'; }
