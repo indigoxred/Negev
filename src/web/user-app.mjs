@@ -370,6 +370,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof page.sourceDate !== 'string' ||
         !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
         !Array.isArray(page.items) || page.items.length > 12 ||
+        !Number.isSafeInteger(page.total) || page.total < 0 ||
+        page.total > 100_000 || page.total < page.items.length ||
         !Array.isArray(page.availableTags) || page.availableTags.length > 5_000 ||
         page.availableTags.some((tag) => typeof tag !== 'string' ||
           !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)) ||
@@ -406,6 +408,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     return { state: page.state, year, season: query.season,
       sourceDate: page.sourceDate, availableTags: page.availableTags,
+      total: page.total,
       ...(page.orderState ? { orderState: page.orderState } : {}),
       items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
