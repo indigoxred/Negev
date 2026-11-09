@@ -267,11 +267,15 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     } catch { return { kind: 'unknown' }; }
   }
   return { async read({ year, season, after = 0, limit = 12,
-    kind = 'all', tag = '', status = 'all', sort = 'newest' } = {}) {
+    kind = 'all', tag = '', status = 'all', sort = 'newest',
+    eligibleIds, eligibleTitle } = {}) {
     if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
         !browseSeasons.has(season) || !Number.isSafeInteger(after) || after < 0 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 20 ||
         !kinds.has(kind) || !validTags(tag) || !statuses.has(status) ||
+        (eligibleIds !== undefined && (!(eligibleIds instanceof Set) ||
+          [...eligibleIds].some((id) => !validId(id)))) ||
+        (eligibleTitle !== undefined && typeof eligibleTitle !== 'function') ||
         !sorts.has(sort)) {
       throw new TypeError('Invalid season page');
     }
@@ -295,6 +299,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     const selectedTags = tag ? tag.split(',').map((value) => value.trim().toLowerCase()) : [];
     const entries = seasonEntries
       .filter((entry) => (status === 'all' || entry.releaseStatus === 'ONGOING') &&
+        (eligibleIds === undefined || eligibleIds.has(entry.anidbId)) &&
+        (eligibleTitle === undefined || eligibleTitle(entry.anidbId)) &&
         (kind === 'all' || (kind === 'movies'
         ? entry.type === 'MOVIE'
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&

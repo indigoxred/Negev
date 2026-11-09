@@ -10,6 +10,66 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('signed-in Airing preferences are owner scoped and require CSRF to change', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  let preference = { mode: 'library', trackedAnidbIds: [] };
+  const observedModes = [];
+  const observedScheduleModes = [];
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false,
+    getAiringPreferences: ({ userId }) => userId === 7 ? preference : null,
+    setAiringPreferences: ({ userId, mode, trackedAnidbIds }) => {
+      assert.equal(userId, 7);
+      preference = { mode, trackedAnidbIds };
+      return preference;
+    } };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    confirmKnownTitle: async ({ anidbId }) => anidbId === 19,
+    listSeasonalTitles: async (input) => {
+      observedModes.push(input.airingPreference);
+      return { state: 'ready', year: 0, season: 'ALL',
+        sourceDate: '2026-11-09', items: [], availableTags: [],
+        total: 0, nextAfter: null };
+    },
+    listAiringSchedule: ({ airingPreference }) => {
+      observedScheduleModes.push(airingPreference);
+      return { state: 'ready', week: '2026-W45', checkedMs: 1,
+        items: [] };
+    } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const read = await app.inject({ method: 'GET', url: '/api/airing/preferences',
+      headers: { cookie } });
+    assert.deepEqual(read.json(), preference);
+    assert.equal((await app.inject({ method: 'PUT', url: '/api/airing/preferences',
+      headers: { cookie, origin }, payload: { mode: 'custom', trackedAnidbIds: [19] } })).statusCode, 403);
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'PUT', url: '/api/airing/preferences',
+      headers, payload: { mode: 'custom', trackedAnidbIds: [20] } })).statusCode, 404);
+    const saved = await app.inject({ method: 'PUT', url: '/api/airing/preferences',
+      headers, payload: { mode: 'custom', trackedAnidbIds: [19] } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.deepEqual(saved.json(), { mode: 'custom', trackedAnidbIds: [19] });
+    const airing = await app.inject({ method: 'GET',
+      url: '/api/seasons?year=0&season=ALL&status=ongoing', headers: { cookie } });
+    assert.equal(airing.statusCode, 200, airing.body);
+    assert.deepEqual(observedModes, [{ mode: 'custom', trackedAnidbIds: [19] }]);
+    const schedule = await app.inject({ method: 'GET', url: '/api/airing',
+      headers: { cookie } });
+    assert.equal(schedule.statusCode, 200, schedule.body);
+    assert.deepEqual(observedScheduleModes,
+      [{ mode: 'custom', trackedAnidbIds: [19] }]);
+  } finally { await app.close(); }
+});
+
 test('rapid signed-in title browsing retains a bounded detail read budget', async () => {
   const user = { id: 17, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };

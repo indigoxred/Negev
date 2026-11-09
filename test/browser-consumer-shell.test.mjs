@@ -254,6 +254,42 @@ async function inspectMobile(url, profile, width = 390) {
         return {button: action?.querySelector('.primary')?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
+    let airingTrack = null;
+    if (width === 390) {
+      await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
+      await wait(800);
+      const defaultMode = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `document.querySelector('#airing-view-mode')?.value`,
+      });
+      await send('Runtime.evaluate', { expression: `(() => {
+        const mode = document.querySelector('#airing-view-mode');
+        mode.value = 'all'; mode.dispatchEvent(new Event('change'));
+      })()` });
+      await wait(800);
+      await send('Runtime.evaluate', { expression:
+        `document.querySelector('.tracked-title button')?.click()` });
+      await wait(300);
+      const tracked = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `document.querySelector('.tracked-title button')?.textContent`,
+      });
+      await send('Runtime.evaluate', { expression: `(() => {
+        const mode = document.querySelector('#airing-view-mode');
+        mode.value = 'custom'; mode.dispatchEvent(new Event('change'));
+      })()` });
+      await wait(800);
+      const custom = await send('Runtime.evaluate', { returnByValue: true,
+        expression: `({mode: document.querySelector('#airing-view-mode')?.value,
+          card: document.querySelector('.tracked-title .poster-card')?.textContent,
+          fits: document.documentElement.scrollWidth <= innerWidth})`,
+      });
+      airingTrack = { defaultMode: defaultMode.result.value,
+        tracked: tracked.result.value, ...custom.result.value };
+      await send('Runtime.evaluate', { expression: `(() => {
+        const mode = document.querySelector('#airing-view-mode');
+        mode.value = 'library'; mode.dispatchEvent(new Event('change'));
+      })()` });
+      await wait(300);
+    }
     return { ...result.value, mobilePager: mobilePager.result.value,
       menu: menu.result.value,
       adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
@@ -268,7 +304,7 @@ async function inspectMobile(url, profile, width = 390) {
       requestSaved: requestSaved.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
-      reviewAfterRetry: reviewAfterRetry.result.value };
+      reviewAfterRetry: reviewAfterRetry.result.value, airingTrack };
   } finally {
     socket?.close();
     child.kill();
@@ -279,6 +315,7 @@ async function inspectMobile(url, profile, width = 390) {
 test('signed-in consumer routes render real shell with search, library and requests',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
     let allowAdult = true;
+    let airingPreference = { mode: 'library', trackedAnidbIds: [] };
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -371,6 +408,16 @@ test('signed-in consumer routes render real shell with search, library and reque
             episodeNumber: '4', adult: false }] }));
         return;
       }
+      if (path === '/api/airing/preferences') {
+        if (request.method === 'PUT') {
+          let body = '';
+          for await (const chunk of request) body += chunk;
+          airingPreference = JSON.parse(body);
+        }
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify(airingPreference));
+        return;
+      }
       if (path === '/api/seasons') {
         const params = new URL(request.url, 'http://localhost').searchParams;
         if (params.get('year') === '2025') {
@@ -397,7 +444,7 @@ test('signed-in consumer routes render real shell with search, library and reque
             type: 'TV Series', releaseStatus: 'ONGOING', adult: false,
             rating: { score: 7.8, votes: 1400, members: 3000,
               checkedMs: 1_000 },
-            libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] :
+            libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }] :
             [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
             adult: false, libraryPresence: { state: 'unknown',
@@ -606,6 +653,11 @@ test('signed-in consumer routes render real shell with search, library and reque
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
       assert.equal(mobile.reviewAfterRetry.button, 'Confirm request');
       assert.equal(mobile.reviewAfterRetry.reviewVisible, true);
+      assert.equal(mobile.airingTrack.defaultMode, 'library');
+      assert.equal(mobile.airingTrack.tracked, 'Stop tracking');
+      assert.equal(mobile.airingTrack.mode, 'custom');
+      assert.match(mobile.airingTrack.card, /FX Senshi Kurumi-chan/);
+      assert.equal(mobile.airingTrack.fits, true);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.ok(desktopRelated.franchise.firstRowCount >= 4,
@@ -624,10 +676,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(airing, /<h1>Airing anime<\/h1>/);
       assert.doesNotMatch(airing, /Ongoing this season/);
       assert.match(airing, /id="airing-sort"/);
+      assert.match(airing, /id="airing-view-mode"/);
       assert.match(airing, /id="airing-kind"/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /★ 7\.8 · 3K members/);
-      assert.match(airing, /Local availability not checked/);
+      assert.match(airing, /✓ In library/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);

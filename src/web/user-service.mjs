@@ -564,11 +564,27 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                 `Anime title unavailable (${item.anidbId})` })),
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
-      listAiringSchedule: () => weeklySchedule.read(),
-      listSeasonalTitles: async (input) => {
-        const page = await seasonalCatalogue.read(input);
-        if (!Array.isArray(page.items)) return page;
+      listAiringSchedule: ({ airingPreference } = {}) => {
+        const schedule = weeklySchedule.read();
+        if (!Array.isArray(schedule.items) || !airingPreference ||
+            airingPreference.mode === 'all') return schedule;
+        const tracked = new Set(airingPreference.trackedAnidbIds);
         const checkedMs = now();
+        return { ...schedule, items: schedule.items.filter((item) =>
+          airingPreference.mode === 'custom' ? tracked.has(item.anidbId)
+            : publicPresenceForTitle(item.anidbId, checkedMs).state === 'in_library') };
+      },
+      listSeasonalTitles: async ({ airingPreference, ...input }) => {
+        const checkedMs = now();
+        const eligibleTitle = airingPreference?.mode === 'library'
+          ? (anidbId) => publicPresenceForTitle(anidbId, checkedMs).state === 'in_library'
+          : undefined;
+        const eligibleIds = airingPreference?.mode === 'custom'
+          ? new Set(airingPreference.trackedAnidbIds) : undefined;
+        const page = await seasonalCatalogue.read({ ...input,
+          ...(eligibleTitle ? { eligibleTitle } : {}),
+          ...(eligibleIds ? { eligibleIds } : {}) });
+        if (!Array.isArray(page.items)) return page;
         return { ...page, items: page.items.map((item) => ({ ...item,
           libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
       },

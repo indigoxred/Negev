@@ -95,7 +95,17 @@
       </section>
       <section id="view-airing" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
-          <p>Browse shows marked ongoing, including those that began in earlier seasons. This week’s AniDB episode schedule is below.</p></header>
+          <p>Follow new episodes for shows you care about. Browse the full catalogue in Discover.</p></header>
+        <div class="airing-tracker-controls">
+          <label for="airing-view-mode">Track shows
+            <select id="airing-view-mode" aria-label="Track shows">
+              <option value="library" selected>In library only</option>
+              <option value="all">All airing anime</option>
+              <option value="custom">Custom tracked titles</option>
+            </select>
+          </label>
+          <p id="airing-mode-help" class="muted">Shows with verified playable items in Negev’s Library.</p>
+        </div>
         <section class="section" aria-label="Airing title filters and results">
           <form id="airing-form" class="season-controls">
             <label>Year <select id="airing-year" name="year"><option value="0">All years</option></select></label>

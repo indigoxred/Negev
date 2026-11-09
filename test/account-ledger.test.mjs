@@ -89,6 +89,36 @@ test('admin can disable adult requests for one user without changing other accou
     } finally { reopened.close(); }
   }));
 
+test('Airing view defaults to library and persists each user’s custom tracked titles', async () =>
+  withAccounts(async (dbPath) => {
+    const ledger = openAccountLedger(dbPath, { now: () => 1_000 });
+    let owner;
+    let friend;
+    try {
+      owner = await ledger.bootstrapAdmin({ username: 'Owner',
+        password: 'long-owner-passphrase' });
+      const invite = ledger.createInvite({ adminUserId: owner.id, expiresMs: 100_000 });
+      friend = await ledger.registerInvite({ code: invite.code, username: 'Friend',
+        password: 'long-member-passphrase' });
+      assert.deepEqual(ledger.getAiringPreferences({ userId: owner.id }),
+        { mode: 'library', trackedAnidbIds: [] });
+      assert.deepEqual(ledger.getAiringPreferences({ userId: friend.id }),
+        { mode: 'library', trackedAnidbIds: [] });
+      assert.deepEqual(ledger.setAiringPreferences({ userId: owner.id,
+        mode: 'custom', trackedAnidbIds: [22, 11, 22] }),
+      { mode: 'custom', trackedAnidbIds: [11, 22] });
+      assert.deepEqual(ledger.getAiringPreferences({ userId: friend.id }),
+        { mode: 'library', trackedAnidbIds: [] });
+      assert.throws(() => ledger.setAiringPreferences({ userId: owner.id,
+        mode: 'all', trackedAnidbIds: [0] }), TypeError);
+    } finally { ledger.close(); }
+    const reopened = openAccountLedger(dbPath, { now: () => 2_000 });
+    try {
+      assert.deepEqual(reopened.getAiringPreferences({ userId: owner.id }),
+        { mode: 'custom', trackedAnidbIds: [11, 22] });
+    } finally { reopened.close(); }
+  }));
+
 test('existing account databases gain the adult setting with access preserved', async () =>
   withAccounts(async (dbPath) => {
     const db = new DatabaseSync(dbPath);

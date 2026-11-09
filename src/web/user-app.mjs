@@ -306,7 +306,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(503).send({ error: 'Airing schedule unavailable' });
     }
     let schedule;
-    try { schedule = await listAiringSchedule(); }
+    try { schedule = await listAiringSchedule({ airingPreference:
+      accounts.getAiringPreferences({ userId: request.negevUser.id }) }); }
     catch { return reply.code(503).send({ error: 'Airing schedule unavailable' }); }
     if (!['ready', 'stale'].includes(schedule?.state) ||
         !/^\d{4}-W\d{2}$/.test(schedule.week ?? '') ||
@@ -330,6 +331,42 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         request.negevUser.adultAllowed || !item.adult).map((item) => ({ anidbId: item.anidbId,
         title: item.title, scheduledDate: item.scheduledDate,
         episodeNumber: item.episodeNumber, adult: item.adult })) };
+  });
+  app.get('/api/airing/preferences', { preHandler: requireUser }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (Object.keys(request.query).length ||
+        typeof accounts.getAiringPreferences !== 'function') {
+      return reply.code(503).send({ error: 'Airing preferences unavailable' });
+    }
+    return accounts.getAiringPreferences({ userId: request.negevUser.id }) ??
+      reply.code(404).send({ error: 'Account unavailable' });
+  });
+  app.put('/api/airing/preferences', { preHandler: writeGuards,
+    config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const body = request.body;
+    if (Object.keys(request.query).length ||
+        !allowedBody(body, ['mode', 'trackedAnidbIds']) ||
+        !['library', 'all', 'custom'].includes(body.mode) ||
+        !Array.isArray(body.trackedAnidbIds) ||
+        body.trackedAnidbIds.length > 200 ||
+        body.trackedAnidbIds.some((id) => !Number.isSafeInteger(id) ||
+          id < 1 || id > 2_147_483_647) ||
+        typeof accounts.setAiringPreferences !== 'function') {
+      return reply.code(400).send({ error: 'Invalid Airing preferences' });
+    }
+    const previous = accounts.getAiringPreferences({ userId: request.negevUser.id });
+    if (!previous) return reply.code(404).send({ error: 'Account unavailable' });
+    const known = new Set(previous.trackedAnidbIds);
+    const additions = [...new Set(body.trackedAnidbIds)].filter((id) => !known.has(id));
+    if (additions.length > 20) return reply.code(400).send({ error: 'Track fewer titles at once' });
+    for (const anidbId of additions) {
+      if (!(await confirmKnownTitle({ anidbId }))) {
+        return reply.code(404).send({ error: 'Title not found' });
+      }
+    }
+    return accounts.setAiringPreferences({ userId: request.negevUser.id,
+      mode: body.mode, trackedAnidbIds: body.trackedAnidbIds });
   });
   app.get('/api/seasons', { preHandler: requireUser,
     config: { rateLimit: { max: 12, timeWindow: '1 minute' } } },
@@ -362,7 +399,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     let page;
     try { page = await listSeasonalTitles({ year, season: query.season,
       after, limit: 12, kind: query.kind ?? 'all', tag: query.tag ?? '',
-      status: query.status ?? 'all', sort: query.sort ?? 'newest' }); }
+      status: query.status ?? 'all', sort: query.sort ?? 'newest',
+      ...(query.status === 'ongoing' ? { airingPreference:
+        accounts.getAiringPreferences({ userId: request.negevUser.id }) } : {}) }); }
     catch { return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
     if (page?.state === 'unavailable') return { state: 'unavailable' };
     if (!['ready', 'partial', 'stale'].includes(page?.state) ||
