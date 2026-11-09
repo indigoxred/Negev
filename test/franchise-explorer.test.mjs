@@ -53,6 +53,24 @@ test('an unavailable branch is skipped and the next branch still expands', async
   assert.equal(view.next(), null);
 });
 
+test('a rate-limited related read keeps its branch for a later retry', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',
+    items: [{ anidbId: 20, title: 'Second season', relation: 'Sequel' }] });
+  const limited = await expandFranchiseBatch({ explorer: view,
+    read: async () => { throw Object.assign(new Error('Too Many Requests'),
+      { status: 429 }); } });
+  assert.deepEqual(limited, { state: 'rate_limited', reads: 1, added: 0,
+    failures: 1, hasMore: true });
+  assert.equal(view.next()?.anidbId, 20);
+  const recovered = await expandFranchiseBatch({ explorer: view,
+    read: async (anidbId) => ({ anidbId, state: 'related_titles',
+      completeness: 'unproven', items: [{ anidbId: 30,
+        title: 'Third season', relation: 'Sequel' }] }), maxReads: 1 });
+  assert.equal(recovered.added, 1);
+  assert.equal(view.items().at(-1).anidbId, 30);
+});
+
 test('show more still expands when the first page already contains many cards', async () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
   view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',

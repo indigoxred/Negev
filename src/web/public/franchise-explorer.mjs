@@ -108,7 +108,14 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
     if (!next) break;
     reads++;
     try { explorer.add(await read(next.anidbId)); }
-    catch {
+    catch (error) {
+      // The API may throttle a large franchise during an explicit batch.
+      // Keep this branch unexpanded so a later click can resume it.
+      if (error?.status === 429) {
+        return { state: 'rate_limited', reads,
+          added: explorer.items().length - before,
+          failures: failures + 1, hasMore: true };
+      }
       if (next.anidbId === explorer.items()[0].anidbId) {
         return { state: 'root_unavailable', reads, added: 0,
           failures: 1, hasMore: true };
