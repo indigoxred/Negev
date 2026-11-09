@@ -224,7 +224,7 @@ test('a mount lost during final verification stops before publish intent', async
         ? { state: 'mounted_handoff_roots' }
         : { state: 'held', reason: 'handoff_mount_unavailable' } });
     assert.deepEqual(result,
-      { state: 'held', reason: 'handoff_mount_unavailable' });
+      { state: 'held', reason: 'handoff_mount_unavailable_after_verify' });
     assert.equal(checks, 2);
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);

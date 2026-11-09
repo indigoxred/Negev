@@ -293,7 +293,7 @@ export async function publishPreparedHandoff({
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
-  if (!await mountReady()) return held('handoff_mount_unavailable');
+  if (!await mountReady()) return held('handoff_mount_unavailable_after_verify');
   if (checkExisting) {
     let existing;
     try { existing = await checkExisting({ state: 'batch_identity_verified',
