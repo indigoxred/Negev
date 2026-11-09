@@ -86,8 +86,11 @@
           </form>
           <p id="season-state" class="muted" role="status"></p>
           <div id="season-list" class="poster-grid"></div>
-          <div class="season-pages"><button id="season-previous" type="button" hidden>Previous page</button>
-            <button id="season-next" type="button" hidden>Next page</button></div>
+          <nav class="season-pages" aria-label="Catalogue pages" hidden>
+            <button id="season-previous" type="button" aria-label="Previous page">‹ Previous</button>
+            <span id="season-page-position" aria-live="polite"></span>
+            <button id="season-next" type="button" aria-label="Next page">Next ›</button>
+          </nav>
         </section>
       </section>
       <section id="view-airing" class="page-view" hidden>

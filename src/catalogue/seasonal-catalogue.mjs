@@ -383,6 +383,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       });
     return { state: mapState === 'stale' ? 'stale' : partial ? 'partial' : 'ready',
       year, season, sourceDate: cached.sourceDate, items, availableTags,
+      total: entries.length,
       ...(orderState ? { orderState } : {}),
       nextAfter: after + limit < entries.length ? after + limit : null };
   } };

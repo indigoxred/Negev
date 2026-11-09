@@ -808,8 +808,9 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
   byId('season-year').value = String(year);
   byId('season-name').value = season;
   byId('season-kind').value = kind;
-  byId('season-previous').hidden = true;
-  byId('season-next').hidden = true;
+  byId('season-previous').disabled = true;
+  byId('season-next').disabled = true;
+  byId('season-previous').parentElement.hidden = true;
   notice.textContent = year === 0 && season === 'ALL'
     ? 'Loading the anime catalogue…'
     : `Loading ${season === 'ALL' ? 'all seasons' : season.toLowerCase()} ${year || 'across all years'}…`;
@@ -853,11 +854,19 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       list.append(button);
     }
     const previous = byId('season-previous');
-    previous.hidden = after === 0;
+    const total = Number(page.total);
+    const pageCount = Math.ceil(total / 12);
+    const pageNumber = Math.floor(after / 12) + 1;
+    const validPosition = Number.isSafeInteger(total) && total >= 0 &&
+      pageNumber <= pageCount;
+    previous.parentElement.hidden = !validPosition;
+    if (validPosition) byId('season-page-position').textContent =
+      `Page ${pageNumber} of ${pageCount}`;
+    previous.disabled = after === 0;
     previous.onclick = () => { location.hash = seasonRoute(year, season,
       Math.max(0, after - 12), { kind, tag }); };
     const next = byId('season-next');
-    next.hidden = page.nextAfter === null;
+    next.disabled = page.nextAfter === null;
     next.onclick = () => { location.hash = seasonRoute(year, season,
       page.nextAfter, { kind, tag }); };
   } catch {
