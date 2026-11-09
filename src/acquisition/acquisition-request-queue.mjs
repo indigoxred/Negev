@@ -93,6 +93,25 @@ export function openAcquisitionRequestQueue(dbPath) {
     WHERE r.id=? AND r.status='held' AND r.cancelled_ms IS NULL
       AND (c.request_id IS NULL OR
         (c.state IS NOT NULL AND c.attempt_id IS NULL))`);
+  let startedForCutover;
+  const inFlightRequest = db.prepare(`SELECT 1 FROM acquisition_request_checks
+    WHERE request_id=? AND state IS NULL`);
+  const hasStage = db.prepare(`SELECT 1 FROM sqlite_master
+    WHERE type='table' AND name=?`);
+  const inFlightStages = new Map();
+  const activeStageForRequest = (requestId) => {
+    for (const table of ['start_checks', 'completion_checks',
+      'handoff_publish_checks']) {
+      if (!hasStage.get(table)) continue;
+      if (!inFlightStages.has(table)) {
+        inFlightStages.set(table, db.prepare(`SELECT 1 FROM ${table} c
+          JOIN acquisition_attempts a ON a.id=c.attempt_id
+          WHERE a.request_id=? AND c.state IS NULL LIMIT 1`));
+      }
+      if (inFlightStages.get(table).get(requestId)) return true;
+    }
+    return false;
+  };
   const hasAttemptLedger = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_attempts'`);
   let attemptForRequest;
@@ -125,6 +144,31 @@ export function openAcquisitionRequestQueue(dbPath) {
       !attemptForRequest?.get(requestId);
   };
   return {
+    suspendForCutover({ requestId, reason, nowMs = Date.now() } = {}) {
+      if (!validId(requestId) || typeof reason !== 'string' ||
+          !/^[a-z][a-z0-9_]{0,79}$/.test(reason) || !validTime(nowMs)) {
+        throw new TypeError('Invalid started request cutover hold');
+      }
+      return transact(() => {
+        if (inFlightRequest.get(requestId) ||
+            activeStageForRequest(requestId)) {
+          return held('request_inflight');
+        }
+        if (suspended.get(requestId)) return { state: 'suspended' };
+        if (!hasAttemptLedger.get()) {
+          return held('request_not_started_or_unavailable');
+        }
+        startedForCutover ??= db.prepare(`SELECT r.id FROM requests r
+          WHERE r.id=? AND r.status='held' AND r.cancelled_ms IS NULL AND
+            EXISTS (SELECT 1 FROM acquisition_attempts a
+              WHERE a.request_id=r.id)`);
+        if (!startedForCutover.get(requestId)) {
+          return held('request_not_started_or_unavailable');
+        }
+        insertSuspension.run(requestId, reason, nowMs);
+        return { state: 'suspended' };
+      });
+    },
     suspendUnstarted({ requestId, reason, nowMs = Date.now() } = {}) {
       if (!validId(requestId) || typeof reason !== 'string' ||
           !/^[a-z][a-z0-9_]{0,79}$/.test(reason) || !validTime(nowMs)) {

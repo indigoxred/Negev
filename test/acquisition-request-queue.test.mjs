@@ -78,6 +78,57 @@ test('a saved download attempt cannot be disguised as an unstarted suspension',
     } finally { queue.close(); acquisitions.close(); }
   }));
 
+test('cutover hold preserves a started request and resumes it after reopen',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      acquisitions.reserve({ requestId: 2,
+        candidate: { indexerId: 7, guid: 'saved-attempt' },
+        episodeIds: [1001], nowMs: 10 });
+      assert.deepEqual(queue.suspendForCutover({ requestId: 2,
+        reason: 'cutover_review', nowMs: 11 }), { state: 'suspended' });
+      assert.equal(queue.claimNext({ nowMs: 12 }).requestId, 1);
+      assert.equal(queue.claimNext({ nowMs: 12 }).requestId, 3);
+      assert.equal(queue.claimNext({ nowMs: 12 }).state, 'pass_complete');
+      queue.close();
+      queue = openAcquisitionRequestQueue(dbPath);
+      assert.deepEqual(queue.getSuspension(2), { requestId: 2,
+        reason: 'cutover_review', recordedMs: 11 });
+      assert.deepEqual(queue.resumeSuspended({ requestId: 2 }),
+        { state: 'resumed' });
+      assert.equal(queue.claimNext({ nowMs: 13 }).requestId, 2);
+      const db = new DatabaseSync(dbPath);
+      try {
+        assert.equal(db.prepare('SELECT COUNT(*) AS count FROM acquisition_attempts WHERE request_id=2').get().count, 1);
+        assert.equal(db.prepare('SELECT COUNT(*) AS count FROM requests').get().count, 3);
+      } finally { db.close(); }
+    } finally { queue.close(); acquisitions.close(); }
+  }));
+
+test('cutover hold refuses a started request with an unfinished worker claim',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      acquisitions.reserve({ requestId: 2,
+        candidate: { indexerId: 7, guid: 'prior-attempt' },
+        episodeIds: [1001], nowMs: 10 });
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 1);
+      const active = queue.claimNext({ nowMs: 11 });
+      assert.equal(active.requestId, 2);
+      assert.deepEqual(queue.suspendForCutover({ requestId: 2,
+        reason: 'cutover_review', nowMs: 12 }),
+      { state: 'held', reason: 'request_inflight' });
+      assert.equal(queue.getSuspension(2), null);
+      assert.deepEqual(queue.recordResult({ requestId: 2, pass: active.pass,
+        state: 'held', reason: 'no_safe_release', checkedMs: 13 }),
+      { state: 'recorded' });
+      assert.deepEqual(queue.suspendForCutover({ requestId: 2,
+        reason: 'cutover_review', nowMs: 14 }), { state: 'suspended' });
+    } finally { queue.close(); acquisitions.close(); }
+  }));
+
 test('batch suspension is all-or-nothing and keeps the remaining queue live',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

@@ -85,9 +85,11 @@ export function openCompletionQueue(dbPath) {
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
     LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
     LEFT JOIN handoff_intents h ON h.attempt_id=a.id
     LEFT JOIN completion_checks c ON c.attempt_id=a.id
-    WHERE a.id>? AND a.status='torrent_observed' AND x.attempt_id IS NULL AND
+    WHERE a.id>? AND a.status='torrent_observed' AND
+      hold.request_id IS NULL AND x.attempt_id IS NULL AND
       j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
       h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
