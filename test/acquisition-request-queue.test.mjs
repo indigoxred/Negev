@@ -5,12 +5,118 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from
   '../src/acquisition/acquisition-request-queue.mjs';
 
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
+
+test('a suspended unstarted request is skipped while existing and new requests continue',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.deepEqual(queue.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 10 }), { state: 'suspended' });
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 1);
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 3);
+      assert.equal(queue.claimNext({ nowMs: 11 }).state, 'pass_complete');
+    } finally { queue.close(); }
+    const requests = openRequestLedger(dbPath);
+    try { requests.submit({ requesterId: 1, requestKey: 'new',
+      intent: { ...intent, anidbId: 44 }, nowMs: 12 }); }
+    finally { requests.close(); }
+    const reopened = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(reopened.claimNext({ nowMs: 12 }).requestId, 4);
+      assert.equal(reopened.claimNext({ nowMs: 12 }).state, 'pass_complete');
+      assert.deepEqual(reopened.resumeSuspended({ requestId: 2 }),
+        { state: 'resumed' });
+      assert.equal(reopened.claimNext({ nowMs: 13 }).requestId, 2);
+    } finally { reopened.close(); }
+  }));
+
+test('suspension cannot hide a request already claimed by a worker',
+  async () => fixture(async (dbPath) => {
+    const worker = openAcquisitionRequestQueue(dbPath);
+    const admin = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(worker.claimNext({ nowMs: 10 }).requestId, 1);
+      assert.deepEqual(admin.suspendUnstarted({ requestId: 1,
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'held', reason: 'request_started_or_unavailable' });
+      assert.equal(admin.getSuspension(1), null);
+      assert.deepEqual(admin.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 11 }), { state: 'suspended' });
+      assert.deepEqual(admin.getSuspension(2), { requestId: 2,
+        reason: 'cutover_review', recordedMs: 11 });
+      assert.deepEqual(admin.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 12 }), { state: 'suspended' });
+      assert.equal(worker.claimNext({ nowMs: 12 }).requestId, 3);
+      assert.deepEqual(admin.resumeSuspended({ requestId: 2 }),
+        { state: 'resumed' });
+      assert.deepEqual(admin.resumeSuspended({ requestId: 2 }),
+        { state: 'held', reason: 'not_suspended' });
+      assert.equal(worker.claimNext({ nowMs: 12 }).state, 'pass_complete');
+      assert.equal(worker.claimNext({ nowMs: 12 }).requestId, 2);
+    } finally { worker.close(); admin.close(); }
+  }));
+
+test('a saved download attempt cannot be disguised as an unstarted suspension',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      acquisitions.reserve({ requestId: 2,
+        candidate: { indexerId: 7, guid: 'already-selected' },
+        episodeIds: [1001], nowMs: 10 });
+      assert.deepEqual(queue.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'held', reason: 'request_started_or_unavailable' });
+      assert.equal(queue.getSuspension(2), null);
+    } finally { queue.close(); acquisitions.close(); }
+  }));
+
+test('batch suspension is all-or-nothing and keeps the remaining queue live',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const first = queue.claimNext({ nowMs: 10 });
+      assert.equal(first.requestId, 1);
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 1, 3],
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'held', reason: 'request_started_or_unavailable' });
+      assert.equal(queue.getSuspension(2), null);
+      assert.equal(queue.getSuspension(3), null);
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 3],
+        reason: 'cutover_review', nowMs: 12 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.claimNext({ nowMs: 13 }).state, 'pass_complete');
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [2, 3],
+        reason: 'cutover_review', nowMs: 14 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.getSuspension(2).recordedMs, 12);
+    } finally { queue.close(); }
+  }));
+
+test('completed checks without a download remain eligible for atomic cutover hold',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const checked = queue.claimNext({ nowMs: 10 });
+      assert.equal(checked.requestId, 1);
+      assert.deepEqual(queue.recordResult({ requestId: 1, pass: checked.pass,
+        state: 'held', reason: 'no_release_candidates', checkedMs: 10 }),
+      { state: 'recorded' });
+      assert.deepEqual(queue.suspendUnstartedBatch({ requestIds: [1, 2],
+        reason: 'cutover_review', nowMs: 11 }),
+      { state: 'suspended', count: 2 });
+      assert.equal(queue.getSuspension(1)?.requestId, 1);
+      assert.equal(queue.getSuspension(2)?.requestId, 2);
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 3);
+    } finally { queue.close(); }
+  }));
 
 test('cancelled requests are not claimed while later requests continue', async () =>
   fixture(async (dbPath) => {

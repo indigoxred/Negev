@@ -35,6 +35,8 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
     WHERE a.request_id=? ORDER BY a.id LIMIT 101`);
   const hasAcquisitionChecks = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_request_checks'`);
+  const hasSuspensions = db.prepare(`SELECT 1 FROM sqlite_master
+    WHERE type='table' AND name='acquisition_request_suspensions'`);
   const hasCompletionChecks = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='completion_checks'`);
   let oneTimeCompletion;
@@ -42,6 +44,17 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
   let scheduledRetry;
   let inconclusiveFileCheck;
   let transferCheck;
+  let suspensionCheck;
+  const waitingForOwner = (requestId) => {
+    // Acquisition can be enabled after this read-only progress connection
+    // opens, so discover the optional table on each read until it exists.
+    if (!suspensionCheck) {
+      if (!hasSuspensions.get()) return false;
+      suspensionCheck = db.prepare(`SELECT 1
+        FROM acquisition_request_suspensions WHERE request_id=?`);
+    }
+    return Boolean(suspensionCheck.get(requestId));
+  };
   const recentTransfer = (requestId) => {
     if (!transferCheck) {
       if (!hasCompletionChecks.get() ||
@@ -141,12 +154,15 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
         sum + (row.handoff_status ? row.claimed_count : 0), 0);
       const interruptedCheck = interrupted(requestId);
       const rejectedNeedsReview = rows.some((row) => row.rejected_id && !row.retired_id);
-      const reviewRequired = interruptedCheck || rejectedNeedsReview;
+      const ownerReviewPending = waitingForOwner(requestId);
+      const reviewRequired = ownerReviewPending || interruptedCheck ||
+        rejectedNeedsReview;
       const identityState = active.some((row) => row.start_status)
         ? fileIdentityState(requestId) : null;
       let state = 'saved';
       if (rejectedNeedsReview) state = 'review_needed';
       else if (interruptedCheck) state = 'request_interrupted';
+      else if (ownerReviewPending) state = 'owner_review_pending';
       else if (privateVerifiedTargets > 0) {
         state = privateVerifiedTargets >= item.target_count &&
           active.some((row) => row.handoff_status !== 'prepared')

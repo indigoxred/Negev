@@ -12,6 +12,32 @@ import { openAcquisitionRequestQueue,
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { openRequestProgress } from '../src/requests/request-progress.mjs';
 
+test('an unstarted cutover hold is visible even when the queue opens after progress',
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'negev-cutover-progress-'));
+    const dbPath = path.join(root, 'state.sqlite');
+    const requests = openRequestLedger(dbPath);
+    const saved = requests.submit({ requesterId: 1, requestKey: 'cutover',
+      nowMs: 100, intent: { state: 'ready', anidbId: 42,
+        kind: 'series', monitorFuture: false, episodeIds: [1001] } });
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const handoffs = openHandoffLedger(dbPath);
+    const progress = openRequestProgress(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      queue.suspendUnstarted({ requestId: saved.requestId,
+        reason: 'cutover_review', nowMs: 101 });
+      assert.deepEqual(progress.read(saved.requestId), {
+        state: 'owner_review_pending', targetCount: 1,
+        privateVerifiedTargets: 0, activeAttempts: 0,
+        reviewRequired: true, publicAvailability: 'unverified' });
+      queue.resumeSuspended({ requestId: saved.requestId });
+      assert.equal(progress.read(saved.requestId).state, 'saved');
+    } finally { queue.close(); progress.close(); handoffs.close();
+      acquisitions.close(); requests.close();
+      await rm(root, { recursive: true, force: true }); }
+  });
+
 test('request progress distinguishes private proof from public availability', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-progress-'));
   const dbPath = path.join(root, 'state.sqlite');
