@@ -9,6 +9,15 @@ const slot = ({ userId, anidbId, selection = 'installment' }) => {
   return `negev-request-${userId}-${anidbId}-${selection}`;
 };
 
+export function generateRequestKey(cryptoSource = globalThis.crypto) {
+  if (typeof cryptoSource?.getRandomValues !== 'function') {
+    throw new TypeError('Secure random values are unavailable');
+  }
+  const bytes = new Uint8Array(16);
+  cryptoSource.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 // Keep a key only while the result is uncertain. A saved request can be
 // requested again later, and a shared browser cannot reuse another account's key.
 export function createRequestKeyStore({ storage, createKey } = {}) {
