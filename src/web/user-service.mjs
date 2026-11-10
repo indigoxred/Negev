@@ -43,6 +43,7 @@ import { buildUserApp } from './user-app.mjs';
 import { createMetadataLimiter } from './metadata-limiter.mjs';
 import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
 import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
+import { currentDisplayAvailability } from '../availability/current-display-availability.mjs';
 import { readShokoRecentPage } from '../availability/shoko-recent-catchup.mjs';
 import { openShokoRecentLedger } from '../availability/shoko-recent-ledger.mjs';
 import { createShokoRecentWorker } from '../availability/shoko-recent-worker.mjs';
@@ -289,12 +290,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const observeDisplayPublic = async (target) => {
       const live = await observeCurrentPublic(target);
       if (live?.state === 'available') return live;
-      const saved = target.kind === 'series' &&
-        inventory.getObservedFileIds(target).length > 0
-        ? fileProofs?.getCurrent(target) : null;
-      return saved?.state === 'available' &&
-        saved.presentation === 'alternate_card'
-        ? { state: 'available', presentation: 'alternate_card' } : live;
+      const hasShokoFile = target.kind === 'series' &&
+        inventory.getObservedFileIds(target).length > 0;
+      const file = hasShokoFile ? fileProofs?.getCurrent(target) : null;
+      return currentDisplayAvailability({ live, file, hasShokoFile });
     };
     const onRecordedAvailable = (proof, target) => {
       if (!fileCursor) return;
