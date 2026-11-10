@@ -30,7 +30,7 @@ test('an exact request and targets survive restart in a held state', async () =>
   try {
     assert.deepEqual(second.getRequest(saved.requestId), {
       id: saved.requestId, requesterId: 7, anidbId: 1234, kind: 'series',
-      monitorFuture: true, watchClosed: false,
+      monitorFuture: true, watchClosed: false, canCancel: true,
       episodeIds: [1001, 1002], status: 'held',
       reason: 'awaiting_availability_evidence', createdMs: 1_000,
     });
@@ -65,6 +65,8 @@ test('a request with an acquisition attempt cannot be falsely cancelled', async 
     db.exec('CREATE TABLE acquisition_attempts (request_id INTEGER NOT NULL)');
     db.prepare('INSERT INTO acquisition_attempts(request_id) VALUES (?)').run(saved.requestId);
     db.close();
+    assert.equal(ledger.getRequest(saved.requestId).canCancel, false);
+    assert.equal(ledger.listRequests({ requesterId: 7 }).items[0].canCancel, false);
     assert.deepEqual(ledger.cancelRequest({ requesterId: 7, requestId: saved.requestId,
       nowMs: 2_000 }), { state: 'held', reason: 'acquisition_started' });
     assert.equal(ledger.getRequest(saved.requestId).status, 'held');

@@ -281,10 +281,13 @@ export function openRequestLedger(dbPath) {
     getRequest(requestId) {
       if (!Number.isSafeInteger(requestId) || requestId <= 0) throw new TypeError('Invalid request ID');
       const row = get.get(requestId);
+      const canCancel = row?.cancelled_ms === null &&
+        !(attemptTable.get() && db.prepare(
+          'SELECT 1 FROM acquisition_attempts WHERE request_id=? LIMIT 1').get(requestId));
       return row ? { id: row.id, requesterId: row.requester_id, anidbId: row.anidb_id,
         ...(row.title === null ? {} : { title: row.title }),
         kind: row.kind, monitorFuture: Boolean(row.monitor_future),
-        watchClosed: Boolean(row.watch_closed),
+        watchClosed: Boolean(row.watch_closed), canCancel,
         episodeIds: findLinks.all(row.id).map((link) => link.episode_id),
         status: row.cancelled_ms === null ? row.status : 'cancelled',
         reason: row.reason, createdMs: row.created_ms } : null;

@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
@@ -113,6 +113,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
+  const clientRevision = createHash('sha256')
+    .update(pages.join('\0')).digest('hex');
+  pages[0] = pages[0].replace('</head>',
+    `  <meta name="negev-client-revision" content="${clientRevision}">\n</head>`);
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store' };
@@ -172,6 +176,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   const writeGuards = [requireOrigin, requireUser, requireCsrf];
   const authRate = { max: 5, timeWindow: '1 minute', keyGenerator: peerRateKey };
   app.get('/health/live', async () => ({ status: 'ok' }));
+  app.get('/api/client-revision', async (_request, reply) =>
+    reply.header('Cache-Control', 'no-store').send({ revision: clientRevision }));
   // Read-only operator diagnostic. A quiet observation is never a download
   // permission and no file, path, torrent, or provider details leave the API.
   app.post('/api/admin/import-activity', { preHandler: writeGuards,
@@ -904,7 +910,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof queuePendingTitle === 'function') {
       const pending = await queuePendingTitle({
         requesterId: request.negevUser.id, anidbId: body.anidbId,
-        requestKey: body.requestKey });
+        requestKey: body.requestKey, initialReason: result.reason });
       if (pending?.state === 'pending' &&
           Number.isSafeInteger(pending.intentId) && pending.intentId > 0) {
         return reply.code(202).send(result.reason === 'release_state_unknown'
@@ -1003,7 +1009,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state === 'cancelled') return result;
     return reply.code(result.reason === 'request_not_found' ? 404 : 409).send({
       error: result.reason === 'acquisition_started'
-        ? 'Download processing has already begun; this request cannot be cancelled here yet.'
+        ? 'Release processing has already started. This request cannot be cancelled here, even if the download has not begun.'
         : 'Request cannot be cancelled', reason: result.reason });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {

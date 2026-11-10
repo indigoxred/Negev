@@ -491,7 +491,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         { state: 'disabled' },
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => submitRequest(input),
-      queuePendingTitle: async ({ requesterId, anidbId, requestKey }) => {
+      queuePendingTitle: async ({ requesterId, anidbId, requestKey,
+        initialReason }) => {
         if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
             !Number.isSafeInteger(anidbId) || anidbId < 1 ||
             typeof requestKey !== 'string') {
@@ -507,7 +508,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           return { state: 'held', reason: 'title_unavailable' };
         }
         return pendingTitles.enqueue({ requesterId, anidbId,
-          title, requestKey, nowMs: now() });
+          title, requestKey, nowMs: now(), initialReason });
       },
       listPendingTitles: (input) => pendingTitles.listForUser(input),
       readPendingTitle: (id) => pendingTitles.get(id),

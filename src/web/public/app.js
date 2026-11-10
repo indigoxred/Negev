@@ -382,7 +382,7 @@ async function loadRequestView(view, append = false, silent = false) {
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
       row.append(heading, status);
-      if (item.status === 'held') {
+      if (item.status === 'held' && item.canCancel !== false) {
         const cancel = element('button', 'Cancel request', 'quiet');
         cancel.type = 'button';
         cancel.addEventListener('click', async () => {
@@ -398,6 +398,10 @@ async function loadRequestView(view, append = false, silent = false) {
           }
         });
         heading.append(cancel);
+      } else if (item.status === 'held' && item.canCancel === false) {
+        heading.append(element('small',
+          'Cancellation is unavailable once release processing starts, even before a download begins.',
+          'muted'));
       }
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
@@ -553,6 +557,10 @@ async function refreshExpandedHistory() {
     for (const status of list.querySelectorAll('.request-status')) {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
+      if (status.negevRequest?.canCancel !== item.canCancel) {
+        void loadRequestView('history', false, true);
+        return;
+      }
       status.negevRequest = item;
       const presentation = requestItemPresentation(item);
       renderRequestStatus(status, presentation);
@@ -601,7 +609,8 @@ async function loadPreparations(silent = false, append = false) {
       row.append(posterImage(item));
       const heading = element('div');
       heading.append(element('strong', item.title),
-        element('small', 'Preparing episode details'));
+        element('small', item.reason === 'release_state_unknown'
+          ? 'Waiting for release schedule' : 'Preparing episode details'));
       const open = element('a', 'View title →', 'text-link');
       open.href = titleRoute(item.anidbId);
       heading.append(open);
@@ -627,7 +636,9 @@ async function loadPreparations(silent = false, append = false) {
             : 'This title could not be requested automatically.'
         : item.state === 'resolving'
           ? 'Finishing the request. Cancellation is unavailable during this step.'
-          : 'Waiting for a verified episode list before any download.',
+          : item.reason === 'release_state_unknown'
+            ? 'Waiting for a release date and first episode before any download.'
+            : 'Waiting for a verified episode list before any download.',
       'muted'));
       rows.append(row);
     }
@@ -1365,6 +1376,9 @@ function pendingTitleAction(item) {
   review.hidden = true;
   review.append(element('strong', 'Review your request'));
   review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
+  review.append(element('p',
+    'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
+    'muted'));
   const cancelReview = element('button', 'Cancel', 'quiet');
   cancelReview.type = 'button';
   cancelReview.addEventListener('click', () => {
@@ -2043,6 +2057,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? `${data.title || item.title} · one film entry`
       : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
     requestReview.append(reviewSummary);
+    requestReview.append(element('p',
+      'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
+      'muted'));
     updateRequestReview = () => {
       const selected = family.items().find((entry) => entry.anidbId === selectedInstallmentId);
       reviewSummary.textContent = selectedInstallmentId === item.anidbId
@@ -2133,6 +2150,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         return;
       }
       if (!reviewingRequest) {
+        if (needsFilmChoice) {
+          const selectedFilm = filmEntries.find((episode) =>
+            String(episode.id) === filmChoiceSelect.value);
+          reviewSummary.textContent = `${data.title || item.title} · ` +
+            `main film entry ${selectedFilm?.number ?? '?'}${selectedFilm?.title ? ` · ${selectedFilm.title}` : ''}`;
+        }
         reviewingRequest = true;
         requestReview.hidden = false;
         button.textContent = 'Confirm request';
@@ -2223,3 +2246,21 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   }
 }
 void refreshSession();
+const loadedClientRevision = document.querySelector(
+  'meta[name="negev-client-revision"]')?.content;
+let checkingClientRevision = false;
+async function refreshClientRevision() {
+  if (!loadedClientRevision || checkingClientRevision || document.hidden) return;
+  checkingClientRevision = true;
+  try {
+    const response = await fetch('/api/client-revision', { cache: 'no-store' });
+    if (!response.ok) return;
+    const { revision } = await response.json();
+    if (revision && revision !== loadedClientRevision) location.reload();
+  } catch { /* A connection failure is not a reason to disrupt this page. */ }
+  finally { checkingClientRevision = false; }
+}
+setInterval(refreshClientRevision, 60_000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refreshClientRevision();
+});

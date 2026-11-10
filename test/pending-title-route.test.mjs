@@ -50,7 +50,8 @@ test('cold installment saves a preparation without client-supplied title or targ
       assert.deepEqual(saved.json(), { state: 'pending', intentId: 12,
         created: true });
       assert.deepEqual(calls, [{ requesterId: 7,
-        anidbId: 4158, requestKey: 'cold-one' }]);
+        anidbId: 4158, requestKey: 'cold-one',
+        initialReason: 'detail_pending' }]);
       const selected = await app.inject({ method: 'POST', url: '/api/requests',
         headers, payload: { ...body, scope: 'episodes', episodeIds: [88],
           requestKey: 'selected' } });
@@ -60,12 +61,14 @@ test('cold installment saves a preparation without client-supplied title or targ
   });
 
 test('an installment with no trustworthy release date saves a pending watch', async () => {
+  const calls = [];
   const app = await buildUserApp({ accounts: accounts(),
     sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, readRequest: () => null,
     confirmKnownTitle: async () => true,
     submitRequest: async () => ({ state: 'held', reason: 'release_state_unknown' }),
-    queuePendingTitle: () => ({ state: 'pending', intentId: 14, created: true }),
+    queuePendingTitle: (input) => { calls.push(input); return {
+      state: 'pending', intentId: 14, created: true }; },
   });
   try {
     const headers = await signedIn(app);
@@ -75,6 +78,7 @@ test('an installment with no trustworthy release date saves a pending watch', as
     assert.equal(saved.statusCode, 202, saved.body);
     assert.equal(saved.json().state, 'pending');
     assert.equal(saved.json().waitingFor, 'release_schedule');
+    assert.equal(calls[0].initialReason, 'release_state_unknown');
   } finally { await app.close(); }
 });
 

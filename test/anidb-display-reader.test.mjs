@@ -48,6 +48,17 @@ test('display descriptions show character names instead of raw AniDB character l
   assert.equal(display.description, 'Fia meets Yashu.');
 });
 
+test('unreleased empty title does not display AniMap epoch placeholder as an air date', async () => {
+  const reader = createAniDbDisplayReader({ fetchImpl: async () =>
+    new Response(JSON.stringify({ anidb_id: 20426, title: 'Liar Game 2',
+      restricted: false, tags: [], startyear: 1970,
+      startdate: '1970-01-01', enddate: null, episodecount: 0 })) });
+  const display = await reader.read({ anidbId: 20426 });
+  assert.equal(display.state, 'display');
+  assert.equal(display.startYear, null);
+  assert.equal(display.startDate, null);
+});
+
 test('display reader keeps a valid title with more than 100 catalogue tags', async () => {
   const reader = createAniDbDisplayReader({ fetchImpl: async () =>
     new Response(JSON.stringify({ anidb_id: 69, title: 'One Piece',

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAniMapRawDetailReader } from '../src/catalogue/animap-raw-detail.mjs';
+import { requestReleaseState } from '../src/requests/submit-held-request.mjs';
 
 const record = { anime: {
   '@id': '19586', '@restricted': 'false', type: 'TV Series',
@@ -43,6 +44,19 @@ test('public raw AniDB record gives exact bounded episode pages', async () => {
   assert.equal(first.complete, false);
   assert.equal(second.nextPage, null);
   assert.equal(second.restricted, false);
+});
+
+test('empty unreleased archive title treats Unix epoch as missing release date', async () => {
+  const reader = createAniMapRawDetailReader({ fetchImpl: async () =>
+    new Response(JSON.stringify({ anime: {
+      ...record.anime, '@id': '20426', startdate: '1970-01-01',
+      enddate: null, episodecount: '0', episodes: null,
+    } }), { status: 200 }) });
+  const detail = await reader.read({ anidbId: 20426, page: 1 });
+  assert.equal(detail.state, 'details');
+  assert.equal(detail.airDate, null);
+  assert.equal(detail.episodes.length, 0);
+  assert.equal(requestReleaseState(detail, '2026-11-10'), 'unknown');
 });
 
 test('a large registered series stays inside the bounded archive reader', async () => {

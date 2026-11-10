@@ -423,7 +423,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
           id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
-          episodeIds: [10], monitorFuture: false, watchClosed: false,
+          episodeIds: [10], monitorFuture: false, watchClosed: false, canCancel: true,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }, {
@@ -433,7 +433,8 @@ test('signed-in consumer routes render real shell with search, library and reque
             publicAvailability: 'verified_recently', publicVerifiedTargets: 1 },
         }, {
           id: 3, anidbId: 7, title: 'A title needing help', kind: 'series',
-          episodeIds: [12], monitorFuture: false, watchClosed: false,
+          episodeIds: [12], monitorFuture: false, watchClosed: false, canCancel: false,
+          status: 'held',
           progress: { state: 'review_needed', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }], nextBeforeId: null }));
@@ -443,7 +444,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{ id: 12, anidbId: 19847,
           title: 'FX Senshi Kurumi-chan', state: 'pending',
-          reason: 'detail_pending', createdMs: 1_000 }], nextBeforeId: 12 }));
+          reason: 'release_state_unknown', createdMs: 1_000 }], nextBeforeId: 12 }));
         return;
       }
       if (path === '/api/catalogue/search') {
@@ -1016,9 +1017,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
       assert.match(requests, /FX Senshi Kurumi-chan/);
-      assert.match(requests, /Preparing episode details/);
+      assert.match(requests, /Waiting for release schedule/);
       assert.match(requests, /id="more-preparations" type="button">Show older preparations/);
       assert.match(requests, /Cancel request/);
+      assert.match(requests, /A title needing help(?:(?!class="request-row")[\s\S])*Cancellation is unavailable once release processing starts/);
       assert.match(requests, /My requests/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);
       assert.match(requests, /No download is confirmed in progress/);
