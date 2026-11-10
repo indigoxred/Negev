@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAniMapRawDetailReader } from '../src/catalogue/animap-raw-detail.mjs';
+import { requestReleaseState } from '../src/requests/submit-held-request.mjs';
 
 const record = { anime: {
   '@id': '19586', '@restricted': 'false', type: 'TV Series',
@@ -55,6 +56,7 @@ test('empty unreleased archive title treats Unix epoch as missing release date',
   assert.equal(detail.state, 'details');
   assert.equal(detail.airDate, null);
   assert.equal(detail.episodes.length, 0);
+  assert.equal(requestReleaseState(detail, '2026-11-10'), 'unknown');
 });
 
 test('a large registered series stays inside the bounded archive reader', async () => {
