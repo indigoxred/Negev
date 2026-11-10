@@ -44,6 +44,62 @@ test('verifies an exact file inside staging without importing or moving it', asy
   });
 });
 
+test('ambiguous AniDB 204 can use an independent exact Shoko offline episode preview', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup: async () => ({ status: 204 }),
+      offlineLookup: async ({ filename, ed2k: hash, size }) => {
+        assert.equal(filename, 'episode.mkv');
+        assert.equal(hash, ed2k);
+        assert.equal(size, 3);
+        return { status: 200, release: { ProviderName: 'Offline Importer',
+          ID: 'offline://42-1001', OriginalFilename: filename,
+          IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+            AnidbEpisodeID: 1001, PercentageStart: 0,
+            PercentageEnd: 100 }] } };
+      },
+    });
+    assert.deepEqual(result, { state: 'identity_verified',
+      identitySource: 'shoko_offline', releaseId: 'offline://42-1001',
+      coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k, size: 3 });
+  });
+});
+
+test('AniDB 204 with an inconclusive offline preview remains held', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    let offlineCalls = 0;
+    const result = await verifyStagedFile({ root, relativePath: 'episode.mkv',
+      expected, lookup: async () => ({ status: 204 }),
+      offlineLookup: async () => { offlineCalls++; return { status: 204 }; },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'offline_lookup_inconclusive' });
+    assert.equal(offlineCalls, 1);
+  });
+});
+
+test('offline fallback never overrides a wrong or unavailable AniDB result', async () => {
+  await withStage(async (root) => {
+    await writeFile(path.join(root, 'episode.mkv'), 'abc');
+    let calls = 0;
+    for (const response of [
+      { status: 401 },
+      { status: 200, release: { ...matchingPreview({ size: 3 }).release,
+        crossReferences: [{ anidbAnimeID: 99, anidbEpisodeID: 1001,
+          percentageStart: null, percentageEnd: null }] } },
+    ]) {
+      const result = await verifyStagedFile({ root,
+        relativePath: 'episode.mkv', expected,
+        lookup: async () => response,
+        offlineLookup: async () => { calls++; throw Error('must not call'); } });
+      assert.notEqual(result.state, 'identity_verified');
+    }
+    assert.equal(calls, 0);
+  });
+});
+
 test('holds an exact ED2K chunk boundary until Shoko hash mode is proven', async () => {
   await withStage(async (root) => {
     await writeFile(path.join(root, 'boundary.mkv'), Buffer.alloc(ED2K_CHUNK_SIZE));

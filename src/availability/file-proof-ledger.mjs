@@ -41,8 +41,11 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       ON file_availability_proofs(file_id,verified_ms)`);
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_card
       ON file_availability_proofs(library_id,rating_key,verified_ms)`);
-    // Source observers cannot witness changes while Negev is stopped. A new
-    // service process must earn each current positive again from exact bytes.
+    // Saved positives remain current until their configured lifetime expires.
+    // Accepted Shoko/Plex changes invalidate them, but changes while Negev is
+    // stopped may remain visible until the resumed source sweep observes them.
+    // An explicit discard is available for a recovery that cannot trust the
+    // saved source generation.
     if (discardPriorProofs) db.exec('DELETE FROM file_availability_proofs');
   } catch (error) { db.close(); throw error; }
   const upsert = db.prepare(`INSERT INTO file_availability_proofs

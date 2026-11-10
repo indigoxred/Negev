@@ -69,6 +69,22 @@ test('restart verification uses the stored file plan and exact target', async ()
     assert.deepEqual(result.files[0].episodeIds, [1001]);
   }));
 
+test('recorded attempt forwards the offline preview only to the file verifier', async () =>
+  withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {
+    const offlineLookup = async () => ({ status: 204 });
+    const result = await verifyRecordedBatch({ ...options({ requests,
+      acquisitions, attemptId, observe: async () => complete,
+      verify: async (input) => {
+        assert.equal(input.offlineLookup, offlineLookup);
+        return { state: 'identity_verified', identitySource: 'shoko_offline',
+          releaseId: 'offline://42-1001', size: 1000,
+          ed2k: 'A'.repeat(32),
+          coverage: [{ episodeId: 1001, start: 0, end: 100 }] };
+      } }), offlineLookup });
+    assert.equal(result.state, 'batch_identity_verified');
+    assert.equal(result.files[0].releaseId, 'offline://42-1001');
+  }));
+
 test('missing durable plan or start intent holds before observing bytes', async () => {
   for (const variant of [{ plan: false }, { started: false }]) {
     await withSavedAttempt(async ({ requests, acquisitions, attemptId }) => {

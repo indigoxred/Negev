@@ -310,3 +310,62 @@ test('synthetic staged bytes pass only through exact AniDB file identities', asy
     assert.equal(result.handoffReady, false);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('an offline-verified single episode carries a distinct identity into the batch', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]],
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    lookup: async () => ({ status: 204 }),
+    offlineLookup: async () => ({ status: 204 }),
+    verify: async ({ offlineLookup }) => {
+      assert.equal(typeof offlineLookup, 'function');
+      return { state: 'identity_verified', identitySource: 'shoko_offline',
+        releaseId: 'offline://42-1001',
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+        ed2k: 'A'.repeat(32), size: 3 };
+    },
+  });
+  assert.equal(result.state, 'batch_identity_verified');
+  assert.deepEqual(result.files, [{ name: files[0].name,
+    episodeIds: [1001], identitySource: 'shoko_offline',
+    releaseId: 'offline://42-1001', ed2k: 'A'.repeat(32), size: 3 }]);
+});
+
+test('offline batch rejects a forged release ID and duplicate physical hash', async () => {
+  const options = { root: '/staging', request, attempt, expectedTorrent,
+    plannedFiles, observe: async () => ({ state: 'complete', files }),
+    lookup: async () => ({ status: 204 }),
+    offlineLookup: async () => ({ status: 204 }) };
+  const forged = await verifyStagedBatch({ ...options,
+    attempt: { ...attempt, episodeIds: [1001] },
+    plannedFiles: [plannedFiles[0]],
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    verify: async () => ({ state: 'identity_verified',
+      identitySource: 'shoko_offline', releaseId: 'offline://42-1002',
+      coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k: 'A'.repeat(32), size: 3 }) });
+  assert.deepEqual(forged, { state: 'held', reason: 'invalid_file_evidence' });
+  const duplicate = await verifyStagedBatch({ ...options,
+    verify: async ({ relativePath }) => ({ state: 'identity_verified',
+      identitySource: 'shoko_offline',
+      releaseId: relativePath.includes('01')
+        ? 'offline://42-1001' : 'offline://42-1002',
+      coverage: [{ episodeId: relativePath.includes('01') ? 1001 : 1002,
+        start: 0, end: 100 }], ed2k: 'A'.repeat(32), size: 3 }) });
+  assert.deepEqual(duplicate,
+    { state: 'held', reason: 'invalid_file_evidence' });
+});
+
+test('offline batch rejects a claimed hash result with the wrong byte count', async () => {
+  const result = await verifyStagedBatch({ root: '/staging', request,
+    attempt: { ...attempt, episodeIds: [1001] }, expectedTorrent,
+    plannedFiles: [plannedFiles[0]],
+    observe: async () => ({ state: 'complete', files: [files[0]] }),
+    lookup: async () => ({ status: 204 }),
+    verify: async () => ({ state: 'identity_verified',
+      identitySource: 'shoko_offline', releaseId: 'offline://42-1001',
+      coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      ed2k: 'A'.repeat(32), size: 4 }) });
+  assert.deepEqual(result, { state: 'held', reason: 'invalid_file_evidence' });
+});

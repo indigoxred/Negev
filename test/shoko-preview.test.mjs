@@ -31,6 +31,19 @@ test('keeps Shoko 204 inconclusive and does not parse a response body', async ()
   assert.deepEqual(result, { status: 204 });
 });
 
+test('ambiguous AniDB 204 needs no unrelated connectivity verdict', async () => {
+  const paths = [];
+  const result = await previewAniDbRelease({ ...options,
+    fetchImpl: async (url) => {
+      paths.push(new URL(url).pathname);
+      return { status: 204 };
+    } });
+  assert.deepEqual(paths, [
+    '/api/v3/ReleaseInfo/Provider/11111111-2222-4333-8444-555555555555/Preview/By-Release',
+  ]);
+  assert.deepEqual(result, { status: 204 });
+});
+
 test('converts transport failure and malformed JSON to provider-unavailable evidence', async () => {
   assert.deepEqual(await previewAniDbRelease({ ...options, fetchImpl: async () => { throw Error('network down'); } }), { status: 0 });
   assert.deepEqual(await previewAniDbRelease({ ...options, fetchImpl: async () => ({ status: 200, text: async () => 'not-json' }) }), { status: 0 });

@@ -8,6 +8,8 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { reconcileHandoffContent } from '../src/acquisition/observe-handoff-import.mjs';
+import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-handoff.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 test('one exact prepared handoff gets one durable publish intent across restart', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-handoff-ledger-'));
@@ -144,5 +146,60 @@ test('prepared handoff cannot substitute another episode under a valid torrent c
           evidenceDigest: evaluateHandoffEvidence(right).digest, ...right },
         nowMs: 205 }).state, 'prepared');
     } finally { ledger.close(); }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('offline handoff persists and restores only its canonical version-two identity', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-offline-handoff-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const hash = 'a'.repeat(40);
+  const candidate = { indexerId: 7, guid: 'offline-release' };
+  const details = { anidbId: 42, torrentHash: hash,
+    files: [{ name: '01.mkv', size: 3, ed2k: 'A'.repeat(32),
+      episodeIds: [1001], identitySource: 'shoko_offline',
+      releaseId: 'offline://42-1001' }], subtitles: [] };
+  try {
+    const requests = openRequestLedger(dbPath);
+    const request = requests.submit({ requesterId: 1, requestKey: 'offline',
+      nowMs: 100, intent: { state: 'ready', anidbId: 42, kind: 'series',
+        monitorFuture: false, episodeIds: [1001] } });
+    requests.close();
+    const acquisition = openAcquisitionLedger(dbPath);
+    const attempt = acquisition.reserve({ requestId: request.requestId,
+      candidate, episodeIds: [1001], nowMs: 200 });
+    acquisition.bindPreparedTorrent({ attemptId: attempt.attemptId,
+      candidate, hash, nowMs: 201 });
+    acquisition.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
+    acquisition.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
+    acquisition.beginStart({ attemptId: attempt.attemptId, hash,
+      manifestDigest: 'c'.repeat(64), nowMs: 204 });
+    acquisition.close();
+    const evidence = evaluateHandoffEvidence(details);
+    const ledger = openHandoffLedger(dbPath);
+    const prepared = { ...details, state: 'handoff_prepared',
+      publishReady: false, holdingPath: path.join(root, 'holding'),
+      evidenceDigest: evidence.digest };
+    try {
+      assert.equal(ledger.recordPrepared({ attemptId: attempt.attemptId,
+        prepared, nowMs: 205 }).state, 'prepared');
+      const saved = ledger.getHandoff(attempt.attemptId);
+      assert.equal(saved.manifest.version, 2);
+      assert.deepEqual(restorePreparedHandoff({ attemptId: attempt.attemptId,
+        handoff: saved }).files, evidence.manifest.videos);
+    } finally { ledger.close(); }
+    const db = new DatabaseSync(dbPath);
+    try {
+      const forged = { ...evidence.manifest, version: 1 };
+      db.prepare('UPDATE handoff_intents SET manifest_json=? WHERE attempt_id=?')
+        .run(JSON.stringify(forged), attempt.attemptId);
+    } finally { db.close(); }
+    const restarted = openHandoffLedger(dbPath);
+    try {
+      assert.equal(restarted.getHandoff(attempt.attemptId).manifest, null);
+      assert.deepEqual(restarted.beginPublish({ attemptId: attempt.attemptId,
+        evidenceDigest: evidence.digest, nowMs: 206 }),
+      { state: 'held', reason: 'manifest_missing' });
+    }
+    finally { restarted.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });

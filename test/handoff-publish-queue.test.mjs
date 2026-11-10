@@ -147,6 +147,35 @@ test('temporary provider failure gets at most one automatic retry', async () =>
     assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
   }));
 
+test('missing preflight mount keeps a paced retry while later batches advance', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId,
+      version: first.version, state: 'held', reason: 'handoff_mount_unavailable',
+      checkedMs: 1_001 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 301_001);
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_002 }).attemptId, ctx.ids[1]);
+    ctx.reopen();
+    const retry = ctx.queue.claimNext({ nowMs: 301_001 });
+    assert.equal(retry.attemptId, first.attemptId);
+    assert.equal(ctx.queue.recordResult({ attemptId: retry.attemptId,
+      version: retry.version, state: 'held', reason: 'handoff_mount_unavailable',
+      checkedMs: 301_002 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 601_002,
+      'a preflight mount check can continue without hashing the batch');
+  }));
+
+test('mount loss after file verification requires review rather than repeated reads', async () =>
+  fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    assert.equal(ctx.queue.recordResult({ attemptId: claim.attemptId,
+      version: claim.version, state: 'held',
+      reason: 'handoff_mount_unavailable_after_verify',
+      checkedMs: 1_001 }).state, 'recorded');
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, null);
+    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId, ctx.ids[1]);
+  }));
+
 test('unknown publish outcome requires review after one reconciliation', async () =>
   fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });

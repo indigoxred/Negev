@@ -182,7 +182,8 @@ export function openCompletionQueue(dbPath) {
         const prior = lookupCount.get(attemptId, pass);
         if (!prior) return held('stale_claim');
         const inconclusiveCount = state === 'held' &&
-          reason === 'file_lookup_inconclusive'
+          ['file_lookup_inconclusive',
+            'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const delay = reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;

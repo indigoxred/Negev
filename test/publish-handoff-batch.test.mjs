@@ -11,7 +11,7 @@ import { restorePreparedHandoff } from '../src/acquisition/restore-prepared-hand
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
 
 async function withBatch(run, { videoBytes = Buffer.from('abc'),
-  ed2kMode } = {}) {
+  ed2kMode, offline = false } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-publish-'));
   const stagingRoot = path.join(root, 'staging');
   const holdingRoot = path.join(root, 'holding');
@@ -26,7 +26,9 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
       torrentHash: 'a'.repeat(40), anidbId: 42,
       files: [{ name: '01.mkv', size: video.length,
         ed2k: ed2kBuffer(video, { mode: ed2kMode ?? 'edonkey' }),
-        anidbFileId: 51, episodeIds: [1001] }],
+        ...(offline ? { identitySource: 'shoko_offline',
+          releaseId: 'offline://42-1001' } : { anidbFileId: 51 }),
+        episodeIds: [1001] }],
       subtitles: [{ index: 1, name: '01.en.srt', size: subtitle.length,
         sha256: (await import('node:crypto')).createHash('sha256').update(subtitle)
           .digest('hex').toUpperCase() }] };
@@ -55,11 +57,115 @@ async function withBatch(run, { videoBytes = Buffer.from('abc'),
       crossReferences: [{ anidbAnimeID: 42, anidbEpisodeID: 1001,
         percentageStart: null, percentageEnd: null }],
     } });
-    await run({ prepared, ledger, lookup, holdingRoot, importRoot,
+    const offlineLookup = async ({ filename }) => ({ status: 200, release: {
+      ProviderName: 'Offline Importer', ID: 'offline://42-1001',
+      OriginalFilename: filename, IsCorrupted: false,
+      CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+        PercentageStart: 0, PercentageEnd: 100 }],
+    } });
+    await run({ prepared, ledger, lookup, offlineLookup, holdingRoot, importRoot,
       video, subtitle, publishName, getBegins: () => begins,
       getObservations: () => observations });
   } finally { await rm(root, { recursive: true, force: true }); }
 }
+
+test('offline handoff rechecks exact preview and bytes before watched Import', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(result.state, 'published_observed', JSON.stringify(result));
+    assert.equal(sample.getBegins(), 1);
+    assert.deepEqual(await readFile(path.join(sample.importRoot,
+      sample.publishName, '01.mkv')), sample.video);
+  }, { offline: true }));
+
+test('offline handoff accepts stronger AniDB registration for the same exact file before publish', async () =>
+  withBatch(async (sample) => {
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500,
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(result.state, 'published_observed', JSON.stringify(result));
+    assert.equal(sample.getBegins(), 1);
+    assert.deepEqual(await readFile(path.join(sample.importRoot,
+      sample.publishName, '01.mkv')), sample.video);
+  }, { offline: true }));
+
+test('offline handoff still holds a corrupt or differently linked AniDB registration', async () => {
+  for (const changed of ['corrupt', 'wrong_episode']) {
+    await withBatch(async (sample) => {
+      const result = await publishPreparedHandoff({ ...sample,
+        attemptId: 1, nowMs: 500,
+        readPacer: { afterBytes: async () => {} },
+        lookup: async (input) => {
+          const preview = await sample.lookup(input);
+          if (changed === 'corrupt') preview.release.isCorrupted = true;
+          else preview.release.crossReferences[0].anidbEpisodeID = 1002;
+          return preview;
+        } });
+      assert.equal(result.state, 'held');
+      assert.equal(sample.getBegins(), 0);
+      assert.deepEqual(await readdir(sample.importRoot), []);
+    }, { offline: true });
+  }
+});
+
+test('offline handoff holds when preview is unavailable or changes target', async () => {
+  for (const changed of ['unavailable', 'wrong_episode']) {
+    await withBatch(async (sample) => {
+      const result = await publishPreparedHandoff({ ...sample,
+        lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+        readPacer: { afterBytes: async () => {} },
+        offlineLookup: async (input) => {
+          if (changed === 'unavailable') return { status: 0 };
+          const preview = await sample.offlineLookup(input);
+          preview.release.CrossReferences[0].AnidbEpisodeID = 1002;
+          return preview;
+        } });
+      assert.equal(result.state, 'held');
+      assert.equal(sample.getBegins(), 0);
+      assert.deepEqual(await readdir(sample.importRoot), []);
+    }, { offline: true });
+  }
+});
+
+test('offline handoff rechecks an intervening Shoko import before the watched rename', async () =>
+  withBatch(async (sample) => {
+    let checked = false;
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      checkExisting: async (verified) => {
+        checked = true;
+        assert.equal(verified.anidbId, 42);
+        assert.equal(verified.files[0].releaseId, 'offline://42-1001');
+        return { state: 'held', reason: 'already_imported' };
+      } });
+    assert.equal(checked, true);
+    assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+    assert.deepEqual(await readFile(path.join(sample.prepared.holdingPath,
+      '01.mkv')), sample.video);
+  }, { offline: true }));
+
+test('offline handoff holds a changed private video before publishing', async () =>
+  withBatch(async (sample) => {
+    await writeFile(path.join(sample.prepared.holdingPath, '01.mkv'),
+      Buffer.from('xyz'));
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+    assert.equal(result.state, 'held');
+    assert.equal(sample.getBegins(), 0);
+    assert.deepEqual(await readdir(sample.importRoot), []);
+  }, { offline: true }));
 
 test('fresh partial coverage or corrupted release cannot enter watched Import', async () => {
   for (const changed of ['partial', 'corrupt', 'unknown_health']) {
@@ -152,7 +258,7 @@ test('a mount lost during final verification stops before publish intent', async
         ? { state: 'mounted_handoff_roots' }
         : { state: 'held', reason: 'handoff_mount_unavailable' } });
     assert.deepEqual(result,
-      { state: 'held', reason: 'handoff_mount_unavailable' });
+      { state: 'held', reason: 'handoff_mount_unavailable_after_verify' });
     assert.equal(checks, 2);
     assert.equal(sample.getBegins(), 0);
     assert.deepEqual(await readdir(sample.importRoot), []);
@@ -174,6 +280,80 @@ test('an uncertain publish with the exact destination is observed without anothe
       { state: 'published_observed' });
     assert.equal(sample.getObservations(), 1);
   }));
+
+test('offline publish-unknown recovery requires the same file and Shoko prediction', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const unchanged = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500 });
+    assert.deepEqual(unchanged, { state: 'published_observed', destination });
+    assert.equal(sample.getObservations(), 1);
+  }, { offline: true }));
+
+test('offline publish-unknown recovery accepts later AniDB registration of the same bytes', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    const destination = path.join(sample.importRoot, sample.publishName);
+    await mkdir(destination);
+    await writeFile(path.join(destination, '01.mkv'), sample.video);
+    await writeFile(path.join(destination, '01.en.srt'), sample.subtitle);
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const result = await publishPreparedHandoff({ ...sample,
+      attemptId: 1, nowMs: 500 });
+    assert.deepEqual(result, { state: 'published_observed', destination });
+    assert.equal(sample.getObservations(), 1);
+  }, { offline: true }));
+
+test('Shoko moving an unknown published handoff records exact content without claiming publication', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    const expected = sample.ledger.getHandoff().manifest.videos[0];
+    let contentWrites = 0;
+    sample.ledger.recordContentPresent = ({ fileIds }) => {
+      contentWrites++;
+      assert.deepEqual(fileIds, [77]);
+      return { state: 'content_present', publicationProven: false, fileIds };
+    };
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+        anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+        releaseId: expected.releaseId, ed2k: expected.ed2k,
+        size: expected.size, fileId: 77, episodeIds: [1001],
+        sourcePaths: ['/pure/Anime/01.mkv'],
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      }] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'content_present_unattributed' });
+    assert.equal(contentWrites, 1);
+    assert.equal(sample.getObservations(), 0);
+    assert.equal(sample.getBegins(), 1);
+  }, { offline: true }));
+
+test('an unrelated Shoko file cannot resolve an unknown publish', async () =>
+  withBatch(async (sample) => {
+    sample.ledger.beginPublish();
+    await rm(sample.prepared.holdingPath, { recursive: true });
+    sample.ledger.recordContentPresent = () => {
+      throw new Error('unrelated file must never be recorded');
+    };
+    const result = await publishPreparedHandoff({ ...sample,
+      lookup: async () => ({ status: 204 }), attemptId: 1, nowMs: 500,
+      readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+        anidbId: 42, anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+        releaseId: 'offline://42-1001', ed2k: '0'.repeat(32),
+        size: sample.video.length, fileId: 77, episodeIds: [1001],
+        sourcePaths: ['/pure/Anime/other.mkv'],
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+      }] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'publish_outcome_unknown' });
+    assert.equal(sample.getObservations(), 0);
+  }, { offline: true }));
 
 test('an altered destination or surviving holding copy remains unknown', async () => {
   for (const keepHolding of [false, true]) {

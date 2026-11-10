@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,6 +9,7 @@ import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
 import { ED2K_CHUNK_SIZE, ed2kFile } from '../src/identity/ed2k.mjs';
 import { processCompletedAttempt } from '../src/acquisition/process-completed-attempt.mjs';
 import { processRecordedHandoff } from '../src/acquisition/process-recorded-handoff.mjs';
+import { observeHandoffPlacement } from '../src/acquisition/observe-handoff-import.mjs';
 import { previewAniDbRelease } from '../src/identity/shoko-preview.mjs';
 import { openHandoffPublishQueue, createHandoffPublishWorker } from
   '../src/acquisition/handoff-publish-queue.mjs';
@@ -93,6 +94,115 @@ test('one explicit completed-attempt tick verifies AniDB bytes and journals priv
     const again = await processCompletedAttempt({ ...stores, handoffs, attemptId, importRoot, ...config });
     assert.deepEqual(again, { state: 'held', reason: 'handoff_already_recorded' });
     assert.equal(calls.filter((call) => call.path.endsWith('/Preview/By-Release')).length, 1);
+  });
+});
+
+test('completion consults exact Shoko import before allocating holding space', async () => {
+  await fixture(async (context) => {
+    const { handoffs, holdingRoot, attemptId, config, ...stores } = context;
+    let checked = false;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      holdingRoot, attemptId, ...config,
+      checkExisting: async (verified) => {
+        checked = true;
+        assert.equal(verified.anidbId, 42);
+        assert.deepEqual(verified.files[0].episodeIds, [1001]);
+        return { state: 'held', reason: 'already_imported' };
+      } });
+    assert.equal(checked, true);
+    assert.deepEqual(result, { state: 'held', reason: 'already_imported' });
+    assert.deepEqual(await readdir(holdingRoot), []);
+    assert.equal(handoffs.getHandoff(attemptId), null);
+  });
+});
+
+test('AniDB 204 with exact installed Offline Importer preview journals only private holding', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, attemptId, config, identity, ...stores } = context;
+    const result = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, importRoot, ...config,
+      shokoFetchImpl: async (url, init) => {
+        const endpoint = new URL(url);
+        assert.equal(init.headers.Authorization, 'Bearer test-key');
+        if (endpoint.pathname === '/api/v3/ReleaseInfo/Provider') {
+          return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
+            ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
+        }
+        const id = endpoint.searchParams.get('id');
+        if (id === `anidb://${identity.ed2k}+${identity.size}`) {
+          return new Response(null, { status: 204 });
+        }
+        if (id === 'search://01.mkv') {
+          return Response.json({ ProviderName: 'Offline Importer',
+            ID: 'offline://42-1001', OriginalFilename: '01.mkv',
+            IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+              AnidbEpisodeID: 1001, PercentageStart: 0,
+              PercentageEnd: 100 }] });
+        }
+        throw Error('unexpected Shoko lookup');
+      },
+    });
+    assert.equal(result.state, 'handoff_prepared', JSON.stringify(result));
+    const saved = handoffs.getHandoff(attemptId);
+    assert.equal(saved.manifest.version, 2);
+    assert.equal(saved.manifest.videos[0].releaseId, 'offline://42-1001');
+    assert.equal(saved.manifest.videos[0].anidbFileId, undefined);
+    assert.deepEqual(await readFile(path.join(saved.holdingPath, '01.mkv')),
+      await readFile(path.join(context.stagingHostPath, torrentHash, '01.mkv')));
+    assert.deepEqual(await readdir(importRoot), []);
+  });
+});
+
+test('one offline attempt survives private preparation, publish and Shoko placement proof', async () => {
+  await fixture(async (context) => {
+    const { handoffs, importRoot, holdingRoot, attemptId,
+      config, identity, ...stores } = context;
+    const offlineRelease = { ProviderName: 'Offline Importer',
+      ID: 'offline://42-1001', OriginalFilename: '01.mkv',
+      IsCorrupted: false, CrossReferences: [{ AnidbAnimeID: 42,
+        AnidbEpisodeID: 1001, PercentageStart: 0,
+        PercentageEnd: 100 }] };
+    const shokoFetchImpl = async (url) => {
+      const endpoint = new URL(url);
+      if (endpoint.pathname === '/api/v3/ReleaseInfo/Provider') {
+        return Response.json([{ Name: 'Offline Importer', IsEnabled: true,
+          ID: 'cd1a838e-1b48-5b7d-beb4-c52187fe4acf' }]);
+      }
+      if (endpoint.searchParams.get('id') ===
+          `anidb://${identity.ed2k}+${identity.size}`) {
+        return new Response(null, { status: 204 });
+      }
+      if (endpoint.searchParams.get('id') === 'search://01.mkv') {
+        return Response.json(offlineRelease);
+      }
+      throw Error('unexpected Shoko lookup');
+    };
+    const prepared = await processCompletedAttempt({ ...stores, handoffs,
+      attemptId, holdingRoot, importRoot, ...config, shokoFetchImpl });
+    assert.equal(prepared.state, 'handoff_prepared', JSON.stringify(prepared));
+    const published = await processRecordedHandoff({ attemptId,
+      ledger: handoffs, holdingRoot, importRoot, nowMs: 207,
+      lookup: async () => ({ status: 204 }),
+      offlineLookup: async ({ filename }) => ({ status: 200,
+        release: { ...offlineRelease, OriginalFilename: filename } }),
+      readPacer: { afterBytes: async () => {} },
+      renamePrepared: async (source, destination) => {
+        await cp(source, destination, { recursive: true });
+        await rm(source, { recursive: true });
+      } });
+    assert.equal(published.state, 'published_observed', JSON.stringify(published));
+    const row = handoffs.getHandoff(attemptId);
+    const placed = await observeHandoffPlacement({ handoff: row,
+      libraryRoot: '/pure/Anime', readEpisode: async () => ({
+        state: 'ok', complete: true, files: [{ fileId: 1800,
+          anidbFileId: null, releaseEvidence: 'shoko_offline_link',
+          releaseId: 'offline://42-1001', ed2k: identity.ed2k,
+          size: identity.size, anidbId: 42, episodeIds: [1001],
+          coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+          sourcePaths: ['/pure/Anime/Example/01.mkv'] }] }) });
+    assert.deepEqual(placed, { state: 'shoko_library_location_reported',
+      fileIds: [1800] });
+    assert.deepEqual(await readdir(holdingRoot), []);
   });
 });
 
@@ -184,7 +294,7 @@ test('incomplete torrent holds before reading staged bytes or Shoko', async () =
   });
 });
 
-test('AniDB provider uncertainty stays retryable and a wrong-show match is terminally held', async () => {
+test('AniDB 204 with unavailable offline provider stays retryable and a wrong-show match is terminally held', async () => {
   for (const outcome of ['unavailable', 'wrong_show']) {
     await fixture(async (context) => {
       const { handoffs, acquisitions, attemptId, config, ...stores } = context;
@@ -198,7 +308,7 @@ test('AniDB provider uncertainty stays retryable and a wrong-show match is termi
           return { status: 200, text: async () => JSON.stringify(body) };
         } });
       assert.deepEqual(result, outcome === 'unavailable'
-        ? { state: 'held', reason: 'file_lookup_inconclusive' }
+        ? { state: 'held', reason: 'file_provider_unavailable' }
         : { state: 'rejected_held', reason: 'file_wrong_identity' });
       assert.equal(acquisitions.getAttempt(attemptId).status,
         outcome === 'unavailable' ? 'torrent_observed' : 'rejected_held');

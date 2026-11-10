@@ -10,7 +10,8 @@ const held = (reason) => ({ state: 'held', reason });
 // before exposing any file to Shoko; this function never moves media.
 export async function verifyStagedBatch({
   root, request, attempt, expectedTorrent, plannedFiles, observe,
-  lookup, verify = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
+  lookup, offlineLookup, verify = verifyStagedFile,
+  verifySubtitle = verifyStagedSubtitle,
   maxTotalBytes = 64 * 1024 ** 3,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   ed2kMode,
@@ -18,6 +19,7 @@ export async function verifyStagedBatch({
   if (typeof root !== 'string' || !path.isAbsolute(root) ||
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expectedTorrent?.hash) ||
       typeof observe !== 'function' || typeof lookup !== 'function' ||
+      (offlineLookup !== undefined && typeof offlineLookup !== 'function') ||
       typeof verify !== 'function' || typeof verifySubtitle !== 'function' ||
       !Number.isSafeInteger(maxTotalBytes) ||
       maxTotalBytes < 1 || maxTotalBytes > 1024 ** 4) {
@@ -96,27 +98,46 @@ export async function verifyStagedBatch({
     try {
       result = await verify({ root, relativePath: file.name,
         expected: { animeId: request.anidbId, episodeIds: plannedByName.get(file.name).episodeIds },
-        lookup, readPacer: pacer, ed2kMode });
+        lookup, offlineLookup, readPacer: pacer, ed2kMode });
     } catch { return held('file_unavailable'); }
     if (result?.state !== 'identity_verified') {
       return held(result?.reason === 'wrong_identity' ? 'file_wrong_identity' :
         `file_${result?.reason ?? 'unavailable'}`);
     }
+    const offline = result.identitySource === 'shoko_offline';
     if (result.isCorrupted === true) return held('file_corrupt_release');
-    if (result.isCorrupted !== false) return held('file_corruption_unverified');
-    if (!Number.isSafeInteger(result.fileId) || result.fileId <= 0 ||
-        fileIds.has(result.fileId) || result.size !== file.size ||
-        !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
+    if (!offline && result.isCorrupted !== false) {
+      return held('file_corruption_unverified');
+    }
     const plannedEpisodes = plannedByName.get(file.name).episodeIds;
+    const invalidIdentity = offline ? (result.fileId !== undefined ||
+        plannedEpisodes.length !== 1 ||
+        result.releaseId !== `offline://${request.anidbId}-${plannedEpisodes[0]}` ||
+        verified.some((prior) => prior.ed2k === result.ed2k))
+      : (result.identitySource !== undefined || result.releaseId !== undefined ||
+        !Number.isSafeInteger(result.fileId) || result.fileId <= 0 ||
+        fileIds.has(result.fileId) ||
+        verified.some((prior) => prior.identitySource === 'shoko_offline' &&
+          prior.ed2k === result.ed2k));
+    if (invalidIdentity || result.size !== file.size ||
+        !/^[0-9A-F]{32}$/.test(result.ed2k)) return held('invalid_file_evidence');
     if (!Array.isArray(result.coverage) || result.coverage.length !== plannedEpisodes.length ||
         result.coverage.some((range) => !plannedEpisodes.includes(range?.episodeId) ||
           range.start !== 0 || range.end !== 100) ||
         new Set(result.coverage.map((range) => range.episodeId)).size !== plannedEpisodes.length) {
       return held('partial_or_unproved_episode');
     }
-    fileIds.add(result.fileId);
-    verified.push({ name: file.name, episodeIds: [...plannedByName.get(file.name).episodeIds],
-      anidbFileId: result.fileId, ed2k: result.ed2k, size: result.size });
+    if (!offline) fileIds.add(result.fileId);
+    verified.push({ name: file.name, episodeIds: [...plannedEpisodes],
+      ...(offline ? { identitySource: 'shoko_offline',
+        releaseId: result.releaseId } : { anidbFileId: result.fileId }),
+      ed2k: result.ed2k, size: result.size });
+  }
+
+  if (verified.some((file) => file.identitySource === 'shoko_offline')) {
+    for (const file of verified) {
+      if (file.identitySource === undefined) file.identitySource = 'anidb';
+    }
   }
 
   const verifiedSubtitles = [];

@@ -5,9 +5,18 @@ import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
+import { reconcileHandoffContent } from './observe-handoff-import.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
-const admitted = (result, file) => result?.isCorrupted === false &&
+const registeredIdentity = (result) => result?.isCorrupted === false &&
+  Number.isSafeInteger(result.fileId) && result.fileId > 0 &&
+  result.identitySource === undefined && result.releaseId === undefined;
+const admitted = (result, file) =>
+  (file.identitySource === 'shoko_offline'
+    ? (result?.identitySource === 'shoko_offline' &&
+        result.releaseId === file.releaseId && result.fileId === undefined) ||
+      registeredIdentity(result)
+    : registeredIdentity(result) && result.fileId === file.anidbFileId) &&
   Array.isArray(result.coverage) && result.coverage.length === file.episodeIds.length &&
   file.episodeIds.every((episodeId) => result.coverage.some((range) =>
     range.episodeId === episodeId && range.start === 0 && range.end === 100));
@@ -65,7 +74,7 @@ async function destinationAbsent(destination) {
 }
 
 async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
-  importRoot, lookup, ledger, nowMs, readPacer, readRateBytesPerSecond,
+  importRoot, lookup, offlineLookup, ledger, nowMs, readPacer, readRateBytesPerSecond,
   verifyVideo, verifySubtitle, ed2kMode }) {
   if (typeof ledger.markPublishedObserved !== 'function' ||
       typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
@@ -101,9 +110,9 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
     let result;
     try { result = await verifyVideo({ root: destination, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer, ed2kMode }); }
+      lookup, offlineLookup, readPacer: pacer, ed2kMode }); }
     catch { return held('publish_outcome_unknown'); }
-    if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
+    if (result?.state !== 'identity_verified' ||
         result.ed2k !== file.ed2k || result.size !== file.size || !admitted(result, file)) {
       return held('publish_outcome_unknown');
     }
@@ -138,10 +147,11 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
 // Local building block only. A caller must supply current NAS mount proof and
 // a private prepared batch. This never marks Shoko import or Plex availability.
 export async function publishPreparedHandoff({
-  attemptId, prepared, ledger, holdingRoot, importRoot, lookup, nowMs,
+  attemptId, prepared, ledger, holdingRoot, importRoot, lookup, offlineLookup, nowMs,
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
-  renamePrepared = rename, verifyHandoffMounts, ed2kMode,
+  renamePrepared = rename, verifyHandoffMounts, ed2kMode, checkExisting,
+  readEpisode,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -149,9 +159,12 @@ export async function publishPreparedHandoff({
       typeof ledger?.beginPublish !== 'function' ||
       typeof ledger?.markPublishedObserved !== 'function' ||
       typeof lookup !== 'function' || typeof verifyVideo !== 'function' ||
+      (offlineLookup !== undefined && typeof offlineLookup !== 'function') ||
       typeof verifySubtitle !== 'function' || typeof renamePrepared !== 'function' ||
       (verifyHandoffMounts !== undefined &&
         typeof verifyHandoffMounts !== 'function') ||
+      (checkExisting !== undefined && typeof checkExisting !== 'function') ||
+      (readEpisode !== undefined && typeof readEpisode !== 'function') ||
       (ed2kMode !== undefined && !['edonkey', 'emule'].includes(ed2kMode)) ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function')) {
     throw new TypeError('Invalid handoff publish configuration');
@@ -162,6 +175,10 @@ export async function publishPreparedHandoff({
   const evidence = evaluateHandoffEvidence(prepared);
   if (evidence.state !== 'valid' || evidence.digest !== prepared.evidenceDigest) {
     return held('handoff_evidence_mismatch');
+  }
+  if (evidence.manifest.videos.some((file) =>
+    file.identitySource === 'shoko_offline') && !offlineLookup) {
+    return held('identity_unavailable');
   }
   const mountReady = async () => {
     if (!verifyHandoffMounts) return true;
@@ -180,9 +197,33 @@ export async function publishPreparedHandoff({
       row.publishName !== `negev-${attemptId}-${evidence.digest.slice(0, 16)}`) {
     return held('handoff_conflict');
   }
-  if (row.status === 'publish_unknown') return reconcileUnknownPublish({ attemptId,
-    row, evidence, holdingRoot, importRoot, lookup, ledger, nowMs, readPacer,
-    readRateBytesPerSecond, verifyVideo, verifySubtitle, ed2kMode });
+  if (row.status === 'publish_unknown') {
+    const recovered = await reconcileUnknownPublish({ attemptId,
+      row, evidence, holdingRoot, importRoot, lookup, offlineLookup, ledger,
+      nowMs, readPacer, readRateBytesPerSecond, verifyVideo, verifySubtitle,
+      ed2kMode });
+    if (recovered.reason !== 'publish_outcome_unknown' || !readEpisode ||
+        typeof ledger.recordContentPresent !== 'function') return recovered;
+    // Shoko may move the published child before a crashed process records the
+    // rename. Exact downstream bytes can stop duplicate work, but cannot
+    // establish that this handoff supplied them.
+    let bothGone = false;
+    try {
+      const [realHolding, realImport] = await Promise.all([
+        realpath(holdingRoot), realpath(importRoot)]);
+      bothGone = path.dirname(row.holdingPath) === realHolding &&
+        !within(realHolding, realImport) && !within(realImport, realHolding) &&
+        await destinationAbsent(row.holdingPath) &&
+        await destinationAbsent(path.join(realImport, row.publishName));
+    } catch { /* Keep the original unknown outcome. */ }
+    if (!bothGone) return recovered;
+    let content;
+    try { content = await reconcileHandoffContent({ attemptId, ledger,
+      readEpisode, nowMs }); }
+    catch { return recovered; }
+    return content?.state === 'content_present'
+      ? held('content_present_unattributed') : recovered;
+  }
   if (row.status === 'published_observed') return { state: 'published_observed' };
   if (row.status !== 'prepared') return held('publish_outcome_unknown');
   if (typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
@@ -225,13 +266,14 @@ export async function publishPreparedHandoff({
     let result;
     try { result = await verifyVideo({ root: holdingPath, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
-      lookup, readPacer: pacer, ed2kMode }); }
+      lookup, offlineLookup, readPacer: pacer, ed2kMode }); }
     catch { return held('identity_unavailable'); }
     if (result?.state === 'held' &&
-        ['provider_unavailable', 'lookup_inconclusive'].includes(result.reason)) {
+        ['provider_unavailable', 'lookup_inconclusive',
+          'offline_lookup_inconclusive'].includes(result.reason)) {
       return held('identity_unavailable');
     }
-    if (result?.state !== 'identity_verified' || result.fileId !== file.anidbFileId ||
+    if (result?.state !== 'identity_verified' ||
         result.ed2k !== file.ed2k || result.size !== file.size) {
       return held('identity_changed');
     }
@@ -254,7 +296,16 @@ export async function publishPreparedHandoff({
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
   } catch { return held('manifest_changed'); }
-  if (!await mountReady()) return held('handoff_mount_unavailable');
+  if (!await mountReady()) return held('handoff_mount_unavailable_after_verify');
+  if (checkExisting) {
+    let existing;
+    try { existing = await checkExisting({ state: 'batch_identity_verified',
+      anidbId: evidence.manifest.anidbId, files: evidence.manifest.videos }); }
+    catch { return held('shoko_unavailable'); }
+    if (existing?.state !== 'no_matching_import') {
+      return existing?.state === 'held' ? existing : held('shoko_unavailable');
+    }
+  }
   const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');

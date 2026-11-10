@@ -28,6 +28,11 @@ export async function previewAniDbRelease({
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status === 204) {
+      // This is unknown, not proof that AniDB has no registered file. An
+      // independent Shoko provider may still offer provisional identity.
+      return { status: 204 };
+    }
     if (response.status !== 200) return { status: response.status };
     return { status: 200, release: await readBoundedJson(response, 1_000_000) };
   } catch {

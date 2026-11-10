@@ -15,28 +15,52 @@ export function evaluateHandoffEvidence(input, { maxVideoBytes = 64 * 1024 ** 3 
       !Array.isArray(input.subtitles) || input.subtitles.length > 50) return held;
   const names = new Set();
   const fileIds = new Set();
+  const releaseIds = new Set();
+  const hashes = new Set();
   const episodeIds = new Set();
   const subtitleIndexes = new Set();
   let videoBytes = 0;
   let subtitleBytes = 0;
   const videos = [];
   const subtitles = [];
+  const version = input.files.some((file) => file?.identitySource !== undefined ||
+    file?.releaseId !== undefined) ? 2 : 1;
   for (const file of input.files) {
+    const source = version === 1 ? 'anidb' : file?.identitySource;
+    const anidbFile = source === 'anidb' &&
+      Number.isSafeInteger(file?.anidbFileId) && file.anidbFileId > 0 &&
+      file.releaseId === undefined && !fileIds.has(file.anidbFileId);
+    const offlineFile = source === 'shoko_offline' &&
+      file?.anidbFileId === undefined &&
+      file.episodeIds?.length === 1 &&
+      file.releaseId === `offline://${input.anidbId}-${file.episodeIds[0]}` &&
+      !releaseIds.has(file.releaseId);
     if (torrentFileKind(file?.name) !== 'video' || names.has(file.name.toLowerCase()) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
-        !Number.isSafeInteger(file.anidbFileId) || file.anidbFileId < 1 ||
-        fileIds.has(file.anidbFileId) || !/^[0-9A-F]{32}$/.test(file.ed2k) ||
+        (version === 2 && !['anidb', 'shoko_offline'].includes(source)) ||
+        (!anidbFile && !offlineFile) ||
+        !/^[0-9A-F]{32}$/.test(file.ed2k) ||
+        (version === 2 && hashes.has(file.ed2k)) ||
         !Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
         file.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1 ||
           episodeIds.has(id)) ||
         new Set(file.episodeIds).size !== file.episodeIds.length) return held;
     names.add(file.name.toLowerCase());
-    fileIds.add(file.anidbFileId);
+    if (anidbFile) fileIds.add(file.anidbFileId);
+    else releaseIds.add(file.releaseId);
+    hashes.add(file.ed2k);
     for (const id of file.episodeIds) episodeIds.add(id);
     videoBytes += file.size;
     if (!Number.isSafeInteger(videoBytes) || videoBytes > maxVideoBytes) return held;
-    videos.push({ name: file.name, size: file.size, ed2k: file.ed2k,
-      anidbFileId: file.anidbFileId, episodeIds: [...file.episodeIds].sort((a, b) => a - b) });
+    videos.push(version === 1
+      ? { name: file.name, size: file.size, ed2k: file.ed2k,
+        anidbFileId: file.anidbFileId,
+        episodeIds: [...file.episodeIds].sort((a, b) => a - b) }
+      : { name: file.name, size: file.size, ed2k: file.ed2k,
+        identitySource: source,
+        ...(anidbFile ? { anidbFileId: file.anidbFileId }
+          : { releaseId: file.releaseId }),
+        episodeIds: [...file.episodeIds].sort((a, b) => a - b) });
   }
   for (const file of input.subtitles) {
     if (torrentFileKind(file?.name) !== 'subtitle' || names.has(file.name.toLowerCase()) ||
@@ -51,7 +75,7 @@ export function evaluateHandoffEvidence(input, { maxVideoBytes = 64 * 1024 ** 3 
     subtitles.push({ index: file.index, name: file.name, size: file.size,
       sha256: file.sha256 });
   }
-  const manifest = { version: 1, torrentHash: input.torrentHash.toLowerCase(),
+  const manifest = { version, torrentHash: input.torrentHash.toLowerCase(),
     anidbId: input.anidbId, videos: videos.sort(byName),
     subtitles: subtitles.sort(byName) };
   const digest = createHash('sha256').update(JSON.stringify(manifest)).digest('hex');

@@ -6,9 +6,10 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validReason = (value) => typeof value === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(value);
 const RETRY_MS = 30 * 60_000;
+const MOUNT_RETRY_MS = 5 * 60_000;
 const UNCERTAIN_RETRY_MS = 5 * 60_000;
 // A held batch can contain many large videos. Never rehash changed evidence
-// indefinitely; even transient failures receive just one automatic retry.
+// indefinitely; preflight mount checks alone may keep retrying without reads.
 const RETRYABLE_HOLDS = new Set([
   'identity_unavailable', 'subtitle_unavailable', 'worker_unavailable',
   'interrupted_before_publish',
@@ -96,6 +97,8 @@ export function openHandoffPublishQueue(dbPath) {
         throw new TypeError('Invalid publish result');
       }
       const due = state === 'publish_unknown' ? checkedMs + 60_000 :
+        state === 'held' && reason === 'handoff_mount_unavailable'
+          ? checkedMs + MOUNT_RETRY_MS :
         state === 'held' && RETRYABLE_HOLDS.has(reason) && version === 1
           ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid publish clock');

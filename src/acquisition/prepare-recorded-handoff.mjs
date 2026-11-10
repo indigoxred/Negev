@@ -9,20 +9,24 @@ const held = (reason) => ({ state: 'held', reason });
 // separate, durable operation and must be explicitly reconciled afterward.
 export async function prepareRecordedHandoff({
   requests, acquisitions, handoffs, attemptId,
-  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, observe, lookup,
+  stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
+  observe, lookup, offlineLookup,
   nowMs, verify, verifySubtitle, readPacer, ed2kMode,
+  checkExisting,
   verifyHandoffMounts,
   verifyStagingRoot,
 }) {
   if (typeof handoffs?.getHandoff !== 'function' ||
       typeof handoffs?.recordPrepared !== 'function' ||
       typeof acquisitions?.recordTerminalRejection !== 'function' ||
+      (checkExisting !== undefined && typeof checkExisting !== 'function') ||
       !Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError('Invalid handoff coordinator configuration');
   }
   if (handoffs.getHandoff(attemptId)) return held('handoff_already_recorded');
   const verified = await verifyRecordedBatch({ requests, acquisitions, attemptId,
-    stagingHostPath, qbitStagingRoot, observe, lookup, verify, verifySubtitle, readPacer,
+    stagingHostPath, qbitStagingRoot, observe, lookup, offlineLookup,
+    verify, verifySubtitle, readPacer,
     ed2kMode });
   if (verified.state === 'held' && verified.reason === 'file_wrong_identity') {
     const attempt = acquisitions.getAttempt(attemptId);
@@ -37,6 +41,14 @@ export async function prepareRecordedHandoff({
         return held('staging_root_unverified');
       }
     } catch { return held('staging_root_unverified'); }
+  }
+  if (checkExisting) {
+    let existing;
+    try { existing = await checkExisting(verified); }
+    catch { return held('shoko_unavailable'); }
+    if (existing?.state !== 'no_matching_import') {
+      return existing?.state === 'held' ? existing : held('shoko_unavailable');
+    }
   }
   const stagingRoot = path.join(stagingHostPath, verified.torrentHash);
   const prepared = await prepareHandoffBatch({ stagingRoot, holdingRoot, importRoot,

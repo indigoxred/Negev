@@ -2,8 +2,11 @@ import { createAcquisitionRequestProcessor } from './acquisition-request-process
 import { submitMissingCandidate } from './submit-missing-candidate.mjs';
 import { processRecordedStart } from './process-recorded-start.mjs';
 import { processCompletedAttempt } from './process-completed-attempt.mjs';
+import { checkExistingShokoBatch } from './existing-shoko-batch.mjs';
+import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
+import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
 import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
@@ -64,6 +67,16 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   const lookup = ({ ed2k, size }) => previewAniDbRelease({
     baseUrl: shoko.baseUrl, providerId: shoko.providerId,
     apiKey: shoko.apiKey, ed2k, size, fetchImpl: providerFetchImpl });
+  const offlineLookup = ({ filename }) => previewOfflineRelease({
+    baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+    filename, fetchImpl: providerFetchImpl });
+  const readHandoffEpisode = ({ anidbId, episodeId }, fetchImpl = providerFetchImpl) =>
+    readShokoEpisodeFiles({ baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+      anidbId, episodeId, purpose: 'handoff', fetchImpl });
+  const checkExisting = (verified, fetchImpl = providerFetchImpl) =>
+    checkExistingShokoBatch({ verified,
+      readEpisode: (target) => readHandoffEpisode(target, fetchImpl),
+    });
   const handoffMountReady = async () => {
     try {
       if ((await verifyShokoSource())?.state !== 'verified_shoko_source') {
@@ -149,23 +162,26 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         handoffs, stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
         qbittorrent, shoko, fetchImpl, shokoFetchImpl, renewQbittorrent,
         readPacer, verifyHandoffMounts, verifyStagingRoot: stagingMountReady,
+        checkExisting: (verified) => checkExisting(verified,
+          shokoFetchImpl ?? providerFetchImpl),
         nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
-      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       let handoff;
       try { handoff = handoffs.getHandoff(attemptId); }
       catch { return held('handoff_unavailable'); }
       if (handoff?.status === 'published_observed') {
         return processRecordedHandoff({ attemptId, ledger: handoffs,
-          holdingRoot, importRoot, lookup, readPacer,
-          verifyHandoffMounts, nowMs: now() });
+          holdingRoot, importRoot, lookup, offlineLookup,
+          readPacer, nowMs: now() });
       }
+      if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       const ed2kMode = await selectedEd2kMode(handoff?.manifest?.videos);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processRecordedHandoff({ attemptId, ledger: handoffs,
-        holdingRoot, importRoot, lookup, readPacer, ed2kMode,
-        verifyHandoffMounts, nowMs: now() });
+        holdingRoot, importRoot, lookup, offlineLookup, readPacer, ed2kMode,
+        verifyHandoffMounts, checkExisting, readEpisode: readHandoffEpisode,
+        nowMs: now() });
     },
   };
 }
