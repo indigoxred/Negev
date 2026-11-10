@@ -382,7 +382,7 @@ async function loadRequestView(view, append = false, silent = false) {
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
       row.append(heading, status);
-      if (item.status === 'held') {
+      if (item.status === 'held' && item.canCancel !== false) {
         const cancel = element('button', 'Cancel request', 'quiet');
         cancel.type = 'button';
         cancel.addEventListener('click', async () => {
@@ -398,6 +398,10 @@ async function loadRequestView(view, append = false, silent = false) {
           }
         });
         heading.append(cancel);
+      } else if (item.status === 'held' && item.canCancel === false) {
+        heading.append(element('small',
+          'Cancellation is unavailable once release processing starts, even before a download begins.',
+          'muted'));
       }
       if (state.user?.role === 'admin' && state.releaseSearch) {
         const button = element('button', 'Review release candidates');
@@ -553,6 +557,10 @@ async function refreshExpandedHistory() {
     for (const status of list.querySelectorAll('.request-status')) {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
+      if (status.negevRequest?.canCancel !== item.canCancel) {
+        void loadRequestView('history', false, true);
+        return;
+      }
       status.negevRequest = item;
       const presentation = requestItemPresentation(item);
       renderRequestStatus(status, presentation);
@@ -1365,6 +1373,9 @@ function pendingTitleAction(item) {
   review.hidden = true;
   review.append(element('strong', 'Review your request'));
   review.append(element('p', `${item.title} · Negev will identify the film or episodes and check the library first`));
+  review.append(element('p',
+    'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
+    'muted'));
   const cancelReview = element('button', 'Cancel', 'quiet');
   cancelReview.type = 'button';
   cancelReview.addEventListener('click', () => {
@@ -2043,6 +2054,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? `${data.title || item.title} · one film entry`
       : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
     requestReview.append(reviewSummary);
+    requestReview.append(element('p',
+      'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
+      'muted'));
     updateRequestReview = () => {
       const selected = family.items().find((entry) => entry.anidbId === selectedInstallmentId);
       reviewSummary.textContent = selectedInstallmentId === item.anidbId
@@ -2133,6 +2147,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         return;
       }
       if (!reviewingRequest) {
+        if (needsFilmChoice) {
+          const selectedFilm = filmEntries.find((episode) =>
+            String(episode.id) === filmChoiceSelect.value);
+          reviewSummary.textContent = `${data.title || item.title} · ` +
+            `main film entry ${selectedFilm?.number ?? '?'}${selectedFilm?.title ? ` · ${selectedFilm.title}` : ''}`;
+        }
         reviewingRequest = true;
         requestReview.hidden = false;
         button.textContent = 'Confirm request';
