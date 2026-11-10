@@ -53,13 +53,17 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
       const tags = data.tags.map((tag) => tag?.name);
       if (tags.some((tag) => typeof tag !== 'string' || !tag.trim() ||
           tag.length > 80)) return unavailable();
+      // AniMap uses the Unix epoch for some unreleased, empty titles.
+      const undatedEpoch = data.startdate === '1970-01-01' &&
+        data.enddate == null && data.episodecount === 0;
       return { state: 'display', anidbId, title: data.title.trim(),
         restricted: data.restricted,
         englishTitle: cleanText(data.title_english, 500),
         type: cleanText(data.type, 80),
-        startYear: Number.isSafeInteger(data.startyear) &&
+        startYear: !undatedEpoch && Number.isSafeInteger(data.startyear) &&
           data.startyear >= 1800 && data.startyear <= 2200 ? data.startyear : null,
-        startDate: cleanDate(data.startdate), endDate: cleanDate(data.enddate),
+        startDate: undatedEpoch ? null : cleanDate(data.startdate),
+        endDate: cleanDate(data.enddate),
         episodeCount: Number.isSafeInteger(data.episodecount) &&
           data.episodecount >= 0 && data.episodecount <= 10_000
           ? data.episodecount : null,
