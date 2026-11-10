@@ -167,6 +167,29 @@ test('request cancellation is owner scoped and CSRF protected', async () => {
   } finally { await app.close(); }
 });
 
+test('started release processing reports the real cancellation limit', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null,
+    readRequest: () => ({ id: 1, requesterId: 7 }),
+    cancelRequest: () => ({ state: 'held', reason: 'acquisition_started' }) });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const result = await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers: { cookie, origin, 'x-negev-csrf': session.json().csrfToken }, payload: {} });
+    assert.equal(result.statusCode, 409);
+    assert.match(result.json().error, /even if the download has not begun/i);
+  } finally { await app.close(); }
+});
+
 function expectTime(value) { assert.ok(Number.isSafeInteger(value) && value >= 0); return value; }
 
 test('a loopback tunnel uses the HTTPS origin and a Secure host-only session', async () => {

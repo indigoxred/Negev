@@ -1009,7 +1009,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state === 'cancelled') return result;
     return reply.code(result.reason === 'request_not_found' ? 404 : 409).send({
       error: result.reason === 'acquisition_started'
-        ? 'Download processing has already begun; this request cannot be cancelled here yet.'
+        ? 'Release processing has already started. This request cannot be cancelled here, even if the download has not begun.'
         : 'Request cannot be cancelled', reason: result.reason });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
