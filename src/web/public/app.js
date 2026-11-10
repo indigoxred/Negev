@@ -2223,3 +2223,21 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   }
 }
 void refreshSession();
+const loadedClientRevision = document.querySelector(
+  'meta[name="negev-client-revision"]')?.content;
+let checkingClientRevision = false;
+async function refreshClientRevision() {
+  if (!loadedClientRevision || checkingClientRevision || document.hidden) return;
+  checkingClientRevision = true;
+  try {
+    const response = await fetch('/api/client-revision', { cache: 'no-store' });
+    if (!response.ok) return;
+    const { revision } = await response.json();
+    if (revision && revision !== loadedClientRevision) location.reload();
+  } catch { /* A connection failure is not a reason to disrupt this page. */ }
+  finally { checkingClientRevision = false; }
+}
+setInterval(refreshClientRevision, 60_000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) void refreshClientRevision();
+});

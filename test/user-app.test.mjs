@@ -385,6 +385,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const script = await app.inject({ method: 'GET', url: '/app.js' });
     assert.equal(script.statusCode, 200);
     assert.match(script.headers['content-type'], /javascript/);
+    const current = await app.inject({ method: 'GET', url: '/api/client-revision' });
+    assert.equal(current.statusCode, 200);
+    assert.equal(current.headers['cache-control'], 'no-store');
+    const { revision } = current.json();
+    assert.match(revision, /^[0-9a-f]{64}$/);
+    assert.match(page.body, new RegExp(`<meta name="negev-client-revision" content="${revision}">`));
     const keyModule = await app.inject({ method: 'GET', url: '/request-key.mjs' });
     assert.equal(keyModule.statusCode, 200);
     assert.match(keyModule.headers['content-type'], /javascript/);
