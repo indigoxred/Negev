@@ -42,7 +42,8 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
         : { state: 'held', reason: 'import_child_unavailable' };
     },
     realpathImpl, shokoProviderId: a.shokoProviderId,
-    allowedAnidbIds: a.allowedAnidbIds,
+    ...(a.allowedAnidbIds === undefined ? {} :
+      { allowedAnidbIds: a.allowedAnidbIds }),
   });
   try {
     const result = await runtime.start();
