@@ -15,7 +15,8 @@ const held = (reason) => ({ state: 'held', reason });
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions,
   processRequest, processStart, processCompletion, processPublish,
-  qbBaseUrl, sessionGate, fetchImpl = fetch, now = Date.now } = {}) {
+  qbBaseUrl, sessionGate, allowedAnidbIds = null,
+  fetchImpl = fetch, now = Date.now } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
       [processRequest, processStart, processCompletion, processPublish, now]
@@ -27,7 +28,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
     processCompletion, processPublish });
   const queues = [];
   try {
-    queues.push(openAcquisitionRequestQueue(dbPath));
+    queues.push(openAcquisitionRequestQueue(dbPath, { allowedAnidbIds }));
     queues.push(openStartQueue(dbPath));
     queues.push(openCompletionQueue(dbPath));
     queues.push(openHandoffPublishQueue(dbPath));

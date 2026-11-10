@@ -900,7 +900,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
         qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
         verifyStagingRoot, verifyShokoSource, realpathImpl,
-        shokoProviderId, readPacer } = {}) {
+        shokoProviderId, allowedAnidbIds, readPacer } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
         }
@@ -933,6 +933,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
+          allowedAnidbIds,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },
           publicSections: plex.publicSections, prowlarr,
