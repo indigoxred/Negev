@@ -280,7 +280,7 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `({loading: document.querySelector('#detail')?.textContent.includes('Loading episode details'),
         hasRequest: Boolean(document.querySelector('#detail .request-action'))})`,
     });
-    await wait(10_200);
+    await wait(4_200);
     const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         const button = action?.querySelector('.primary'); button?.click();
@@ -313,6 +313,18 @@ async function inspectMobile(url, profile, width = 390) {
         button?.click();
         return { message, action: label,
           summary: action?.querySelector('.request-review p')?.textContent }; })()`,
+    });
+    const unlistedFilmConfirm = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('#detail .request-action');
+        action?.querySelector('.primary')?.click();
+        return { saving: action?.querySelector('.primary')?.textContent }; })()`,
+    });
+    await wait(300);
+    const unlistedFilmSaved = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('#detail .request-action');
+        return { button: action?.querySelector('.primary')?.textContent,
+          feedback: action?.querySelector('.request-feedback')?.textContent,
+          reviewHidden: action?.querySelector('.request-review')?.hidden }; })()`,
     });
     let airingTrack = null;
     if (width === 390) {
@@ -381,7 +393,9 @@ async function inspectMobile(url, profile, width = 390) {
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value,
-      unlistedFilm: unlistedFilm.result.value, airingTrack };
+      unlistedFilm: unlistedFilm.result.value,
+      unlistedFilmConfirm: unlistedFilmConfirm.result.value,
+      unlistedFilmSaved: unlistedFilmSaved.result.value, airingTrack };
   } finally {
     socket?.close();
     child.kill();
@@ -876,11 +890,15 @@ test('signed-in consumer routes render real shell with search, library and reque
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
       assert.equal(mobile.reviewAfterRetry.button, 'Confirm request');
       assert.equal(mobile.reviewAfterRetry.reviewVisible, true);
-      assert.equal(mobile.unlistedFilm.action, 'Request if missing');
+      assert.equal(mobile.unlistedFilm.action, 'Request film');
       assert.match(mobile.unlistedFilm.message,
         /wait for an exact film entry before any download/i);
       assert.equal(mobile.unlistedFilm.summary,
-        'Unlisted future film · Negev will identify the film or episodes and check the library first');
+        'Unlisted future film · Negev will identify the film entry and check the library first');
+      assert.equal(mobile.unlistedFilmConfirm.saving, 'Saving request…');
+      assert.equal(mobile.unlistedFilmSaved.button, 'Requested');
+      assert.equal(mobile.unlistedFilmSaved.reviewHidden, true);
+      assert.match(mobile.unlistedFilmSaved.feedback, /saved|waiting/i);
       assert.equal(mobile.airingTrack.defaultMode, 'library');
       assert.equal(mobile.airingTrack.tracked, 'Stop tracking');
       assert.equal(mobile.airingTrack.mode, 'custom');
@@ -991,7 +1009,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(throttledDetail, /A new anime description/);
       assert.match(throttledDetail, /Episode details are temporarily unavailable/);
       assert.match(throttledDetail, /Try again/);
-      assert.match(throttledDetail, /Request if missing/);
+      assert.match(throttledDetail, /Request series/);
       const coldDetail = await dump(`${base}/#/title/19848`,
         join(dir, 'cold-detail'));
       assert.match(coldDetail, /Request if missing/,

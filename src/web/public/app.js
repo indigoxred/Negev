@@ -10,7 +10,6 @@ import { createFranchiseExplorer, expandFranchiseBatch,
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { detailRefreshDelay, detailHydrationFollowup } from './detail-refresh.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
@@ -1384,7 +1383,7 @@ function pendingTitleAction(item) {
   cancelReview.addEventListener('click', () => {
     action.dataset.reviewing = 'false';
     review.hidden = true;
-    button.textContent = 'Request if missing';
+    button.textContent = pendingTitleLabel(action.dataset.kind);
     status.textContent = '';
   });
   review.append(cancelReview);
@@ -1427,6 +1426,22 @@ function pendingTitleAction(item) {
   });
   return action;
 }
+function pendingTitleLabel(kind) {
+  return kind === 'movie' ? 'Request film' :
+    kind === 'series' ? 'Request series' : 'Request if missing';
+}
+function setPendingTitleKind(action, item, kind) {
+  if (!action || !['movie', 'series'].includes(kind)) return;
+  action.dataset.kind = kind;
+  const summary = action.querySelector('.request-review p');
+  if (summary) summary.textContent = kind === 'movie'
+    ? `${item.title} · Negev will identify the film entry and check the library first`
+    : `${item.title} · Negev will identify the episodes and check the library first`;
+  if (action.dataset.reviewing !== 'true' && action.dataset.saving !== 'true' &&
+      action.dataset.saved !== 'true') {
+    action.querySelector('.primary').textContent = pendingTitleLabel(kind);
+  }
+}
 async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const previousAction = state.selected === item.anidbId
     ? byId('detail').querySelector('.request-action[data-pending="true"]')
@@ -1446,14 +1461,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const displaySummary = element('div', undefined, 'detail-display');
   panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
     element('p', 'Loading episode details…', 'muted'), displaySummary);
-  // Only offer a fallback if the first detail read is still loading after
-  // ten seconds. Once it returns pending, the normal request action appears.
+  // An uncached catalogue read must not make the request path wait for Shoko.
   const earlyRequest = previousAction ?? pendingTitleAction(item);
   const fallbackTimer = earlyRequest ? setTimeout(() => {
     if (!isCurrentDetail() || !panel.contains(loadingArt) ||
         !state.showAdult && state.searchItems.get(item.anidbId)?.adult !== false) return;
     panel.append(earlyRequest);
-  }, 10_000) : null;
+  }, 4_000) : null;
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
     displayRead = api(`/api/catalogue/${item.anidbId}/display`)
@@ -1472,6 +1486,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (!isCurrentDetail() || display?.state !== 'display') return;
     if (display.restricted !== false &&
         (!state.showAdult || state.user?.adultAllowed !== true)) return;
+    setPendingTitleKind(earlyRequest, { title },
+      /movie|film/i.test(display.type ?? '') ? 'movie' :
+        /series|tv|ova|ona/i.test(display.type ?? '') ? 'series' : null);
     displaySummary.replaceChildren();
     const main = element('div', undefined, 'detail-main');
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
@@ -1547,70 +1564,46 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     detailArt.append(detailPoster);
     panel.replaceChildren(detailArt,
       element('h1', data.title || item.title, 'detail-title'));
-    const pendingSummary = earlyRequest?.querySelector('.request-review p');
-    if (pendingSummary) pendingSummary.textContent =
-      `${data.title || item.title} · Negev will identify the film or episodes and check the library first`;
+    setPendingTitleKind(earlyRequest, { title: data.title || item.title }, data.kind);
     panel.append(displaySummary);
     void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
-      if (!state.detailLoad) {
-        panel.append(element('p', 'Episode details are not cached yet. You can save a request now; it will wait for exact episodes before any download.', 'muted'));
-      } else {
-        panel.append(element('p', 'Preparing episode details automatically. You can keep browsing; this page will update when they are ready.', 'muted'));
-      }
+      panel.append(element('p', 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.', 'muted'));
       const pendingAction = earlyRequest;
       if (pendingAction) panel.append(pendingAction);
       if (state.detailLoad) {
-        const retry = element('button', 'Retry loading details');
-        retry.hidden = true;
         const preparationStatus = element('p', '', 'muted');
         const begin = async () => {
           state.detailHydrationQueued.add(item.anidbId);
-          retry.hidden = true;
-          preparationStatus.textContent = '';
+          preparationStatus.textContent = 'Checking for an updated episode list in the background.';
           try {
             const hydration = await api(`/api/catalogue/${item.anidbId}/load-detail`,
               { method: 'POST', body: '{}' });
-            const followup = detailHydrationFollowup(hydration, refreshAttempt);
-            if (followup.state === 'retry' || followup.state === 'stop') {
-              state.detailHydrationQueued.delete(item.anidbId);
-            }
+            state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
-              if (followup.state === 'ready') void showDetail(item, franchise);
-              else if (followup.state === 'stop') {
-                preparationStatus.textContent = 'Episode details are still unavailable. Try again later.';
-                retry.hidden = false;
-              } else {
-                if (followup.state === 'retry') {
-                  preparationStatus.textContent = 'Another title is being prepared. This one will retry automatically.';
-                }
+              if (hydration.state === 'detail_ready') void showDetail(item, franchise, 1);
+              else if (hydration.state === 'pending' &&
+                  hydration.reason === 'refresh_queued') {
+                preparationStatus.textContent = 'Episode details are updating. The request button is ready.';
                 detailPollTimer = setTimeout(() => {
-                  void showDetail(item, franchise, refreshAttempt + 1);
-                }, followup.delayMs);
+                  void showDetail(item, franchise, 1);
+                }, 4_000);
+              } else {
+                preparationStatus.textContent = 'Episode details are not ready yet. The request button is ready.';
               }
             }
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
-              preparationStatus.textContent = error.status === 429
-                ? 'Episode details are busy. You can request this title now; Negev will check the library before any download.'
-                : 'Episode details could not be prepared right now. You can still request this title.';
-              retry.hidden = false;
+              preparationStatus.textContent = 'Episode details are busy. The request button is ready.';
             }
           }
         };
-        retry.addEventListener('click', () => { void showDetail(item, franchise, 0); });
-        panel.append(preparationStatus, retry);
-        if (refreshAttempt >= 5) {
-          state.detailHydrationQueued.delete(item.anidbId);
-          preparationStatus.textContent = 'Episode details are still unavailable. Try again later.';
-          retry.hidden = false;
-        } else if (state.detailHydrationQueued.has(item.anidbId)) {
-          detailPollTimer = setTimeout(() => {
-            void showDetail(item, franchise, refreshAttempt + 1);
-          }, detailRefreshDelay(refreshAttempt));
-        } else {
+        panel.append(preparationStatus);
+        if (refreshAttempt === 0 && !state.detailHydrationQueued.has(item.anidbId)) {
           void begin();
+        } else {
+          preparationStatus.textContent = 'Episode details are not ready yet. The request button is ready.';
         }
       }
     } else {
@@ -2027,6 +2020,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (data.kind === 'movie' && pager.episodes.length === 0) {
       const pendingFilmAction = earlyRequest ?? pendingTitleAction({ ...item,
         adult: data.restricted });
+      setPendingTitleKind(pendingFilmAction,
+        { title: data.title || item.title }, 'movie');
       if (pendingFilmAction) panel.insertBefore(pendingFilmAction, relatedHeading);
       return;
     }
