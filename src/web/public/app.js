@@ -1640,6 +1640,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
                 updated.regularSeason.verified <= updated.regularSeason.total) {
               data.regularSeason = updated.regularSeason;
               refreshAvailabilitySummary();
+              refreshRequestAction();
               return;
             }
           } catch { /* Keep the page proof while the catalogue is busy. */ }
@@ -1748,7 +1749,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           renderFamily();
           if (result.failures === 0) return;
           const error = element('p',
-            result.state === 'root_unavailable'
+            result.state === 'rate_limited'
+              ? 'Related titles are temporarily rate limited. Try again in about a minute.'
+              : result.state === 'temporarily_unavailable'
+              ? 'Related titles are temporarily unavailable. Try again shortly.'
+              : result.state === 'root_unavailable'
               ? 'Related titles could not be loaded. Try again or search for another installment.'
               : 'Some relationships could not be loaded. You can open that title directly or continue exploring.',
             'muted related-error');
@@ -1757,7 +1762,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedList.append(error);
           } else relatedList.replaceChildren(error);
           if (family.next()) {
-            relatedButton.textContent = result.state === 'root_unavailable' ?
+            relatedButton.textContent = ['root_unavailable', 'rate_limited',
+              'temporarily_unavailable']
+              .includes(result.state) ?
               'Try related titles again' : 'Show more related titles';
             relatedButton.hidden = false;
             relatedButton.disabled = false;

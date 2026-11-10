@@ -24,12 +24,12 @@ const assets = new Map([
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
 
-const dump = async (url, profile, captureName, viewport = '1440,900') => new Promise((resolve, reject) => {
+const dump = async (url, profile, captureName, viewport = '1440,900', virtualTimeMs = 6000) => new Promise((resolve, reject) => {
   const screenshot = process.env.NEGEV_UI_CAPTURE_DIR && captureName
     ? join(process.env.NEGEV_UI_CAPTURE_DIR, `${captureName}.png`) : null;
   const child = spawn(browser, ['--headless=new', '--no-first-run',
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
-    `--user-data-dir=${profile}`, '--virtual-time-budget=6000',
+    `--user-data-dir=${profile}`, `--virtual-time-budget=${virtualTimeMs}`,
     `--window-size=${viewport}`, ...(screenshot ? [`--screenshot=${screenshot}`] : []),
     '--dump-dom', url], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
   let output = '';
@@ -394,6 +394,7 @@ test('signed-in consumer routes render real shell with search, library and reque
     let allowAdult = true;
     let airingPreference = { mode: 'library', trackedAnidbIds: [] };
     let coldSeasonReads = 0;
+    let completedColdSeasonReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -685,6 +686,29 @@ test('signed-in consumer routes render real shell with search, library and reque
             title: 'Second', availability: 'unknown' }] }));
         return;
       }
+      if (path === '/api/catalogue/94') {
+        completedColdSeasonReads++;
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 94,
+          title: 'Cold complete season', kind: 'series', restricted: false,
+          monitorFuture: false, episodeCount: 2,
+          ...(completedColdSeasonReads > 1 ?
+            { regularSeason: { verified: 2, total: 2 } } : {}),
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 },
+          page: 1, total: 3, nextPage: 2,
+          episodes: [1, 2].map((number) => ({ id: 9400 + number,
+            number, type: 'Episode', title: `Episode ${number}`,
+            availability: 'available' })) }));
+        return;
+      }
+      if (path === '/api/catalogue/94/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 94,
+          title: 'Cold complete season', type: 'TV Series',
+          endDate: '2020-01-01', episodeCount: 2, restricted: false,
+          tags: [] }));
+        return;
+      }
       if (path === '/api/catalogue/99' || path === '/api/catalogue/98') {
         const secondPage = new URL(request.url, 'http://localhost')
           .searchParams.get('page') === '2';
@@ -782,6 +806,14 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(discover, /Pale Cocoon/);
       assert.match(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
+      const completedColdSeason = await dump(`${base}/#/title/94`,
+        join(dir, 'completed-cold-season'), undefined, '1440,900', 15000);
+      assert.ok(completedColdSeasonReads >= 2,
+        'the complete season proof arrives after the initial detail response');
+      assert.match(completedColdSeason,
+        /2 of 2 regular episodes verified playable in Plex/);
+      assert.match(completedColdSeason,
+        /<button class="primary" disabled="">Already available<\/button>/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /<h1>Browse anime\.<\/h1>/);
