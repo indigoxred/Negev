@@ -1640,6 +1640,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
                 updated.regularSeason.verified <= updated.regularSeason.total) {
               data.regularSeason = updated.regularSeason;
               refreshAvailabilitySummary();
+              refreshRequestAction();
               return;
             }
           } catch { /* Keep the page proof while the catalogue is busy. */ }
