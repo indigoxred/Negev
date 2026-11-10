@@ -13,6 +13,27 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('an exact acquisition cohort skips other saved titles across restart',
+  async () => fixture(async (dbPath) => {
+    const first = openAcquisitionRequestQueue(dbPath, { allowedAnidbIds: [42] });
+    try {
+      assert.deepEqual(first.claimNext({ nowMs: 10 }),
+        { state: 'claimed', requestId: 2, pass: 1 });
+      assert.deepEqual(first.claimNext({ nowMs: 10 }),
+        { state: 'pass_complete', pass: 1 });
+    } finally { first.close(); }
+    const reopened = openAcquisitionRequestQueue(dbPath,
+      { allowedAnidbIds: [42] });
+    try {
+      assert.deepEqual(reopened.claimNext({ nowMs: 10 }),
+        { state: 'pass_complete', pass: 2 });
+    } finally { reopened.close(); }
+    const unrestricted = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(unrestricted.claimNext({ nowMs: 10 }).requestId, 1);
+    } finally { unrestricted.close(); }
+  }));
+
 test('a suspended unstarted request is skipped while existing and new requests continue',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

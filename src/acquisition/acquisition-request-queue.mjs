@@ -9,10 +9,20 @@ const validCandidateFingerprint = (value) => typeof value === 'string' &&
 
 // This queue only chooses which saved request to examine. It never searches
 // an indexer, calls qBittorrent, or treats a held item as completed.
-export function openAcquisitionRequestQueue(dbPath) {
+export function openAcquisitionRequestQueue(dbPath,
+  { allowedAnidbIds = null } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable acquisition queue path required');
   }
+  if (allowedAnidbIds !== null &&
+      (!Array.isArray(allowedAnidbIds) || allowedAnidbIds.length < 1 ||
+       allowedAnidbIds.length > 100 ||
+       allowedAnidbIds.some((id) => !validId(id)) ||
+       new Set(allowedAnidbIds).size !== allowedAnidbIds.length)) {
+    throw new TypeError('Invalid acquisition title cohort');
+  }
+  const cohortFilter = allowedAnidbIds === null ? '' :
+    `r.anidb_id IN (${allowedAnidbIds.map(() => '?').join(',')}) AND`;
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     db.exec('PRAGMA journal_mode=WAL');
@@ -65,6 +75,7 @@ export function openAcquisitionRequestQueue(dbPath) {
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
       s.request_id IS NULL AND
+      ${cohortFilter}
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
@@ -215,7 +226,7 @@ export function openAcquisitionRequestQueue(dbPath) {
       if (!validTime(nowMs)) throw new TypeError('Invalid acquisition queue clock');
       return transact(() => {
         const position = cursor.get();
-        const row = next.get(position.afterId, nowMs);
+        const row = next.get(position.afterId, ...(allowedAnidbIds ?? []), nowMs);
         if (!row) {
           if (wrap.run(position.afterId, position.pass).changes !== 1) {
             throw new Error('Acquisition cursor changed');

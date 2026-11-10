@@ -15,12 +15,12 @@ export function openAcquisitionRuntime(options = {}) {
     stop: async () => {},
     getStatus: () => ({ state: 'disabled' }),
   };
-  const { dbPath, acquisitions, qbBaseUrl, sessionGate,
+  const { dbPath, acquisitions, qbBaseUrl, sessionGate, allowedAnidbIds,
     fetchImpl = fetch, now = Date.now, ...providers } = options;
   const stages = createAcquisitionStageProcessors({
     ...providers, acquisitions, providerFetchImpl: fetchImpl, now });
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
-    qbBaseUrl, sessionGate, fetchImpl, now, ...stages });
+    qbBaseUrl, sessionGate, allowedAnidbIds, fetchImpl, now, ...stages });
   const scheduler = createPipelineScheduler({ pipeline, now });
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),

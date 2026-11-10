@@ -59,3 +59,14 @@ node --test
 The Dockerfile builds a non-root image. Starting the account server requires explicit configuration and private secret files; there are no public example credentials or server-specific paths in this repository. Keep tokens, databases, media, logs, installed configuration, and operational evidence outside Git.
 
 Negev is independent of TV Sonarr and Radarr. It must not remove or modify existing services as part of installation.
+
+During a measured handover from another anime acquisition owner, an enabled
+Negev worker can be restricted to exact AniDB titles with
+`NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS=42,19847`. The list is optional, but when
+set it must contain 1–100 distinct positive AniDB IDs with no spaces. Only
+those titles enter the acquisition request queue; requests for other titles
+remain saved and are not downloaded by Negev. Changing the list requires a
+restart. Confirm that any previously started attempts outside the list have
+finished or are held before enabling this mode, since downstream attempt
+workers continue their durable journals. Remove the restriction only after
+the former owner's corresponding watches and request route have been retired.

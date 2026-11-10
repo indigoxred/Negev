@@ -371,7 +371,8 @@ export function parseUserServerConfig(env) {
   const acquisitionNames = ['NEGEV_STAGING_HOST_PATH', 'NEGEV_HOLDING_ROOT',
     'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID',
     'NEGEV_ACQUISITION_IMPORT_PARENT', 'NEGEV_ACQUISITION_IMPORT_FOLDER_ID',
-    'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH'];
+    'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH',
+    'NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS'];
   let acquisition = null;
   let acquisitionImportParent = null;
   let acquisitionImportFolderId = null;
@@ -384,6 +385,19 @@ export function parseUserServerConfig(env) {
     const shokoSourcePath = env.NEGEV_ACQUISITION_SHOKO_SOURCE_PATH;
     const qbitStagingRoot = env.NEGEV_QBITTORRENT_STAGING_ROOT;
     const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
+    const rawAllowedIds = env.NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS;
+    let allowedAnidbIds = null;
+    if (rawAllowedIds !== undefined) {
+      if (typeof rawAllowedIds !== 'string' ||
+          !/^[1-9]\d*(,[1-9]\d*){0,99}$/.test(rawAllowedIds)) {
+        throw new TypeError('Invalid acquisition title cohort');
+      }
+      allowedAnidbIds = rawAllowedIds.split(',').map(Number);
+      if (allowedAnidbIds.some((id) => !validId(id)) ||
+          new Set(allowedAnidbIds).size !== allowedAnidbIds.length) {
+        throw new TypeError('Invalid acquisition title cohort');
+      }
+    }
     if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
         shokoImportFolderId === null || shokoImportRoot === null ||
         env.NEGEV_SHOKO_EVENTS !== '1' || env.NEGEV_SHOKO_RECENT !== '1' ||
@@ -422,7 +436,7 @@ export function parseUserServerConfig(env) {
     acquisition = { stagingHostPath, qbitStagingRoot, holdingRoot,
       importRoot: path.join(acquisitionImportParent, 'Negev'),
       shokoSourcePath, shokoSourceFolderId: acquisitionImportFolderId,
-      shokoProviderId };
+      shokoProviderId, allowedAnidbIds };
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
   }

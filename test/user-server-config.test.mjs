@@ -181,6 +181,16 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     NEGEV_ACQUISITION_RUNTIME: '1' };
   const parsed = parseUserServerConfig(configured);
   assert.equal(parsed.acquisitionRuntime, true);
+  assert.deepEqual(parseUserServerConfig({ ...configured,
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: '42,19847' })
+    .acquisition.allowedAnidbIds, [42, 19847]);
+  for (const value of ['', '0', '42,', '42,42', ' 42', '42,foo',
+    Array.from({ length: 101 }, (_, i) => i + 1).join(',')]) {
+    assert.throws(() => parseUserServerConfig({ ...configured,
+      NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: value }), TypeError);
+  }
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: '42' }), TypeError);
   assert.deepEqual(parsed.acquisition, {
     stagingHostPath: configured.NEGEV_STAGING_HOST_PATH,
     qbitStagingRoot: configured.NEGEV_QBITTORRENT_STAGING_ROOT,
@@ -188,6 +198,7 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     importRoot: path.join(configured.NEGEV_ACQUISITION_IMPORT_PARENT, 'Negev'),
     shokoSourcePath: '/negev/source', shokoSourceFolderId: 2,
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
+    allowedAnidbIds: null,
   });
   for (const change of [
     { NEGEV_PROWLARR_DISCOVERY: '0' },
