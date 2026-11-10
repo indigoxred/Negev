@@ -434,6 +434,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         }, {
           id: 3, anidbId: 7, title: 'A title needing help', kind: 'series',
           episodeIds: [12], monitorFuture: false, watchClosed: false, canCancel: false,
+          status: 'held',
           progress: { state: 'review_needed', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }], nextBeforeId: null }));
