@@ -217,7 +217,7 @@ test('title and library controls recover from pending and failed reads without d
         'owner review starts while Watching is pending');
       holdWatchingRequests = false;
       heldWatchingResponses.shift().end(JSON.stringify({ items: [], nextBeforeId: null }));
-      await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
+      await until("document.querySelector('#detail')?.textContent.includes('You can request this title now')");
       await until("document.querySelector('#detail')?.textContent.includes('The catalogue summary is already ready.')");
       for (let attempt = 0; attempt < 80 && detailPosts < 1; attempt++) await wait(100);
       assert.equal(detailPosts, 1);
@@ -239,7 +239,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");
       await evaluate("location.hash = '#/title/1'");
-      await until("document.querySelector('#detail')?.textContent.includes('Preparing episode details automatically')");
+      await until("document.querySelector('#detail')?.textContent.includes('You can request this title now')");
       assert.equal(detailPosts, 2, 'an in-flight hydration POST must not be duplicated');
       assert.ok(heldDetailResponse);
       json(heldDetailResponse, { state: 'detail_ready' });
