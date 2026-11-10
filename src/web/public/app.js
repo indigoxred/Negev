@@ -1371,6 +1371,10 @@ function pendingTitleAction(item) {
   const button = element('button', 'Request if missing', 'primary');
   const status = element('p', '', 'muted request-feedback');
   status.setAttribute('role', 'status');
+  const viewRequest = element('a', 'View in My Requests →',
+    'text-link request-receipt-link');
+  viewRequest.href = '#/requests';
+  viewRequest.hidden = true;
   const review = element('div', undefined, 'request-review');
   review.hidden = true;
   review.append(element('strong', 'Review your request'));
@@ -1387,7 +1391,7 @@ function pendingTitleAction(item) {
     status.textContent = '';
   });
   review.append(cancelReview);
-  action.append(review, button, status);
+  action.append(review, button, status, viewRequest);
   button.addEventListener('click', async () => {
     if (button.disabled) return;
     if (action.dataset.reviewing !== 'true') {
@@ -1414,6 +1418,7 @@ function pendingTitleAction(item) {
       button.disabled = true;
       button.textContent = 'Requested';
       status.textContent = savedRequestMessage(saved);
+      viewRequest.hidden = false;
       message('Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
@@ -2070,13 +2075,18 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.insertBefore(requestAction, relatedHeading);
     const requestStatus = element('p', '', 'muted request-feedback');
     requestStatus.setAttribute('role', 'status');
+    const viewRequest = element('a', 'View in My Requests →',
+      'text-link request-receipt-link');
+    viewRequest.href = '#/requests';
+    viewRequest.hidden = true;
     const alreadyAvailable = () => selectedInstallmentId === item.anidbId
       ? installmentRequestState({ kind: data.kind,
         episodes: pager.episodes, nextPage: pager.nextPage,
         monitorFuture: data.monitorFuture,
         regularSeason: data.regularSeason }) === 'already_available'
       : selectedAvailability === 'already_available';
-    const requestLabel = () => data.kind === 'movie' ? 'Request film' :
+    const requestLabel = () => data.kind === 'movie'
+      ? filmChoiceSelect?.value ? 'Request selected film' : 'Request film' :
       selectedInstallmentId !== item.anidbId ? 'Request selected installment' :
       data.monitorFuture === true && pager.episodes.some((episode) =>
         episode.type === 'Episode' && episode.availability === 'available')
@@ -2160,6 +2170,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       filmChoice.hidden = true;
       const label = element('label', 'Choose the film version or part');
       filmChoiceSelect = element('select');
+      filmChoiceSelect.addEventListener('change', () => {
+        reviewingRequest = false;
+        requestReview.hidden = true;
+        requestStatus.textContent = '';
+        refreshRequestAction();
+      });
       const placeholder = element('option', 'Select a main film entry');
       placeholder.value = '';
       filmChoiceSelect.append(placeholder);
@@ -2186,7 +2202,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       }
       if (!reviewingRequest) {
         if (needsFilmChoice) {
-          const selectedFilm = filmEntries.find((episode) =>
+          const selectedFilm = pager.episodes.find((episode) =>
             String(episode.id) === filmChoiceSelect.value);
           reviewSummary.textContent = `${data.title || item.title} · ` +
             `main film entry ${selectedFilm?.number ?? '?'}${selectedFilm?.title ? ` · ${selectedFilm.title}` : ''}`;
@@ -2199,6 +2215,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       }
       requestSaving = true;
       if (installmentSelect) installmentSelect.disabled = true;
+      if (filmChoiceSelect) filmChoiceSelect.disabled = true;
       button.disabled = true;
       button.textContent = 'Saving request…';
       requestStatus.textContent = 'Saving your request…';
@@ -2218,6 +2235,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestReview.hidden = true;
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
+        viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'
           : `Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
@@ -2228,10 +2246,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         message(feedback, true);
         requestSaving = false;
         if (installmentSelect) installmentSelect.disabled = false;
+        if (filmChoiceSelect) filmChoiceSelect.disabled = false;
         refreshRequestAction();
       }
     });
-    requestAction.append(requestReview, button, requestStatus);
+    requestAction.append(requestReview, button, requestStatus, viewRequest);
     if (checkingCompleteSeries && loadNextEpisodePage) {
       // A title-level count is only a hint. Keep the request closed until
       // every exact regular episode has been checked, even after page eight.

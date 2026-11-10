@@ -326,6 +326,37 @@ async function inspectMobile(url, profile, width = 390) {
           feedback: action?.querySelector('.request-feedback')?.textContent,
           reviewHidden: action?.querySelector('.request-review')?.hidden }; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/10') });
+    await wait(700);
+    const filmChoiceReview = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        const button = action.querySelector('.primary');
+        button.click();
+        const select = action.querySelector('.film-request-choice select');
+        select.value = '1001'; select.dispatchEvent(new Event('change'));
+        button.click();
+        select.value = '1002'; select.dispatchEvent(new Event('change'));
+        return { reviewHidden: action.querySelector('.request-review').hidden,
+          button: button.textContent,
+          summary: action.querySelector('.request-review p').textContent }; })()`,
+    });
+    await send('Runtime.evaluate', { expression:
+      `document.querySelector('.request-action .primary').click()` });
+    const filmChoiceConfirm = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return { reviewHidden: action.querySelector('.request-review').hidden,
+          summary: action.querySelector('.request-review p').textContent,
+          button: action.querySelector('.primary').textContent }; })()`,
+    });
+    await send('Runtime.evaluate', { expression:
+      `document.querySelector('.request-action .primary').click()` });
+    await wait(250);
+    const filmChoiceSaved = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return { reviewHidden: action.querySelector('.request-review').hidden,
+          feedback: action.querySelector('.request-feedback').textContent,
+          view: action.querySelector('.request-receipt-link')?.textContent }; })()`,
+    });
     let airingTrack = null;
     if (width === 390) {
       await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
@@ -395,7 +426,10 @@ async function inspectMobile(url, profile, width = 390) {
       reviewAfterRetry: reviewAfterRetry.result.value,
       unlistedFilm: unlistedFilm.result.value,
       unlistedFilmConfirm: unlistedFilmConfirm.result.value,
-      unlistedFilmSaved: unlistedFilmSaved.result.value, airingTrack };
+      unlistedFilmSaved: unlistedFilmSaved.result.value,
+      filmChoiceReview: filmChoiceReview.result.value,
+      filmChoiceConfirm: filmChoiceConfirm.result.value,
+      filmChoiceSaved: filmChoiceSaved.result.value, airingTrack };
   } finally {
     socket?.close();
     child.kill();
@@ -405,6 +439,7 @@ async function inspectMobile(url, profile, width = 390) {
 
 test('signed-in consumer routes render real shell with search, library and requests',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+    const submittedRequests = [];
     let allowAdult = true;
     let airingPreference = { mode: 'library', trackedAnidbIds: [] };
     let coldSeasonReads = 0;
@@ -429,6 +464,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       }
       if (path === '/api/requests') {
         if (request.method === 'POST') {
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          submittedRequests.push(JSON.parse(Buffer.concat(chunks).toString('utf8')));
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify({ state: 'pending', requestId: 7,
             waitingFor: 'release_schedule' }));
@@ -595,6 +633,16 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'details', anidbId: 20291,
           title: 'Unlisted future film', kind: 'movie', restricted: false,
           page: 1, total: 0, nextPage: null, episodes: [] }));
+        return;
+      }
+      if (path === '/api/catalogue/10') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 10,
+          title: 'Two-part film', kind: 'movie', restricted: false,
+          page: 1, total: 2, nextPage: null, episodes: [
+            { id: 1001, number: 1, type: 'Episode', title: 'Part One' },
+            { id: 1002, number: 2, type: 'Episode', title: 'Part Two' },
+          ] }));
         return;
       }
       if (path === '/api/catalogue/7') {
@@ -899,6 +947,21 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.unlistedFilmSaved.button, 'Requested');
       assert.equal(mobile.unlistedFilmSaved.reviewHidden, true);
       assert.match(mobile.unlistedFilmSaved.feedback, /saved|waiting/i);
+      assert.deepEqual(mobile.filmChoiceReview, {
+        reviewHidden: true, button: 'Request selected film',
+        summary: 'Two-part film · main film entry 1 · Part One' });
+      assert.deepEqual(mobile.filmChoiceConfirm, {
+        reviewHidden: false,
+        summary: 'Two-part film · main film entry 2 · Part Two',
+        button: 'Confirm request' });
+      assert.equal(mobile.filmChoiceSaved.reviewHidden, true);
+      assert.match(mobile.filmChoiceSaved.feedback, /Request #7 saved/);
+      assert.equal(mobile.filmChoiceSaved.view, 'View in My Requests →');
+      assert.ok(submittedRequests.some((body) => body.anidbId === 43 &&
+        body.scope === 'installment'), 'selected related season reaches the request API');
+      assert.ok(submittedRequests.some((body) => body.anidbId === 10 &&
+        body.scope === 'episodes' && body.episodeIds?.length === 1 &&
+        body.episodeIds[0] === 1002), 'reviewed film entry reaches the request API');
       assert.equal(mobile.airingTrack.defaultMode, 'library');
       assert.equal(mobile.airingTrack.tracked, 'Stop tracking');
       assert.equal(mobile.airingTrack.mode, 'custom');
