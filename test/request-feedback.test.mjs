@@ -13,6 +13,8 @@ test('request feedback explains a changed selection and has a safe generic fallb
   assert.equal(requestFailureMessage({ message: 'Already available in Negev’s Library',
     reason: 'already_available' }),
   'This installment is already available in Negev’s Library.');
+  assert.equal(requestFailureMessage({ reason: 'title_not_in_cutover' }),
+    'Requests for this title are not open yet. Please use Seerr for now.');
   assert.equal(requestFailureMessage(new Error('internal_error')),
     'The request could not be saved. Please try again.');
 });

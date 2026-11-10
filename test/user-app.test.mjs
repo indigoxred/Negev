@@ -10,6 +10,43 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('a limited acquisition cohort rejects other new titles before saving a request', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const submitted = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    acquisitionAllowedAnidbIds: [1234],
+    submitRequest: async (input) => { submitted.push(input); return {
+      state: 'held', requestId: 1, reason: 'test_request' }; },
+    readRequest: () => null });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    const blocked = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 1235, scope: 'installment', requestKey: 'outside' } });
+    assert.equal(blocked.statusCode, 409);
+    assert.equal(blocked.json().reason, 'title_not_in_cutover');
+    assert.match(blocked.json().error, /not open yet/i);
+    assert.equal(submitted.length, 0);
+    const invalid = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: '1235', scope: 'installment', requestKey: 'invalid' } });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(submitted.length, 0);
+    const allowed = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 1234, scope: 'installment', requestKey: 'inside' } });
+    assert.equal(allowed.statusCode, 202);
+    assert.equal(submitted.length, 1);
+  } finally { await app.close(); }
+});
+
 test('signed-in Airing preferences are owner scoped and require CSRF to change', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };

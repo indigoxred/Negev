@@ -64,8 +64,9 @@ During a measured handover from another anime acquisition owner, an enabled
 Negev worker can be restricted to exact AniDB titles with
 `NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS=42,19847`. The list is optional, but when
 set it must contain 1–100 distinct positive AniDB IDs with no spaces. Only
-those titles enter the acquisition request queue; requests for other titles
-remain saved and are not downloaded by Negev. Changing the list requires a
+those titles enter the acquisition request queue. New requests outside the
+list are rejected with a clear cutover message; previously saved requests
+outside it remain saved and are not downloaded by Negev. Changing the list requires a
 restart. Confirm that any previously started attempts outside the list have
 finished or are held before enabling this mode, since downstream attempt
 workers continue their durable journals. Remove the restriction only after
