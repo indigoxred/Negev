@@ -952,6 +952,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
       assert.match(seriesDetail, /Choose a season or installment/);
+      assert.match(seriesDetail, /Check season availability/);
+      assert.match(seriesDetail, /Check selected episode/);
+      assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);
+      assert.doesNotMatch(seriesDetail, /Recheck unknown entries in background/);
       assert.match(seriesDetail, /class="installment-choice"/);
       assert.match(seriesDetail, /Watch future episodes/);
       assert.doesNotMatch(seriesDetail, /Already available/);

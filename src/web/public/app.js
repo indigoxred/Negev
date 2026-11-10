@@ -1636,6 +1636,42 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       refreshAvailabilitySummary();
       panel.append(summary);
+      if (data.kind === 'series') {
+        const checkSeason = element('button', 'Check season availability',
+          'availability-season-check');
+        const seasonResult = element('p', '', 'muted');
+        seasonResult.setAttribute('role', 'status');
+        checkSeason.addEventListener('click', async () => {
+          if (checkSeason.disabled) return;
+          checkSeason.disabled = true;
+          seasonResult.textContent = 'Checking recent public Plex proof for this season…';
+          try {
+            const updated = await api(`/api/catalogue/${item.anidbId}`, {
+              signal: AbortSignal.timeout(8_000) });
+            if (!isCurrentDetail()) return;
+            const season = updated?.regularSeason;
+            if (updated.state !== 'details' ||
+                updated.anidbId !== data.anidbId ||
+                updated.kind !== 'series' ||
+                !Number.isSafeInteger(season?.total) || season.total < 1 ||
+                !Number.isSafeInteger(season.verified) ||
+                season.verified < 0 || season.verified > season.total) {
+              seasonResult.textContent = 'A full-season count could not be confirmed now. Existing verified items remain shown above.';
+              return;
+            }
+            data.regularSeason = season;
+            refreshAvailabilitySummary();
+            refreshRequestAction();
+            seasonResult.textContent = `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`;
+          } catch {
+            if (isCurrentDetail()) seasonResult.textContent =
+              'The season check is temporarily unavailable. Existing verified items remain shown above.';
+          } finally {
+            checkSeason.disabled = false;
+          }
+        });
+        panel.append(checkSeason, seasonResult);
+      }
       if (data.kind === 'series' && pager.nextPage !== null &&
           !data.regularSeason) {
         const refreshFullSeason = async (attempt) => {
@@ -1857,7 +1893,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       appendOptions(pager.episodes);
       label.append(select);
-      const button = element('button', 'Check availability');
+      const button = element('button', data.kind === 'series'
+        ? 'Check selected episode' : 'Check selected film entry');
       const result = element('p', '', 'muted');
       button.disabled = !select.value;
       select.addEventListener('change', () => {
@@ -1871,12 +1908,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         result.textContent = 'Checking the public library…';
         try {
           const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
-          updateOption(Number(select.value), status.state, status.presentation);
+          if (status.state === 'available') {
+            updateOption(Number(select.value), status.state, status.presentation);
+          }
           select.dispatchEvent(new Event('change'));
           result.textContent = status.state === 'available' ?
             status.presentation === 'alternate_card'
               ? 'Playable in Plex; episode card not linked to this episode'
-              : 'Playable in Plex' : 'Availability is not confirmed yet';
+              : 'Playable in Plex' :
+            'This entry could not be verified now. The season result above is unchanged.';
         } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
         finally { button.disabled = !select.value; select.disabled = false; }
       });
