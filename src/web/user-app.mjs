@@ -909,6 +909,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     if (acquisitionAllowedAnidbIds !== null &&
         !acquisitionAllowedAnidbIds.includes(body.anidbId)) {
+      if (!Number.isSafeInteger(body.anidbId) || body.anidbId < 1) {
+        return reply.code(400).send({ error: 'Invalid request' });
+      }
       return reply.code(409).send({ state: 'held',
         reason: 'title_not_in_cutover',
         error: 'Requests for this title are not open yet' });

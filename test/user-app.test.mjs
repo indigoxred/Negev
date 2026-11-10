@@ -36,6 +36,10 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
     assert.equal(blocked.json().reason, 'title_not_in_cutover');
     assert.match(blocked.json().error, /not open yet/i);
     assert.equal(submitted.length, 0);
+    const invalid = await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: '1235', scope: 'installment', requestKey: 'invalid' } });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(submitted.length, 0);
     const allowed = await app.inject({ method: 'POST', url: '/api/requests',
       headers, payload: { anidbId: 1234, scope: 'installment', requestKey: 'inside' } });
     assert.equal(allowed.statusCode, 202);
