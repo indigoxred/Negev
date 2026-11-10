@@ -609,7 +609,8 @@ async function loadPreparations(silent = false, append = false) {
       row.append(posterImage(item));
       const heading = element('div');
       heading.append(element('strong', item.title),
-        element('small', 'Preparing episode details'));
+        element('small', item.reason === 'release_state_unknown'
+          ? 'Waiting for release schedule' : 'Preparing episode details'));
       const open = element('a', 'View title →', 'text-link');
       open.href = titleRoute(item.anidbId);
       heading.append(open);
@@ -635,7 +636,9 @@ async function loadPreparations(silent = false, append = false) {
             : 'This title could not be requested automatically.'
         : item.state === 'resolving'
           ? 'Finishing the request. Cancellation is unavailable during this step.'
-          : 'Waiting for a verified episode list before any download.',
+          : item.reason === 'release_state_unknown'
+            ? 'Waiting for a release date and first episode before any download.'
+            : 'Waiting for a verified episode list before any download.',
       'muted'));
       rows.append(row);
     }
