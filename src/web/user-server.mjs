@@ -63,6 +63,7 @@ try {
     }),
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
+    acquisitionAllowedAnidbIds: config.acquisition?.allowedAnidbIds ?? null,
     shokoApiKey, sessionKey, qbitSidecarObserver,
     ...(process.env.NEGEV_IMPORT_FENCE_TRACE === '1' ? {
       importFenceTrace: (observation) => process.stdout.write(

@@ -46,6 +46,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   readImportActivity,
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
+  acquisitionAllowedAnidbIds = null,
   publicAvailabilityConfigured = false } = {}) {
   let origin, local;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
@@ -74,6 +75,13 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       typeof readRequest !== 'function' ||
       typeof confirmKnownTitle !== 'function' ||
       typeof getAcquisitionStatus !== 'function' ||
+      (acquisitionAllowedAnidbIds !== null &&
+        (!Array.isArray(acquisitionAllowedAnidbIds) ||
+          acquisitionAllowedAnidbIds.length < 1 ||
+          acquisitionAllowedAnidbIds.length > 100 ||
+          acquisitionAllowedAnidbIds.some((id) =>
+            !Number.isSafeInteger(id) || id < 1) ||
+          new Set(acquisitionAllowedAnidbIds).size !== acquisitionAllowedAnidbIds.length)) ||
       typeof publicAvailabilityConfigured !== 'boolean') {
     throw new TypeError('Invalid user app configuration');
   }
@@ -898,6 +906,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         requesterId: request.negevUser.id, anidbId: body.anidbId });
       if (active) return reply.code(202).send({ state: 'pending',
         intentId: active.id, created: false });
+    }
+    if (acquisitionAllowedAnidbIds !== null &&
+        !acquisitionAllowedAnidbIds.includes(body.anidbId)) {
+      return reply.code(409).send({ state: 'held',
+        reason: 'title_not_in_cutover',
+        error: 'Requests for this title are not open yet' });
     }
     const result = await submitRequest({ ...body, requesterId: request.negevUser.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });

@@ -6,6 +6,7 @@ const messages = {
   detail_pending: 'Episode details are still being prepared. Please try again shortly.',
   detail_unavailable: 'Episode details are unavailable right now. Please try again.',
   request_cancelled: 'This request was cancelled. Refresh this title before requesting it again.',
+  title_not_in_cutover: 'Requests for this title are not open yet. Please use Seerr for now.',
 };
 
 export function requestFailureMessage(error) {
