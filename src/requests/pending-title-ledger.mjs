@@ -47,8 +47,8 @@ export function openPendingTitleLedger(dbPath) {
     WHERE requester_id=? AND id<? AND state!='resolved'
     ORDER BY id DESC LIMIT ?`);
   const insert = db.prepare(`INSERT INTO pending_title_intents
-    (requester_id,request_key,anidb_id,title,created_ms,state,next_due_ms)
-    VALUES (?,?,?,?,?,'pending',?)`);
+    (requester_id,request_key,anidb_id,title,created_ms,state,next_due_ms,reason)
+    VALUES (?,?,?,?,?,'pending',?,?)`);
   const due = db.prepare(`SELECT id FROM pending_title_intents
     WHERE (state='pending' AND next_due_ms<=?) OR
       (state='resolving' AND lease_until_ms<=?)
@@ -83,12 +83,16 @@ export function openPendingTitleLedger(dbPath) {
   }
 
   return {
-    enqueue({ requesterId, anidbId, title, requestKey, nowMs }) {
+    enqueue({ requesterId, anidbId, title, requestKey, nowMs,
+      initialReason = null }) {
       if (!validId(requesterId) || !validId(anidbId) ||
           typeof title !== 'string' || title.trim() !== title ||
           !title || title.length > 300 || /[\x00-\x1f\x7f]/.test(title) ||
           typeof requestKey !== 'string' ||
-          !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) || !validMs(nowMs)) {
+          !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) || !validMs(nowMs) ||
+          (initialReason !== null && !['detail_pending',
+            'detail_unavailable', 'detail_incomplete',
+            'release_state_unknown'].includes(initialReason))) {
         throw new TypeError('Invalid pending title intent');
       }
       return transaction(() => {
@@ -99,7 +103,7 @@ export function openPendingTitleLedger(dbPath) {
         const active = activeByTitle.get(requesterId, anidbId);
         if (active) return outcome(active, false);
         const id = Number(insert.run(requesterId, requestKey, anidbId,
-          title, nowMs, nowMs).lastInsertRowid);
+          title, nowMs, nowMs, initialReason).lastInsertRowid);
         return outcome(byId.get(id), true);
       });
     },

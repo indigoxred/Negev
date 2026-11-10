@@ -45,6 +45,21 @@ test('pending title intent survives restart and one key never changes its title'
     } finally { reopened.close(); }
   }));
 
+test('a cold title keeps its original wait reason until the worker updates it',
+  async () => withPath(async (dbPath) => {
+    const ledger = openPendingTitleLedger(dbPath);
+    try {
+      ledger.enqueue({ ...first, initialReason: 'release_state_unknown' });
+      assert.equal(ledger.get(1).reason, 'release_state_unknown');
+      assert.equal(ledger.listForUser({ requesterId: 7 }).items[0].reason,
+        'release_state_unknown');
+      const claim = ledger.claimDue({ nowMs: 1_000, leaseMs: 5_000 });
+      ledger.defer({ intentId: claim.id, version: claim.version,
+        nowMs: 1_001, delayMs: 30_000, reason: 'detail_pending' });
+      assert.equal(ledger.get(1).reason, 'detail_pending');
+    } finally { ledger.close(); }
+  }));
+
 test('only a due intent can be claimed; cancellation and stale workers cannot resolve it',
   async () => withPath(async (dbPath) => {
     const ledger = openPendingTitleLedger(dbPath);

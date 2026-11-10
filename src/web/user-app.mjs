@@ -910,7 +910,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof queuePendingTitle === 'function') {
       const pending = await queuePendingTitle({
         requesterId: request.negevUser.id, anidbId: body.anidbId,
-        requestKey: body.requestKey });
+        requestKey: body.requestKey, initialReason: result.reason });
       if (pending?.state === 'pending' &&
           Number.isSafeInteger(pending.intentId) && pending.intentId > 0) {
         return reply.code(202).send(result.reason === 'release_state_unknown'
