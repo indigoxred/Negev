@@ -1792,10 +1792,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         }
       }
       const overflow = allRelated.length > capacity;
-      const canExplore = family.next() !== null;
-      relatedButton.textContent = !relatedExpanded && overflow
-        ? 'Show more related titles' : 'Find more related titles';
-      relatedButton.hidden = !(!relatedExpanded && overflow) && !canExplore;
+      relatedButton.textContent = 'Show more related titles';
+      relatedButton.hidden = relatedExpanded || !overflow;
       relatedButton.disabled = relatedButton.hidden;
       syncInstallmentChoice();
       syncSeasonRows();
@@ -1839,10 +1837,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedList.append(error);
           } else relatedList.replaceChildren(error);
           if (family.next()) {
-            relatedButton.textContent = ['root_unavailable', 'rate_limited',
-              'temporarily_unavailable']
-              .includes(result.state) ?
-              'Try related titles again' : 'Find more related titles';
+            relatedButton.textContent = 'Try related titles again';
             relatedButton.hidden = false;
             relatedButton.disabled = false;
           }
@@ -1865,17 +1860,22 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const relatedHeading = element('h2', 'Related titles', 'related-heading');
     panel.append(relatedHeading, relatedList, relatedButton);
     let relatedWidth = -1;
+    let initialRelatedStarted = false;
     const relatedResize = new ResizeObserver(([entry]) => {
       if (!isCurrentDetail()) { relatedResize.disconnect(); return; }
       const width = Math.round(entry.contentRect.width);
-      if (width === relatedWidth) return;
+      if (width <= 0 || width === relatedWidth) return;
       relatedWidth = width;
       renderFamily();
+      // Grid capacity is unreliable before the panel is mounted. Fill the
+      // actual visible row (plus one overflow card) after layout is known.
+      if (!initialRelatedStarted && family.next() &&
+          family.items().length - 1 <= relatedRowCapacity()) {
+        initialRelatedStarted = true;
+        void loadRelated({ initial: true });
+      }
     });
     relatedResize.observe(relatedList);
-    if (family.next() && family.items().length - 1 <= relatedRowCapacity()) {
-      void loadRelated({ initial: true });
-    }
     if (!pager) return;
     let filmChoiceSelect = null;
     let refreshRequestAction = () => {};
