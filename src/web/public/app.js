@@ -1795,6 +1795,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedButton.disabled = true;
     }
     let relatedLoading = false;
+    let expandForOpenPopup = false;
+    let openSeasonDialog = null;
     const loadRelated = async ({ batch = false, initial = false } = {}) => {
       const next = family.next();
       if (!next || relatedLoading) return;
@@ -1833,7 +1835,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedButton.disabled = false;
           }
         }
-      } finally { relatedLoading = false; }
+      } finally {
+        relatedLoading = false;
+        if (expandForOpenPopup) {
+          expandForOpenPopup = false;
+          if (openSeasonDialog?.open && family.next()) void loadRelated({ batch: true });
+        }
+      }
     };
     relatedButton.addEventListener('click', () => {
       if (!relatedExpanded && family.items().length - 1 > relatedRowCapacity()) {
@@ -2074,6 +2082,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       trigger.type = 'button';
       const action = element('dialog', undefined,
         'request-action season-request-action season-request-dialog');
+      openSeasonDialog = action;
       const popupHeading = element('div', undefined, 'season-request-popup-heading');
       const headingTitle = element('h2', 'Request Series');
       headingTitle.id = 'season-request-title';
@@ -2234,7 +2243,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         feedback.textContent = '';
         refresh();
       });
-      trigger.addEventListener('click', () => action.showModal());
+      trigger.addEventListener('click', () => {
+        action.showModal();
+        if (family.next()) {
+          if (relatedLoading) expandForOpenPopup = true;
+          else void loadRelated({ batch: true });
+        }
+      });
       action.addEventListener('close', () => {
         reviewing = false;
         review.hidden = true;
