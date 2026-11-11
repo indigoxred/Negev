@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -483,6 +483,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.match(page.body, /Negev/);
     assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);
+    assert.match(page.body, /<form id="login-form" method="post" action="\/api\/login">/);
+    assert.match(page.body, /<form id="register-form" method="post" action="\/api\/register" hidden>/);
     const script = await app.inject({ method: 'GET', url: '/app.js' });
     assert.equal(script.statusCode, 200);
     assert.match(script.headers['content-type'], /javascript/);
@@ -514,6 +516,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       const dependency = await app.inject({ method: 'GET', url: `/${match[1]}` });
       assert.equal(dependency.statusCode, 200, `Missing browser module ${match[1]}`);
       assert.match(dependency.headers['content-type'], /javascript/);
+      assert.equal(dependency.body,
+        await readFile(new URL(`../src/web/public/${match[1]}`, import.meta.url), 'utf8'),
+        `Wrong browser module served at ${match[1]}`);
     }
     const unauthorized = await app.inject({ method: 'GET', url: '/api/session' });
     assert.equal(unauthorized.statusCode, 401);

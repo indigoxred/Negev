@@ -113,43 +113,32 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   // A tunnel presents one peer IP for many users. Signed-in accounts get
   // separate route budgets; login and registration retain peer throttling.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
-  const pages = await Promise.all(['index.html', 'app.js', 'style.css', 'consumer.css',
+  const assetNames = ['index.html', 'app.js', 'style.css', 'consumer.css',
     'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
     'season-request-selection.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
-    'adult-search-visibility.mjs'].map((name) =>
+    'adult-search-visibility.mjs'];
+  const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
+  const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));
   const clientRevision = createHash('sha256')
     .update(pages.join('\0')).digest('hex');
-  pages[0] = pages[0].replace('</head>',
-    `  <meta name="negev-client-revision" content="${clientRevision}">\n</head>`);
+  assets.set('index.html', assets.get('index.html').replace('</head>',
+    `  <meta name="negev-client-revision" content="${clientRevision}">\n</head>`));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store' };
-  for (const [url, contentType, body] of [
-    ['/', 'text/html; charset=utf-8', pages[0]],
-    ['/app.js', 'text/javascript; charset=utf-8', pages[1]],
-    ['/style.css', 'text/css; charset=utf-8', pages[2]],
-    ['/consumer.css', 'text/css; charset=utf-8', pages[3]],
-    ['/request-key.mjs', 'text/javascript; charset=utf-8', pages[4]],
-    ['/episode-pages.mjs', 'text/javascript; charset=utf-8', pages[5]],
-    ['/search-pages.mjs', 'text/javascript; charset=utf-8', pages[6]],
-    ['/request-progress-text.mjs', 'text/javascript; charset=utf-8', pages[7]],
-    ['/response-epoch.mjs', 'text/javascript; charset=utf-8', pages[8]],
-    ['/franchise-explorer.mjs', 'text/javascript; charset=utf-8', pages[9]],
-    ['/acquisition-notice.mjs', 'text/javascript; charset=utf-8', pages[10]],
-    ['/consumer-route.mjs', 'text/javascript; charset=utf-8', pages[11]],
-    ['/season-availability-presentation.mjs',
-      'text/javascript; charset=utf-8', pages[12]],
-    ['/detail-refresh.mjs', 'text/javascript; charset=utf-8', pages[13]],
-    ['/relation-label.mjs', 'text/javascript; charset=utf-8', pages[14]],
-    ['/request-feedback.mjs', 'text/javascript; charset=utf-8', pages[15]],
-    ['/adult-search-visibility.mjs', 'text/javascript; charset=utf-8', pages[16]],
-    ['/season-request-selection.mjs', 'text/javascript; charset=utf-8', pages[17]],
-  ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
+  for (const name of assetNames) {
+    const url = name === 'index.html' ? '/' : `/${name}`;
+    const contentType = name === 'index.html' ? 'text/html; charset=utf-8'
+      : name.endsWith('.css') ? 'text/css; charset=utf-8'
+        : 'text/javascript; charset=utf-8';
+    app.get(url, async (_request, reply) =>
+      reply.headers(pageHeaders).type(contentType).send(assets.get(name)));
+  }
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&
         !(local && request.headers.origin === localOrigin &&
