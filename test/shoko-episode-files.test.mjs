@@ -89,6 +89,29 @@ test('a 404 without exact AniDB metadata cannot prove a local episode is missing
   }
 });
 
+test('first-time observation distinguishes missing AniDB metadata from a Shoko outage', async () => {
+  for (const [status, expected] of [[404, 'metadata_missing'],
+    [503, 'unavailable']]) {
+    let calls = 0;
+    const result = await readShokoEpisodeFiles({ ...base, purpose: 'first_time',
+      fetchImpl: async () => new Response('', { status: ++calls === 1 ? 404 : status }) });
+    assert.deepEqual(result, expected === 'metadata_missing'
+      ? { state: expected, anidbId: 42, episodeId: 1001 }
+      : { state: expected });
+    assert.equal(calls, 2);
+  }
+});
+
+test('an empty local episode still refreshes when its AniDB metadata row is missing', async () => {
+  const empty = { IDs: { ID: 555, ParentSeries: 99,
+    AniDB: 1001 }, Files: [] };
+  assert.deepEqual(await readShokoEpisodeFiles({ ...base,
+    purpose: 'first_time', fetchImpl: async (url) =>
+      url.pathname.endsWith('/Episode') ? json(empty) :
+        new Response(null, { status: 404 }) }),
+  { state: 'metadata_missing', anidbId: 42, episodeId: 1001 });
+});
+
 test('wrong identity, inaccessible location, and unregistered release hold the observation', async () => {
   for (const changed of [
     { ...episode, IDs: { AniDB: 1002 } },

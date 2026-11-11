@@ -386,6 +386,56 @@ test('opt-in exact GUID probe can find a direct import before the paced index re
   service.close();
 });
 
+test('a newly proven GUID card is saved for durable first-import file proof', async () => {
+  const { config, calls } = await fixture();
+  const service = createPlexAvailabilityService({ ...config, guidProbe: true });
+  const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
+  try {
+    const result = await service.observeTarget(target, undefined,
+      { includeProof: true });
+    assert.equal(result.state, 'available');
+    assert.equal(result.proof.fileId, 51);
+    assert.equal(result.cardRevision.observedMs, 100);
+    const index = openPlexCardIndex(config.dbPath);
+    try {
+      assert.deepEqual(index.getCardRevision({ libraryId: 102,
+        ratingKey: 500 }), result.cardRevision);
+    } finally { index.close(); }
+    assert.equal(calls.filter((call) => call ===
+      'plex/library/metadata/500').length, 2);
+  } finally { service.close(); }
+});
+
+test('a GUID card remapped between proof and index reads cannot save old availability', async () => {
+  const { config } = await fixture();
+  const originalFetch = config.fetchImpl;
+  let cardReads = 0;
+  config.fetchImpl = async (url, init) => {
+    if (url.pathname === '/library/metadata/500' && ++cardReads === 2) {
+      return Response.json({ MediaContainer: { size: 1, Metadata: [{
+        ratingKey: '500', type: 'episode', librarySectionID: 102,
+        guid: 'tv.plex.agents.custom.shoko://episode/e555',
+        grandparentGuid: 'tv.plex.agents.custom.shoko://show/999',
+        Media: [{ Part: [{ id: 900, size: 5,
+          file: '/source-pure/Anime/one.mkv' }] }],
+      }] } });
+    }
+    return originalFetch(url, init);
+  };
+  const service = createPlexAvailabilityService({ ...config, guidProbe: true });
+  try {
+    const result = await service.observeTarget({ anidbId: 42,
+      episodeId: 1001, kind: 'series' }, undefined, { includeProof: true });
+    assert.equal(result.state, 'unknown');
+    assert.equal(result.cardRevision, undefined);
+    const index = openPlexCardIndex(config.dbPath);
+    try { assert.equal(index.getCardRevision({ libraryId: 102,
+      ratingKey: 500 }), null); }
+    finally { index.close(); }
+    assert.equal(cardReads, 2);
+  } finally { service.close(); }
+});
+
 test('public observer accepts a physically matched Shoko User link only for availability', async () => {
   const { config } = await fixture({ userRelease: true });
   const target = { anidbId: 42, episodeId: 1001, kind: 'series' };

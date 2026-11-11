@@ -15,6 +15,8 @@ import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+const changedCard = () => ({ state: 'unknown',
+  reason: 'card_changed_during_observation' });
 const publicResult = (result, includeProof) => includeProof ||
   result?.state !== 'available' ? result :
   { state: 'available', fileId: result.fileId };
@@ -97,6 +99,37 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     elapsedMs: Math.max(0, Math.ceil(performance.now() - started)) });
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, purpose: 'availability', fetchImpl });
+  const indexProvenGuidCard = async (result, target, shoko) => {
+    const proof = result?.proof;
+    if (result?.state !== 'available' || !validId(proof?.libraryId) ||
+        !validId(proof.ratingKey) || !validId(proof.partId) ||
+        typeof proof.storageKey !== 'string') return changedCard();
+    const kind = publicSections.movie.includes(proof.libraryId)
+      ? 'movie' : 'episode';
+    try {
+      const card = await readCardForIndex({ libraryId: proof.libraryId,
+        ratingKey: proof.ratingKey, expectedType: kind });
+      if (card?.state !== 'ok' || card.complete !== true ||
+          !card.parts.some((part) => part.partId === proof.partId &&
+            part.candidateKey === proof.storageKey)) return changedCard();
+      const rechecked = await observePublicTarget({ target,
+        publicLibraryIds: [proof.libraryId],
+        knownCards: [{ libraryId: proof.libraryId,
+          ratingKey: proof.ratingKey, kind }],
+        shokoMount, plexMount, plexMounts,
+        readShoko: async () => shoko, readPlex: async () => card });
+      if (rechecked.state !== 'available' ||
+          rechecked.proof?.fileId !== proof.fileId ||
+          rechecked.proof?.partId !== proof.partId ||
+          rechecked.proof?.storageKey !== proof.storageKey) return changedCard();
+      index.recordCard({ libraryId: proof.libraryId,
+        ratingKey: proof.ratingKey, kind, parts: card.parts,
+        observedMs: now() });
+      const cardRevision = index.getCardRevision({ libraryId: proof.libraryId,
+        ratingKey: proof.ratingKey });
+      return cardRevision ? { ...result, cardRevision } : changedCard();
+    } catch { return changedCard(); }
+  };
   return {
     // Internal file-centric path: the caller must obtain this candidate from
     // a fresh Shoko file read. The exact Plex card and physical part are still
@@ -219,7 +252,9 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
               knownCards: cards, shokoMount, plexMount, plexMounts,
               readShoko: async () => shoko, readPlex: readCard });
             if (result.state === 'available') {
-              return publicResult(result, includeProof);
+              return publicResult(includeProof
+                ? await indexProvenGuidCard(result, target, shoko) : result,
+              includeProof);
             }
           }
         }

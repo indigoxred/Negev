@@ -183,14 +183,13 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
     assert.equal(service.getDirectAvailabilityStatus({ anidbId: 42,
       episodeId: 1001 }).state, 'available');
     assert.equal(calls.includes('/api/v3/Episode/AniDB/1001/Episode'), false);
-    const recentCursor = openFileBackfillCursor(dbPath);
+    const immediateProofs = openFileProofLedger(dbPath, {
+      positiveLifetimeMs: 30 * 60_000, now: () => clock });
     try {
-      const recentClaim = recentCursor.claim({ inventory: {
-        listFileHintIds: () => [] }, nowMs: clock, limit: 1 });
-      assert.deepEqual(recentClaim.fileIds, [51],
-        'a newly verified import must not wait behind the full file sweep');
-      assert.equal(recentClaim.priority, true);
-    } finally { recentCursor.close(); }
+      assert.equal(immediateProofs.getCurrent({ anidbId: 42,
+        episodeId: 1001 }).state, 'available',
+      'a newly verified import must not wait behind the full file sweep');
+    } finally { immediateProofs.close(); }
     assert.equal((await service.tickFileBackfill()).state, 'checked');
     const proofs = openFileProofLedger(dbPath, {
       positiveLifetimeMs: 30 * 60_000, now: () => 100 });

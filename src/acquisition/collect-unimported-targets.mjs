@@ -20,6 +20,10 @@ export async function collectUnimportedTargets({ anidbId, episodeIds,
     if (observed?.state === 'busy') {
       return { state: 'held', reason: 'metadata_reader_busy', episodeId };
     }
+    if (observed?.state === 'metadata_missing' &&
+        observed.anidbId === anidbId && observed.episodeId === episodeId) {
+      return { state: 'held', reason: 'shoko_metadata_missing', episodeId };
+    }
     if (!['not_imported', 'empty_episode'].includes(observed?.state) ||
         observed.anidbId !== anidbId ||
         observed.episodeId !== episodeId) {

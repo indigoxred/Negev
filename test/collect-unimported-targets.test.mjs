@@ -60,3 +60,14 @@ test('a busy shared metadata reader has a distinct retryable hold reason', async
   assert.deepEqual(result, { state: 'held', reason: 'metadata_reader_busy',
     episodeId: 1001 });
 });
+
+test('only an exact missing metadata row requests a bounded Shoko refresh', async () => {
+  assert.deepEqual(await collectUnimportedTargets({ anidbId: 42,
+    episodeIds: [1001], readEpisode: async () => ({ state: 'metadata_missing',
+      anidbId: 42, episodeId: 1001 }) }), { state: 'held',
+    reason: 'shoko_metadata_missing', episodeId: 1001 });
+  assert.deepEqual(await collectUnimportedTargets({ anidbId: 42,
+    episodeIds: [1001], readEpisode: async () => ({ state: 'metadata_missing',
+      anidbId: 99, episodeId: 1001 }) }), { state: 'held',
+    reason: 'target_not_proven_unimported', episodeId: 1001 });
+});
