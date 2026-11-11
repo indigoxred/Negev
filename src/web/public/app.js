@@ -10,7 +10,8 @@ import { createFranchiseExplorer, expandFranchiseBatch,
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { seasonRequestStatus, seasonSelectionSummary } from './season-request-selection.mjs';
+import { canOpenSeasonRequest, seasonRequestStatus,
+  seasonSelectionSummary } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
@@ -2128,7 +2129,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const selected = selectedRows();
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
-        trigger.disabled = saving || (rows.size > 0 && selectable.length === 0);
+        trigger.disabled = saving || (rows.size > 0 &&
+          !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
         selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
           ? 'Clear selection' : 'Select all requestable';
