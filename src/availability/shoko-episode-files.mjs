@@ -57,10 +57,12 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       const response = await fetchImpl(metadataUrl, { method: 'GET',
         redirect: 'manual', headers: { Authorization: `Bearer ${apiKey}`,
           Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
-      if (response.status !== 200) return false;
+      if (response.status === 404) return 'missing';
+      if (response.status !== 200) return 'unavailable';
       const metadata = await readBoundedJson(response, 100_000);
-      return metadata?.ID === episodeId && metadata.AnimeID === anidbId;
-    } catch { return false; }
+      return metadata?.ID === episodeId && metadata.AnimeID === anidbId
+        ? 'exists' : 'unavailable';
+    } catch { return 'unavailable'; }
   };
   let episode;
   try {
@@ -70,8 +72,12 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     if (response.status === 404) {
       // Shoko uses this 404 both for absent AniDB metadata and for an AniDB
       // episode with no local Shoko episode. Confirm which case occurred.
-      return await exactMetadataExists()
-        ? { state: 'not_imported', anidbId, episodeId } : unavailable();
+      const metadata = await exactMetadataExists();
+      if (metadata === 'exists') return { state: 'not_imported', anidbId, episodeId };
+      if (purpose === 'first_time' && metadata === 'missing') {
+        return { state: 'metadata_missing', anidbId, episodeId };
+      }
+      return unavailable();
     }
     if (response.status !== 200) return unavailable();
     episode = await readBoundedJson(response, 2_000_000);
@@ -81,8 +87,10 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   // Shoko can create an episode row before importing any file. For a first
   // acquisition, confirm its AniDB anime identity before treating it as empty.
   if (purpose === 'first_time' && episode.Files.length === 0) {
-    return await exactMetadataExists()
-      ? { state: 'empty_episode', anidbId, episodeId } : unavailable();
+    const metadata = await exactMetadataExists();
+    if (metadata === 'exists') return { state: 'empty_episode', anidbId, episodeId };
+    if (metadata === 'missing') return { state: 'metadata_missing', anidbId, episodeId };
+    return unavailable();
   }
   const files = [];
   let incomplete = false;

@@ -127,6 +127,61 @@ test('weekly Airing applies saved tracking mode after the async schedule read', 
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('a missing first-time Shoko episode queues one supported metadata refresh', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-metadata-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const importRoot = path.join(dir, 'Import');
+  const handoffParent = path.join(dir, 'handoff');
+  await mkdir(importRoot);
+  await mkdir(handoffParent);
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000_000_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner',
+    password: 'long-owner-passphrase' });
+  accounts.close();
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  let posts = 0;
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111/', shokoApiKey: 'synthetic',
+    shokoImportRoot: importRoot, shokoImportFolderId: 1,
+    acquisitionImportParent: handoffParent, acquisitionImportFolderId: 2,
+    anidbTitleDump: true,
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    now: () => 1_000_000_000,
+    plex: { plexBaseUrl: 'http://plex.internal:32400/',
+      plexToken: 'synthetic', publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMount: { appRoot: '/source-pure', localRoot: dir } },
+    fetchImpl: async (url, init) => {
+      if (String(url) === 'https://anidb.net/api/anime-titles.dat.gz') {
+        return new Response(dump, { status: 200 });
+      }
+      if (init.method === 'POST' && url.pathname ===
+          '/api/v3/Series/AniDB/4158/Refresh') {
+        posts++;
+        return new Response('false', { status: 200 });
+      }
+      return new Response(null, { status: 404 });
+    } });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    assert.equal(login.statusCode, 200);
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const search = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=Pale', headers: { cookie } });
+    assert.equal(search.statusCode, 200);
+    assert.equal(search.json().items[0].anidbId, 4158);
+    for (let retry = 0; retry < 2; retry++) {
+      assert.deepEqual(await service.observeFirstTimeUncertain({
+        anidbId: 4158, episodeIds: [1001], kind: 'series' }),
+      { state: 'held', reason: 'shoko_metadata_missing', episodeId: 1001 });
+    }
+    assert.equal(posts, 1);
+  } finally { await service.close(); await rm(dir, { recursive: true,
+    force: true }); }
+});
+
 test('internal first-time observation uses installed Shoko, Plex and Import readers without acquisition', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-time-service-'));
   const dbPath = path.join(dir, 'negev.sqlite');

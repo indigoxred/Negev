@@ -64,6 +64,8 @@ import { recentPublicCoverage } from '../availability/recent-public-coverage.mjs
 import { openFileBackfillCursor } from
   '../availability/file-backfill-cursor.mjs';
 import { openFileProofLedger } from '../availability/file-proof-ledger.mjs';
+import { createRecordArrivalProof } from
+  '../availability/record-arrival-proof.mjs';
 import { countVerifiedRegularEpisodes } from
   '../availability/regular-season-proof.mjs';
 import { episodeDisplayAvailability } from
@@ -78,6 +80,8 @@ import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidat
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
 import { collectFirstTimeUncertain } from
   '../acquisition/collect-first-time-uncertain.mjs';
+import { refreshFirstTimeMetadata } from
+  '../acquisition/refresh-first-time-metadata.mjs';
 import { openAcquisitionRuntime } from '../acquisition/acquisition-runtime.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
@@ -296,18 +300,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       const file = hasShokoFile ? fileProofs?.getCurrent(target) : null;
       return currentDisplayAvailability({ live, file, hasShokoFile });
     };
-    const onRecordedAvailable = (proof, target) => {
-      if (!fileCursor) return;
-      const observedMs = now();
-      const recent = fileCursor.confirmRecentFile({
-        fileId: proof.fileId, nowMs: observedMs });
-      if (recent.state === 'unchanged' &&
-          fileProofs.getCurrent(target).state !== 'available') {
-        // A direct check can discover a file without a Shoko event. Give
-        // that exact file one bounded durable-proof pass ahead of the sweep.
-        fileCursor.prioritizeFile({ fileId: proof.fileId, observedMs });
-      }
-    };
+    const onRecordedAvailable = fileCursor
+      ? createRecordArrivalProof({ inventory, proofs: fileProofs,
+        cursor: fileCursor, now }) : () => {};
     const directWorker = createDirectAvailabilityWorker({ queue: directAvailability,
       now, requireProof: true,
       onRecordedAvailable,
@@ -809,7 +804,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       const publicLibraryIds = input?.kind === 'movie'
         ? [...plex.publicSections.episode, ...plex.publicSections.movie]
         : [...plex.publicSections.episode];
-      return track(collectFirstTimeUncertain({ ...input,
+      return track((async () => {
+        const observation = await collectFirstTimeUncertain({ ...input,
         publicLibraryIds, now,
         readEpisode: (target) => metadata.run(() =>
           readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
@@ -824,7 +820,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           now, requireFingerprint: true, trace: importFenceTrace,
         }),
         readFeedState: readScopedImportFeed,
-      }));
+        });
+        return refreshFirstTimeMetadata({ anidbId: input.anidbId,
+          episodeIds: input.episodeIds, observation,
+          pendingClaim: hydration.getActiveClaim(now()),
+          hydrate: ({ anidbId, missingEpisodeId }) => metadata.run(() =>
+            hydrator.load({ anidbId, missingEpisodeId })) });
+      })());
     };
     return { app,
       tickPendingTitle: () => stopping

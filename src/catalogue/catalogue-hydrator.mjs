@@ -14,9 +14,13 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
   }
 
   return {
-    async load({ anidbId }) {
+    async load({ anidbId, missingEpisodeId } = {}) {
       if (!Number.isSafeInteger(anidbId) || anidbId <= 0) {
         throw new TypeError('Invalid AniDB ID');
+      }
+      if (missingEpisodeId !== undefined &&
+          (!Number.isSafeInteger(missingEpisodeId) || missingEpisodeId <= 0)) {
+        throw new TypeError('Invalid missing AniDB episode ID');
       }
       let known;
       try { known = await isKnownTitle({ anidbId }); }
@@ -32,11 +36,14 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
         if (detail.anidbId !== anidbId) return { state: 'held', reason: 'invalid_detail_evidence' };
         if (detail.complete !== true) return { state: 'pending', reason: 'detail_pagination_required' };
         if (!isCompleteAniDbDetail(detail, anidbId)) return { state: 'held', reason: 'invalid_detail_evidence' };
-        const finished = ledger.finishLatestFromDetail(anidbId, detail, now());
-        if (finished.state === 'held') return finished;
-        return { state: 'detail_ready', detail, requestable: false };
+        if (missingEpisodeId === undefined) {
+          const finished = ledger.finishLatestFromDetail(anidbId, detail, now());
+          if (finished.state === 'held') return finished;
+          return { state: 'detail_ready', detail, requestable: false };
+        }
       }
-      if (detail?.state !== 'detail_pending' || detail.anidbId !== anidbId) {
+      if (!['detail_pending', 'details'].includes(detail?.state) ||
+          detail.anidbId !== anidbId) {
         return { state: 'held', reason: 'detail_unavailable' };
       }
 
@@ -54,7 +61,8 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
           ledger.finishFromDetail(active.id, previous, now());
         }
       }
-      const claim = ledger.reserve({ anidbId, titleKnown: true, detailState: 'detail_pending', nowMs: now() });
+      const claim = ledger.reserve({ anidbId, titleKnown: true,
+        detailState: 'detail_pending', nowMs: now() });
       if (claim.state !== 'reserved') return { state: 'pending', reason: claim.reason };
       let submitted;
       try { submitted = await requestHydration({ anidbId }); }

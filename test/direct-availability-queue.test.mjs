@@ -134,6 +134,25 @@ test('metadata contention retains a direct arrival for the next tick', async () 
   });
 });
 
+test('the recorded arrival callback receives the exact card revision for guarded proof', async () => {
+  await fixture(async (ctx) => {
+    const target = { anidbId: 42, episodeId: 1001 };
+    ctx.queue.enqueue({ ...target, observedMs: 100, priority: 'event' });
+    const outcome = { state: 'available', fileId: 51,
+      proof: { fileId: 51, libraryId: 102, ratingKey: 500, partId: 600 },
+      cardRevision: { observedMs: 100, identitySignature: 'exact' } };
+    let delivered;
+    const worker = createDirectAvailabilityWorker({ queue: ctx.queue,
+      now: () => 101, requireProof: true,
+      observeTarget: async () => outcome,
+      onRecordedAvailable: (_proof, _target, savedOutcome) => {
+        delivered = savedOutcome;
+      } });
+    assert.equal((await worker.runOnce()).state, 'checked');
+    assert.deepEqual(delivered, outcome);
+  });
+});
+
 test('a bounded same-file claim preserves separate episode receipts and fences', async () => {
   await fixture(async (ctx) => {
     const targets = [1001, 1002, 1003, 1004, 1005].map((episodeId) =>
