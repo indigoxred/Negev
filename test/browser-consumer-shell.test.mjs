@@ -228,6 +228,22 @@ async function inspectMobile(url, profile, width = 390) {
     }
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/42') });
     await wait(700);
+    const seasonPopup = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const dialog = document.querySelector('.season-request-dialog');
+        const trigger = document.querySelector('.season-request-trigger');
+        const before = {button: trigger?.textContent, closed: !dialog?.open};
+        trigger?.click();
+        const box = dialog?.getBoundingClientRect();
+        return {...before, opened: dialog?.open,
+          centered: Math.abs((box?.left + box?.right) / 2 - innerWidth / 2) < 8,
+          heading: dialog?.querySelector('h2')?.textContent,
+          close: dialog?.querySelector('.season-request-close')?.textContent}; })()`,
+    });
+    if (process.env.NEGEV_UI_CAPTURE_DIR && width === 1200) {
+      const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true });
+      await writeFile(join(process.env.NEGEV_UI_CAPTURE_DIR, 'season-popup-desktop.png'),
+        Buffer.from(shot.data, 'base64'));
+    }
     const requestOwnedSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const rows = [...document.querySelectorAll('.season-request-row')];
         return rows.map(row => ({id: Number(row.dataset.anidbId),
@@ -276,6 +292,11 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `(() => { const action = document.querySelector('.request-action');
         return {reviewHidden: action.querySelector('.request-review')?.hidden,
           receipt: action.querySelector('.request-feedback')?.textContent}; })()`,
+    });
+    const popupClosed = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const dialog = document.querySelector('.season-request-dialog');
+        dialog.querySelector('.season-request-close').click();
+        return {closed: !dialog.open, trigger: document.querySelector('.season-request-trigger')?.textContent}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
     await wait(700);
@@ -417,6 +438,7 @@ async function inspectMobile(url, profile, width = 390) {
       liveToggle: liveToggle.result.value,
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
+      seasonPopup: seasonPopup.result.value,
       requestReview: requestReview.result.value,
       requestOwnedSelection: requestOwnedSelection.result.value,
       requestSelection: requestSelection.result.value,
@@ -424,6 +446,7 @@ async function inspectMobile(url, profile, width = 390) {
       reviewAfterSelection: reviewAfterSelection.result.value,
       requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
+      popupClosed: popupClosed.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value,
@@ -947,6 +970,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.franchise.titleAlignment, true);
       assert.equal(mobile.franchise.moreVisible, false,
         'More disappears after all cached relations are visible');
+      assert.deepEqual(mobile.seasonPopup, { button: 'Request series', closed: true,
+        opened: true, centered: true, heading: 'Request Series', close: 'Close' });
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Season Two · request missing episodes; Partly available season · complete missing episodes' });
@@ -967,6 +992,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.requestSaved.reviewHidden, true);
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /2 seasons requested/);
+      assert.deepEqual(mobile.popupClosed, { closed: true, trigger: 'Request series' });
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });

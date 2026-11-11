@@ -2069,8 +2069,19 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       return;
     }
     if (data.kind === 'series') {
-      const action = element('section', undefined, 'request-action season-request-action');
-      action.append(element('h2', 'Request seasons'));
+      const trigger = element('button', 'Request series', 'primary season-request-trigger');
+      trigger.type = 'button';
+      const action = element('dialog', undefined,
+        'request-action season-request-action season-request-dialog');
+      const popupHeading = element('div', undefined, 'season-request-popup-heading');
+      const headingTitle = element('h2', 'Request Series');
+      headingTitle.id = 'season-request-title';
+      action.setAttribute('aria-labelledby', headingTitle.id);
+      const closePopup = element('button', 'Close', 'quiet season-request-close');
+      closePopup.type = 'button';
+      closePopup.addEventListener('click', () => action.close());
+      popupHeading.append(headingTitle, closePopup);
+      action.append(popupHeading);
       action.append(element('p',
         'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only its missing episodes. Specials stay separate.',
         'muted'));
@@ -2117,6 +2128,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const selected = selectedRows();
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
+        trigger.disabled = saving || (rows.size > 0 && selectable.length === 0);
         selectAll.disabled = saving || selectable.length === 0;
         selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
           ? 'Clear selection' : 'Select all requestable';
@@ -2220,6 +2232,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         feedback.textContent = '';
         refresh();
       });
+      trigger.addEventListener('click', () => action.showModal());
+      action.addEventListener('close', () => {
+        reviewing = false;
+        review.hidden = true;
+        refresh();
+      });
       submit.addEventListener('click', async () => {
         const selected = selectedRows();
         if (saving || selected.length === 0) return;
@@ -2312,7 +2330,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         continueCheck.addEventListener('click', () => { void checkPages(); });
         void checkPages();
       }
-      panel.insertBefore(action, relatedHeading);
+      panel.insertBefore(trigger, relatedHeading);
+      panel.append(action);
       return;
     }
     const requestAction = element('section', undefined, 'request-action');
