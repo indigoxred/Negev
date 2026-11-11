@@ -764,8 +764,8 @@ async function loadLibrary(append = false, continuation = null) {
 function seasonChoice(route) {
   if (route.year !== undefined && route.season) return { year: route.year,
     season: route.season, after: route.after ?? 0,
-    kind: route.kind ?? 'all', tag: route.tag ?? '' };
-  return { year: 0, season: 'ALL', after: 0, kind: 'all', tag: '' };
+    kind: route.kind ?? 'all', tag: route.tag ?? '', sort: route.sort ?? 'newest' };
+  return { year: 0, season: 'ALL', after: 0, kind: 'all', tag: '', sort: 'newest' };
 }
 for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
   const option = element('option', String(year));
@@ -822,7 +822,8 @@ function renderGenres(prefix, availableTags, selected) {
   more.onclick = () => { expanded = true; render(); };
   render();
 }
-async function loadSeasonal({ year, season, after, kind, tag }) {
+async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
+  scoreRefresh = 0) {
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
   const userId = state.user?.id;
@@ -831,6 +832,7 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
   byId('season-year').value = String(year);
   byId('season-name').value = season;
   byId('season-kind').value = kind;
+  byId('season-sort').value = sort;
   byId('season-previous').disabled = true;
   byId('season-next').disabled = true;
   byId('season-previous').parentElement.hidden = true;
@@ -843,6 +845,7 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
     if (after) params.set('after', String(after));
     if (kind !== 'all') params.set('kind', kind);
     if (tag) params.set('tag', tag);
+    if (sort !== 'newest') params.set('sort', sort);
     const page = await api(`/api/seasons?${params}`);
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
@@ -855,7 +858,13 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
         ? `Catalogue updated ${page.sourceDate}. Some title details could not be checked; try again later.`
-        : `Catalogue updated ${page.sourceDate}. Newest seasons first; local availability is checked separately.`;
+        : page.orderState === 'score_partial'
+          ? `Catalogue updated ${page.sourceDate}. Known ${sort === 'score_desc' ? 'scores' : 'member counts'} first; titles without a rating follow while ratings fill in.`
+          : page.orderState === 'score_loading'
+            ? `Catalogue updated ${page.sourceDate}. Ratings are loading; showing catalogue order for now.`
+            : page.orderState === 'score_unavailable'
+              ? `Catalogue updated ${page.sourceDate}. Ratings are unavailable; showing catalogue order.`
+            : `Catalogue updated ${page.sourceDate}. Local availability is checked separately.${page.scorePending ? ' Ratings are filling in.' : ''}`;
     if (page.items.length === 0) list.append(element('p',
       'No verified titles on this page. Search may find titles missing from the season map.',
       'empty-state'));
@@ -868,6 +877,16 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       copy.append(element('strong', item.title),
         element('small', item.type || 'Anime'),
         publicPresenceBadge(item.libraryPresence));
+      if (item.rating) {
+        const members = new Intl.NumberFormat('en', { notation: 'compact',
+          maximumFractionDigits: 1 }).format(item.rating.members);
+        const rating = element('small', item.rating.score === null
+          ? `${members} members · Unrated`
+          : `★ ${item.rating.score.toFixed(1)} · ${members} members`,
+        'muted rating-line');
+        rating.title = `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings`;
+        copy.append(rating);
+      }
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(frame, copy);
       button.addEventListener('click', () => {
@@ -887,11 +906,22 @@ async function loadSeasonal({ year, season, after, kind, tag }) {
       `Page ${pageNumber} of ${pageCount}`;
     previous.disabled = after === 0;
     previous.onclick = () => { location.hash = seasonRoute(year, season,
-      Math.max(0, after - 12), { kind, tag }); };
+      Math.max(0, after - 12), { kind, tag, sort }); };
     const next = byId('season-next');
     next.disabled = page.nextAfter === null;
     next.onclick = () => { location.hash = seasonRoute(year, season,
-      page.nextAfter, { kind, tag }); };
+      page.nextAfter, { kind, tag, sort }); };
+    if (page.scorePending && scoreRefresh < 2) {
+      setTimeout(() => {
+        if (sessionResponses.isCurrent(session) &&
+            seasonalResponses.isCurrent(epoch) &&
+            location.hash === seasonRoute(year, season, after,
+              { kind, tag, sort })) {
+          void loadSeasonal({ year, season, after, kind, tag, sort },
+            scoreRefresh + 1);
+        }
+      }, scoreRefresh === 0 ? 10_000 : 20_000);
+    }
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
@@ -903,11 +933,12 @@ byId('season-form').addEventListener('submit', (event) => {
   const year = Number(byId('season-year').value);
   const season = byId('season-name').value;
   const kind = byId('season-kind').value;
+  const sort = byId('season-sort').value;
   const tag = [...genreSelections.season].join(',');
   if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100)) return;
-  const route = seasonRoute(year, season, 0, { kind, tag });
+  const route = seasonRoute(year, season, 0, { kind, tag, sort });
   if (location.hash === route) void loadSeasonal({ year, season,
-    after: 0, kind, tag });
+    after: 0, kind, tag, sort });
   else location.hash = route;
 });
 async function loadCurrentAiring(session, epoch, userId, after = 0) {

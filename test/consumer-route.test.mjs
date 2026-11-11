@@ -44,6 +44,10 @@ test('season and page survive reload and Back/Forward without accepting arbitrar
   assert.deepEqual(parseConsumerRoute(filtered), { page: 'discover', anidbId: null,
     query: '', year: 2026, season: 'FALL', after: 12,
     kind: 'movies', tag: 'sci-fi' });
+  const ranked = seasonRoute(2026, 'FALL', 12, { sort: 'score_desc' });
+  assert.equal(ranked, '#/discover?year=2026&season=FALL&after=12&sort=score_desc');
+  assert.equal(parseConsumerRoute(ranked).sort, 'score_desc');
+  assert.equal(browseReturnDestination(parseConsumerRoute(ranked)).href, ranked);
   assert.equal(seasonRoute(2026, 'FALL', 0,
     { tag: 'action,fantasy' }), '#/discover?year=2026&season=FALL&tag=action%2Cfantasy');
   assert.deepEqual(parseConsumerRoute('#/discover?year=2026&season=FALL&kind=unsafe'),

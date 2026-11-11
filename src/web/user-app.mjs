@@ -451,7 +451,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
             item.rating.checkedMs < 0)) ||
         page.orderState !== undefined &&
           !['schedule', 'fallback', 'score', 'popularity',
-            'score_loading', 'score_unavailable'].includes(page.orderState) ||
+            'score_loading', 'score_unavailable', 'score_partial'].includes(page.orderState) ||
+        page.scorePending !== undefined && typeof page.scorePending !== 'boolean' ||
         page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
           page.nextAfter <= after || page.nextAfter > 100_000)) {
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
@@ -460,6 +461,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       sourceDate: page.sourceDate, availableTags: page.availableTags,
       total: page.total,
       ...(page.orderState ? { orderState: page.orderState } : {}),
+      ...(page.scorePending ? { scorePending: true } : {}),
       items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
