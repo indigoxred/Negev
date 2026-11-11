@@ -922,7 +922,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         ['Prequel', 'Sequel', 'Side story', 'Side story', 'Alternative',
           'Sequel · via The Garden of Words',
           'Side story · via The Garden of Words']);
-      assert.deepEqual(mobile.franchise.groupHeadings, ['More linked titles']);
+      assert.deepEqual(mobile.franchise.groupHeadings, [],
+        'expanded related titles stay in the same continuous grid');
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
       assert.equal(mobile.franchise.titleAlignment, true);
