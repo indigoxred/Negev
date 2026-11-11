@@ -186,9 +186,11 @@ async function inspectMobile(url, profile, width = 390) {
     await wait(800);
     const franchiseBefore = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const button = document.querySelector('.related-trigger');
-        const before = {button: button?.textContent,
-          count: document.querySelectorAll('.related-card').length};
-        button?.click(); return before; })()`,
+        const list = document.querySelector('.related-list');
+        const before = {button: button?.textContent, visible: !button?.hidden,
+          count: list.querySelectorAll('.related-card').length,
+          capacity: getComputedStyle(list).gridTemplateColumns.split(' ').length};
+        if (!button.hidden) button.click(); return before; })()`,
     });
     await wait(300);
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
@@ -206,8 +208,16 @@ async function inspectMobile(url, profile, width = 390) {
             return poster && relation && relation.top >= poster.bottom - 1;
           }),
           firstRowCount: cards.filter((card) => Math.abs(card.getBoundingClientRect().top - firstTop) < 2).length,
+          titleAlignment: cards.filter((card) =>
+            Math.abs(card.getBoundingClientRect().top - firstTop) < 2).every((card, _, row) => {
+              const title = card.querySelector('strong').getBoundingClientRect();
+              const first = row[0].querySelector('strong').getBoundingClientRect();
+              return Math.abs(title.top - first.top) < 2 &&
+                Math.abs(title.height - first.height) < 2;
+            }),
           right: document.querySelector('.related-list')?.getBoundingClientRect().right,
-          next: document.querySelector('.related-trigger')?.textContent}; })()`,
+          next: document.querySelector('.related-trigger')?.textContent,
+          moreVisible: !document.querySelector('.related-trigger')?.hidden}; })()`,
     });
     if (process.env.NEGEV_UI_CAPTURE_DIR && width === 1200) {
       const shot = await send('Page.captureScreenshot', { format: 'png', fromSurface: true,
@@ -606,7 +616,9 @@ test('signed-in consumer routes render real shell with search, library and reque
           { anidbId: 9600, title: 'Another related film', relation: 'Sequel' },
           { anidbId: 9601, title: 'Prequel season', relation: 'Prequel' },
           { anidbId: 9602, title: 'A separate special', relation: 'SideStory' },
-          { anidbId: 9603, title: 'Another installment', relation: 'Alternative' }] }));
+          { anidbId: 9603,
+            title: 'Another installment with a very long title that must keep the poster row aligned',
+            relation: 'Alternative' }] }));
         return;
       }
       if (/^\/api\/catalogue\/(9589|9600|9601|9602|9603|9604|9605)\/related$/.test(path)) {
@@ -901,7 +913,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
       assert.deepEqual(mobile.franchise.before,
-        { button: 'Show more related titles', count: 5 });
+        { button: 'Show more related titles', visible: true, count: 2, capacity: 2 });
       assert.match(mobile.franchise.listed, /The Garden of Words/);
       assert.match(mobile.franchise.listed, /Side story/);
       assert.match(mobile.franchise.listed, /1 verified item in library/);
@@ -913,7 +925,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.franchise.groupHeadings, ['More linked titles']);
       assert.equal(mobile.franchise.relationBelowPoster, true,
         'relation labels remain readable below poster artwork');
-      assert.equal(mobile.franchise.next, 'No more cached links to explore');
+      assert.equal(mobile.franchise.titleAlignment, true);
+      assert.equal(mobile.franchise.moreVisible, false,
+        'More disappears after all cached relations are visible');
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Series · this installment’s regular episodes and future episodes' });
@@ -977,8 +991,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.equal(desktopRelated.franchise.posterCards, 7);
-      assert.ok(desktopRelated.franchise.firstRowCount >= 4,
-        'related anime use the desktop page width');
+      assert.equal(desktopRelated.franchise.before.count,
+        desktopRelated.franchise.before.capacity,
+        'initial desktop view fills its first row');
+      assert.equal(desktopRelated.franchise.before.visible, false,
+        'More is absent when the related titles fit in one row');
+      assert.equal(desktopRelated.franchise.firstRowCount, 7);
+      assert.equal(desktopRelated.franchise.titleAlignment, true);
       assert.ok(desktopRelated.franchise.right <= 1200,
         'related anime stay within the desktop page width');
       const tablet = await inspectMobile(`${base}/#/discover`, join(dir, 'tablet'), 709);

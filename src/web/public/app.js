@@ -1709,6 +1709,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       title: data.title || item.title });
     const relatedButton = element('button', 'Show more related titles', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
+    let relatedExpanded = false;
+    const relatedRowCapacity = () => Math.max(1,
+      getComputedStyle(relatedList).gridTemplateColumns.trim().split(/\s+/).length);
     let installmentSelect = null;
     let selectedInstallmentId = item.anidbId;
     let selectedAvailability = 'unknown';
@@ -1734,6 +1737,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const renderFamily = () => {
       relatedList.replaceChildren();
       const groups = groupFranchiseItems(family.items(), item.anidbId);
+      const capacity = relatedRowCapacity();
+      const allRelated = groups.flatMap((group) => group.items);
+      const visibleIds = new Set((relatedExpanded ? allRelated :
+        allRelated.slice(0, capacity)).map((entry) => entry.anidbId));
       const titles = new Map(family.items().map((entry) =>
         [entry.anidbId, entry.title]));
       if (groups.length === 0) relatedList.append(element('p',
@@ -1741,10 +1748,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       for (const group of groups) {
         // Direct relation labels already appear on each card. Keep those
         // cards together in one compact grid; only separate indirect hops.
-        if (group.heading === 'More linked titles') relatedList.append(
+        if (relatedExpanded && group.heading === 'More linked titles') relatedList.append(
           element('h3', group.heading, 'related-group-heading'));
         for (const installment of group.items) {
+          if (!visibleIds.has(installment.anidbId)) continue;
           const open = element('button', undefined, 'related-card');
+          open.title = installment.title;
           const art = element('span', 'N', 'related-art poster-fallback');
           const image = posterImage(installment);
           image.addEventListener('load', () => art.classList.add('has-poster'));
@@ -1769,10 +1778,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           relatedList.append(open);
         }
       }
-      relatedButton.textContent = family.next() ? 'Show more related titles' :
-        'No more cached links to explore';
-      relatedButton.hidden = !family.next();
-      relatedButton.disabled = !family.next();
+      const overflow = allRelated.length > capacity;
+      const canExplore = family.next() !== null;
+      relatedButton.textContent = !relatedExpanded && overflow
+        ? 'Show more related titles' : 'Find more related titles';
+      relatedButton.hidden = !(!relatedExpanded && overflow) && !canExplore;
+      relatedButton.disabled = relatedButton.hidden;
       syncInstallmentChoice();
     };
     if (franchise) renderFamily();
@@ -1782,7 +1793,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedButton.disabled = true;
     }
     let relatedLoading = false;
-    const loadRelated = async ({ batch = false } = {}) => {
+    const loadRelated = async ({ batch = false, initial = false } = {}) => {
       const next = family.next();
       if (!next || relatedLoading) return;
       relatedLoading = true;
@@ -1791,7 +1802,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       try {
         const result = await expandFranchiseBatch({ explorer: family,
           read: (anidbId) => api(`/api/catalogue/${anidbId}/related`),
-          maxReads: batch ? 8 : 1, minNewItems: batch ? 8 : 1,
+          maxReads: initial ? 12 : batch ? 8 : 1,
+          minNewItems: initial ? Math.min(49, Math.max(1,
+            relatedRowCapacity() + 1 - (family.items().length - 1))) : batch ? 8 : 1,
           shouldContinue: isCurrentDetail });
         if (isCurrentDetail()) {
           renderFamily();
@@ -1813,17 +1826,34 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedButton.textContent = ['root_unavailable', 'rate_limited',
               'temporarily_unavailable']
               .includes(result.state) ?
-              'Try related titles again' : 'Show more related titles';
+              'Try related titles again' : 'Find more related titles';
             relatedButton.hidden = false;
             relatedButton.disabled = false;
           }
         }
       } finally { relatedLoading = false; }
     };
-    relatedButton.addEventListener('click', () => { void loadRelated({ batch: true }); });
+    relatedButton.addEventListener('click', () => {
+      if (!relatedExpanded && family.items().length - 1 > relatedRowCapacity()) {
+        relatedExpanded = true;
+        renderFamily();
+      }
+      if (family.next()) void loadRelated({ batch: true });
+    });
     const relatedHeading = element('h2', 'Related titles', 'related-heading');
     panel.append(relatedHeading, relatedList, relatedButton);
-    if (!franchise) void loadRelated();
+    let relatedWidth = -1;
+    const relatedResize = new ResizeObserver(([entry]) => {
+      if (!isCurrentDetail()) { relatedResize.disconnect(); return; }
+      const width = Math.round(entry.contentRect.width);
+      if (width === relatedWidth) return;
+      relatedWidth = width;
+      renderFamily();
+    });
+    relatedResize.observe(relatedList);
+    if (family.next() && family.items().length - 1 <= relatedRowCapacity()) {
+      void loadRelated({ initial: true });
+    }
     if (!pager) return;
     let filmChoiceSelect = null;
     let refreshRequestAction = () => {};
