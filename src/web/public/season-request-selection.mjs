@@ -1,5 +1,9 @@
 import { summarizeSeasonAvailability } from './season-availability-presentation.mjs';
 
+export function canOpenSeasonRequest(rows, hasMore) {
+  return hasMore || rows.some((row) => row.status?.selectable && !row.requested);
+}
+
 export function seasonRequestStatus(detail) {
   if (detail?.kind === 'movie') return null;
   if (detail?.state !== 'details' && detail?.state !== undefined) {

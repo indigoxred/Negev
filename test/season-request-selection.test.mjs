@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { seasonRequestStatus, seasonSelectionSummary } from '../src/web/public/season-request-selection.mjs';
+import { canOpenSeasonRequest, seasonRequestStatus, seasonSelectionSummary } from '../src/web/public/season-request-selection.mjs';
+
+test('a later season page keeps Request series openable after a full first page', () => {
+  const full = [{ status: { selectable: false }, requested: false }];
+  assert.equal(canOpenSeasonRequest(full, true), true);
+  assert.equal(canOpenSeasonRequest(full, false), false);
+  assert.equal(canOpenSeasonRequest([{ status: { selectable: true }, requested: false }], false), true);
+});
 
 test('season rows distinguish available, partial, missing, future and unverified', () => {
   const base = { kind: 'series', episodes: [], nextPage: null };
