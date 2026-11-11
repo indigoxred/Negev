@@ -295,6 +295,55 @@ test('Airing keeps its fast fallback while scores warm in the background', async
   assert.deepEqual(result.items.map((item) => item.anidbId), [1, 2]);
 });
 
+test('Browse primes only the visible page and exposes its mapped rating', async () => {
+  const entries = Array.from({ length: 25 }, (_, index) => ({
+    ...row(`Title ${index + 1}`, index + 1),
+    sources: [`https://anidb.net/anime/${index + 1}`,
+      `https://myanimelist.net/anime/${index + 101}`],
+  }));
+  const primed = [];
+  const reader = createSeasonalCatalogue({
+    scoreCache: { prime(pairs) { primed.push(pairs); return {
+      ready: true, checked: pairs.length, total: pairs.length }; },
+    get(id) { return id === 1 ? { state: 'rated', score: 8.4,
+      votes: 200, members: 500, checkedMs: 1000 } : null; } },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL', limit: 12 });
+  assert.equal(primed.length, 1);
+  assert.equal(primed[0].length, 12);
+  assert.deepEqual(page.items[0].rating, { score: 8.4, votes: 200,
+    members: 500, checkedMs: 1000 });
+});
+
+test('Browse ranks known mapped scores before pagination without fetching the whole archive', async () => {
+  const entries = [1, 2, 3].map((id) => ({ ...row(`Title ${id}`, id),
+    sources: [`https://anidb.net/anime/${id}`,
+      `https://myanimelist.net/anime/${id + 10}`] }));
+  const primed = [];
+  const scores = new Map([
+    [1, { state: 'rated', score: 7.1, votes: 100, members: 9000, checkedMs: 1000 }],
+    [3, { state: 'rated', score: 8.2, votes: 200, members: 4000, checkedMs: 1000 }],
+  ]);
+  const reader = createSeasonalCatalogue({
+    scoreCache: { prime(pairs) { primed.push(pairs); return {
+      ready: false, checked: 0, total: pairs.length }; },
+    get(id) { return scores.get(id) ?? null; } },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL', limit: 2,
+    sort: 'score_desc' });
+  assert.equal(page.orderState, 'score_partial');
+  assert.deepEqual(page.items.map((item) => item.anidbId), [3, 1]);
+  assert.equal(primed[0].length, 2);
+});
+
 test('missing mapped ratings do not pretend to rank ongoing titles', async () => {
   const entries = [{ ...row('Unmapped', 1), status: 'ONGOING' }];
   const reader = createSeasonalCatalogue({

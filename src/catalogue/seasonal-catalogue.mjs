@@ -306,20 +306,30 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         : ['TV', 'OVA', 'ONA', 'SPECIAL'].includes(entry.type))) &&
         selectedTags.every((selected) => entry.tags.includes(selected)));
     let orderState;
-    if (status === 'ongoing' && scoreCache) {
+    let scorePending = false;
+    if (scoreCache && (status === 'ongoing' ||
+        sort === 'score_desc' || sort === 'popular_desc')) {
       const eligible = entries.filter((entry) => entry.malId !== null)
         .map(({ anidbId, malId }) => ({ anidbId, malId }));
-      const scoreProgress = scoreCache.prime(eligible);
+      // The ongoing set is small enough to refresh as a whole. Historical
+      // Browse can contain thousands of titles, so warm only the visible
+      // fallback page; rating sorts use known snapshots without blocking.
+      const scope = status === 'ongoing' ? eligible : eligible.slice(after, after + limit);
+      const scoreProgress = scoreCache.prime(scope);
+      scorePending = !scoreProgress.ready;
       if (sort === 'score_desc' || sort === 'popular_desc') {
         const metric = sort === 'score_desc' ? 'score' : 'members';
-        const anyEvidence = eligible.some(({ anidbId, malId }) =>
-          typeof scoreCache.get(anidbId, malId)?.[metric] === 'number');
-        orderState = !scoreProgress.ready ? 'score_loading'
+        const snapshots = new Map(eligible.map(({ anidbId, malId }) =>
+          [anidbId, scoreCache.get(anidbId, malId)]));
+        const anyEvidence = eligible.some(({ anidbId }) =>
+          typeof snapshots.get(anidbId)?.[metric] === 'number');
+        orderState = status !== 'ongoing' && anyEvidence ? 'score_partial'
+          : !scoreProgress.ready ? 'score_loading'
           : !anyEvidence ? 'score_unavailable'
           : sort === 'score_desc' ? 'score' : 'popularity';
-        if (orderState === 'score' || orderState === 'popularity') entries.sort((a, b) => {
-          const left = a.malId === null ? null : scoreCache.get(a.anidbId, a.malId);
-          const right = b.malId === null ? null : scoreCache.get(b.anidbId, b.malId);
+        if (['score', 'popularity', 'score_partial'].includes(orderState)) entries.sort((a, b) => {
+          const left = snapshots.get(a.anidbId);
+          const right = snapshots.get(b.anidbId);
           const leftValue = typeof left?.[metric] === 'number'
             ? left[metric] : -1;
           const rightValue = typeof right?.[metric] === 'number'
@@ -369,6 +379,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         a.anidbId - b.anidbId);
     }
     const page = entries.slice(after, after + limit);
+    if (scoreCache && status !== 'ongoing' &&
+        sort !== 'score_desc' && sort !== 'popular_desc') {
+      scorePending = !scoreCache.prime(page.filter((entry) => entry.malId !== null)
+        .map(({ anidbId, malId }) => ({ anidbId, malId }))).ready;
+    }
     const found = [];
     for (let offset = 0; offset < page.length; offset += 4) {
       found.push(...await Promise.all(page.slice(offset, offset + 4)
@@ -391,6 +406,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       year, season, sourceDate: cached.sourceDate, items, availableTags,
       total: entries.length,
       ...(orderState ? { orderState } : {}),
+      ...(scorePending ? { scorePending: true } : {}),
       nextAfter: after + limit < entries.length ? after + limit : null };
   } };
 }

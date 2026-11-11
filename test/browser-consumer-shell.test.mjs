@@ -632,6 +632,8 @@ test('signed-in consumer routes render real shell with search, library and reque
             libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }] :
             [{ anidbId: 4158,
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
+            rating: { score: 8.2, votes: 2100, members: 9000,
+              checkedMs: 1_000 },
             adult: false, libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
             type: 'Movie', releaseStatus: 'FINISHED', adult: true,
@@ -958,6 +960,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         /Available · 2\/2/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
+      assert.match(browse, /★ 8.2/);
       assert.match(browse, /<h1>Browse anime\.<\/h1>/);
       assert.doesNotMatch(browse, /id="discover-shelves"/);
       assert.match(browse, /The Garden of Words/);
