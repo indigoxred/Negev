@@ -410,20 +410,23 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
         indexerIds: prowlarr.indexerIds, query, fetchImpl })),
     }) : undefined;
+    // Preview, submission, and start must use identical relation evidence.
+    // Shoko may not know an unowned season yet, while the AniDB archive does.
+    const readRelatedTitles = ({ anidbId }) => readRelatedEvidence({ anidbId,
+      readLocal: () => metadata.run(() => readAniDbRelatedTitles({
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
+      readArchive: async () => {
+        const status = await titleSource?.refresh();
+        if (!['ready', 'stale'].includes(status?.state)) return { state: 'unavailable' };
+        return metadata.run(() => readArchiveRelatedTitles({ anidbId,
+          titleForId: (id) => titleSource.getTitle(id), fetchImpl }));
+      },
+    });
     const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
         loadDetail: (input) => loadCurrentDetail(input),
-        readRelatedTitles: ({ anidbId }) => readRelatedEvidence({ anidbId,
-          readLocal: () => metadata.run(() => readAniDbRelatedTitles({
-            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
-          readArchive: async () => {
-            const status = await titleSource?.refresh();
-            if (!['ready', 'stale'].includes(status?.state)) return { state: 'unavailable' };
-            return metadata.run(() => readArchiveRelatedTitles({ anidbId,
-              titleForId: (id) => titleSource.getTitle(id), fetchImpl }));
-          },
-        }),
+        readRelatedTitles,
         releaseQueries,
         prepare: (input) => metadata.run(() => prepareStoppedCandidate({
           baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
@@ -943,6 +946,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
           allowedAnidbIds,
+          readRelatedTitles,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },
           publicSections: plex.publicSections, prowlarr,
