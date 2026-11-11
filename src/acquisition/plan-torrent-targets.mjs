@@ -5,9 +5,13 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
 const titleTokens = (value) => typeof value === 'string'
-  ? value.normalize('NFKC').toLocaleLowerCase('en')
+  ? (value.normalize('NFKC').toLocaleLowerCase('en')
     .replace(/&/g, ' and ').replace(/×/g, ' x ')
-    .match(/[\p{L}\p{N}]+/gu) ?? [] : [];
+    .match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((token, index, all) => {
+      if (token === 'season' && /^0*[1-9]\d*$/.test(all[index + 1] ?? '')) return [];
+      const season = /^s0*([1-9]\d*)$/.exec(token);
+      return [season ? season[1] : token];
+    }) : [];
 // A search hit may be unrelated despite matching episode numbers. This is
 // provisional title evidence; completed bytes still need exact AniDB proof.
 export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
