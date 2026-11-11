@@ -579,14 +579,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       listLibraryTitles: plexObserver && fileProofs ?
         async ({ afterAnidbId, limit }) => {
-          const source = await titleSource?.refresh();
-          if (titleSource && !['ready', 'stale'].includes(source?.state)) {
-            return { state: 'unavailable' };
-          }
+          // Title artwork and names are optional display data. A temporary
+          // AniDB outage must not hide already verified public Plex files.
+          await titleSource?.refresh();
           const page = fileProofs.listCurrentTitles({ afterAnidbId, limit });
           return { state: 'current_proofs',
             items: page.items.map((item) => ({ ...item,
               title: titleSource?.getTitle(item.anidbId) ??
+                titleRegistry.getTitle({ anidbId: item.anidbId }) ??
                 `Anime title unavailable (${item.anidbId})` })),
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,

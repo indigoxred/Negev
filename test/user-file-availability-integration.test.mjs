@@ -27,6 +27,11 @@ test('review service reads recent saved public proofs without starting backfill'
       shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
       sessionKey: randomBytes(32), publicOrigin: 'http://localhost:3000',
       secureCookies: false, now: () => 1_000,
+      anidbTitleDump: true,
+      fetchImpl: async (url) => {
+        assert.equal(String(url), 'https://anidb.net/api/anime-titles.dat.gz');
+        return new Response(null, { status: 503 });
+      },
       fileProofLifetimeMs: 30 * 60_000,
       plex: { plexBaseUrl: 'http://plex:32400/', plexToken: 'synthetic',
         publicSections: { episode: [102], movie: [] },
@@ -45,6 +50,8 @@ test('review service reads recent saved public proofs without starting backfill'
         cookie: login.headers['set-cookie'].split(';')[0] } });
     assert.equal(library.statusCode, 200);
     assert.equal(library.json().items[0].anidbId, 42);
+    assert.equal(library.json().items[0].title,
+      'Anime title unavailable (42)');
     assert.equal((await service.tickFileBackfill()).state, 'held');
   } finally {
     await service?.close();
@@ -203,9 +210,13 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
       const coverage = async () => (await service.app.inject({ method: 'GET',
         url: '/api/requests', headers: { cookie } })).json()
         .items[0].progress.publicVerifiedTargets;
+      const libraryIds = async () => (await service.app.inject({ method: 'GET',
+        url: '/api/library', headers: { cookie } })).json()
+        .items.map((item) => item.anidbId);
       const catalogue = async () => (await service.app.inject({ method: 'GET',
         url: '/api/catalogue/42', headers: { cookie } })).json();
       assert.equal(await coverage(), 1);
+      assert.deepEqual(await libraryIds(), [42]);
       assert.equal((await catalogue()).episodes?.[0]?.availability, 'available');
       assert.deepEqual((await catalogue()).libraryPresence,
         { state: 'in_library', verifiedEpisodeCount: 1 });
@@ -223,6 +234,8 @@ test('opt-in file tick joins a Shoko import to its exact public Plex part', asyn
         { state: 'queued', fileId: 51 });
       assert.equal(proofs.getCurrent({ anidbId: 42, episodeId: 1001 }).state,
         'unknown');
+      assert.deepEqual(await libraryIds(), [],
+        'a withdrawn exact file must disappear from Library immediately');
       assert.equal(await coverage(), undefined);
       assert.equal((await catalogue()).episodes?.[0]?.availability, 'unknown');
       assert.deepEqual((await catalogue()).libraryPresence,
