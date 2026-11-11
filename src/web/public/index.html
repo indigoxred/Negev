@@ -42,12 +42,12 @@
         <p>Browse the catalogue, see what you can watch and request what is missing.</p></div>
       <div class="panel auth-panel">
         <div class="tabs"><button id="login-tab" class="selected" type="button">Sign in</button><button id="register-tab" type="button">Use an invitation</button></div>
-        <form id="login-form">
+        <form id="login-form" method="post" action="/api/login">
           <label>Username<input name="username" autocomplete="username" required></label>
           <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
           <button class="primary" type="submit">Sign in</button>
         </form>
-        <form id="register-form" hidden>
+        <form id="register-form" method="post" action="/api/register" hidden>
           <label>Invitation code<input name="code" autocomplete="off" required></label>
           <label>Username<input name="username" autocomplete="username" required></label>
           <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
