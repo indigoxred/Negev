@@ -20,6 +20,7 @@ const assets = new Map([
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'season-request-selection.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
@@ -227,6 +228,22 @@ async function inspectMobile(url, profile, width = 390) {
     }
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/42') });
     await wait(700);
+    const requestOwnedSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const rows = [...document.querySelectorAll('.season-request-row')];
+        return rows.map(row => ({id: Number(row.dataset.anidbId),
+          status: row.querySelector('.season-request-status')?.textContent,
+          disabled: row.querySelector('input')?.disabled})); })()`,
+    });
+    await send('Runtime.evaluate', { expression: `(() => {
+      for (const id of [43,45]) document.querySelector(
+        '.season-request-row[data-anidb-id="' + id + '"] input').click();
+    })()` });
+    const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const action = document.querySelector('.request-action');
+        return {route: location.hash, button: action.querySelector('.primary')?.textContent,
+          chosen: [...action.querySelectorAll('.season-request-row input:checked')]
+            .map(input => Number(input.closest('.season-request-row').dataset.anidbId))}; })()`,
+    });
     const requestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         const button = action?.querySelector('.primary'); button?.click();
@@ -241,30 +258,6 @@ async function inspectMobile(url, profile, width = 390) {
           button: action.querySelector('.primary').textContent,
           status: action.querySelector('.request-feedback').textContent}; })()`,
     });
-    await send('Runtime.evaluate', { expression:
-      `document.querySelector('.request-action .primary').click()` });
-    await send('Runtime.evaluate', { expression: `(() => {
-      const select = document.querySelector('.request-action select');
-      select.value = '44'; select.dispatchEvent(new Event('change'));
-    })()` });
-    await wait(250);
-    const requestOwnedSelection = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `(() => { const action = document.querySelector('.request-action');
-        return {button: action.querySelector('.primary')?.textContent,
-          disabled: action.querySelector('.primary')?.disabled,
-          reviewHidden: action.querySelector('.request-review')?.hidden,
-          status: action.querySelector('.request-feedback')?.textContent}; })()`,
-    });
-    const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `(() => { const action = document.querySelector('.request-action');
-        const select = action.querySelector('select'); select.value = '43';
-        select.dispatchEvent(new Event('change'));
-        return {route: location.hash, summary: action.querySelector('.request-review p')?.textContent,
-          cancelLabel: action.querySelector('.request-review button')?.textContent,
-          reviewHidden: action.querySelector('.request-review')?.hidden,
-          button: action.querySelector('.primary')?.textContent}; })()`,
-    });
-    await wait(250);
     const requestSelectionReady = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         return {button: action.querySelector('.primary')?.textContent,
@@ -502,6 +495,19 @@ test('signed-in consumer routes render real shell with search, library and reque
         }], nextBeforeId: null }));
         return;
       }
+      if (path === '/api/requests/seasons' && request.method === 'POST') {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        submittedRequests.push(...body.seasons.map((entry) =>
+          ({ ...entry, scope: 'installment' })));
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ items: body.seasons.map((entry, index) => ({
+          anidbId: entry.anidbId, status: 202,
+          result: { state: 'held', requestId: 70 + index },
+        })) }));
+        return;
+      }
       if (path === '/api/request-preparations') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{ id: 12, anidbId: 19847,
@@ -708,6 +714,8 @@ test('signed-in consumer routes render real shell with search, library and reque
           completeness: 'unproven', items: [{ anidbId: 43,
             title: 'Example Season Two', relation: 'Sequel' },
           { anidbId: 44, title: 'Complete related season',
+            relation: 'Sequel' },
+          { anidbId: 45, title: 'Partly available season',
             relation: 'Sequel' }] }));
         return;
       }
@@ -729,6 +737,16 @@ test('signed-in consumer routes render real shell with search, library and reque
           page: 1, total: 2, nextPage: null,
           episodes: [1, 2].map((number) => ({ id: 4300 + number,
             number, type: 'Episode', availability: 'unknown' })) }));
+        return;
+      }
+      if (path === '/api/catalogue/45') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 45,
+          title: 'Partly available season', kind: 'series', restricted: false,
+          monitorFuture: false, regularSeason: { verified: 1, total: 2 },
+          page: 1, total: 2, nextPage: null,
+          episodes: [1, 2].map((number) => ({ id: 4500 + number,
+            number, type: 'Episode', availability: number === 1 ? 'available' : 'unknown' })) }));
         return;
       }
       if (path === '/api/catalogue/96') {
@@ -888,7 +906,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(completedColdSeason,
         /2 of 2 regular episodes verified playable in Plex/);
       assert.match(completedColdSeason,
-        /<button class="primary" disabled="">Already available<\/button>/);
+        /Available · 2\/2/);
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /<h1>Browse anime\.<\/h1>/);
@@ -931,23 +949,24 @@ test('signed-in consumer routes render real shell with search, library and reque
         'More disappears after all cached relations are visible');
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
-        summary: 'Example Series · this installment’s regular episodes and future episodes' });
-      assert.deepEqual(mobile.requestOwnedSelection, {
-        button: 'Already available', disabled: true, reviewHidden: true,
-        status: 'This installment is already verified in Negev’s Library.' });
+        summary: 'Example Season Two · request missing episodes; Partly available season · complete missing episodes' });
+      assert.deepEqual(mobile.requestOwnedSelection, [
+        { id: 42, status: 'Available so far · watch future episodes', disabled: false },
+        { id: 43, status: 'Missing · 0/2', disabled: false },
+        { id: 44, status: 'Available · 2/2', disabled: true },
+        { id: 45, status: 'Partial · 1/2', disabled: false },
+      ]);
       assert.deepEqual(mobile.requestSelection, { route: '#/title/42',
-        summary: 'Example Season Two · Negev will check its film or episodes before saving',
-        cancelLabel: 'Cancel', reviewHidden: true,
-        button: 'Checking selected installment…' });
+        button: 'Request 2 seasons', chosen: [43, 45] });
       assert.deepEqual(mobile.requestSelectionReady,
-        { button: 'Request selected installment', disabled: false });
+        { button: 'Request 2 seasons', disabled: false });
       assert.deepEqual(mobile.reviewAfterSelection, { reviewVisible: true,
-        button: 'Confirm request', status: 'Review this installment, then confirm.' });
+        button: 'Confirm request', status: 'Review the selected seasons, then confirm.' });
       assert.deepEqual(mobile.requestCancelled, { reviewHidden: true,
-        button: 'Watch future episodes', status: '' });
+        button: 'Request 2 seasons', status: '' });
       assert.equal(mobile.requestSaved.reviewHidden, true);
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
-      assert.match(mobile.requestSaved.receipt, /Request #7 saved/);
+      assert.match(mobile.requestSaved.receipt, /2 seasons requested/);
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });
@@ -974,6 +993,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.filmChoiceSaved.view, 'View in My Requests →');
       assert.ok(submittedRequests.some((body) => body.anidbId === 43 &&
         body.scope === 'installment'), 'selected related season reaches the request API');
+      assert.ok(submittedRequests.some((body) => body.anidbId === 45 &&
+        body.scope === 'installment'), 'partial season requests its missing episodes');
+      assert.ok(!submittedRequests.some((body) => body.anidbId === 44),
+        'already available season cannot be submitted');
       assert.ok(submittedRequests.some((body) => body.anidbId === 10 &&
         body.scope === 'episodes' && body.episodeIds?.length === 1 &&
         body.episodeIds[0] === 1002), 'reviewed film entry reaches the request API');
@@ -1052,13 +1075,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(detail, /Choose a season or installment/);
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
-      assert.match(seriesDetail, /Choose a season or installment/);
+      assert.match(seriesDetail, /Choose seasons or installments/);
       assert.match(seriesDetail, /Check season availability/);
       assert.match(seriesDetail, /Check selected episode/);
       assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);
       assert.doesNotMatch(seriesDetail, /Recheck unknown entries in background/);
-      assert.match(seriesDetail, /class="installment-choice"/);
-      assert.match(seriesDetail, /Watch future episodes/);
+      assert.match(seriesDetail, /class="season-request-row"/);
       assert.doesNotMatch(seriesDetail, /Already available/);
       const partialSeason = await dump(`${base}/#/title/96`,
         join(dir, 'partial-season'));
@@ -1075,18 +1097,18 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'complete-paginated'));
       assert.match(completePaginated, /4 of 4 regular episodes verified playable in Plex/);
       assert.match(completePaginated,
-        /<button class="primary" disabled="">Already available<\/button>/);
+        /Available · 4\/4/);
       assert.match(completePaginated, /Show more episodes/,
         'episode details remain optional when complete-season proof is already saved');
       assert.doesNotMatch(completePaginated, /Checking the complete episode list/);
       const incompletePaginated = await dump(`${base}/#/title/98`,
         join(dir, 'incomplete-paginated'));
       assert.match(incompletePaginated, /3 of 4 regular episodes verified playable in Plex/);
-      assert.match(incompletePaginated, /<button class="primary">Request series<\/button>/);
+      assert.match(incompletePaginated, /Partial · 3\/4/);
       const longComplete = await dump(`${base}/#/title/97`,
         join(dir, 'long-complete'));
       assert.match(longComplete,
-        /<button class="primary" disabled="">Already available<\/button>/);
+        /Available · [0-9]+\/[0-9]+/);
       const throttledDetail = await dump(`${base}/#/title/19847`,
         join(dir, 'throttled-detail'));
       assert.match(throttledDetail, /A new anime description/);

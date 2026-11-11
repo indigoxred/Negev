@@ -118,6 +118,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'season-request-selection.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs'].map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
@@ -147,6 +148,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     ['/relation-label.mjs', 'text/javascript; charset=utf-8', pages[14]],
     ['/request-feedback.mjs', 'text/javascript; charset=utf-8', pages[15]],
     ['/adult-search-visibility.mjs', 'text/javascript; charset=utf-8', pages[16]],
+    ['/season-request-selection.mjs', 'text/javascript; charset=utf-8', pages[17]],
   ]) app.get(url, async (_request, reply) => reply.headers(pageHeaders).type(contentType).send(body));
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&
@@ -859,14 +861,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return result.state === 'updated' ? result :
       reply.code(404).send({ error: 'Account unavailable' });
   });
-  app.post('/api/requests', { preHandler: writeGuards,
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
-    reply.header('Cache-Control', 'no-store');
-    const body = request.body;
+  const processRequest = async (body, requester, reply) => {
     if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey'])) {
       return reply.code(400).send({ error: 'Invalid request' });
     }
-    if (!request.negevUser.adultAllowed) {
+    if (!requester.adultAllowed) {
       if (!Number.isSafeInteger(body.anidbId) || body.anidbId <= 0) {
         return reply.code(400).send({ error: 'Invalid request' });
       }
@@ -879,7 +878,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         /^[A-Za-z0-9_-]{1,64}$/.test(body.requestKey) &&
         typeof readPendingTitleByKey === 'function') {
       const pending = readPendingTitleByKey({
-        requesterId: request.negevUser.id, requestKey: body.requestKey });
+        requesterId: requester.id, requestKey: body.requestKey });
       if (pending) {
         if (body.scope !== 'installment' ||
             pending.anidbId !== body.anidbId ||
@@ -903,7 +902,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         Number.isSafeInteger(body.anidbId) && body.anidbId > 0 &&
         typeof readActivePendingTitle === 'function') {
       const active = readActivePendingTitle({
-        requesterId: request.negevUser.id, anidbId: body.anidbId });
+        requesterId: requester.id, anidbId: body.anidbId });
       if (active) return reply.code(202).send({ state: 'pending',
         intentId: active.id, created: false });
     }
@@ -916,7 +915,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         reason: 'title_not_in_cutover',
         error: 'Requests for this title are not open yet' });
     }
-    const result = await submitRequest({ ...body, requesterId: request.negevUser.id });
+    const result = await submitRequest({ ...body, requesterId: requester.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
       return reply.code(202).send(result);
@@ -926,7 +925,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           'release_state_unknown'].includes(result.reason) &&
         typeof queuePendingTitle === 'function') {
       const pending = await queuePendingTitle({
-        requesterId: request.negevUser.id, anidbId: body.anidbId,
+        requesterId: requester.id, anidbId: body.anidbId,
         requestKey: body.requestKey, initialReason: result.reason });
       if (pending?.state === 'pending' &&
           Number.isSafeInteger(pending.intentId) && pending.intentId > 0) {
@@ -940,6 +939,40 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         state: 'held', reason: result.reason });
     }
     return reply.code(result.reason === 'invalid_request' ? 400 : 409).send(result);
+  };
+  app.post('/api/requests', { preHandler: writeGuards,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    return processRequest(request.body, request.negevUser, reply);
+  });
+  app.post('/api/requests/seasons', { preHandler: writeGuards,
+    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const body = request.body;
+    if (!allowedBody(body, ['seasons']) || !Array.isArray(body.seasons) ||
+        body.seasons.length < 1 || body.seasons.length > 20 ||
+        body.seasons.some((entry) => !allowedBody(entry, ['anidbId', 'requestKey']) ||
+          !Number.isSafeInteger(entry.anidbId) || entry.anidbId < 1 ||
+          typeof entry.requestKey !== 'string' ||
+          !/^[A-Za-z0-9_-]{1,64}$/.test(entry.requestKey)) ||
+        new Set(body.seasons.map((entry) => entry.anidbId)).size !== body.seasons.length) {
+      return reply.code(400).send({ error: 'Invalid season selection' });
+    }
+    const items = [];
+    for (const entry of body.seasons) {
+      let status = 200;
+      const rowReply = { code(value) { status = value; return this; },
+        send(payload) { return payload; } };
+      try {
+        const result = await processRequest({ ...entry, scope: 'installment' },
+          request.negevUser, rowReply);
+        items.push({ anidbId: entry.anidbId, status, result });
+      } catch {
+        items.push({ anidbId: entry.anidbId, status: 503,
+          result: { error: 'Could not save this season; retry' } });
+      }
+    }
+    return { items };
   });
   app.get('/api/requests', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

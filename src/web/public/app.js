@@ -10,6 +10,7 @@ import { createFranchiseExplorer, expandFranchiseBatch,
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
+import { seasonRequestStatus, seasonSelectionSummary } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
@@ -1717,6 +1718,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     let selectedAvailability = 'unknown';
     let selectedCheckVersion = 0;
     let updateRequestReview = () => {};
+    let syncSeasonRows = () => {};
     const syncInstallmentChoice = () => {
       if (!installmentSelect) return;
       installmentSelect.replaceChildren();
@@ -1783,6 +1785,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedButton.hidden = !(!relatedExpanded && overflow) && !canExplore;
       relatedButton.disabled = relatedButton.hidden;
       syncInstallmentChoice();
+      syncSeasonRows();
     };
     if (franchise) renderFamily();
     else {
@@ -2063,6 +2066,253 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (earlyRequest?.dataset.saving === 'true' ||
         earlyRequest?.dataset.saved === 'true') {
       panel.insertBefore(earlyRequest, relatedHeading);
+      return;
+    }
+    if (data.kind === 'series') {
+      const action = element('section', undefined, 'request-action season-request-action');
+      action.append(element('h2', 'Request seasons'));
+      action.append(element('p',
+        'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only its missing episodes. Specials stay separate.',
+        'muted'));
+      const chooser = element('details', undefined, 'season-request-chooser');
+      chooser.open = true;
+      chooser.append(element('summary', 'Choose seasons'));
+      const heading = element('div', undefined, 'season-request-header');
+      heading.append(element('strong', 'Choose seasons or installments'));
+      const selectAll = element('button', 'Select all requestable', 'quiet');
+      selectAll.type = 'button';
+      heading.append(selectAll);
+      const list = element('div', undefined, 'season-request-list');
+      const moreSeasons = element('button', 'Find more seasons or installments', 'quiet');
+      moreSeasons.type = 'button';
+      moreSeasons.hidden = family.next() === null;
+      moreSeasons.addEventListener('click', () => { void loadRelated({ batch: true }); });
+      chooser.append(heading, list, moreSeasons);
+      const review = element('div', undefined, 'request-review');
+      review.hidden = true;
+      review.append(element('strong', 'Review your request'));
+      const reviewSummary = element('p');
+      review.append(reviewSummary);
+      review.append(element('p',
+        'Each selected installment becomes its own request. You can cancel a saved request in My Requests until processing starts.',
+        'muted'));
+      const cancel = element('button', 'Cancel', 'quiet');
+      cancel.type = 'button';
+      review.append(cancel);
+      const submit = element('button', 'Select seasons', 'primary');
+      submit.disabled = true;
+      const feedback = element('p', '', 'muted request-feedback');
+      feedback.setAttribute('role', 'status');
+      const view = element('a', 'View in My Requests →',
+        'text-link request-receipt-link');
+      view.href = '#/requests';
+      view.hidden = true;
+      action.append(chooser, review, submit, feedback, view);
+      const rows = new Map();
+      let saving = false;
+      let reviewing = false;
+      const selectedRows = () => [...rows.values()].filter((row) =>
+        row.input.checked && row.status?.selectable && !row.requested);
+      const refresh = () => {
+        const selected = selectedRows();
+        const selectable = [...rows.values()].filter((row) =>
+          row.status?.selectable && !row.requested);
+        selectAll.disabled = saving || selectable.length === 0;
+        selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
+          ? 'Clear selection' : 'Select all requestable';
+        for (const row of rows.values()) {
+          row.input.disabled = saving || row.requested || !row.status?.selectable;
+          if (row.input.disabled && !saving) row.input.checked = false;
+        }
+        submit.disabled = saving || selected.length === 0;
+        submit.textContent = saving ? 'Saving requests…' : reviewing ? 'Confirm request' :
+          selected.length === 0 ? 'Select seasons' : selected.length > 1
+            ? `Request ${selected.length} seasons` : selected[0].status.state === 'partial'
+              ? 'Complete season' : selected[0].status.state === 'watching'
+                ? 'Watch future episodes' : 'Request season';
+        reviewSummary.textContent = seasonSelectionSummary(selected);
+      };
+      const updateRow = (row, detail) => {
+        const status = row.anidbId === item.anidbId && checkingCompleteSeries
+          ? { state: 'unverified', text: 'Checking complete season…', selectable: false }
+          : seasonRequestStatus(detail);
+        if (status === null) { row.element.remove(); rows.delete(row.anidbId); refresh(); return; }
+        row.status = status;
+        row.statusText.textContent = row.requested ? 'Requested' : status.text;
+        row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total)
+          ? `${detail.regularSeason.total} episodes` : '';
+        refresh();
+      };
+      const pending = [];
+      let active = 0;
+      const drain = () => {
+        while (active < 3 && pending.length > 0) {
+          const row = pending.shift();
+          active++;
+          void (async () => {
+            try {
+              const detail = await api(`/api/catalogue/${row.anidbId}`,
+                { signal: AbortSignal.timeout(5_000) });
+              if (isCurrentDetail() && rows.get(row.anidbId) === row) {
+                updateRow(row, detail);
+              }
+            } catch {
+              if (isCurrentDetail() && rows.get(row.anidbId) === row) {
+                updateRow(row, { state: 'detail_pending' });
+              }
+            } finally { active--; drain(); }
+          })();
+        }
+      };
+      const addRow = (entry) => {
+        if (rows.has(entry.anidbId)) return;
+        const row = { anidbId: entry.anidbId, title: entry.title,
+          status: null, requested: false };
+        const label = element('label', undefined, 'season-request-row');
+        label.dataset.anidbId = String(entry.anidbId);
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.disabled = true;
+        input.addEventListener('change', () => {
+          reviewing = false;
+          review.hidden = true;
+          feedback.textContent = '';
+          refresh();
+        });
+        const title = element('span', entry.title, 'season-request-title');
+        const count = element('span', '', 'season-request-count');
+        const statusText = element('span', 'Checking…', 'season-request-status');
+        label.append(input, title, count, statusText);
+        row.element = label;
+        row.input = input;
+        row.count = count;
+        row.statusText = statusText;
+        rows.set(entry.anidbId, row);
+        list.append(label);
+        if (entry.anidbId === item.anidbId) {
+          updateRow(row, { ...data, episodes: pager.episodes,
+            nextPage: pager.nextPage });
+        } else { pending.push(row); drain(); }
+      };
+      syncSeasonRows = () => {
+        for (const entry of family.items()) addRow(entry);
+        moreSeasons.hidden = family.next() === null;
+      };
+      syncSeasonRows();
+      refreshRequestAction = () => {
+        const row = rows.get(item.anidbId);
+        if (row) updateRow(row, { ...data, episodes: pager.episodes,
+          nextPage: pager.nextPage });
+      };
+      selectAll.addEventListener('click', () => {
+        const selectable = [...rows.values()].filter((row) =>
+          row.status?.selectable && !row.requested);
+        const select = !selectable.every((row) => row.input.checked);
+        for (const row of selectable) row.input.checked = select;
+        reviewing = false;
+        review.hidden = true;
+        feedback.textContent = '';
+        refresh();
+      });
+      cancel.addEventListener('click', () => {
+        reviewing = false;
+        review.hidden = true;
+        feedback.textContent = '';
+        refresh();
+      });
+      submit.addEventListener('click', async () => {
+        const selected = selectedRows();
+        if (saving || selected.length === 0) return;
+        if (selected.length > 20) {
+          feedback.textContent = 'Choose up to 20 seasons at a time.';
+          return;
+        }
+        if (!reviewing) {
+          reviewing = true;
+          review.hidden = false;
+          feedback.textContent = 'Review the selected seasons, then confirm.';
+          refresh();
+          return;
+        }
+        saving = true;
+        refresh();
+        const saved = [];
+        const failed = [];
+        try {
+          const result = await api('/api/requests/seasons', { method: 'POST',
+            body: JSON.stringify({ seasons: selected.map((row) => ({
+              anidbId: row.anidbId,
+              requestKey: requestKeys.pending({ userId: state.user.id,
+                anidbId: row.anidbId }),
+            })) }) });
+          for (const itemResult of result.items ?? []) {
+            const row = rows.get(itemResult.anidbId);
+            if (!row) continue;
+            const payload = itemResult.result ?? {};
+            if (itemResult.status >= 200 && itemResult.status < 300) {
+              requestKeys.saved({ userId: state.user.id, anidbId: row.anidbId });
+              row.requested = true;
+              row.statusText.textContent = payload.state === 'pending'
+                ? 'Queued for details' : 'Requested';
+              saved.push(Number.isSafeInteger(payload.requestId)
+                ? `#${payload.requestId}` : row.title);
+            } else if (payload.reason === 'already_available') {
+              row.status = { state: 'available', text: 'Already available', selectable: false };
+              row.statusText.textContent = 'Already available';
+            } else {
+              row.statusText.textContent = payload.error ?? payload.reason ?? 'Could not save';
+              failed.push(row.title);
+            }
+          }
+        } catch (error) {
+          for (const row of selected) {
+            row.statusText.textContent = requestFailureMessage(error);
+            failed.push(row.title);
+          }
+        }
+        saving = false;
+        reviewing = false;
+        review.hidden = true;
+        feedback.textContent = saved.length
+          ? `${saved.length} season${saved.length === 1 ? '' : 's'} requested · ${saved.join(', ')}${failed.length ? ` · ${failed.length} could not be saved; retry those seasons` : ''}`
+          : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
+            : 'Selected seasons are already available.';
+        view.hidden = saved.length === 0;
+        refresh();
+        if (saved.length) loadRequests();
+      });
+      if (checkingCompleteSeries && loadNextEpisodePage) {
+        const continueCheck = element('button', 'Continue availability check', 'quiet');
+        continueCheck.hidden = true;
+        continueCheck.type = 'button';
+        action.append(continueCheck);
+        const checkPages = async () => {
+          continueCheck.hidden = true;
+          for (let page = 0; page < 20 && pager.nextPage !== null; page++) {
+            if (!isCurrentDetail()) return;
+            if (!await loadNextEpisodePage(false)) {
+              if (!isCurrentDetail()) return;
+              feedback.textContent = 'The season check could not finish. Try again.';
+              continueCheck.hidden = false;
+              return;
+            }
+          }
+          if (!isCurrentDetail()) return;
+          if (pager.nextPage !== null) {
+            feedback.textContent = 'More episodes remain to check.';
+            continueCheck.hidden = false;
+            return;
+          }
+          checkingCompleteSeries = false;
+          const row = rows.get(item.anidbId);
+          if (row) updateRow(row, { ...data, episodes: pager.episodes,
+            nextPage: pager.nextPage });
+          feedback.textContent = '';
+        };
+        continueCheck.addEventListener('click', () => { void checkPages(); });
+        void checkPages();
+      }
+      panel.insertBefore(action, relatedHeading);
       return;
     }
     const requestAction = element('section', undefined, 'request-action');

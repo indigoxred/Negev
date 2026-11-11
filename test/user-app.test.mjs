@@ -10,6 +10,47 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('one season batch applies the normal request gate to every selected installment', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const submitted = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    acquisitionAllowedAnidbIds: [41, 42],
+    submitRequest: async (input) => {
+      submitted.push(input);
+      return { state: 'held', requestId: input.anidbId,
+        reason: 'test_request' };
+    }, readRequest: () => null });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    const payload = { seasons: [
+      { anidbId: 41, requestKey: 'season41' },
+      { anidbId: 43, requestKey: 'season43' },
+      { anidbId: 42, requestKey: 'season42' },
+    ] };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/seasons',
+      headers: { cookie, origin }, payload })).statusCode, 403);
+    const response = await app.inject({ method: 'POST', url: '/api/requests/seasons',
+      headers, payload });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().items.map(({ anidbId, status }) =>
+      [anidbId, status]), [[41, 202], [43, 409], [42, 202]]);
+    assert.deepEqual(submitted.map(({ anidbId }) => anidbId), [41, 42]);
+    const duplicate = await app.inject({ method: 'POST', url: '/api/requests/seasons',
+      headers, payload: { seasons: [payload.seasons[0], payload.seasons[0]] } });
+    assert.equal(duplicate.statusCode, 400);
+  } finally { await app.close(); }
+});
+
 test('a limited acquisition cohort rejects other new titles before saving a request', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
