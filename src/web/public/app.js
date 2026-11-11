@@ -1748,8 +1748,6 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       for (const group of groups) {
         // Direct relation labels already appear on each card. Keep those
         // cards together in one compact grid; only separate indirect hops.
-        if (relatedExpanded && group.heading === 'More linked titles') relatedList.append(
-          element('h3', group.heading, 'related-group-heading'));
         for (const installment of group.items) {
           if (!visibleIds.has(installment.anidbId)) continue;
           const open = element('button', undefined, 'related-card');
