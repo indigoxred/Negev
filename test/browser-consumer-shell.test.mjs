@@ -298,6 +298,14 @@ async function inspectMobile(url, profile, width = 390) {
         dialog.querySelector('.season-request-close').click();
         return {closed: !dialog.open, trigger: document.querySelector('.season-request-trigger')?.textContent}; })()`,
     });
+    await send('Runtime.evaluate', { expression: `document.querySelector('#adult-toggle').click()` });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/46') });
+    await wait(1_500);
+    const closedPilotTitle = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => ({notice: document.querySelector('.request-preview-gate')?.textContent,
+        disabled: document.querySelector('.season-request-trigger')?.disabled,
+        visible: document.querySelector('#detail')?.textContent.slice(0, 200)}))()`,
+    });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/19848') });
     await wait(700);
     const coldBeforeFallback = await send('Runtime.evaluate', { returnByValue: true,
@@ -447,6 +455,7 @@ async function inspectMobile(url, profile, width = 390) {
       requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
       popupClosed: popupClosed.result.value,
+      closedPilotTitle: closedPilotTitle.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
       reviewAfterRetry: reviewAfterRetry.result.value,
@@ -731,6 +740,23 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'available' }] }));
         return;
       }
+      if (path === '/api/catalogue/46') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 46,
+          title: 'Closed pilot title', kind: 'series', restricted: false,
+          requestsOpen: false, regularSeason: { verified: 0, total: 11 },
+          page: 1, total: 11, nextPage: null, episodes: Array.from({ length: 11 },
+            (_, index) => ({ id: 4600 + index, number: index + 1,
+              type: 'Episode', title: `Episode ${index + 1}`,
+              availability: 'unknown' })) }));
+        return;
+      }
+      if (path === '/api/catalogue/46/related') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'related_titles', anidbId: 46,
+          completeness: 'unproven', items: [] }));
+        return;
+      }
       if (path === '/api/catalogue/42/related') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'related_titles', anidbId: 42,
@@ -993,6 +1019,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /2 seasons requested/);
       assert.deepEqual(mobile.popupClosed, { closed: true, trigger: 'Request series' });
+      assert.equal(mobile.closedPilotTitle.notice,
+        'Requests for this title are not open yet. Please use Seerr for now.',
+        JSON.stringify(mobile.closedPilotTitle));
+      assert.equal(mobile.closedPilotTitle.disabled, true);
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Anime 19848 · Negev will identify the film or episodes and check the library first' });

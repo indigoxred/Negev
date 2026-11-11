@@ -21,7 +21,14 @@ test('season rows distinguish available, partial, missing, future and unverified
     regularSeason: { verified: 6, total: 6 } }),
   { state: 'watching', text: 'Available so far · watch future episodes', selectable: true });
   assert.deepEqual(seasonRequestStatus({ state: 'detail_pending' }),
-    { state: 'unverified', text: 'Checking episode details', selectable: true });
+    { state: 'unverified', text: 'Episode list not available yet · request can be queued', selectable: true });
+  assert.deepEqual(seasonRequestStatus({ state: 'detail_unavailable' }),
+    { state: 'unverified', text: 'Episode details unavailable · retry later', selectable: false });
+  assert.deepEqual(seasonRequestStatus({ ...base, regularSeason: { verified: 0, total: 0 } }),
+    { state: 'unverified', text: 'Episode list not published yet · request can be queued', selectable: true });
+  assert.deepEqual(seasonRequestStatus({ ...base, requestsOpen: false,
+    regularSeason: { verified: 0, total: 11 } }),
+    { state: 'missing', text: 'Missing · 0/11 · requests not open yet', selectable: false });
   assert.equal(seasonRequestStatus({ ...base, kind: 'movie' }), null);
 });
 

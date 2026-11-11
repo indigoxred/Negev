@@ -629,12 +629,15 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({ error: 'Invalid AniDB ID or page' });
     }
     const result = await loadDetail({ anidbId: id, page });
-    if (result.state === 'detail_pending') return { state: 'detail_pending', anidbId: id, requestable: false };
+    const requestsOpen = acquisitionAllowedAnidbIds === null ||
+      acquisitionAllowedAnidbIds.includes(id);
+    if (result.state === 'detail_pending') return { state: 'detail_pending',
+      anidbId: id, requestable: false, requestsOpen };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     if (!request.negevUser.adultAllowed && result.restricted !== false) {
       return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
-    return { ...result, requestable: false };
+    return { ...result, requestable: false, requestsOpen };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

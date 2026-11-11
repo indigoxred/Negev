@@ -1551,10 +1551,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     renderDisplay(display, item.title);
   });
+  let requestAccess = null;
   try {
     const data = await api(`/api/catalogue/${item.anidbId}`)
       .finally(() => { if (fallbackTimer !== null) clearTimeout(fallbackTimer); });
     if (!isCurrentDetail()) return;
+    requestAccess = data.requestsOpen !== false;
     if (typeof data.restricted === 'boolean') {
       state.searchItems.set(item.anidbId, { ...item, adult: data.restricted });
       applyAdultVisibility();
@@ -1575,8 +1577,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.append(displaySummary);
     void displayRead.then((display) => renderDisplay(display, data.title || item.title));
     if (data.state === 'detail_pending') {
-      panel.append(element('p', 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.', 'muted'));
-      const pendingAction = earlyRequest;
+      panel.append(element('p', requestAccess
+        ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
+        : 'Episode details are not cached yet. Requests for this title are not open yet; please use Seerr for now.', 'muted'));
+      const pendingAction = requestAccess ? earlyRequest : null;
       if (pendingAction) panel.append(pendingAction);
       if (state.detailLoad) {
         const preparationStatus = element('p', '', 'muted');
@@ -1591,18 +1595,24 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               if (hydration.state === 'detail_ready') void showDetail(item, franchise, 1);
               else if (hydration.state === 'pending' &&
                   hydration.reason === 'refresh_queued') {
-                preparationStatus.textContent = 'Episode details are updating. The request button is ready.';
+                preparationStatus.textContent = requestAccess
+                  ? 'Episode details are updating. The request button is ready.'
+                  : 'Episode details are updating.';
                 detailPollTimer = setTimeout(() => {
                   void showDetail(item, franchise, 1);
                 }, 4_000);
               } else {
-                preparationStatus.textContent = 'Episode details are not ready yet. The request button is ready.';
+                preparationStatus.textContent = requestAccess
+                  ? 'Episode details are not ready yet. The request button is ready.'
+                  : 'Episode details are not ready yet.';
               }
             }
           } catch (error) {
             state.detailHydrationQueued.delete(item.anidbId);
             if (isCurrentDetail()) {
-              preparationStatus.textContent = 'Episode details are busy. The request button is ready.';
+              preparationStatus.textContent = requestAccess
+                ? 'Episode details are busy. The request button is ready.'
+                : 'Episode details are busy.';
             }
           }
         };
@@ -1610,7 +1620,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (refreshAttempt === 0 && !state.detailHydrationQueued.has(item.anidbId)) {
           void begin();
         } else {
-          preparationStatus.textContent = 'Episode details are not ready yet. The request button is ready.';
+          preparationStatus.textContent = requestAccess
+            ? 'Episode details are not ready yet. The request button is ready.'
+            : 'Episode details are not ready yet.';
         }
       }
     } else {
@@ -2080,6 +2092,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (data.kind === 'series') {
       const trigger = element('button', 'Request series', 'primary season-request-trigger');
       trigger.type = 'button';
+      if (data.requestsOpen === false) panel.append(element('p',
+        'Requests for this title are not open yet. Please use Seerr for now.',
+        'muted request-preview-gate'));
       const action = element('dialog', undefined,
         'request-action season-request-action season-request-dialog');
       openSeasonDialog = action;
@@ -2138,7 +2153,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const selected = selectedRows();
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
-        trigger.disabled = saving || (rows.size > 0 &&
+        trigger.disabled = data.requestsOpen === false || saving || (rows.size > 0 &&
           !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
         selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
@@ -2162,7 +2177,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (status === null) { row.element.remove(); rows.delete(row.anidbId); refresh(); return; }
         row.status = status;
         row.statusText.textContent = row.requested ? 'Requested' : status.text;
-        row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total)
+        row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total) &&
+          detail.regularSeason.total > 0
           ? `${detail.regularSeason.total} episodes` : '';
         refresh();
       };
@@ -2181,7 +2197,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               }
             } catch {
               if (isCurrentDetail() && rows.get(row.anidbId) === row) {
-                updateRow(row, { state: 'detail_pending' });
+                updateRow(row, { state: 'detail_unavailable' });
               }
             } finally { active--; drain(); }
           })();
@@ -2273,6 +2289,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         refresh();
         const saved = [];
         const failed = [];
+        let closedByPilot = 0;
         try {
           const result = await api('/api/requests/seasons', { method: 'POST',
             body: JSON.stringify({ seasons: selected.map((row) => ({
@@ -2294,6 +2311,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             } else if (payload.reason === 'already_available') {
               row.status = { state: 'available', text: 'Already available', selectable: false };
               row.statusText.textContent = 'Already available';
+            } else if (payload.reason === 'title_not_in_cutover') {
+              row.status = { state: 'closed', text: 'Requests not open yet', selectable: false };
+              row.statusText.textContent = requestFailureMessage(payload);
+              closedByPilot++;
+              failed.push(row.title);
             } else {
               row.statusText.textContent = payload.error ?? payload.reason ?? 'Could not save';
               failed.push(row.title);
@@ -2310,7 +2332,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         review.hidden = true;
         feedback.textContent = saved.length
           ? `${saved.length} season${saved.length === 1 ? '' : 's'} requested · ${saved.join(', ')}${failed.length ? ` · ${failed.length} could not be saved; retry those seasons` : ''}`
-          : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
+          : failed.length && closedByPilot === failed.length
+            ? 'Requests for these titles are not open yet. Please use Seerr for now.'
+            : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
             : 'Selected seasons are already available.';
         view.hidden = saved.length === 0;
         refresh();
@@ -2608,7 +2632,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     'muted');
     panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
       displaySummary, unavailable, retry);
-    const pendingAction = earlyRequest;
+    const pendingAction = requestAccess === false ? null : earlyRequest;
     if (pendingAction) panel.append(pendingAction);
     void displayRead.then((display) => renderDisplay(display, item.title));
   }
