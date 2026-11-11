@@ -73,6 +73,7 @@ import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
+import { readRelatedEvidence } from '../acquisition/read-related-evidence.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
 import { collectFirstTimeUncertain } from
@@ -413,9 +414,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       previewRequestCandidate({ requestId, candidate,
         readRequest: (id) => requests.getRequest(id),
         loadDetail: (input) => loadCurrentDetail(input),
-        readRelatedTitles: ({ anidbId }) => metadata.run(() =>
-          readAniDbRelatedTitles({ baseUrl: shokoBaseUrl,
-            apiKey: shokoApiKey, anidbId, fetchImpl })),
+        readRelatedTitles: ({ anidbId }) => readRelatedEvidence({ anidbId,
+          readLocal: () => metadata.run(() => readAniDbRelatedTitles({
+            baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
+          readArchive: async () => {
+            const status = await titleSource?.refresh();
+            if (!['ready', 'stale'].includes(status?.state)) return { state: 'unavailable' };
+            return metadata.run(() => readArchiveRelatedTitles({ anidbId,
+              titleForId: (id) => titleSource.getTitle(id), fetchImpl }));
+          },
+        }),
         releaseQueries,
         prepare: (input) => metadata.run(() => prepareStoppedCandidate({
           baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,

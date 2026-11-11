@@ -48,6 +48,31 @@ test('a numbered release for an unrelated title cannot become a preflight', asyn
     { state: 'held', reason: 'release_title_mismatch' });
 });
 
+test('a second-season request accepts its AniDB alias and S02 files but not S01', async () => {
+  const title = 'Itai no wa Iya nano de Bougyoryoku ni Kyokufuri Shitai to Omoimasu. 2';
+  const alias = 'Bofuri: I Don`t Want to Get Hurt, So I`ll Max Out My Defense. 2';
+  const second = { ...detail, anidbId: 15464, title, total: 1,
+    episodes: [{ id: 260001, number: 1, type: 'Episode', title: 'First' }] };
+  const selected = { ...request, anidbId: 15464, episodeIds: [260001] };
+  const make = (season) => previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, title:
+      `Bofuri.I.Don't.Want.to.Get.Hurt.So.I'll.Max.Out.My.Defense.S0${season}.1080p` },
+    readRequest: () => selected, loadDetail: async () => second,
+    releaseQueries: async () => [title, alias],
+    readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 15464,
+      items: [{ anidbId: 14523,
+        title: 'Itai no wa Iya nano de Bougyoryoku ni Kyokufuri Shitai to Omoimasu.',
+        relation: 'Prequel' }] }),
+    prepare: async () => ({ ...prepared, files: [{
+      name: `Bofuri.S0${season}E01.mkv`, size: 1_000 }] }) });
+  const yes = await make(2);
+  assert.equal(yes.state, 'preflight', JSON.stringify(yes));
+  assert.deepEqual(yes.episodeIds, [260001]);
+  assert.equal(yes.searchQuery, alias);
+  const no = await make(1);
+  assert.equal(no.state, 'held');
+});
+
 test('a separately listed side story is held before it can become a preflight', async () => {
   const result = await previewRequestCandidate({ requestId: 4,
     candidate: { ...candidate, title: 'Example: Side Story - 01' },

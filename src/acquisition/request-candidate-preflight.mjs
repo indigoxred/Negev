@@ -1,6 +1,6 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
-import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
@@ -45,24 +45,19 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (request.episodeIds.some((id) => !knownTargets.has(id))) {
     return held('target_missing');
   }
-  const canonicalQuery = trustedReleaseQueries(detail.title)[0];
   let aliases = [];
-  if (!canonicalQuery) {
-    try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
-    catch { return held('trusted_query_unavailable'); }
-  }
-  const firstQuery = trustedReleaseQueries(detail.title, aliases)[0];
+  try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
+  catch { /* The canonical title can still be used. */ }
+  const queries = trustedReleaseQueries(detail.title, aliases);
+  const canonicalQuery = trustedReleaseQueries(detail.title)[0];
+  const firstQuery = queries.find((query) =>
+    matchesTrustedReleaseTitle(candidate.title, query)) ?? canonicalQuery;
   if (!firstQuery) return held('detail_unavailable');
   let prepared;
   let searchQuery = firstQuery;
   try { prepared = await prepare({ query: firstQuery, candidate }); }
   catch { return held('torrent_preflight_unavailable'); }
   if (prepared?.state === 'held' && prepared.reason === 'candidate_changed') {
-    if (canonicalQuery) {
-      try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
-      catch { aliases = []; }
-    }
-    const queries = trustedReleaseQueries(detail.title, aliases);
     for (const query of queries.filter((value) => value !== firstQuery)) {
       try { await pause(1_000); }
       catch { return held('torrent_preflight_unavailable'); }
