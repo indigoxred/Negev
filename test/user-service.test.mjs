@@ -18,6 +18,38 @@ const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
 
+test('paced provisional recheck discovers a Shoko link with unchanged file timestamp', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-provisional-recheck-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const inventory = openShokoInventoryLedger(dbPath);
+  inventory.recordFileObservation({ item: { fileId: 10,
+    updated: '2026-11-08T00:00:00Z', state: 'provisional', pairs: [] },
+  observedMs: 100 });
+  inventory.close();
+  let reads = 0;
+  let service;
+  try {
+    service = await createUserService({ dbPath,
+      shokoBaseUrl: 'http://shoko.internal:8111',
+      shokoApiKey: 'synthetic', sessionKey: randomBytes(32),
+      publicOrigin: origin, secureCookies: false, now: () => 600_100,
+      fetchImpl: async (url) => {
+        assert.equal(url.pathname, '/api/v3/File/10');
+        reads++;
+        return json({ ID: 10, Updated: '2026-11-08T00:00:00Z',
+          SeriesIDs: [{ SeriesID: { AniDB: 42 },
+            EpisodeIDs: [{ AniDB: 1001 }] }] });
+      } });
+    assert.deepEqual(await service.tickShokoProvisional(),
+      { state: 'recorded_file', fileId: 10 });
+    assert.deepEqual(service.getObservedShokoFileIds({
+      anidbId: 42, episodeId: 1001 }), [10]);
+    assert.equal(reads, 1);
+    assert.deepEqual(await service.tickShokoProvisional(), { state: 'idle' });
+    assert.equal(reads, 1);
+  } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('a first title view counts a complete multi-page regular season from current proof', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-season-roster-'));
   const dbPath = path.join(dir, 'negev.sqlite');

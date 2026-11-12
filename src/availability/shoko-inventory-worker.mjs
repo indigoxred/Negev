@@ -76,6 +76,13 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       paths_json TEXT NOT NULL,
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_provisional_rechecks (
+      file_id INTEGER PRIMARY KEY CHECK(file_id>0),
+      last_attempt_ms INTEGER NOT NULL CHECK(last_attempt_ms>=0)
+    ) STRICT`);
+    db.exec(`CREATE INDEX IF NOT EXISTS shoko_provisional_age
+      ON shoko_inventory_files(observed_ms,file_id)
+      WHERE state='provisional'`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_inventory_passes (
       pass INTEGER PRIMARY KEY CHECK(pass>0),
       total INTEGER NOT NULL CHECK(total>=0),
@@ -139,6 +146,17 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
   const cursor = db.prepare('SELECT page,pass,page_size AS pageSize FROM shoko_inventory_cursor WHERE id=1');
   const find = db.prepare(`SELECT file_id AS fileId,updated,state,pairs_json AS pairsJson,
     seen_pass AS seenPass,observed_ms AS observedMs FROM shoko_inventory_files WHERE file_id=?`);
+  const oldestProvisional = db.prepare(`SELECT f.file_id AS fileId,
+    f.observed_ms AS observedMs FROM shoko_inventory_files f
+    LEFT JOIN shoko_provisional_rechecks r ON r.file_id=f.file_id
+    WHERE f.state='provisional' AND f.observed_ms<=?
+      AND (r.last_attempt_ms IS NULL OR r.last_attempt_ms<=?)
+    ORDER BY MAX(f.observed_ms,COALESCE(r.last_attempt_ms,0)),f.file_id LIMIT 1`);
+  const saveProvisionalAttempt = db.prepare(`INSERT INTO shoko_provisional_rechecks
+    (file_id,last_attempt_ms) VALUES (?,?) ON CONFLICT(file_id) DO UPDATE SET
+    last_attempt_ms=MAX(last_attempt_ms,excluded.last_attempt_ms)`);
+  const clearProvisionalAttempt = db.prepare(`DELETE FROM shoko_provisional_rechecks
+    WHERE file_id=?`);
   const save = db.prepare(`INSERT INTO shoko_inventory_files
     (file_id,updated,state,pairs_json,seen_pass,observed_ms) VALUES (?,?,?,?,?,?)
     ON CONFLICT(file_id) DO UPDATE SET updated=excluded.updated,state=excluded.state,
@@ -248,6 +266,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     }
     save.run(item.fileId, item.updated, item.state, pairsJson,
       seenPass, observedMs);
+    if (item.state !== 'provisional') clearProvisionalAttempt.run(item.fileId);
     if (item.state !== 'linked' ||
         (previous && previous.updated !== item.updated) ||
         hintProvided) {
@@ -260,6 +279,19 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
     for (const pair of pairs) addPair.run(item.fileId, pair.anidbId, pair.episodeId);
   }
   return {
+    getOldestProvisionalFile({ beforeMs } = {}) {
+      if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) {
+        throw new TypeError('Invalid provisional recheck time');
+      }
+      const row = oldestProvisional.get(beforeMs, beforeMs);
+      return row ? { fileId: row.fileId, observedMs: row.observedMs } : null;
+    },
+    recordProvisionalRecheck({ fileId, attemptedMs } = {}) {
+      if (!validId(fileId) || !Number.isSafeInteger(attemptedMs) ||
+          attemptedMs < 0) throw new TypeError('Invalid provisional recheck');
+      saveProvisionalAttempt.run(fileId, attemptedMs);
+      return { state: 'recorded' };
+    },
     invalidateFileEvent({ fileId, observedMs }) {
       if (!validId(fileId) || !Number.isSafeInteger(observedMs) ||
           observedMs < 0) return held('invalid_file_event');

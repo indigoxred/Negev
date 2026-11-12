@@ -14,6 +14,29 @@ const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
 const linked = { ...provisional, updated: '2026-10-31T01:00:00Z', state: 'linked',
   pairs: [{ anidbId: 42, episodeId: 1001 }] };
 
+test('oldest provisional file is offered for a paced recognition recheck', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-provisional-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  try {
+    ledger.recordFileObservation({ item: { ...provisional, fileId: 11 }, observedMs: 100 });
+    ledger.recordFileObservation({ item: { ...provisional, fileId: 10 }, observedMs: 200 });
+    assert.equal(ledger.getOldestProvisionalFile({ beforeMs: 99 }), null);
+    assert.deepEqual(ledger.getOldestProvisionalFile({ beforeMs: 150 }),
+      { fileId: 11, observedMs: 100 });
+    ledger.recordProvisionalRecheck({ fileId: 11, attemptedMs: 250 });
+    assert.deepEqual(ledger.getOldestProvisionalFile({ beforeMs: 250 }),
+      { fileId: 10, observedMs: 200 });
+    ledger.recordProvisionalRecheck({ fileId: 10, attemptedMs: 260 });
+    assert.equal(ledger.getOldestProvisionalFile({ beforeMs: 200 }), null);
+    ledger.recordFileObservation({ item: { ...provisional, fileId: 11 }, observedMs: 300 });
+    assert.deepEqual(ledger.getOldestProvisionalFile({ beforeMs: 400 }),
+      { fileId: 10, observedMs: 200 });
+    ledger.recordFileObservation({ item: { ...linked, fileId: 10 }, observedMs: 500 });
+    ledger.recordFileObservation({ item: { ...linked, fileId: 11 }, observedMs: 500 });
+    assert.equal(ledger.getOldestProvisionalFile({ beforeMs: 1_000 }), null);
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('an excessive omission is identified separately from a transient bad page', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-cap-'));
   const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
