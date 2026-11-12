@@ -30,14 +30,23 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
     .filter((item) => validId(item.requestId)).map((item) => item.anidbId));
   const candidates = new Set(mapped.anidbIds);
   const relationHolds = [];
-  for (const sourceId of new Set([...mapped.anidbIds, ...recorded])) {
+  const queue = [...new Set([...mapped.anidbIds, ...recorded])];
+  const visited = new Set();
+  while (queue.length > 0) {
+    if (visited.size >= 20) return held('too_many_parent_relations');
+    const sourceId = queue.shift();
+    if (visited.has(sourceId)) continue;
+    visited.add(sourceId);
     const related = await confirmedSequelIds({ sourceId,
       readRelations });
     if (related.state === 'confirmed') {
-      for (const id of related.anidbIds) candidates.add(id);
+      for (const id of related.anidbIds) {
+        candidates.add(id);
+        if (!visited.has(id)) queue.push(id);
+      }
     } else relationHolds.push(sourceId);
+    if (candidates.size > 100) return held('too_many_parent_candidates');
   }
-  if (candidates.size > 100) return held('too_many_parent_candidates');
   const created = [];
   const existing = [];
   const skipped = [];

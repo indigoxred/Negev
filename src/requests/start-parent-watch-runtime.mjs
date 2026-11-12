@@ -73,8 +73,8 @@ export function startParentWatchRuntime({ config, shokoApiKey,
     const readRelations = async (anidbId) => {
       const [local, archiveRelations] = await Promise.all([
         readShokoRelations({
-        baseUrl: config.shokoBaseUrl, apiKey: shokoApiKey,
-        anidbId, fetchImpl, timeoutMs: 5_000 }),
+          baseUrl: config.shokoBaseUrl, apiKey: shokoApiKey,
+          anidbId, fetchImpl, timeoutMs: 5_000 }),
         readArchiveRelations({ anidbId, titleForId: () => null,
           fetchImpl, timeoutMs: 5_000 }),
       ]);
