@@ -317,6 +317,14 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Title check needs scoped public Plex discovery');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
+  if (env.NEGEV_PARENT_WATCH != null &&
+      !['0', '1'].includes(env.NEGEV_PARENT_WATCH)) {
+    throw new TypeError('Invalid parent watch flag');
+  }
+  const parentWatch = env.NEGEV_PARENT_WATCH === '1';
+  if (parentWatch && !airingWatch) {
+    throw new TypeError('Parent watch needs Airing watch');
+  }
   if (airingWatch && !env.NEGEV_TIME_ZONE) {
     throw new TypeError('Airing watch time zone required');
   }
@@ -373,12 +381,19 @@ export function parseUserServerConfig(env) {
     'NEGEV_ACQUISITION_IMPORT_PARENT', 'NEGEV_ACQUISITION_IMPORT_FOLDER_ID',
     'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH',
     'NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS', 'NEGEV_SONARR_OWNERSHIP_URL',
-    'NEGEV_SONARR_API_KEY_FILE', 'NEGEV_SONARR_API_KEY'];
+    'NEGEV_SONARR_API_KEY_FILE', 'NEGEV_SONARR_API_KEY',
+    'NEGEV_ANIME_SOLE_OWNER'];
   let acquisition = null;
   let sonarrOwnership = null;
+  let animeSoleOwner = false;
   let acquisitionImportParent = null;
   let acquisitionImportFolderId = null;
   if (acquisitionRuntime) {
+    if (env.NEGEV_ANIME_SOLE_OWNER != null &&
+        !['0', '1'].includes(env.NEGEV_ANIME_SOLE_OWNER)) {
+      throw new TypeError('Invalid sole anime owner flag');
+    }
+    animeSoleOwner = env.NEGEV_ANIME_SOLE_OWNER === '1';
     if (Object.hasOwn(env, 'NEGEV_SONARR_API_KEY')) {
       throw new TypeError('Sonarr credential must be a private file');
     }
@@ -415,7 +430,10 @@ export function parseUserServerConfig(env) {
         throw new TypeError('Invalid acquisition title cohort');
       }
     }
-    if (allowedAnidbIds === null && sonarrOwnership === null) {
+    if (animeSoleOwner && sonarrOwnership !== null) {
+      throw new TypeError('Sole anime owner conflicts with Sonarr ownership guard');
+    }
+    if (allowedAnidbIds === null && sonarrOwnership === null && !animeSoleOwner) {
       throw new TypeError('Unrestricted acquisition needs an ownership guard');
     }
     if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
@@ -461,7 +479,7 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Acquisition runtime is disabled');
   }
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
-    acquisitionRuntime, acquisition, sonarrOwnership,
+    acquisitionRuntime, acquisition, sonarrOwnership, animeSoleOwner,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
     acquisitionImportParent, acquisitionImportFolderId,
@@ -480,7 +498,7 @@ export function parseUserServerConfig(env) {
     titleCheck: env.NEGEV_TITLE_CHECK === '1',
     shokoHydration: env.NEGEV_SHOKO_HYDRATION === '1',
     anidbTitleDump: env.NEGEV_ANIDB_TITLE_DUMP === '1',
-    airingWatch, timeZone, plex,
+    airingWatch, parentWatch, timeZone, plex,
     prowlarr, qbitSidecar,
     plexIndex: env.NEGEV_PLEX_INDEX === '1',
     plexIndexIntervalMs: Number(rawPlexIndexInterval ?? 60_000), publicOrigin,

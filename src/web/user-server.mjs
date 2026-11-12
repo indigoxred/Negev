@@ -28,12 +28,14 @@ import { createDirectAvailabilityScheduler } from
 import { createAvailabilityCycle } from '../availability/availability-cycle.mjs';
 import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
 import { startAcquisitionRuntime } from '../acquisition/start-acquisition-runtime.mjs';
+import { startParentWatchRuntime } from '../requests/start-parent-watch-runtime.mjs';
 
 let service;
 let shokoFeedSupervisor;
 let shokoInventory;
 let shokoRecent;
 let airingScheduler;
+let parentWatchRuntime;
 let plexScheduler;
 let fileBackfillScheduler;
 let directAvailabilityScheduler;
@@ -131,6 +133,7 @@ try {
       pageDelayMs: 60_000 });
     airingScheduler.start();
   }
+  parentWatchRuntime = startParentWatchRuntime({ config, shokoApiKey });
   if (config.plexIndex) {
     plexScheduler = createPlexIndexScheduler({
       sections: config.plex.publicSections,
@@ -176,6 +179,7 @@ try {
     stopping = true;
     try {
       await airingScheduler?.stop();
+      await parentWatchRuntime?.close();
       await plexScheduler?.close();
       await fileBackfillScheduler?.close();
       await directAvailabilityScheduler?.close();
@@ -191,6 +195,7 @@ try {
 } catch (error) {
   try {
     await airingScheduler?.stop();
+    await parentWatchRuntime?.close();
     await plexScheduler?.close();
     await fileBackfillScheduler?.close();
     await directAvailabilityScheduler?.close();
