@@ -96,6 +96,55 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
   } finally { await app.close(); }
 });
 
+test('Sonarr ownership closes monitored titles and fails closed on an API outage', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const submitted = [];
+  let unavailable = false;
+  const ownershipGate = {
+    status: (id) => unavailable ? 'unavailable' :
+      id === 41 ? 'owned' : id === 42 ? 'eligible' : 'unmapped',
+    refresh: async () => unavailable
+      ? { state: 'held', reason: 'sonarr_ownership_unavailable' }
+      : { state: 'ready' },
+  };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    ownershipGate,
+    loadDetail: async ({ anidbId }) => ({ state: 'details', anidbId,
+      kind: 'series', restricted: false, episodes: [], nextPage: null }),
+    submitRequest: async (input) => {
+      submitted.push(input);
+      return { state: 'held', requestId: 2, reason: 'test_request' };
+    }, readRequest: () => null });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/41',
+      headers: { cookie } })).json().requestsOpen, false);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/42',
+      headers: { cookie } })).json().requestsOpen, true);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 41, scope: 'installment', requestKey: 'owned' } })).statusCode, 409);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 43, scope: 'installment', requestKey: 'unknown' } })).statusCode, 409);
+    unavailable = true;
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 42, scope: 'installment', requestKey: 'outage' } })).statusCode, 503);
+    unavailable = false;
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId: 42, scope: 'installment', requestKey: 'open' } })).statusCode, 202);
+    assert.equal(submitted.length, 1);
+  } finally { await app.close(); }
+});
+
 test('signed-in Airing preferences are owner scoped and require CSRF to change', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };

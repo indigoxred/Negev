@@ -48,6 +48,26 @@ const options = (calls) => ({
   now: () => 200,
 } );
 
+test('Sonarr ownership blocks request search and a previously reserved start', async () => {
+  const calls = [];
+  const guard = { refresh: async () => ({ state: 'ready' }),
+    status: () => 'owned' };
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    ownershipGate: guard,
+    acquisitions: { getAttempt: () => ({ id: 7, requestId: 1 }) },
+  });
+  assert.deepEqual(await stages.processRequest({ requestId: 1,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('qBittorrent called'); },
+    providerFetchImpl: async () => { throw Error('Prowlarr called'); } }),
+  { state: 'held', reason: 'sonarr_title_owned' });
+  assert.deepEqual(await stages.processStart({ attemptId: 7,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('qBittorrent called'); } }),
+  { state: 'held', reason: 'sonarr_title_owned' });
+  assert.ok(!calls.includes('search'));
+});
+
 test('construction is inert and a no-candidate request cannot touch download providers', async () => {
   const calls = [];
   const stages = createAcquisitionStageProcessors(options(calls));

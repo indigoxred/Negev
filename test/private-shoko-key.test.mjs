@@ -4,7 +4,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { readPrivatePlexToken, readPrivateProwlarrKey, readPrivateQbittorrentPassword,
-  readPrivateShokoKey } from '../src/web/private-shoko-key.mjs';
+  readPrivateShokoKey, readPrivateSonarrKey } from '../src/web/private-shoko-key.mjs';
+
+test('Sonarr ownership key accepts only its restricted private file', async () => {
+  const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-sonarr-key-'));
+  try {
+    const secretDir = path.join(dataDir, 'secrets');
+    await mkdir(secretDir, { mode: 0o700 });
+    const keyPath = path.join(secretDir, 'sonarr.token');
+    await writeFile(keyPath, 'synthetic-sonarr\n', { mode: 0o600 });
+    assert.equal(await readPrivateSonarrKey({ dataDir, keyPath }),
+      'synthetic-sonarr');
+    await assert.rejects(readPrivateSonarrKey({ dataDir,
+      keyPath: path.join(secretDir, 'shoko.token') }), TypeError);
+  } finally { await rm(dataDir, { recursive: true, force: true }); }
+});
 
 test('account server reads a restricted Shoko token file without using Docker env secrets', async () => {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'negev-key-'));

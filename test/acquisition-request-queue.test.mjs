@@ -13,6 +13,35 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a live ownership gate skips Sonarr titles without claiming them',
+  async () => fixture(async (dbPath) => {
+    let owned = new Set([41, 42]);
+    const gate = { status: (id) => owned.has(id) ? 'owned' : 'eligible' };
+    const queue = openAcquisitionRequestQueue(dbPath,
+      { ownershipGate: gate });
+    try {
+      assert.deepEqual(queue.claimNext({ nowMs: 10 }),
+        { state: 'claimed', requestId: 3, pass: 1 });
+      assert.equal(queue.claimNext({ nowMs: 10 }).state, 'pass_complete');
+      owned = new Set();
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 1);
+      assert.equal(queue.claimNext({ nowMs: 11 }).requestId, 2);
+    } finally { queue.close(); }
+  }));
+
+test('an unavailable ownership gate cannot claim a request',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath,
+      { ownershipGate: { status: () => 'unavailable' } });
+    try {
+      assert.deepEqual(queue.claimNext({ nowMs: 10 }),
+        { state: 'held', reason: 'sonarr_ownership_unavailable' });
+      const db = new DatabaseSync(dbPath);
+      try { assert.equal(db.prepare('SELECT count(*) AS total FROM acquisition_request_checks').get().total, 0); }
+      finally { db.close(); }
+    } finally { queue.close(); }
+  }));
+
 test('an exact acquisition cohort skips other saved titles across restart',
   async () => fixture(async (dbPath) => {
     const first = openAcquisitionRequestQueue(dbPath, { allowedAnidbIds: [42] });

@@ -3,7 +3,9 @@ import { createUserService } from './user-service.mjs';
 import { dateInZone, parseUserServerConfig } from './user-server-config.mjs';
 import { readPrivatePlexToken, readPrivateProwlarrKey,
   readPrivateQbittorrentPassword,
-  readPrivateShokoKey } from './private-shoko-key.mjs';
+  readPrivateShokoKey, readPrivateSonarrKey } from './private-shoko-key.mjs';
+import { createSonarrOwnershipGuard } from
+  '../acquisition/sonarr-ownership-guard.mjs';
 import { createQbittorrentSidecarObserver } from
   '../availability/qbittorrent-sidecar-observer.mjs';
 import { createQbittorrentSessionGate } from
@@ -43,6 +45,11 @@ try {
   store.accounts.close();
   const shokoApiKey = await readPrivateShokoKey({ dataDir: config.dataDir,
     keyPath: config.shokoApiKeyPath });
+  const acquisitionOwnershipGate = config.sonarrOwnership ?
+    createSonarrOwnershipGuard({
+      sonarrBaseUrl: config.sonarrOwnership.baseUrl,
+      sonarrApiKey: await readPrivateSonarrKey({ dataDir: config.dataDir,
+        keyPath: config.sonarrOwnership.keyPath }) }) : null;
   const plex = config.plex ? { ...config.plex,
     plexToken: await readPrivatePlexToken({ dataDir: config.dataDir,
       keyPath: config.plex.plexTokenPath }) } : null;
@@ -63,6 +70,7 @@ try {
     }),
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
+    acquisitionOwnershipGate,
     acquisitionAllowedAnidbIds: config.acquisition?.allowedAnidbIds ?? null,
     shokoApiKey, sessionKey, qbitSidecarObserver,
     ...(process.env.NEGEV_IMPORT_FENCE_TRACE === '1' ? {
@@ -77,7 +85,7 @@ try {
     },
     today: () => dateInZone(config.timeZone) });
   await startAcquisitionRuntime({ config, service, sessionGate: qbitSessionGate,
-    shokoApiKey });
+    shokoApiKey, ownershipGate: acquisitionOwnershipGate });
   await service.app.listen({ host: config.host, port: config.port });
   const reportShokoFeedStatus = createShokoFeedStatusReporter();
   const flagShokoGap = (reason) => {
