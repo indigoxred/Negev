@@ -33,6 +33,7 @@ import { startParentWatchRuntime } from '../requests/start-parent-watch-runtime.
 let service;
 let shokoFeedSupervisor;
 let shokoInventory;
+let shokoProvisional;
 let shokoRecent;
 let airingScheduler;
 let parentWatchRuntime;
@@ -120,6 +121,11 @@ try {
   if (config.shokoInventory) {
     shokoInventory = createShokoInventoryScheduler({ tick: service.tickShokoInventory });
     shokoInventory.start();
+    shokoProvisional = createDirectAvailabilityScheduler({
+      runOnce: service.tickShokoProvisional,
+      initialDelayMs: 30_000, activeDelayMs: 2 * 60_000,
+      idleDelayMs: 2 * 60_000 });
+    shokoProvisional.start();
   }
   if (config.shokoRecent) {
     shokoRecent = createShokoRecentScheduler({
@@ -185,6 +191,7 @@ try {
       await directAvailabilityScheduler?.close();
       await pendingTitleScheduler?.close();
       await shokoInventory?.close();
+      await shokoProvisional?.close();
       await shokoRecent?.close();
       await shokoFeedSupervisor?.close();
     }
@@ -201,6 +208,7 @@ try {
     await directAvailabilityScheduler?.close();
     await pendingTitleScheduler?.close();
     await shokoInventory?.close();
+    await shokoProvisional?.close();
     await shokoRecent?.close();
     await shokoFeedSupervisor?.close();
   }

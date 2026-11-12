@@ -842,6 +842,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         return track(fullReconciliation.tick());
       },
+      tickShokoProvisional: async () => {
+        if (stopping) return { state: 'held', reason: 'service_stopping' };
+        const observedMs = now();
+        const beforeMs = observedMs - 5 * 60_000;
+        if (!Number.isSafeInteger(beforeMs) || beforeMs < 0) {
+          return { state: 'idle' };
+        }
+        const candidate = inventory.getOldestProvisionalFile({ beforeMs });
+        if (!candidate) return { state: 'idle' };
+        // One Shoko GET per paced tick. A failed read cannot pin later files.
+        inventory.recordProvisionalRecheck({ fileId: candidate.fileId,
+          attemptedMs: observedMs });
+        return refreshShokoFile(candidate.fileId);
+      },
       tickShokoRecentScan: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
         if (!recentWorker) return Promise.resolve({ state: 'held',
