@@ -32,13 +32,28 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
   const relationHolds = [];
   const queue = [...new Set([...mapped.anidbIds, ...recorded])];
   const visited = new Set();
+  const relationCache = new Map();
+  let relationBudgetExhausted = false;
+  const budgetedRelations = (anidbId) => {
+    if (relationCache.has(anidbId)) return relationCache.get(anidbId);
+    if (relationCache.size >= 12) {
+      relationBudgetExhausted = true;
+      return { state: 'unavailable' };
+    }
+    const result = Promise.resolve().then(() => readRelations(anidbId));
+    relationCache.set(anidbId, result);
+    return result;
+  };
   while (queue.length > 0) {
-    if (visited.size >= 20) return held('too_many_parent_relations');
     const sourceId = queue.shift();
     if (visited.has(sourceId)) continue;
+    if (visited.size >= 20) {
+      relationHolds.push(sourceId);
+      break;
+    }
     visited.add(sourceId);
     const related = await confirmedSequelIds({ sourceId,
-      readRelations });
+      readRelations: budgetedRelations });
     if (related.state === 'confirmed') {
       for (const id of related.anidbIds) {
         candidates.add(id);
@@ -46,6 +61,7 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
       }
     } else relationHolds.push(sourceId);
     if (candidates.size > 100) return held('too_many_parent_candidates');
+    if (relationBudgetExhausted) break;
   }
   const created = [];
   const existing = [];
@@ -94,5 +110,6 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
   }
   return { state: 'reconciled', created, existing, skipped,
     ...(heldCandidates.length ? { heldCandidates } : {}),
-    ...(relationHolds.length ? { relationHolds } : {}) };
+    ...(relationHolds.length ? { relationHolds } : {}),
+    ...(relationBudgetExhausted ? { relationBudgetExhausted: true } : {}) };
 }

@@ -91,6 +91,28 @@ test('a later reciprocal sequel is found through a completed intermediary', asyn
     assert.equal(requests.countRequests(), 1);
   }));
 
+test('a long reciprocal chain stays within a read budget and records a hold', async () =>
+  withLedgers(async ({ requests, parents }) => {
+    const reads = [];
+    const result = await reconcileParentWatch({
+      parent: parents.listActive({ limit: 10 })[0], map, parents, requests,
+      loadDetail: async ({ anidbId }) => detail(anidbId,
+        { endDate: '2026-11-02' }),
+      readRelations: async (id) => {
+        reads.push(id);
+        return { state: 'related_titles', anidbId: id,
+          items: [
+            ...(id > 11 ? [{ anidbId: id - 1, relation: 'Prequel' }] : []),
+            ...(id < 30 ? [{ anidbId: id + 1, relation: 'Sequel' }] : []),
+          ] };
+      }, today: '2026-11-12', nowMs: 2000 });
+    assert.equal(result.state, 'reconciled');
+    assert.equal(result.relationBudgetExhausted, true);
+    assert.equal(reads.length, 12);
+    assert.deepEqual(result.created, []);
+    assert.equal(requests.countRequests(), 0);
+  }));
+
 test('incomplete detail holds a candidate and does not create a watch', async () =>
   withLedgers(async ({ requests, parents }) => {
     const result = await reconcileParentWatch({
