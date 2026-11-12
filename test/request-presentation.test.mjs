@@ -27,6 +27,23 @@ test('a saved request and an unobserved download do not claim a transfer or ETA'
   });
 });
 
+test('a recovering download gives an accurate automatic retry message', () => {
+  assert.deepEqual(requestPresentation({ ...base, state: 'download_unverified',
+    connectionRetrying: true }, 'movie'), {
+    stage: 'Reconnecting to download service',
+    detail: 'Your request remains saved. Negev is retrying automatically.',
+    note: '', group: 'active',
+  });
+  assert.deepEqual(requestPresentation({ ...base, state: 'download_unverified',
+    completionRetrying: true }, 'movie'), {
+    stage: 'Resuming file check',
+    detail: 'Negev is checking the download before adding it to the library.',
+    note: '', group: 'active',
+  });
+  assert.equal(requestPresentation({ ...base, state: 'download_unverified',
+    completionChecking: true }, 'movie').stage, 'Checking the download');
+});
+
 test('recent measured transfer reports its state and a qualified download ETA only', () => {
   const transfer = { progressBasisPoints: 3750, etaSeconds: 120,
     speedBytesPerSecond: 512, transferState: 'active', observedMs: 1_000 };

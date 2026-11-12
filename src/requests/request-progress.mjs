@@ -20,7 +20,7 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
   const request = db.prepare(`SELECT r.id,COUNT(rt.target_id) AS target_count
     FROM requests r LEFT JOIN request_targets rt ON rt.request_id=r.id
     WHERE r.id=? GROUP BY r.id`);
-  const attempts = db.prepare(`SELECT a.status,
+  const attempts = db.prepare(`SELECT a.id AS attempt_id,a.status,
       (SELECT COUNT(*) FROM acquisition_target_claims c
         WHERE c.attempt_id=a.id AND c.active=1) AS claimed_count,
       s.status AS start_status,h.status AS handoff_status,
@@ -44,6 +44,10 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
   let scheduledRetry;
   let inconclusiveFileCheck;
   let transferCheck;
+  let activeCompletionCheck;
+  let activeRequestCheck;
+  const authRetryReason = (reason) => ['provider_http_403',
+    'authentication_backoff', 'authentication_unavailable'].includes(reason);
   let suspensionCheck;
   const waitingForOwner = (requestId) => {
     // Acquisition can be enabled after this read-only progress connection
@@ -181,10 +185,31 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
           ? 'release_check_retrying' : 'torrent_unverified';
       } else if (active.length > 0) state = 'release_preparing';
       const transfer = recentTransfer(requestId);
+      let connectionRetrying = false;
+      let completionRetrying = false;
+      let completionChecking = false;
+      const latestStarted = active.filter((row) => row.start_status).at(-1);
+      if (latestStarted && hasCompletionChecks.get()) {
+        activeCompletionCheck ??= db.prepare(`SELECT state,reason
+          FROM completion_checks WHERE attempt_id=?`);
+        const check = activeCompletionCheck.get(latestStarted.attempt_id);
+        completionRetrying = check?.reason === 'interrupted_retry';
+        completionChecking = check?.state === null;
+        connectionRetrying = authRetryReason(check?.reason);
+      }
+      if (!completionRetrying && !completionChecking &&
+          !connectionRetrying && hasAcquisitionChecks.get()) {
+        activeRequestCheck ??= db.prepare(`SELECT reason FROM acquisition_request_checks
+          WHERE request_id=? AND state='held'`);
+        connectionRetrying = authRetryReason(activeRequestCheck.get(requestId)?.reason);
+      }
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
         reviewRequired, publicAvailability: 'unverified',
         ...(transfer ? { transfer } : {}),
+        ...(connectionRetrying ? { connectionRetrying } : {}),
+        ...(completionRetrying ? { completionRetrying } : {}),
+        ...(completionChecking ? { completionChecking } : {}),
         ...(state === 'partial_private_copy' && identityState === 'retrying'
           ? { identityCheckPending: true } : {}),
         ...(state === 'partial_private_copy' && identityState === 'retiring'

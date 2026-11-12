@@ -4,15 +4,17 @@ import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 const held = (reason) => ({ state: 'held', reason });
 const validSid = validQbittorrentSessionId;
 // Refresh before qBittorrent's default one-hour WebUI session lifetime.
-// A configured shorter lifetime still follows the existing 403/backoff path.
+// A configured shorter lifetime is recovered through one shared re-login.
 const MAX_SESSION_AGE_MS = 30 * 60_000;
+const REPEATED_REJECTION_WINDOW_MS = 60_000;
 
-// One session for the paced acquisition runtime. A bad password or a 403
-// latches until restart so worker ticks cannot trigger qBittorrent's IP ban.
+// One session for the paced acquisition runtime. A bad password latches until
+// restart so worker ticks cannot trigger qBittorrent's IP ban. A rejected SID
+// is different: it needs one immediate, shared re-login with known credentials.
 // A caller must invalidate an exact SID after an authenticated API rejection.
 export function createQbittorrentSessionGate({ baseUrl, username, password,
   login = loginQbittorrent, now = Date.now,
-  retryDelayMs = 30 * 60_000 } = {}) {
+  retryDelayMs = 30_000 } = {}) {
   if (typeof baseUrl !== 'string' || !baseUrl ||
       typeof username !== 'string' || !username ||
       typeof password !== 'string' || !password ||
@@ -26,6 +28,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
   let pending;
   let rejectedReason = null;
   let retryAtMs = null;
+  let lastInvalidatedAtMs = null;
   const clock = () => {
     const value = now();
     if (!Number.isSafeInteger(value) || value < 0) {
@@ -82,8 +85,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
       if (sessionId !== expectedSessionId) {
         return fresh(currentMs)
           ? Promise.resolve({ state: 'authenticated', sessionId })
-          : sessionId ? authenticate(currentMs)
-            : Promise.resolve(held('authentication_backoff'));
+          : authenticate(currentMs);
       }
       return authenticate(currentMs);
     },
@@ -93,8 +95,11 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
       }
       sessionId = null;
       authenticatedAtMs = null;
-      retryAtMs = clock() + retryDelayMs;
-      if (!Number.isSafeInteger(retryAtMs)) retryAtMs = Number.MAX_SAFE_INTEGER;
+      const currentMs = clock();
+      retryAtMs = lastInvalidatedAtMs !== null &&
+        currentMs - lastInvalidatedAtMs < REPEATED_REJECTION_WINDOW_MS
+        ? Math.min(currentMs + retryDelayMs, Number.MAX_SAFE_INTEGER) : null;
+      lastInvalidatedAtMs = currentMs;
       return { state: 'invalidated' };
     },
     getStatus() {

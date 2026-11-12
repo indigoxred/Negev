@@ -60,6 +60,18 @@ test('one stopped torrent holds while later stopped torrents advance', async () 
       ctx.ids[0].attemptId);
   }));
 
+test('a temporary session backoff remains retryable after the second start check', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId, version: first.version,
+      state: 'held', reason: 'authentication_backoff', checkedMs: 1_001 });
+    const second = ctx.queue.claimNext({ nowMs: 61_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    ctx.queue.recordResult({ attemptId: second.attemptId, version: second.version,
+      state: 'held', reason: 'authentication_backoff', checkedMs: 61_002 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
+  }));
+
 test('cutover hold excludes saved starts until explicit resume', async () =>
   fixture(async (ctx) => {
     const later = ctx.requests.submit({ requesterId: 1,

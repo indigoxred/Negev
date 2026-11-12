@@ -21,6 +21,7 @@ export function openAcquisitionRuntime(options = {}) {
   const stages = createAcquisitionStageProcessors({
     ...providers, acquisitions, ownershipGate, providerFetchImpl: fetchImpl, now });
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    holdingRoot: providers.holdingRoot,
     qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate,
     fetchImpl, now, ...stages });
   const scheduler = createPipelineScheduler({ pipeline, now });

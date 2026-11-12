@@ -44,7 +44,7 @@ test('modern qBittorrent cookie is sent unchanged on the exact sidecar read', as
   assert.equal((await observer.readTorrent(hash)).hash, hash);
 });
 
-test('rejected sidecar session stays held without a login storm', async () => {
+test('rejected sidecar session retries once, then backs off repeated 403s', async () => {
   let logins = 0;
   let requests = 0;
   const observer = createQbittorrentSidecarObserver({
@@ -57,8 +57,9 @@ test('rejected sidecar session stays held without a login storm', async () => {
   });
   assert.equal(await observer.readTorrent(hash), null);
   assert.equal(await observer.readTorrent(hash), null);
-  assert.equal(logins, 1);
-  assert.equal(requests, 1);
+  assert.equal(await observer.readTorrent(hash), null);
+  assert.equal(logins, 2);
+  assert.equal(requests, 2);
 });
 
 test('invalid sidecar hash never authenticates or contacts qBittorrent', async () => {
@@ -74,7 +75,7 @@ test('invalid sidecar hash never authenticates or contacts qBittorrent', async (
   assert.equal(networkCalls, 0);
 });
 
-test('sidecar and acquisition share one login and rejected session', async () => {
+test('sidecar and acquisition share one immediate session recovery', async () => {
   let logins = 0;
   let requests = 0;
   const baseUrl = 'http://qbit.internal:8080';
@@ -99,7 +100,7 @@ test('sidecar and acquisition share one login and rejected session', async () =>
     'no_candidate');
   assert.equal(await observer.readTorrent(hash), null);
   assert.equal((await runners.processStart({ attemptId: 2 })).reason,
-    'authentication_backoff');
-  assert.equal(logins, 1);
+    'no_start');
+  assert.equal(logins, 2);
   assert.equal(requests, 1);
 });

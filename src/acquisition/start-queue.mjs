@@ -6,6 +6,7 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validReason = (value) => typeof value === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(value);
 const RETRY_MS = 30 * 60_000;
+const SESSION_RETRY_MS = 60_000;
 const INTERRUPTED_RETRY_MS = 5 * 60_000;
 
 // One stopped torrent per explicit tick. Only a guarded start coordinator may
@@ -105,7 +106,11 @@ export function openStartQueue(dbPath) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid start result');
       }
-      const due = state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;
+      const sessionRetry = ['provider_http_403', 'authentication_backoff',
+        'authentication_unavailable'].includes(reason);
+      const due = state === 'held' && sessionRetry
+        ? checkedMs + SESSION_RETRY_MS :
+        state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid start clock');
       return transact(() => {
         const intent = start.get(attemptId);

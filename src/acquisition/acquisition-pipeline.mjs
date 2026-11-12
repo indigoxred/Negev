@@ -6,6 +6,7 @@ import { openHandoffPublishQueue, createHandoffPublishWorker } from
   './handoff-publish-queue.mjs';
 import { createAcquisitionSessionRunners } from
   './acquisition-session-runners.mjs';
+import { recoverOrphanedHolding } from './orphaned-holding-recovery.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -13,7 +14,7 @@ const held = (reason) => ({ state: 'held', reason });
 // explicit ticks, not a timer or HTTP route. Only one stage may run at a time
 // to bound concurrent media reads. A caller must supply guarded processors
 // and finish restart reconciliation before any tick can run.
-export function openAcquisitionPipeline({ dbPath, acquisitions,
+export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   processRequest, processStart, processCompletion, processPublish,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now } = {}) {
@@ -52,6 +53,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
   let closed = false;
   let closing;
   let running = false;
+  let holdingRecovered = false;
   const run = (worker) => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
@@ -73,6 +75,10 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
         .every((result) => result.held.length === 0)) return Promise.resolve(recovery);
       if (!initialization) {
         initialization = (async () => {
+          if (holdingRoot && !holdingRecovered) {
+            await recoverOrphanedHolding({ holdingRoot, dbPath });
+            holdingRecovered = true;
+          }
           const requests = await reconcileUnresolvedAcquisitionClaims({
             queue: requestQueue, now,
             inspectRequest: (requestId) =>
