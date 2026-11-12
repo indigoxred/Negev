@@ -64,7 +64,12 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         continue;
       }
       successful++;
-      buckets.push(result.items);
+      // Preserve which bucket answered the exact missing-episode query. This
+      // is ordering evidence only; stopped metainfo and identity checks still
+      // decide whether a candidate can be submitted.
+      buckets.push(targeted && index === 0
+        ? result.items.map((item) => ({ ...item, targetedEpisode: true }))
+        : result.items);
     }
     if (successful === 0) return held('release_search_unavailable');
     const items = [];

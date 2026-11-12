@@ -45,6 +45,9 @@ test('a missing episode search reaches older releases without losing title alias
     assert.ok(found.items.some((item) => item.title.startsWith(`${query} release`)));
   }
   assert.ok(found.items[0].title.startsWith('Canonical Anime 01 release'));
+  assert.equal(found.items[0].targetedEpisode, true);
+  assert.equal(found.items.find((item) =>
+    item.title.startsWith('Canonical Anime release')).targetedEpisode, undefined);
 });
 
 test('an episode search cannot use a target outside the saved request', async () => {

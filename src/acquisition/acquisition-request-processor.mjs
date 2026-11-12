@@ -77,15 +77,23 @@ export function createAcquisitionRequestProcessor({ readRequest,
         !Array.isArray(found.items) || found.items.length > 50 ||
         found.items.some((candidate) => !validId(candidate?.indexerId) ||
           typeof candidate.guid !== 'string' || !candidate.guid ||
-          candidate.guid.length > MAX_RELEASE_GUID_LENGTH || candidate.evidence !== 'unverified')) {
+          candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
+          candidate.evidence !== 'unverified' ||
+          (candidate.targetedEpisode !== undefined &&
+            typeof candidate.targetedEpisode !== 'boolean'))) {
       return held('release_search_unavailable');
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),
       nextCandidateOffset: 0 };
-    // Prefer a release with peers, while retaining provider order for ties.
-    // The exact AniDB and file checks below still decide whether it is safe.
+    // Inspect exact-episode search hits before broad title hits, then prefer
+    // peers within each group. This is ordering only: metainfo, ownership and
+    // exact file checks still decide whether a release is safe.
     const candidates = [...new Map(found.items.map((item) =>
       [`${item.indexerId}:${item.guid}`, item])).values()].sort((a, b) => {
+      if (a.targetedEpisode !== b.targetedEpisode) {
+        return Number(b.targetedEpisode === true) -
+          Number(a.targetedEpisode === true);
+      }
       const peers = (item) => Number.isSafeInteger(item.seeders) &&
         item.seeders >= 0 ? item.seeders : -1;
       return peers(b) - peers(a);
@@ -97,12 +105,20 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Only a changed target set restarts a sweep. Indexers can add/drop
     // releases between pages; keep the still-present unvisited releases in
     // order and append newcomers so churn cannot starve an older candidate.
+    // A rotated episode search may promote an unvisited release. Promote it
+    // within the unvisited suffix without repeating already inspected items.
     const fingerprint = createHash('sha256').update(JSON.stringify(
-      [...request.episodeIds].sort((a, b) => a - b))).digest('hex');
+      ['targeted-first-v1', ...[...request.episodeIds].sort((a, b) => a - b)]))
+      .digest('hex');
     const saved = typeof candidateFingerprint === 'string' &&
       candidateFingerprint.length <= 3_400 ? candidateFingerprint.split(':') : [];
-    const savedOrder = saved.length === 2 && saved[0] === fingerprint ?
-      saved[1].split(',') : [];
+    const savedGroups = saved.length === 2 && saved[0] === fingerprint ?
+      saved[1].split('|') : [];
+    const originalOrder = savedGroups.length >= 1 && savedGroups.length <= 2 ?
+      savedGroups[0].split(',').filter(Boolean) : [];
+    const appendedOrder = savedGroups.length === 2 ?
+      savedGroups[1].split(',').filter(Boolean) : [];
+    const savedOrder = [...originalOrder, ...appendedOrder];
     const sameTarget = savedOrder.length > 0 &&
       new Set(savedOrder).size === savedOrder.length &&
       savedOrder.every((id) => /^[0-9a-f]{64}$/.test(id));
@@ -113,10 +129,22 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const previous = new Set(savedOrder);
     const newcomers = sameTarget ? [...currentById.keys()]
       .filter((id) => !previous.has(id)) : [];
-    const order = sameTarget ? [...consumed, ...remaining, ...newcomers] :
+    const originalIds = new Set(originalOrder);
+    const priorityRemaining = [
+      ...remaining.filter((id) => originalIds.has(id) &&
+        currentById.get(id).targetedEpisode === true),
+      ...remaining.filter((id) => originalIds.has(id) &&
+        currentById.get(id).targetedEpisode !== true),
+      ...remaining.filter((id) => !originalIds.has(id)),
+    ];
+    // New discoveries join after the saved sweep. A fresh targeted result on
+    // every pass must not starve older unvisited candidates indefinitely.
+    const order = sameTarget ? [...consumed, ...priorityRemaining, ...newcomers] :
       [...currentById.keys()];
     const ordered = order.map((id) => currentById.get(id));
-    const cursor = `${fingerprint}:${ordered.map(candidateId).join(',')}`;
+    const primaryIds = sameTarget ? order.filter((id) => originalIds.has(id)) : order;
+    const tailIds = sameTarget ? order.filter((id) => !originalIds.has(id)) : [];
+    const cursor = `${fingerprint}:${primaryIds.join(',')}|${tailIds.join(',')}`;
     const seen = new Set();
     let selected;
     const start = consumed.length < ordered.length ? consumed.length : 0;

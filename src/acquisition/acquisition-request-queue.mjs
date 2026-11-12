@@ -4,8 +4,19 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
-const validCandidateFingerprint = (value) => typeof value === 'string' &&
-  /^[0-9a-f]{64}(?::[0-9a-f]{64}(?:,[0-9a-f]{64}){0,49})?$/.test(value);
+const validCandidateFingerprint = (value) => {
+  if (typeof value !== 'string' || value.length > 3_400) return false;
+  const parts = value.split(':');
+  if (parts.length < 1 || parts.length > 2 ||
+      !/^[0-9a-f]{64}$/.test(parts[0])) return false;
+  if (parts.length === 1) return true;
+  const groups = parts[1].split('|');
+  if (groups.length < 1 || groups.length > 2 || groups.some((group) =>
+    !/^(?:[0-9a-f]{64}(?:,[0-9a-f]{64})*)?$/.test(group))) return false;
+  const ids = groups.flatMap((group) => group ? group.split(',') : []);
+  return ids.length > 0 && ids.length <= 50 &&
+    new Set(ids).size === ids.length;
+};
 
 // This queue only chooses which saved request to examine. It never searches
 // an indexer, calls qBittorrent, or treats a held item as completed.
