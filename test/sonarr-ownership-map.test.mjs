@@ -9,13 +9,13 @@ const anime = [
   { anidb_id: 13, episodes: [{ tvdb: [{ series: 100, season: 0, episode: 1 }] }] },
 ];
 
-test('blocks every AniDB installment of a monitored Sonarr TVDB series', () => {
+test('blocks every AniDB installment while any Sonarr series record still exists', () => {
   const result = mapSonarrOwnership({ version: 2, anime }, [
     { id: 1, monitored: true, tvdbId: 100 },
     { id: 2, monitored: false, tvdbId: 200 },
   ]);
   assert.deepEqual(result, { state: 'ready', monitoredSeries: 1,
-    ownedAnidbIds: new Set([10, 11, 13]),
+    ownedAnidbIds: new Set([10, 11, 12, 13]),
     knownAnidbIds: new Set([10, 11, 12, 13]) });
 });
 
@@ -24,6 +24,16 @@ test('fails closed when any monitored series lacks a TVDB mapping', () => {
     { id: 1, monitored: true, tvdbId: 100 },
     { id: 3, monitored: true, tvdbId: 999 },
   ]), { state: 'held', reason: 'sonarr_identity_unmapped' });
+});
+
+test('an unmonitored Sonarr record absent from AniMap does not stop unrelated titles', () => {
+  const result = mapSonarrOwnership({ version: 2, anime }, [
+    { id: 1, monitored: true, tvdbId: 100 },
+    { id: 2, monitored: false, tvdbId: 999 },
+  ]);
+  assert.equal(result.state, 'ready');
+  assert.deepEqual(result.ownedAnidbIds, new Set([10, 11, 13]));
+  assert.equal(result.knownAnidbIds.has(999), false);
 });
 
 test('fails closed on malformed Sonarr data or unsupported map version', () => {

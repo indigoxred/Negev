@@ -2,8 +2,9 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
 
 // This is an exclusion map, not an episode mapping. Every AniDB installment
-// sharing a monitored TVDB series is held from Negev acquisition. A target
-// explicitly filed on a different TVDB series also counts as an overlap.
+// sharing any Sonarr series record is held from Negev acquisition, even when
+// unmonitored. A staged transfer releases ownership only after that record is
+// removed; unmonitoring alone cannot create a duplicate-download window.
 export function mapSonarrOwnership(map, series) {
   if (map?.version !== 2 || !Array.isArray(map.anime) ||
       map.anime.length < 1 || map.anime.length > 100_000 ||
@@ -11,13 +12,14 @@ export function mapSonarrOwnership(map, series) {
     return held('ownership_map_invalid');
   }
   const watched = new Set();
+  const present = new Set();
   for (const item of series) {
     if (!validId(item?.id) || typeof item.monitored !== 'boolean') {
       return held('sonarr_response_invalid');
     }
-    if (!item.monitored) continue;
     if (!validId(item.tvdbId)) return held('sonarr_identity_unmapped');
-    watched.add(item.tvdbId);
+    present.add(item.tvdbId);
+    if (item.monitored) watched.add(item.tvdbId);
   }
   const matched = new Set();
   const ownedAnidbIds = new Set();
@@ -39,12 +41,14 @@ export function mapSonarrOwnership(map, series) {
       }
     }
     for (const id of ids) {
-      if (!watched.has(id)) continue;
+      if (!present.has(id)) continue;
       matched.add(id);
       ownedAnidbIds.add(item.anidb_id);
     }
   }
-  if (matched.size !== watched.size) return held('sonarr_identity_unmapped');
+  if ([...watched].some((id) => !matched.has(id))) {
+    return held('sonarr_identity_unmapped');
+  }
   return { state: 'ready', monitoredSeries: watched.size,
     ownedAnidbIds, knownAnidbIds };
 }

@@ -46,6 +46,13 @@ test('account-backed listener starts loopback only with explicit mode and data',
   assert.equal(parsed.airingWatch, false);
   assert.equal(parseUserServerConfig({ ...valid, NEGEV_AIRING_WATCH: '1',
     NEGEV_TIME_ZONE: 'Australia/Sydney' }).airingWatch, true);
+  assert.equal(parsed.parentWatch, false);
+  assert.equal(parseUserServerConfig({ ...valid, NEGEV_PARENT_WATCH: '1',
+    NEGEV_AIRING_WATCH: '1', NEGEV_TIME_ZONE: 'Australia/Sydney' }).parentWatch, true);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_PARENT_WATCH: '1' }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_PARENT_WATCH: 'yes' }), TypeError);
 });
 
 test('read-only Prowlarr discovery is opt-in and uses a private key file', () => {
@@ -200,6 +207,19 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
     NEGEV_SONARR_API_KEY_FILE: path.join(dataDir, 'secrets', 'sonarr.token')
   }).acquisition.allowedAnidbIds, null);
+  const sole = parseUserServerConfig({ ...configured,
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: undefined,
+    NEGEV_ANIME_SOLE_OWNER: '1' });
+  assert.equal(sole.animeSoleOwner, true);
+  assert.equal(sole.sonarrOwnership, null);
+  assert.equal(sole.acquisition.allowedAnidbIds, null);
+  assert.throws(() => parseUserServerConfig({ ...configured,
+    NEGEV_ANIME_SOLE_OWNER: '1',
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
+    NEGEV_SONARR_API_KEY_FILE: path.join(dataDir, 'secrets', 'sonarr.token') }),
+  TypeError);
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_ANIME_SOLE_OWNER: '1' }), TypeError);
   assert.deepEqual(parseUserServerConfig({ ...configured,
     NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: '42,19847' })
     .acquisition.allowedAnidbIds, [42, 19847]);

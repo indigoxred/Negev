@@ -20,7 +20,7 @@ const responseFor = (url) => url.endsWith('/animap.json')
       { id: 2, monitored: false, tvdbId: 200 },
     ]));
 
-test('opens only mapped titles not monitored by Sonarr', async () => {
+test('blocks all Sonarr series records, including unmonitored titles', async () => {
   const calls = [];
   const gate = createSonarrOwnershipGuard({
     sonarrBaseUrl: 'http://192.168.50.138:8999', sonarrApiKey: 'PrivateKey1234567',
@@ -31,9 +31,9 @@ test('opens only mapped titles not monitored by Sonarr', async () => {
   });
   assert.equal(gate.status(11), 'unavailable');
   assert.deepEqual(await gate.refresh(), { state: 'ready',
-    monitoredSeries: 1, blockedTitles: 1 });
+    monitoredSeries: 1, blockedTitles: 2 });
   assert.equal(gate.status(10), 'owned');
-  assert.equal(gate.status(11), 'eligible');
+  assert.equal(gate.status(11), 'owned');
   assert.equal(gate.status(999), 'unmapped');
   assert.equal(calls.filter((call) => call.key === 'PrivateKey1234567').length, 1);
   assert.equal(calls.filter((call) => call.key === undefined).length, 2);
