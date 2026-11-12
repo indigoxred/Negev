@@ -85,7 +85,7 @@ export function startParentWatchRuntime({ config, shokoApiKey,
       readRelations,
       today: () => dateInZone(config.timeZone) });
     scheduler = createScheduler({ runPage: worker.runOnce,
-      initialDelayMs: 120_000, pageDelayMs: 300_000,
+      initialDelayMs: 120_000, pageDelayMs: 60_000,
       cycleDelayMs: 86_400_000, failureDelayMs: 300_000 });
     scheduler.start();
   } catch (error) {

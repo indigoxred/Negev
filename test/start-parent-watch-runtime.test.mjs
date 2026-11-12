@@ -40,7 +40,7 @@ test('enabled runtime starts a paced worker and closes ledgers after its schedul
     },
     createScheduler: ({ runPage, pageDelayMs, cycleDelayMs }) => {
       assert.equal(typeof runPage, 'function');
-      assert.equal(pageDelayMs, 300_000);
+      assert.equal(pageDelayMs, 60_000);
       assert.equal(cycleDelayMs, 86_400_000);
       return { start() { events.push('start'); },
         async stop() { events.push('stop'); } };
