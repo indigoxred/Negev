@@ -377,6 +377,7 @@ export function parseUserServerConfig(env) {
   const prowlarr = prowlarrConfig(env, dataDir);
   const qbitSidecar = qbitSidecarConfig(env, dataDir, shokoImportFolderId);
   const acquisitionNames = ['NEGEV_STAGING_HOST_PATH', 'NEGEV_HOLDING_ROOT',
+    'NEGEV_PURE_MOVE',
     'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID',
     'NEGEV_ACQUISITION_IMPORT_PARENT', 'NEGEV_ACQUISITION_IMPORT_FOLDER_ID',
     'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH',
@@ -416,6 +417,11 @@ export function parseUserServerConfig(env) {
     acquisitionImportFolderId = Number(rawAcquisitionFolderId);
     const shokoSourcePath = env.NEGEV_ACQUISITION_SHOKO_SOURCE_PATH;
     const qbitStagingRoot = env.NEGEV_QBITTORRENT_STAGING_ROOT;
+    const pureMode = env.NEGEV_PURE_MOVE === '1';
+    if (env.NEGEV_PURE_MOVE !== undefined &&
+        !['0', '1'].includes(env.NEGEV_PURE_MOVE)) {
+      throw new TypeError('Invalid pure move flag');
+    }
     const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
     const rawAllowedIds = env.NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS;
     let allowedAnidbIds = null;
@@ -471,10 +477,15 @@ export function parseUserServerConfig(env) {
         !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId)) {
       throw new TypeError('Acquisition runtime is unavailable without guarded providers and paths');
     }
+    if (pureMode && (path.basename(stagingHostPath) !== 'staging' ||
+        path.dirname(stagingHostPath) !== path.dirname(holdingRoot))) {
+      throw new TypeError('Pure staging must share the handoff mount');
+    }
     acquisition = { stagingHostPath, qbitStagingRoot, holdingRoot,
       importRoot: path.join(acquisitionImportParent, 'Negev'),
       shokoSourcePath, shokoSourceFolderId: acquisitionImportFolderId,
-      shokoProviderId, allowedAnidbIds };
+      shokoProviderId, allowedAnidbIds,
+      ...(pureMode ? { pureMode: true } : {}) };
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
   }

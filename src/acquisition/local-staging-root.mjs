@@ -15,7 +15,7 @@ const decode = (value) => value.replace(/\\([0-7]{3})/g,
 // qBittorrent's save path is checked separately through its Web API; Docker
 // socket access is neither needed nor granted to this service.
 export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
-  holdingRoot, resolve = realpath, read = readFile,
+  holdingRoot, writablePureMove = false, resolve = realpath, read = readFile,
   openDir = opendir } = {}) {
   if ([stagingRoot, importRoot, holdingRoot].some((value) => !canonical(value)) ||
       overlap(stagingRoot, importRoot) || overlap(stagingRoot, holdingRoot) ||
@@ -47,7 +47,17 @@ export async function verifyLocalStagingRoot({ stagingRoot, importRoot,
     const covering = mounts.filter(({ point }) =>
       point === '/' || within(point, stagingRoot)).sort((a, b) =>
       b.point.length - a.point.length)[0];
-    if (covering?.point === '/' || covering?.writable !== false ||
+    const coveringRoot = (target) => mounts.filter(({ point }) =>
+      point === '/' || within(point, target)).sort((a, b) =>
+      b.point.length - a.point.length)[0];
+    const holdingMount = coveringRoot(holdingRoot);
+    const importMount = coveringRoot(importRoot);
+    if (covering?.point === '/' ||
+        (writablePureMove ?
+          covering?.writable !== true ||
+          covering.point !== holdingMount?.point ||
+          covering.point !== importMount?.point :
+          covering?.writable !== false) ||
         ['overlay', 'tmpfs', 'ramfs'].includes(covering?.type)) return held();
     // realpath can succeed on a bind whose directory entries are inaccessible
     // to Negev's UID/GIDs. Confirm the process can open the directory without

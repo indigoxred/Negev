@@ -18,19 +18,22 @@ const RETRYABLE_HOLDS = new Set([
 // Durable, one-batch-at-a-time selection after a verified private handoff.
 // An interrupted claim stays excluded until its saved publish state is
 // reconciled. No timer or production service invokes this queue yet.
-export function openHandoffPublishQueue(dbPath) {
+export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable handoff publish queue path required');
   }
+  if (typeof pureMode !== 'boolean') throw new TypeError('Invalid handoff mode');
+  const handoffTable = pureMode ? 'pure_move_intents' : 'handoff_intents';
+  const checksTable = pureMode ? 'pure_move_publish_checks' : 'handoff_publish_checks';
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA foreign_keys=ON');
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handoff_intents'").get()) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(handoffTable)) {
       throw new TypeError('Handoff ledger must be initialized first');
     }
-    db.exec(`CREATE TABLE IF NOT EXISTS handoff_publish_checks (
-      attempt_id INTEGER PRIMARY KEY REFERENCES handoff_intents(attempt_id),
+    db.exec(`CREATE TABLE IF NOT EXISTS ${checksTable} (
+      attempt_id INTEGER PRIMARY KEY REFERENCES ${handoffTable}(attempt_id),
       version INTEGER NOT NULL CHECK(version>0),
       state TEXT CHECK(state IN ('held','publish_unknown','published_observed')),
       reason TEXT,
@@ -40,31 +43,31 @@ export function openHandoffPublishQueue(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT h.attempt_id AS attemptId
-    FROM handoff_intents h
+    FROM ${handoffTable} h
     JOIN acquisition_attempts a ON a.id=h.attempt_id
     LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
-    LEFT JOIN handoff_publish_checks c ON c.attempt_id=h.attempt_id
-    WHERE h.status IN ('prepared','publish_unknown') AND
+    LEFT JOIN ${checksTable} c ON c.attempt_id=h.attempt_id
+    WHERE h.status IN (${pureMode ? "'moving'," : ''}'prepared','publish_unknown') AND
       hold.request_id IS NULL AND
       (c.attempt_id IS NULL OR
         (c.state IN ('held','publish_unknown') AND c.next_due_ms<=?))
     ORDER BY h.attempt_id LIMIT 1`);
-  const claim = db.prepare(`INSERT INTO handoff_publish_checks
+  const claim = db.prepare(`INSERT INTO ${checksTable}
     (attempt_id,version,state,reason,checked_ms,next_due_ms)
     VALUES (?,1,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
     version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,version,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
-    FROM handoff_publish_checks WHERE attempt_id=?`);
-  const handoff = db.prepare('SELECT status FROM handoff_intents WHERE attempt_id=?');
-  const save = db.prepare(`UPDATE handoff_publish_checks SET
+    FROM ${checksTable} WHERE attempt_id=?`);
+  const handoff = db.prepare(`SELECT status FROM ${handoffTable} WHERE attempt_id=?`);
+  const save = db.prepare(`UPDATE ${checksTable} SET
     state=?,reason=?,checked_ms=?,next_due_ms=?
     WHERE attempt_id=? AND version=? AND state IS NULL`);
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version
-    FROM handoff_publish_checks WHERE attempt_id>? AND state IS NULL
+    FROM ${checksTable} WHERE attempt_id>? AND state IS NULL
     ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT attempt_id AS attemptId,reason,
-    checked_ms AS checkedMs FROM handoff_publish_checks
+    checked_ms AS checkedMs FROM ${checksTable}
     WHERE state='held' AND next_due_ms IS NULL AND attempt_id>?
     ORDER BY attempt_id LIMIT ?`);
   const transact = (action) => {
@@ -106,7 +109,8 @@ export function openHandoffPublishQueue(dbPath) {
         const status = handoff.get(attemptId)?.status;
         if ((state === 'publish_unknown' && status !== 'publish_unknown') ||
             (state === 'published_observed' && status !== 'published_observed') ||
-            (state === 'held' && !['prepared', 'publish_unknown'].includes(status))) {
+            (state === 'held' && ![...(pureMode ? ['moving'] : []),
+              'prepared', 'publish_unknown'].includes(status))) {
           return held('outcome_changed');
         }
         return save.run(state, reason, checkedMs, due, attemptId, version).changes === 1
@@ -137,7 +141,7 @@ export function openHandoffPublishQueue(dbPath) {
           if (rows.length === 0) break;
           for (const row of rows) {
             const status = handoff.get(row.attemptId)?.status;
-            const state = status === 'prepared' ? 'held' :
+            const state = status === 'prepared' || (pureMode && status === 'moving') ? 'held' :
               status === 'publish_unknown' ? 'publish_unknown' :
               status === 'published_observed' ? 'published_observed' : null;
             if (!state) { remaining.push(row.attemptId); continue; }

@@ -239,6 +239,14 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
     allowedAnidbIds: [42],
   });
+  const pureConfigured = { ...configured, NEGEV_PURE_MOVE: '1',
+    NEGEV_STAGING_HOST_PATH: path.resolve('handoff', 'staging'),
+    NEGEV_QBITTORRENT_STAGING_ROOT: '/NegevPure' };
+  assert.equal(parseUserServerConfig(pureConfigured).acquisition.pureMode, true);
+  assert.throws(() => parseUserServerConfig({ ...pureConfigured,
+    NEGEV_STAGING_HOST_PATH: configured.NEGEV_STAGING_HOST_PATH }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...pureConfigured,
+    NEGEV_PURE_MOVE: 'maybe' }), TypeError);
   for (const change of [
     { NEGEV_PROWLARR_DISCOVERY: '0' },
     { NEGEV_SHOKO_EVENTS: '0' },

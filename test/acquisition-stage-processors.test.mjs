@@ -85,6 +85,24 @@ test('construction is inert and a no-candidate request cannot touch download pro
   { state: 'held', reason: 'attempt_missing' });
 });
 
+test('opt-in pure move mode routes recorded attempts without invoking legacy hashes', async () => {
+  const calls = [];
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    qbitStagingRoot: '/NegevPure',
+    pureMode: true,
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    pureMoves: { getIntent: () => ({ status: 'moving' }),
+      recordIntent: () => ({ state: 'recorded' }),
+      markPrepared: () => ({ state: 'prepared' }) },
+    acquisitions: { getAttempt: () => ({ id: 7, requestId: 1 }),
+      getStart: () => ({ torrentHash }), getFilePlan: () => [] },
+  });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 7,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('qBittorrent must not be contacted'); } }),
+  { state: 'held', reason: 'handoff_already_recorded' });
+});
+
 test('missing safety providers are rejected before any work', () => {
   const calls = [];
   assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
