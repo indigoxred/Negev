@@ -4,6 +4,7 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
+const SESSION_RETRY_MS = 60_000;
 const validCandidateFingerprint = (value) => {
   if (typeof value !== 'string' || value.length > 3_400) return false;
   const parts = value.split(':');
@@ -293,7 +294,10 @@ export function openAcquisitionRequestQueue(dbPath,
         nextCandidateOffset !== null &&
         nextCandidateOffset > previous.candidateOffset;
       const nextDueMs = reason === 'interrupted_attempt_present'
-        ? null : advanced ? checkedMs : checkedMs + RETRY_DELAY_MS;
+        ? null : advanced ? checkedMs : checkedMs +
+          (['provider_http_403', 'authentication_backoff',
+            'authentication_unavailable'].includes(reason)
+            ? SESSION_RETRY_MS : RETRY_DELAY_MS);
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1

@@ -57,7 +57,7 @@ test('concurrent workers share one login and a cached session', async () => {
   assert.equal(calls, 1);
 });
 
-test('a rejected session is cleared and briefly delayed before login again', async () => {
+test('an expired session reauthenticates once immediately for concurrent workers', async () => {
   let time = 1_000;
   let calls = 0;
   const gate = createQbittorrentSessionGate({
@@ -70,10 +70,31 @@ test('a rejected session is cleared and briefly delayed before login again', asy
   assert.deepEqual(gate.invalidate('sid_other'), { state: 'held', reason: 'session_mismatch' });
   assert.equal((await gate.get()).sessionId, 'sid_1');
   assert.deepEqual(gate.invalidate('sid_1'), { state: 'invalidated' });
-  assert.equal((await gate.get()).reason, 'authentication_backoff');
-  time = 31_000;
-  assert.equal((await gate.get()).sessionId, 'sid_2');
+  const renewed = await Promise.all([gate.get(), gate.get()]);
+  assert.deepEqual(renewed, [
+    { state: 'authenticated', sessionId: 'sid_2' },
+    { state: 'authenticated', sessionId: 'sid_2' },
+  ]);
   assert.equal(calls, 2);
+});
+
+test('two rejected sessions in quick succession pause reauthentication', async () => {
+  let time = 1_000;
+  let calls = 0;
+  const gate = createQbittorrentSessionGate({
+    baseUrl: 'http://qbit.internal:8080/', username: 'negev', password: 'secret',
+    login: async () => ({ state: 'authenticated', sessionId: `sid_${++calls}` }),
+    now: () => time, retryDelayMs: 30_000,
+  });
+  assert.equal((await gate.get()).sessionId, 'sid_1');
+  gate.invalidate('sid_1');
+  assert.equal((await gate.get()).sessionId, 'sid_2');
+  time += 1_000;
+  gate.invalidate('sid_2');
+  assert.equal((await gate.get()).reason, 'authentication_backoff');
+  assert.equal(calls, 2);
+  time += 30_000;
+  assert.equal((await gate.get()).sessionId, 'sid_3');
 });
 
 test('renewing an established session before a long hash final check logs in once', async () => {

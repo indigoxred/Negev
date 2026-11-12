@@ -71,6 +71,7 @@ test('request progress distinguishes private proof from public availability', as
     try {
       const check = completion.claimNext({ nowMs: 205 });
       assert.equal(check.attemptId, claim.attemptId);
+      assert.equal(progress.read(saved.requestId).completionChecking, true);
       completion.recordResult({ attemptId: claim.attemptId, pass: check.pass,
         state: 'held', reason: 'file_lookup_inconclusive', checkedMs: 206 });
       assert.deepEqual(progress.read(saved.requestId), {

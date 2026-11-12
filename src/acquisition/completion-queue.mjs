@@ -16,6 +16,7 @@ const validTransfer = (value) => value &&
       value.speedBytesPerSecond <= 10 * 1024 ** 3)) &&
   ['active', 'stalled', 'queued', 'paused'].includes(value.transferState);
 const RETRY_MS = 30 * 60_000;
+const SESSION_RETRY_MS = 60_000;
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
 const INCONCLUSIVE_RETRY_MS = [RETRY_MS, 2 * 60 * 60_000,
   8 * 60 * 60_000, 24 * 60 * 60_000];
@@ -113,6 +114,12 @@ export function openCompletionQueue(dbPath) {
     FROM completion_checks WHERE attempt_id=? AND pass=? AND state IS NULL`);
   const prepared = db.prepare('SELECT 1 FROM handoff_intents WHERE attempt_id=?');
   const rejected = db.prepare('SELECT 1 FROM acquisition_rejections WHERE attempt_id=?');
+  const retryInterrupted = db.prepare(`UPDATE completion_checks SET
+    state='held',reason='interrupted_retry',checked_ms=?,next_due_ms=?,
+    progress_bp=NULL,eta_sec=NULL,speed_bps=NULL,transfer_state=NULL
+    WHERE attempt_id=? AND pass=? AND state IS NULL
+      AND NOT EXISTS (SELECT 1 FROM handoff_intents WHERE attempt_id=?)
+      AND NOT EXISTS (SELECT 1 FROM acquisition_rejections WHERE attempt_id=?)`);
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,pass FROM completion_checks
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
@@ -185,7 +192,9 @@ export function openCompletionQueue(dbPath) {
           ['file_lookup_inconclusive',
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
-        const delay = reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
+        const delay = ['provider_http_403', 'authentication_backoff',
+          'authentication_unavailable'].includes(reason) ? SESSION_RETRY_MS :
+          reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
         return save.run(state, reason, checkedMs,
@@ -229,7 +238,16 @@ export function openCompletionQueue(dbPath) {
         for (const row of rows) {
           const state = prepared.get(row.attemptId) ? 'handoff_prepared' :
             rejected.get(row.attemptId) ? 'rejected_held' : null;
-          if (!state) { heldAttempts.push(row.attemptId); continue; }
+          if (!state) {
+            // The completion stage only writes to private holding until a
+            // handoff intent is durable. Recheck the original torrent after
+            // an interrupted private copy; never infer a published import.
+            const retried = transact(() => retryInterrupted.run(nowMs, nowMs,
+              row.attemptId, row.pass, row.attemptId, row.attemptId).changes === 1);
+            if (retried) resolved.push(row.attemptId);
+            else heldAttempts.push(row.attemptId);
+            continue;
+          }
           const saved = this.recordResult({ attemptId: row.attemptId,
             pass: row.pass, state, checkedMs: nowMs });
           if (saved.state === 'recorded') resolved.push(row.attemptId);

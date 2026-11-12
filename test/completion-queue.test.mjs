@@ -340,7 +340,7 @@ test('a retirement intent excludes completion while unrelated attempts advance',
   });
 });
 
-test('unfinished claim survives restart and does not stall a later attempt', async () => {
+test('unfinished claim retries after restart while a later attempt remains available', async () => {
   await fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });
     ctx.reopen();
@@ -352,14 +352,19 @@ test('unfinished claim survives restart and does not stall a later attempt', asy
         observedMs: 1_001 },
     ]);
     assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_002 }),
-      { state: 'reviewed', resolved: [], held: [ctx.attemptIds[0], ctx.attemptIds[1]] });
-    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId, pass: first.pass,
-      state: 'held', reason: 'provider_unavailable', checkedMs: 1_003 }).state,
-    'recorded');
-    assert.deepEqual(ctx.queue.listReviewNeeded({ nowMs: 1_004 }), [
-      { attemptId: ctx.attemptIds[1], reason: 'completion_interrupted',
-        observedMs: 1_004 },
-    ]);
+      { state: 'reviewed', resolved: ctx.attemptIds.slice(0, 2), held: [] });
+    assert.deepEqual(ctx.queue.listReviewNeeded({ nowMs: 1_004 }), []);
+    assert.equal(ctx.queue.getResult(first.attemptId).reason, 'interrupted_retry');
+    assert.equal(ctx.queue.claimNext({ nowMs: 1_004 }).attemptId, ctx.attemptIds[2]);
+  });
+});
+
+test('session rejection retries on the next paced completion cycle', async () => {
+  await fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+      state: 'held', reason: 'provider_http_403', checkedMs: 1_001 });
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61_001);
   });
 });
 
@@ -370,7 +375,7 @@ test('completion recovery reviews every page of interrupted attempts', async () 
     }
     ctx.reopen();
     assert.deepEqual(ctx.queue.reconcileUnresolved({ nowMs: 1_001, limit: 1 }),
-      { state: 'reviewed', resolved: [], held: ctx.attemptIds });
+      { state: 'reviewed', resolved: ctx.attemptIds, held: [] });
   });
 });
 

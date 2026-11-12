@@ -13,6 +13,17 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('temporary qBittorrent authentication backoff retries on the next request cycle',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 1_000 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'authentication_backoff', checkedMs: 1_001 });
+      assert.equal(queue.getResult(claim.requestId).nextDueMs, 61_001);
+    } finally { queue.close(); }
+  }));
+
 test('a live ownership gate skips Sonarr titles without claiming them',
   async () => fixture(async (dbPath) => {
     let owned = new Set([41, 42]);

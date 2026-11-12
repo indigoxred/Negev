@@ -74,9 +74,18 @@ export function requestPresentation(progress, kind,
       case 'torrent_stopped': return { stage: 'Download not started',
         detail: 'A release was selected but its transfer has not begun.', note: '' };
       case 'download_unverified': return measuredDownload() ??
+        (progress.completionRetrying ? { stage: 'Resuming file check',
+          detail: 'Negev is checking the download before adding it to the library.',
+          note: '' } :
+          progress.connectionRetrying ? { stage: 'Reconnecting to download service',
+            detail: 'Your request remains saved. Negev is retrying automatically.',
+            note: '' } :
+          progress.completionChecking ? { stage: 'Checking the download',
+            detail: 'Negev is checking the file before adding it to the library.',
+            note: '' } :
         { stage: 'Checking download status',
         detail: 'Negev has requested a download but has not confirmed its current progress.',
-        note: '' };
+        note: '' });
       case 'release_identity_unverified': return { stage: 'Checking the download',
         detail: 'The downloaded file has not been confirmed as the requested title yet.',
         note: 'Negev will check again.' };
