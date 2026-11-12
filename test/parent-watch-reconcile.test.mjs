@@ -72,6 +72,25 @@ test('a reciprocal sequel absent from AniMap becomes a separate watch', async ()
       .map((item) => item.anidbId), [12]);
   }));
 
+test('a later reciprocal sequel is found from a previously recorded successor', async () =>
+  withLedgers(async ({ requests, parents }) => {
+    const relations = async (id) => ({ state: 'related_titles', anidbId: id,
+      items: id === 11 ? [{ anidbId: 12, relation: 'Sequel' }] :
+        id === 12 ? [{ anidbId: 11, relation: 'Prequel' },
+          { anidbId: 13, relation: 'Sequel' }] :
+          [{ anidbId: 12, relation: 'Prequel' }] });
+    const parent = parents.listActive({ limit: 10 })[0];
+    const input = { parent, map, parents, requests,
+      loadDetail: async ({ anidbId }) => detail(anidbId,
+        anidbId === 11 ? { endDate: '2026-11-02' } : {}),
+      readRelations: relations, today: '2026-11-12', nowMs: 2000 };
+    const first = await reconcileParentWatch(input);
+    assert.deepEqual(first.created, [12]);
+    const second = await reconcileParentWatch(input);
+    assert.deepEqual(second.created, [13]);
+    assert.equal(requests.countRequests(), 2);
+  }));
+
 test('incomplete detail holds a candidate and does not create a watch', async () =>
   withLedgers(async ({ requests, parents }) => {
     const result = await reconcileParentWatch({

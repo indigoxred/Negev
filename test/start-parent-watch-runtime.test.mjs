@@ -1,6 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { startParentWatchRuntime } from '../src/requests/start-parent-watch-runtime.mjs';
+import { mergeParentRelations, startParentWatchRuntime } from
+  '../src/requests/start-parent-watch-runtime.mjs';
+
+test('local and archive relation edges are merged by exact AniDB ID', () => {
+  assert.deepEqual(mergeParentRelations(10,
+    { state: 'related_titles', anidbId: 10, items: [
+      { anidbId: 11, relation: 'Prequel', title: 'Local' }] },
+    { state: 'related_titles', anidbId: 10, items: [
+      { anidbId: 11, relation: 'Prequel', title: 'Archive' },
+      { anidbId: 12, relation: 'Sequel', title: 'New season' }] }),
+  { state: 'related_titles', anidbId: 10, items: [
+    { anidbId: 11, relation: 'Prequel', title: 'Local' },
+    { anidbId: 12, relation: 'Sequel', title: 'New season' }] });
+});
 
 test('parent-watch runtime is inert unless explicitly enabled', async () => {
   const result = startParentWatchRuntime({ config: { parentWatch: false },

@@ -12,6 +12,29 @@ import { readAniDbRelatedTitles as readArchiveRelations } from
   '../catalogue/anidb-related-titles.mjs';
 import { dateInZone } from '../web/user-server-config.mjs';
 
+export function mergeParentRelations(anidbId, local, archive) {
+  const valid = (value) => value?.state === 'related_titles' &&
+    value.anidbId === anidbId && Array.isArray(value.items) &&
+    value.items.length <= 50 && value.items.every((item) =>
+      Number.isSafeInteger(item?.anidbId) && item.anidbId > 0 &&
+      typeof item.relation === 'string');
+  const sources = [archive, local].filter(valid);
+  if (sources.length === 0) return { state: 'unavailable' };
+  const items = new Map();
+  for (const source of sources) {
+    for (const item of source.items) {
+      const previous = items.get(item.anidbId);
+      if (previous && previous.relation !== item.relation) {
+        return { state: 'unavailable' };
+      }
+      items.set(item.anidbId, item);
+    }
+  }
+  return items.size <= 50
+    ? { state: 'related_titles', anidbId, items: [...items.values()] }
+    : { state: 'unavailable' };
+}
+
 // Runs only after an explicit service opt-in. Every tick handles at most one
 // adopted TVDB parent, and this component never starts an acquisition itself.
 export function startParentWatchRuntime({ config, shokoApiKey,
@@ -48,12 +71,14 @@ export function startParentWatchRuntime({ config, shokoApiKey,
           : archive.read({ anidbId, page }) });
     };
     const readRelations = async (anidbId) => {
-      const local = await readShokoRelations({
+      const [local, archiveRelations] = await Promise.all([
+        readShokoRelations({
         baseUrl: config.shokoBaseUrl, apiKey: shokoApiKey,
-        anidbId, fetchImpl, timeoutMs: 5_000 });
-      if (local.state === 'related_titles' && local.items.length > 0) return local;
-      return readArchiveRelations({ anidbId, titleForId: () => null,
-        fetchImpl, timeoutMs: 5_000 });
+        anidbId, fetchImpl, timeoutMs: 5_000 }),
+        readArchiveRelations({ anidbId, titleForId: () => null,
+          fetchImpl, timeoutMs: 5_000 }),
+      ]);
+      return mergeParentRelations(anidbId, local, archiveRelations);
     };
     const worker = createWorker({ parents, requests,
       mapReader: createMapReader({ fetchImpl }), loadDetail: readDetail,

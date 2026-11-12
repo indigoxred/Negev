@@ -26,9 +26,11 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
   }
   const mapped = mapParentInstallments({ map, tvdbId: parent.tvdbId });
   if (mapped.state !== 'mapped') return mapped;
+  const recorded = new Set(parents.listInstallments({ tvdbId: parent.tvdbId })
+    .filter((item) => validId(item.requestId)).map((item) => item.anidbId));
   const candidates = new Set(mapped.anidbIds);
   const relationHolds = [];
-  for (const sourceId of mapped.anidbIds) {
+  for (const sourceId of new Set([...mapped.anidbIds, ...recorded])) {
     const related = await confirmedSequelIds({ sourceId,
       readRelations });
     if (related.state === 'confirmed') {
@@ -36,8 +38,6 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
     } else relationHolds.push(sourceId);
   }
   if (candidates.size > 100) return held('too_many_parent_candidates');
-  const recorded = new Set(parents.listInstallments({ tvdbId: parent.tvdbId })
-    .filter((item) => validId(item.requestId)).map((item) => item.anidbId));
   const created = [];
   const existing = [];
   const skipped = [];
