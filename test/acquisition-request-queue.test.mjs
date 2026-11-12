@@ -529,7 +529,7 @@ test('the page worker passes a saved candidate offset to a later attempt', async
           return { state: 'held', reason: 'no_safe_release',
             nextCandidateOffset: requestId === 1 ? 3 : 0,
             nextCandidateFingerprint: requestId === 1 ?
-              `${'b'.repeat(64)}:${'c'.repeat(64)}` : undefined };
+              `${'b'.repeat(64)}:${'c'.repeat(64)}|${'d'.repeat(64)}` : undefined };
         } });
       assert.equal((await worker.runOnce()).state, 'page');
       assert.equal((await worker.runOnce()).state, 'pass_complete');
@@ -541,7 +541,7 @@ test('the page worker passes a saved candidate offset to a later attempt', async
         } });
       assert.equal((await later.runOnce()).state, 'page');
       assert.deepEqual(seen.at(-1), { requestId: 1, candidateOffset: 3,
-        candidateFingerprint: `${'b'.repeat(64)}:${'c'.repeat(64)}` });
+        candidateFingerprint: `${'b'.repeat(64)}:${'c'.repeat(64)}|${'d'.repeat(64)}` });
     } finally { queue.close(); }
   }));
 

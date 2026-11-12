@@ -65,6 +65,67 @@ test('preflights a more seeded release first without weakening exact checks', as
   assert.equal(submitted, 'candidate-2');
 });
 
+test('prioritizes an exact episode query before more seeded generic results', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 1, targetCount: 2,
+      availableEpisodeIds: [1001] }),
+    discoverCandidates: async ({ searchTargetEpisodeId }) => {
+      assert.equal(searchTargetEpisodeId, 1002);
+      return { state: 'candidates', requestId: 4, anidbId: 42,
+        items: [{ ...candidate(1), seeders: 100 },
+          { ...candidate(2), seeders: 2, targetedEpisode: true }] };
+    },
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return { ...preflight, episodeIds: [1002],
+        files: [{ name: 'Example - 02.mkv', size: 1000,
+          episodeIds: [1002] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 12);
+  assert.deepEqual(inspected, ['candidate-2']);
+});
+
+test('new episode target leads the unvisited sweep on a later queue pass', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    maxPreflights: 1,
+    readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 2,
+      availableEpisodeIds: [] }),
+    discoverCandidates: async ({ searchTargetEpisodeId }) => ({
+      state: 'candidates', requestId: 4, anidbId: 42,
+      items: [
+        { ...candidate(1), seeders: 2,
+          targetedEpisode: searchTargetEpisodeId === 1001 },
+        { ...candidate(2), seeders: 100 },
+        { ...candidate(3), seeders: 1,
+          targetedEpisode: searchTargetEpisodeId === 1002 },
+      ],
+    }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return item.guid === 'candidate-3' ? { ...preflight,
+        episodeIds: [1002], files: [{ name: 'Example - 02.mkv', size: 1000,
+          episodeIds: [1002] }] } :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 13 }),
+  });
+  const first = await process({ requestId: 4, pass: 1 });
+  assert.equal(first.reason, 'no_safe_release');
+  assert.equal(first.nextCandidateOffset, 1);
+  assertAttempt(await process({ requestId: 4, pass: 2,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 13);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-3']);
+});
+
 test('a submitted episode advances the saved candidate cursor for other episodes', async () => {
   const seen = [];
   const process = createAcquisitionRequestProcessor({
@@ -301,7 +362,7 @@ test('a newly discovered release cannot restart the current candidate sweep', as
     'candidate-4', 'candidate-5']);
 });
 
-test('removed and added releases do not make a changing catalogue starve older candidates', async () => {
+test('new targeted releases do not starve older unvisited candidates', async () => {
   let items = [candidate(1), candidate(2), candidate(3), candidate(4)];
   const seen = [];
   const process = createAcquisitionRequestProcessor({
@@ -318,11 +379,13 @@ test('removed and added releases do not make a changing catalogue starve older c
     submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
   });
   const first = await process({ requestId: 4 });
-  items = [{ ...candidate(5), seeders: 30 }, candidate(2), candidate(3), candidate(4)];
+  items = [{ ...candidate(5), seeders: 30, targetedEpisode: true },
+    candidate(2), candidate(3), candidate(4)];
   const second = await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,
     candidateFingerprint: first.nextCandidateFingerprint });
-  items = [{ ...candidate(6), seeders: 40 }, candidate(3), candidate(4), candidate(5)];
+  items = [{ ...candidate(6), seeders: 40, targetedEpisode: true },
+    candidate(3), candidate(4), { ...candidate(5), targetedEpisode: true }];
   const third = await process({ requestId: 4,
     candidateOffset: second.nextCandidateOffset,
     candidateFingerprint: second.nextCandidateFingerprint });
