@@ -141,7 +141,7 @@ test('acquisition cannot be advertised as enabled before installed safety gates 
       [secret]: 'synthetic-secret' }), /qBittorrent credentials cannot use environment variables/);
   }
   assert.throws(() => parseUserServerConfig({ ...valid,
-    NEGEV_ACQUISITION_RUNTIME: '1' }), /Acquisition runtime is unavailable/);
+    NEGEV_ACQUISITION_RUNTIME: '1' }), TypeError);
   assert.throws(() => parseUserServerConfig({ ...valid,
     NEGEV_ACQUISITION_RUNTIME: 'yes' }), TypeError);
   assert.equal(parseUserServerConfig({ ...valid,
@@ -178,9 +178,28 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     NEGEV_ACQUISITION_IMPORT_FOLDER_ID: '2',
     NEGEV_ACQUISITION_SHOKO_SOURCE_PATH: '/negev/source',
     NEGEV_SHOKO_RELEASE_PROVIDER_ID: '11111111-2222-3333-4444-555555555555',
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: '42',
     NEGEV_ACQUISITION_RUNTIME: '1' };
   const parsed = parseUserServerConfig(configured);
   assert.equal(parsed.acquisitionRuntime, true);
+  assert.throws(() => parseUserServerConfig({ ...configured,
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999' }), TypeError);
+  assert.throws(() => parseUserServerConfig({ ...configured,
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
+    NEGEV_SONARR_API_KEY: 'exposed' }), TypeError);
+  const guarded = parseUserServerConfig({ ...configured,
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
+    NEGEV_SONARR_API_KEY_FILE: path.join(dataDir, 'secrets', 'sonarr.token') });
+  assert.deepEqual(guarded.sonarrOwnership, {
+    baseUrl: 'http://192.168.50.138:8999',
+    keyPath: path.join(dataDir, 'secrets', 'sonarr.token') });
+  assert.throws(() => parseUserServerConfig({ ...configured,
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: undefined }), TypeError);
+  assert.equal(parseUserServerConfig({ ...configured,
+    NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: undefined,
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
+    NEGEV_SONARR_API_KEY_FILE: path.join(dataDir, 'secrets', 'sonarr.token')
+  }).acquisition.allowedAnidbIds, null);
   assert.deepEqual(parseUserServerConfig({ ...configured,
     NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS: '42,19847' })
     .acquisition.allowedAnidbIds, [42, 19847]);
@@ -198,7 +217,7 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     importRoot: path.join(configured.NEGEV_ACQUISITION_IMPORT_PARENT, 'Negev'),
     shokoSourcePath: '/negev/source', shokoSourceFolderId: 2,
     shokoProviderId: configured.NEGEV_SHOKO_RELEASE_PROVIDER_ID,
-    allowedAnidbIds: null,
+    allowedAnidbIds: [42],
   });
   for (const change of [
     { NEGEV_PROWLARR_DISCOVERY: '0' },

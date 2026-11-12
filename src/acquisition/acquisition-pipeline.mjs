@@ -15,7 +15,7 @@ const held = (reason) => ({ state: 'held', reason });
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions,
   processRequest, processStart, processCompletion, processPublish,
-  qbBaseUrl, sessionGate, allowedAnidbIds = null,
+  qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
@@ -28,7 +28,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
     processCompletion, processPublish });
   const queues = [];
   try {
-    queues.push(openAcquisitionRequestQueue(dbPath, { allowedAnidbIds }));
+    queues.push(openAcquisitionRequestQueue(dbPath, {
+      allowedAnidbIds, ownershipGate }));
     queues.push(openStartQueue(dbPath));
     queues.push(openCompletionQueue(dbPath));
     queues.push(openHandoffPublishQueue(dbPath));
@@ -89,7 +90,13 @@ export function openAcquisitionPipeline({ dbPath, acquisitions,
       }
       return initialization;
     },
-    tickRequests: () => run(requestWorker),
+    tickRequests: () => run({ runOnce: async () => {
+      if (ownershipGate) {
+        const result = await ownershipGate.refresh();
+        if (result?.state !== 'ready') return held('sonarr_ownership_unavailable');
+      }
+      return requestWorker.runOnce();
+    } }),
     tickStarts: () => run(startWorker),
     tickCompletions: () => run(completionWorker),
     tickPublish: () => run(publishWorker),

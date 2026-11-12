@@ -104,6 +104,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   acquisitionImportParent = null, acquisitionImportFolderId = null,
   qbitSidecarObserver = null,
   acquisitionAllowedAnidbIds = null,
+  acquisitionOwnershipGate = null,
   sessionKey, publicOrigin, localOrigin = null,
   secureCookies = true, shokoHydration = false,
   titleCheck = false, fileBackfill = false, fileProofLifetimeMs = null,
@@ -496,6 +497,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
         { state: 'disabled' },
       acquisitionAllowedAnidbIds,
+      ownershipGate: acquisitionOwnershipGate,
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => submitRequest(input),
       queuePendingTitle: async ({ requesterId, anidbId, requestKey,
@@ -914,7 +916,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
         qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
         verifyStagingRoot, verifyShokoSource, realpathImpl,
-        shokoProviderId, allowedAnidbIds, readPacer } = {}) {
+        shokoProviderId, allowedAnidbIds, ownershipGate, readPacer } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
         }
@@ -947,7 +949,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
-          allowedAnidbIds,
+          allowedAnidbIds, ownershipGate,
           readRelatedTitles,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },

@@ -47,6 +47,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   acquisitionAllowedAnidbIds = null,
+  ownershipGate = null,
   publicAvailabilityConfigured = false } = {}) {
   let origin, local;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
@@ -82,6 +83,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           acquisitionAllowedAnidbIds.some((id) =>
             !Number.isSafeInteger(id) || id < 1) ||
           new Set(acquisitionAllowedAnidbIds).size !== acquisitionAllowedAnidbIds.length)) ||
+      (ownershipGate !== null &&
+        (typeof ownershipGate?.status !== 'function' ||
+          typeof ownershipGate?.refresh !== 'function')) ||
       typeof publicAvailabilityConfigured !== 'boolean') {
     throw new TypeError('Invalid user app configuration');
   }
@@ -630,16 +634,24 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         !Number.isSafeInteger(page) || page < 1 || page > 1000) {
       return reply.code(400).send({ error: 'Invalid AniDB ID or page' });
     }
-    const result = await loadDetail({ anidbId: id, page });
+    const [result] = await Promise.all([
+      loadDetail({ anidbId: id, page }),
+      ownershipGate ? Promise.resolve().then(() =>
+        ownershipGate.refresh({ force: false })).catch(() => null) : null,
+    ]);
     const requestsOpen = acquisitionAllowedAnidbIds === null ||
       acquisitionAllowedAnidbIds.includes(id);
+    const ownershipOpen = !ownershipGate ||
+      ownershipGate.status(id) === 'eligible';
     if (result.state === 'detail_pending') return { state: 'detail_pending',
-      anidbId: id, requestable: false, requestsOpen };
+      anidbId: id, requestable: false,
+      requestsOpen: requestsOpen && ownershipOpen };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     if (!request.negevUser.adultAllowed && result.restricted !== false) {
       return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
-    return { ...result, requestable: false, requestsOpen };
+    return { ...result, requestable: false,
+      requestsOpen: requestsOpen && ownershipOpen };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -908,6 +920,24 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(409).send({ state: 'held',
         reason: 'title_not_in_cutover',
         error: 'Requests for this title are not open yet' });
+    }
+    if (ownershipGate) {
+      if (!Number.isSafeInteger(body.anidbId) || body.anidbId < 1) {
+        return reply.code(400).send({ error: 'Invalid request' });
+      }
+      let ownership;
+      try { ownership = await ownershipGate.refresh(); }
+      catch { ownership = null; }
+      if (ownership?.state !== 'ready') return reply.code(503).send({
+        state: 'held', reason: 'sonarr_ownership_unavailable',
+        error: 'Anime request ownership cannot be checked right now' });
+      const status = ownershipGate.status(body.anidbId);
+      if (status === 'owned') return reply.code(409).send({
+        state: 'held', reason: 'title_sonarr_owned',
+        error: 'This title is still managed by Anime Sonarr' });
+      if (status !== 'eligible') return reply.code(409).send({
+        state: 'held', reason: 'sonarr_identity_unmapped',
+        error: 'This title cannot be safely checked against Anime Sonarr yet' });
     }
     const result = await submitRequest({ ...body, requesterId: requester.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });

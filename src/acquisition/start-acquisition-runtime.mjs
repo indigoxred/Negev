@@ -8,7 +8,7 @@ import { verifyShokoSourceFolder } from './shoko-source-folder.mjs';
 // Unresolved claims stay excluded while independent work can continue.
 // Disabled startup never touches the acquisition filesystem.
 export async function startAcquisitionRuntime({ config, service, sessionGate,
-  shokoApiKey,
+  shokoApiKey, ownershipGate = null,
   verifyRoot = verifyLocalStagingRoot, ensureChild = ensureImportChild,
   verifySource = verifyShokoSourceFolder,
   realpathImpl = realpath } = {}) {
@@ -42,6 +42,7 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
         : { state: 'held', reason: 'import_child_unavailable' };
     },
     realpathImpl, shokoProviderId: a.shokoProviderId,
+    ...(ownershipGate ? { ownershipGate } : {}),
     ...(a.allowedAnidbIds === undefined ? {} :
       { allowedAnidbIds: a.allowedAnidbIds }),
   });

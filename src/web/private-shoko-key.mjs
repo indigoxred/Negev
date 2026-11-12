@@ -54,6 +54,9 @@ async function readPrivateKey({ dataDir, keyPath, filename, password = false } =
 export const readPrivateShokoKey = ({ dataDir, keyPath } = {}) =>
   readPrivateKey({ dataDir, keyPath, filename: 'shoko.token' });
 
+export const readPrivateSonarrKey = ({ dataDir, keyPath } = {}) =>
+  readPrivateKey({ dataDir, keyPath, filename: 'sonarr.token' });
+
 export const readPrivatePlexToken = ({ dataDir, keyPath } = {}) =>
   readPrivateKey({ dataDir, keyPath, filename: 'plex.token' });
 

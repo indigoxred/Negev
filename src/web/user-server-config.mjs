@@ -372,11 +372,28 @@ export function parseUserServerConfig(env) {
     'NEGEV_QBITTORRENT_STAGING_ROOT', 'NEGEV_SHOKO_RELEASE_PROVIDER_ID',
     'NEGEV_ACQUISITION_IMPORT_PARENT', 'NEGEV_ACQUISITION_IMPORT_FOLDER_ID',
     'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH',
-    'NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS'];
+    'NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS', 'NEGEV_SONARR_OWNERSHIP_URL',
+    'NEGEV_SONARR_API_KEY_FILE', 'NEGEV_SONARR_API_KEY'];
   let acquisition = null;
+  let sonarrOwnership = null;
   let acquisitionImportParent = null;
   let acquisitionImportFolderId = null;
   if (acquisitionRuntime) {
+    if (Object.hasOwn(env, 'NEGEV_SONARR_API_KEY')) {
+      throw new TypeError('Sonarr credential must be a private file');
+    }
+    if (env.NEGEV_SONARR_OWNERSHIP_URL !== undefined ||
+        env.NEGEV_SONARR_API_KEY_FILE !== undefined) {
+      const keyPath = path.join(dataDir, 'secrets', 'sonarr.token');
+      let url;
+      try { url = baseUrl(env.NEGEV_SONARR_OWNERSHIP_URL,
+        'Sonarr ownership URL'); } catch { throw new TypeError('Invalid Sonarr ownership URL'); }
+      if (url.protocol !== 'http:' ||
+          env.NEGEV_SONARR_API_KEY_FILE !== keyPath) {
+        throw new TypeError('Invalid private Sonarr ownership configuration');
+      }
+      sonarrOwnership = { baseUrl: url.origin, keyPath };
+    }
     const stagingHostPath = env.NEGEV_STAGING_HOST_PATH;
     const holdingRoot = env.NEGEV_HOLDING_ROOT;
     acquisitionImportParent = env.NEGEV_ACQUISITION_IMPORT_PARENT;
@@ -397,6 +414,9 @@ export function parseUserServerConfig(env) {
           new Set(allowedAnidbIds).size !== allowedAnidbIds.length) {
         throw new TypeError('Invalid acquisition title cohort');
       }
+    }
+    if (allowedAnidbIds === null && sonarrOwnership === null) {
+      throw new TypeError('Unrestricted acquisition needs an ownership guard');
     }
     if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
         shokoImportFolderId === null || shokoImportRoot === null ||
@@ -441,7 +461,7 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Acquisition runtime is disabled');
   }
   return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
-    acquisitionRuntime, acquisition,
+    acquisitionRuntime, acquisition, sonarrOwnership,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,
     acquisitionImportParent, acquisitionImportFolderId,

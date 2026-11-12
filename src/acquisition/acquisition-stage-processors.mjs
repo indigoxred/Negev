@@ -26,6 +26,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyStagingRoot, realpathImpl,
   verifyShokoSource,
   readRelatedTitles,
+  ownershipGate = null,
   shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
@@ -56,9 +57,24 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         .some((value) => typeof value !== 'string' || !value) ||
       (typeof verifyStagingRoot !== 'function' && typeof inspectMounts !== 'function') ||
       (readPacer !== undefined && typeof readPacer?.afterBytes !== 'function') ||
-      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function')) {
+      (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (ownershipGate !== null && (typeof ownershipGate?.refresh !== 'function' ||
+        typeof ownershipGate?.status !== 'function'))) {
     throw new TypeError('Invalid acquisition stage providers');
   }
+  const checkOwnership = async (anidbId) => {
+    if (!ownershipGate) return null;
+    try {
+      if ((await ownershipGate.refresh())?.state !== 'ready') {
+        return held('sonarr_ownership_unavailable');
+      }
+      const status = ownershipGate.status(anidbId);
+      return status === 'eligible' ? null :
+        held(status === 'owned' ? 'sonarr_title_owned' :
+          status === 'unmapped' ? 'sonarr_identity_unmapped' :
+            'sonarr_ownership_unavailable');
+    } catch { return held('sonarr_ownership_unavailable'); }
+  };
   const publicLibraryIds = (kind) => kind === 'movie'
     ? [...episode, ...movie] : [...episode];
   const relatedTitleReader = readRelatedTitles ?? (({ anidbId }) =>
@@ -106,7 +122,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     } catch { return null; }
   };
   return {
-    processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
+    async processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
       ...claim } = {}) {
       if (typeof fetchImpl !== 'function' ||
           typeof searchFetch !== 'function' ||
@@ -114,13 +130,22 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           typeof qbittorrent?.sessionId !== 'string') {
         return Promise.resolve(held('provider_unavailable'));
       }
+      if (ownershipGate) {
+        let request;
+        try { request = requests.getRequest(claim.requestId); }
+        catch { return held('request_unavailable'); }
+        const ownership = await checkOwnership(request?.anidbId);
+        if (ownership) return ownership;
+      }
       const process = createAcquisitionRequestProcessor({
         readRequest: (id) => requests.getRequest(id),
         readPublicCoverage,
         inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
         discoverCandidates, previewCandidate, loadDetail,
-        submitCandidate: ({ request, ...selected }) =>
-          submitMissingCandidate({ request, ...selected,
+        submitCandidate: async ({ request, ...selected }) => {
+          const ownership = await checkOwnership(request.anidbId);
+          if (ownership) return ownership;
+          return submitMissingCandidate({ request, ...selected,
             releaseQueries, readEvidence, readRelatedTitles: relatedTitleReader,
             ledger: acquisitions, firstTimePolicy,
             publicLibraryIds: publicLibraryIds(request.kind), now,
@@ -128,7 +153,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
             qbittorrent: { ...qbittorrent, hostPath: stagingHostPath,
               saveRoot: qbitStagingRoot, inspectMounts, verifyStagingRoot,
               realpathImpl, fetchImpl },
-          }),
+          });
+        },
       });
       return process(claim);
     },
@@ -142,6 +168,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (!['series', 'movie'].includes(request?.kind)) {
         return held('request_unavailable');
       }
+      const ownership = await checkOwnership(request.anidbId);
+      if (ownership) return ownership;
       return processRecordedStart({ attemptId, requests, acquisitions,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,

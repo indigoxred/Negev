@@ -15,6 +15,34 @@ const authorizedSession = { get: async () => ({ state: 'authenticated',
   sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
 const qbBaseUrl = 'http://qb:8080/';
 
+test('a failed Sonarr ownership refresh holds the request cursor before a claim', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-ownership-pipeline-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'ownership-hold', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      episodeIds: [1001], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  let invoked = false;
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession,
+    ownershipGate: { refresh: async () => ({ state: 'held' }),
+      status: () => 'unavailable' },
+    processRequest: async () => { invoked = true; },
+    processStart: async () => {}, processCompletion: async () => {},
+    processPublish: async () => {}, now: () => 100 });
+  try {
+    await pipeline.initialize();
+    assert.deepEqual(await pipeline.tickRequests(), { state: 'held',
+      reason: 'sonarr_ownership_unavailable' });
+    assert.equal(invoked, false);
+  } finally {
+    await pipeline.close(); handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('pipeline never invokes a download processor while qBittorrent authentication is held', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-auth-'));
   const dbPath = path.join(dir, 'state.sqlite');

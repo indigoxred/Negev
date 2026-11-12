@@ -10,7 +10,7 @@ const validCandidateFingerprint = (value) => typeof value === 'string' &&
 // This queue only chooses which saved request to examine. It never searches
 // an indexer, calls qBittorrent, or treats a held item as completed.
 export function openAcquisitionRequestQueue(dbPath,
-  { allowedAnidbIds = null } = {}) {
+  { allowedAnidbIds = null, ownershipGate = null } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable acquisition queue path required');
   }
@@ -20,6 +20,9 @@ export function openAcquisitionRequestQueue(dbPath,
        allowedAnidbIds.some((id) => !validId(id)) ||
        new Set(allowedAnidbIds).size !== allowedAnidbIds.length)) {
     throw new TypeError('Invalid acquisition title cohort');
+  }
+  if (ownershipGate !== null && typeof ownershipGate?.status !== 'function') {
+    throw new TypeError('Invalid acquisition ownership gate');
   }
   const cohortFilter = allowedAnidbIds === null ? '' :
     `r.anidb_id IN (${allowedAnidbIds.map(() => '?').join(',')}) AND`;
@@ -69,7 +72,8 @@ export function openAcquisitionRequestQueue(dbPath,
   // An unfinished claim remains excluded after a crash. A one-time request
   // stops acquiring after exact public proof; its saved history remains.
   // Active Airing watches continue so later episodes can be added.
-  const next = db.prepare(`SELECT r.id,COALESCE(c.candidate_offset,0) AS candidateOffset,
+  const next = db.prepare(`SELECT r.id,r.anidb_id AS anidbId,
+      COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
@@ -226,21 +230,31 @@ export function openAcquisitionRequestQueue(dbPath,
       if (!validTime(nowMs)) throw new TypeError('Invalid acquisition queue clock');
       return transact(() => {
         const position = cursor.get();
-        const row = next.get(position.afterId, ...(allowedAnidbIds ?? []), nowMs);
-        if (!row) {
-          if (wrap.run(position.afterId, position.pass).changes !== 1) {
+        let afterId = position.afterId;
+        for (let scanned = 0; scanned < 1_000; scanned++) {
+          const row = next.get(afterId, ...(allowedAnidbIds ?? []), nowMs);
+          if (!row) {
+            if (wrap.run(afterId, position.pass).changes !== 1) {
+              throw new Error('Acquisition cursor changed');
+            }
+            return { state: 'pass_complete', pass: position.pass };
+          }
+          const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
+          if (!['eligible', 'owned', 'unmapped'].includes(ownership)) {
+            return held('sonarr_ownership_unavailable');
+          }
+          if (advance.run(row.id, afterId, position.pass).changes !== 1) {
             throw new Error('Acquisition cursor changed');
           }
-          return { state: 'pass_complete', pass: position.pass };
+          afterId = row.id;
+          if (ownership !== 'eligible') continue;
+          claim.run(row.id, position.pass);
+          return { state: 'claimed', requestId: row.id, pass: position.pass,
+            ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
+            ...(row.candidateFingerprint ?
+              { candidateFingerprint: row.candidateFingerprint } : {}) };
         }
-        if (advance.run(row.id, position.afterId, position.pass).changes !== 1) {
-          throw new Error('Acquisition cursor changed');
-        }
-        claim.run(row.id, position.pass);
-        return { state: 'claimed', requestId: row.id, pass: position.pass,
-          ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
-          ...(row.candidateFingerprint ?
-            { candidateFingerprint: row.candidateFingerprint } : {}) };
+        return held('queue_scan_limit');
       });
     },
     recordResult({ requestId, pass, state, reason = null, attemptId = null,
@@ -318,6 +332,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
           if (next.state === 'pass_complete') {
             return { state: 'pass_complete', pass: next.pass, results };
           }
+          if (next.state !== 'claimed') return { ...next, results };
           let outcome;
           try { outcome = await processRequest({ requestId: next.requestId,
             pass: next.pass,
