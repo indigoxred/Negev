@@ -2,6 +2,7 @@ import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
+import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -14,12 +15,15 @@ const validReason = (value) => typeof value === 'string' &&
 export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
   readPublicCoverage, inspectCandidateTargets,
+  readRelatedTitles,
   maxPreflights = 3 } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       (readPublicCoverage !== undefined && typeof readPublicCoverage !== 'function') ||
       (inspectCandidateTargets !== undefined &&
         typeof inspectCandidateTargets !== 'function') ||
+      (readRelatedTitles !== undefined &&
+        typeof readRelatedTitles !== 'function') ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, pass = 1, candidateOffset = 0,
@@ -85,10 +89,29 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     if (found.items.length === 0) return { ...held('no_release_candidates'),
       nextCandidateOffset: 0 };
+    let safeTitles = found.items;
+    if (readRelatedTitles) {
+      let related;
+      try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
+      catch { return held('related_title_unavailable'); }
+      safeTitles = [];
+      for (const item of found.items) {
+        // Reject a known different installment before spending a metainfo
+        // read or a place in the bounded three-candidate preview. File names
+        // are checked again after metainfo is fetched for surviving titles.
+        const checked = checkRelatedInstallment({ anidbId: request.anidbId,
+          requestedTitle: request.title, related, releaseTitle: item.title,
+          fileNames: [item.title] });
+        if (checked.reason === 'related_title_unavailable') return checked;
+        if (checked.state === 'related_title_clear') safeTitles.push(item);
+      }
+    }
+    if (safeTitles.length === 0) return { ...held('no_safe_release'),
+      nextCandidateOffset: 0 };
     // Inspect exact-episode search hits before broad title hits, then prefer
     // peers within each group. This is ordering only: metainfo, ownership and
     // exact file checks still decide whether a release is safe.
-    const candidates = [...new Map(found.items.map((item) =>
+    const candidates = [...new Map(safeTitles.map((item) =>
       [`${item.indexerId}:${item.guid}`, item])).values()].sort((a, b) => {
       if (a.targetedEpisode !== b.targetedEpisode) {
         return Number(b.targetedEpisode === true) -
@@ -108,7 +131,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // A rotated episode search may promote an unvisited release. Promote it
     // within the unvisited suffix without repeating already inspected items.
     const fingerprint = createHash('sha256').update(JSON.stringify(
-      ['targeted-first-v1', ...[...request.episodeIds].sort((a, b) => a - b)]))
+      [readRelatedTitles ? 'targeted-related-v2' : 'targeted-first-v1',
+        ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const saved = typeof candidateFingerprint === 'string' &&
       candidateFingerprint.length <= 3_400 ? candidateFingerprint.split(':') : [];

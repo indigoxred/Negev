@@ -150,6 +150,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readPublicCoverage,
         inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
         discoverCandidates, previewCandidate, loadDetail,
+        ...(readRelatedTitles ? { readRelatedTitles: relatedTitleReader } : {}),
         submitCandidate: async ({ request, ...selected }) => {
           const ownership = await checkOwnership(request.anidbId);
           if (ownership) return ownership;
