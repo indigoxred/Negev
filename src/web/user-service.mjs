@@ -416,6 +416,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     // Preview, submission, and start must use identical relation evidence.
     // Shoko may not know an unowned season yet, while the AniDB archive does.
     const readRelatedTitles = ({ anidbId }) => readRelatedEvidence({ anidbId,
+      aliasesForId: (relatedId) => titleSource?.releaseQueries(relatedId) ?? [],
       readLocal: () => metadata.run(() => readAniDbRelatedTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
       readArchive: async () => {

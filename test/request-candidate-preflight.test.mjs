@@ -85,6 +85,27 @@ test('a separately listed side story is held before it can become a preflight', 
   assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
 });
 
+test('a related installment under its English alias is held before a torrent is submitted', async () => {
+  const original = { ...detail, anidbId: 461,
+    title: 'Kanojo to Kanojo no Neko', total: 1,
+    episodes: [{ id: 5336, number: 1, type: 'Episode', title: 'OVA' }] };
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate,
+      title: '[Commie] She and Her Cat ~Everything Flows~ - 01' },
+    readRequest: () => ({ ...request, anidbId: 461, episodeIds: [5336] }),
+    loadDetail: async () => original,
+    releaseQueries: async () => ['She and Her Cat'],
+    readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 461,
+      items: [{ anidbId: 11874,
+        title: 'Kanojo to Kanojo no Neko: Everything Flows',
+        aliases: ['She and Her Cat: Everything Flows'], relation: 'Sequel' }] }),
+    prepare: async () => ({ ...prepared,
+      files: [{ name: '[Commie] She and Her Cat ~Everything Flows~ - 01.mkv',
+        size: 1_000 }] }),
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
+});
+
 test('an unnumbered one-episode series remains provisional before exact AniDB admission', async () => {
   const single = { ...detail, total: 1,
     episodes: [detail.episodes[0]] };

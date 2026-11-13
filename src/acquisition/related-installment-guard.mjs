@@ -16,13 +16,21 @@ export function checkRelatedInstallment({ anidbId, requestedTitle, related,
       (releaseTitle !== undefined && typeof releaseTitle !== 'string') ||
       related.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
         item.anidbId < 1 || item.anidbId === anidbId ||
-        typeof item.title !== 'string' || !item.title.trim())) {
+        typeof item.title !== 'string' || !item.title.trim() ||
+        (item.aliases !== undefined &&
+          (!Array.isArray(item.aliases) || item.aliases.length > 20 ||
+            item.aliases.some((alias) => typeof alias !== 'string' ||
+              alias.length < 2 || alias.length > 120 ||
+              /[\x00-\x1f\x7f]/.test(alias)))))) {
     return held('related_title_unavailable');
   }
   const names = releaseTitle === undefined ? fileNames : [releaseTitle, ...fileNames];
-  if (related.items.some((item) =>
-    !matchesTrustedReleaseTitle(requestedTitle, item.title) &&
-    names.some((name) => matchesTrustedReleaseTitle(name, item.title)))) {
+  if (related.items.some((item) => {
+    const titles = [item.title, ...(item.aliases ?? [])];
+    return titles.every((title) =>
+      !matchesTrustedReleaseTitle(requestedTitle, title)) &&
+      names.some((name) => matchesTrustedReleaseTitle(name, ...titles));
+  })) {
     return held('related_installment_mismatch');
   }
   return { state: 'related_title_clear' };
