@@ -98,6 +98,9 @@ export async function observePureMoveImport({ move, target, shokoMount,
       episodeId: expected.episodeIds[0] };
     if (matching.size !== 1) return held('ambiguous_shoko_file');
     const file = [...matching.values()][0];
+    const releaseEvidence = file.releaseEvidence ??
+      (validId(file.anidbFileId) ? 'registered' : null);
+    if (!releaseEvidence) return held('shoko_provenance_unverified');
     for (const episodeId of expected.episodeIds.slice(1)) {
       if (!episodes.get(episodeId).some((other) =>
         other.fileId === file.fileId && other.anidbId === file.anidbId &&
@@ -111,7 +114,7 @@ export async function observePureMoveImport({ move, target, shokoMount,
     if (usedIds.has(file.fileId)) return held('ambiguous_shoko_file');
     usedIds.add(file.fileId);
     observed.push({ name: expected.name, fileId: file.fileId,
-      releaseEvidence: file.releaseEvidence ?? 'registered' });
+      releaseEvidence });
   }
   return { state: 'shoko_files_identified', files: observed };
 }

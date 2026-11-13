@@ -27,6 +27,19 @@ test('associates only the exact journalled inode with the Shoko identity', async
       releaseEvidence: 'shoko_offline_link' }] });
 });
 
+test('registered provenance requires Shoko to supply an AniDB file ID', async () => {
+  const readEpisode = async (value) => ({ state: 'ok', complete: true,
+    files: [{ ...file, releaseEvidence: undefined, anidbFileId: value }] });
+  const probeImpl = async () => ({ state: 'candidate', candidateKey: '12:34:100:56' });
+  assert.deepEqual(await observePureMoveImport({ move, target, shokoMount,
+    readEpisode: async () => readEpisode(12345), probeImpl }),
+  { state: 'shoko_files_identified', files: [{ name: 'Movie.mkv',
+    fileId: 77, releaseEvidence: 'registered' }] });
+  assert.deepEqual(await observePureMoveImport({ move, target, shokoMount,
+    readEpisode: async () => readEpisode(null), probeImpl }),
+  { state: 'held', reason: 'shoko_provenance_unverified' });
+});
+
 test('the default probe checks real inode, size and mtime without reading bytes', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-observer-'));
   try {
