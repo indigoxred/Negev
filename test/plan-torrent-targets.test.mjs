@@ -197,6 +197,21 @@ test('passive artwork and notes cannot claim an AniDB episode', () => {
   assert.equal(plan.plannedFiles.length, 2);
 });
 
+test('separately named NCOP and NCED clips are excluded from a regular episode request', () => {
+  const prepared = { ...pack, files: [...pack.files,
+    { name: 'Show/NCOP.mkv', size: 100 },
+    { name: 'Show/NCED.mkv', size: 120 },
+    { name: 'Show/checksums.md5', size: 90 }] };
+  const plan = planTorrentTargets({ request, detail, prepared });
+  assert.equal(plan.state, 'planned_targets');
+  assert.deepEqual(plan.episodeIds, [1001, 1002]);
+  assert.deepEqual(plan.excludedVideoNames, ['Show/NCOP.mkv', 'Show/NCED.mkv']);
+  assert.equal(plan.plannedFiles.length, 2);
+  assert.equal(planTorrentTargets({ request, detail,
+    prepared: { ...pack, files: [...pack.files,
+      { name: 'Show/Show - 04.mkv', size: 100 }] } }).state, 'held');
+});
+
 test('ambiguous pack, duplicate number, foreign target, and special hold without a claim', () => {
   const variants = [
     { ...pack, files: [{ name: 'Show - 01.mkv', size: 1200 },

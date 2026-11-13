@@ -383,6 +383,50 @@ test('excludes only passive extras before accepting a pristine stopped torrent',
       name: 'Example.mkv', size: 1000 }]);
   }));
 
+test('excludes a specifically unplanned NCOP clip and checksum before starting', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    const clipInfo = { ...passiveInfo, files: [
+      { length: 1000, path: ['Example.mkv'] },
+      { length: 200, path: ['NCOP.mkv'] },
+      { length: 20, path: ['checksums.md5'] },
+    ] };
+    const clipHash = createHash('sha1').update(encode(clipInfo)).digest('hex');
+    const clipSavePath = `/Downloads/negev/${clipHash}`;
+    const clipPrepared = { state: 'prepared_stopped',
+      expected: { hash: clipHash, category: 'negev', savePath: clipSavePath },
+      form: buildStoppedTorrentAddForm({ torrentBytes: encode({ info: clipInfo }),
+        savePath: clipSavePath, category: 'negev' }) };
+    let added = false;
+    let excluded = false;
+    const fetchImpl = async (url, init) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+      if (endpoint.endsWith('/add')) { added = true; return new Response('Ok.'); }
+      if (endpoint.endsWith('/filePrio')) {
+        assert.equal(init.body.get('id'), '1|2');
+        excluded = true;
+        return new Response('Ok.');
+      }
+      if (!added) return Response.json([]);
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: clipSavePath, download_path: '' });
+      if (endpoint.endsWith('/files')) return Response.json([
+        files[0],
+        { index: 1, name: 'NCOP.mkv', size: 200,
+          priority: excluded ? 0 : 1, progress: 0 },
+        { index: 2, name: 'checksums.md5', size: 20,
+          priority: excluded ? 0 : 1, progress: 0 },
+      ]);
+      return Response.json([{ ...torrent, hash: clipHash,
+        save_path: clipSavePath, amount_left: 1220 }]);
+    };
+    const result = await submitStoppedCandidate({ ...options, ledger,
+      attemptId, prepared: clipPrepared, plannedFileNames: ['Example.mkv'], fetchImpl });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(excluded, true);
+    assert.deepEqual(result.videos, [{ index: 0, name: 'Example.mkv', size: 1000 }]);
+  }));
+
 test('unsafe extra file never receives a priority write or torrent start', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     let added = false;

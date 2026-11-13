@@ -49,6 +49,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
       baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
       expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
       allowSelectedPassive: true,
+      plannedFileNames: plan?.map((file) => file.name),
     });
     if (observed.state === 'manifest_needs_exclusions') {
       const body = new URLSearchParams({ hash: pending.hash,
@@ -64,6 +65,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
       observed = await observeStoppedManifest({
         baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
         expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
+        plannedFileNames: plan?.map((file) => file.name),
       });
       if (observed.reason === 'unexpected_selected_file') {
         return held('passive_exclusion_unconfirmed');

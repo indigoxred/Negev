@@ -35,7 +35,7 @@ async function exactPreparedTorrent(prepared, saveRoot) {
 // observation, never retried.
 export async function submitStoppedCandidate({
   ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl,
-  verifyStagingRoot, saveRoot,
+  verifyStagingRoot, saveRoot, plannedFileNames,
   baseUrl, sessionId, nowMs, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   let base;
@@ -130,7 +130,7 @@ export async function submitStoppedCandidate({
 
   let observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
     fetchImpl, timeoutMs, allowSelectedPassive: true,
-    expectedFiles: metainfo.files, saveRoot });
+    plannedFileNames, expectedFiles: metainfo.files, saveRoot });
   // qBittorrent may acknowledge an add before its torrent list exposes the
   // hash or while it briefly checks the new torrent. Re-read the full exact
   // manifest for up to five seconds; never send another add or accept a
@@ -142,7 +142,7 @@ export async function submitStoppedCandidate({
     await new Promise((resolve) => setTimeout(resolve, 250));
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
       fetchImpl, timeoutMs, allowSelectedPassive: true,
-      expectedFiles: metainfo.files, saveRoot });
+      plannedFileNames, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state === 'manifest_needs_exclusions') {
     const body = new URLSearchParams({ hash: expected.hash,
@@ -156,7 +156,7 @@ export async function submitStoppedCandidate({
       });
     } catch { /* An uncertain response is resolved by the exact manifest below. */ }
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
-      fetchImpl, timeoutMs, expectedFiles: metainfo.files, saveRoot });
+      fetchImpl, timeoutMs, plannedFileNames, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state !== 'manifest_safe') return observed;
   const recorded = ledger.recordTorrent({ attemptId, hash: expected.hash, nowMs });
