@@ -167,7 +167,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       });
       return process(claim);
     },
-    async processStart({ attemptId, qbittorrent, fetchImpl } = {}) {
+    async processStart({ attemptId, qbittorrent, fetchImpl,
+      renewQbittorrent } = {}) {
       let attempt, request;
       try {
         attempt = acquisitions.getAttempt(attemptId);
@@ -184,7 +185,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         readRelatedTitles: relatedTitleReader,
-        fetchImpl, now });
+        fetchImpl, renewQbittorrent, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl, renewQbittorrent } = {}) {

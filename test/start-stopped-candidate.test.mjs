@@ -297,6 +297,62 @@ test('a final qBittorrent 403 is retryable and never records a start intent', as
     assert.equal(starts, 0);
   }));
 
+test('a final qBittorrent 403 renews once, rechecks the stopped manifest, and starts with the new session', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let renewals = 0;
+    let starts = 0;
+    const provider = (renewed) => async (url, init = {}) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint.endsWith('/start')) {
+        starts++;
+        assert.equal(init.headers.Cookie, 'SID=renewedSID');
+        return new Response('Ok.');
+      }
+      if (availabilityRead && !renewed) return new Response('', { status: 403 });
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: expected.savePath, download_path: '' });
+      return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+    };
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => { availabilityRead = true; return options.readEvidence(); },
+      fetchImpl: provider(false),
+      renewQbittorrent: async (sid) => {
+        assert.equal(sid, 'syntheticSID');
+        renewals++;
+        return { state: 'authenticated', sessionId: 'renewedSID',
+          fetchImpl: provider(true) };
+      },
+    });
+    assert.deepEqual(result, { state: 'start_unknown', sendNow: true });
+    assert.equal(renewals, 1);
+    assert.equal(starts, 1);
+    assert.ok(ledger.getStart(attemptId));
+  }));
+
+test('failed final-session renewal leaves the torrent stopped without a start intent', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let starts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => { availabilityRead = true; return options.readEvidence(); },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { starts++; return new Response('Ok.'); }
+        if (availabilityRead) return new Response('', { status: 403 });
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      },
+      renewQbittorrent: async () => ({ state: 'held', reason: 'authentication_backoff' }),
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'authentication_backoff' });
+    assert.equal(starts, 0);
+    assert.equal(ledger.getStart(attemptId), null);
+  }));
+
 test('a file priority changed during the availability probe blocks start', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;

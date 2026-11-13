@@ -141,3 +141,27 @@ test('request can renew its session after a long Import observation', async () =
     { state: 'authenticated', sessionId: 'new_sid' });
   assert.equal(renewals, 1);
 });
+
+test('start can renew a rejected qBittorrent session before sending start', async () => {
+  let renewals = 0;
+  const run = createAcquisitionSessionRunners({
+    qbBaseUrl: 'http://qbittorrent.internal:8080/',
+    sessionGate: {
+      get: async () => ({ state: 'authenticated', sessionId: 'old_sid' }),
+      invalidate: () => {},
+      renew: async (sid) => { assert.equal(sid, 'old_sid'); renewals++;
+        return { state: 'authenticated', sessionId: 'new_sid' }; },
+    },
+    fetchImpl: async () => new Response('Ok.'),
+    processRequest: async () => {},
+    processStart: async ({ qbittorrent, renewQbittorrent }) => {
+      const fresh = await renewQbittorrent(qbittorrent.sessionId);
+      return { state: fresh.state, sessionId: fresh.sessionId };
+    },
+    processCompletion: async () => {},
+    processPublish: async () => {},
+  });
+  assert.deepEqual(await run.processStart({ attemptId: 9 }),
+    { state: 'authenticated', sessionId: 'new_sid' });
+  assert.equal(renewals, 1);
+});

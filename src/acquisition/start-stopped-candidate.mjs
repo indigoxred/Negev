@@ -17,7 +17,7 @@ export async function startStoppedCandidate({
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
   readRelatedTitles,
-  now = Date.now, fetchImpl = fetch, timeoutMs = 10_000,
+  now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -34,6 +34,7 @@ export async function startStoppedCandidate({
       (typeof verifyStagingRoot !== 'function' &&
         (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
       typeof fetchImpl !== 'function' || typeof ledger?.beginStart !== 'function' ||
+      (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       typeof ledger?.getAttempt !== 'function' ||
       typeof ledger?.getFilePlan !== 'function') {
     throw new TypeError('Invalid torrent start configuration');
@@ -106,8 +107,26 @@ export async function startStoppedCandidate({
   }
   // The availability probe may take long enough for qBittorrent priorities or
   // paths to change. Recheck immediately before recording the one-send intent.
-  const finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
+  let activeSessionId = sessionId;
+  let activeFetch = fetchImpl;
+  let finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
     expected, fetchImpl, timeoutMs, saveRoot });
+  if (finalManifest.reason === 'provider_http_403' && renewQbittorrent) {
+    let renewed;
+    try { renewed = await renewQbittorrent(sessionId); }
+    catch { return held('authentication_unavailable'); }
+    if (renewed?.state !== 'authenticated') {
+      return held(typeof renewed?.reason === 'string' ? renewed.reason :
+        'authentication_unavailable');
+    }
+    if (!validQbittorrentSessionId(renewed.sessionId) ||
+        typeof renewed.fetchImpl !== 'function') return held('authentication_unavailable');
+    activeSessionId = renewed.sessionId;
+    activeFetch = renewed.fetchImpl;
+    finalManifest = await observeStoppedManifest({ baseUrl,
+      sessionId: activeSessionId, expected, fetchImpl: activeFetch,
+      timeoutMs, saveRoot });
+  }
   if (finalManifest.reason === 'provider_http_403' ||
       finalManifest.reason === 'provider_unavailable') return finalManifest;
   if (finalManifest.state !== 'manifest_safe' ||
@@ -149,8 +168,8 @@ export async function startStoppedCandidate({
 
   const body = new URLSearchParams({ hashes: expected.hash });
   try {
-    await fetchImpl(new URL('/api/v2/torrents/start', base), {
-      method: 'POST', headers: { Cookie: qbittorrentSessionCookie(sessionId) }, body,
+    await activeFetch(new URL('/api/v2/torrents/start', base), {
+      method: 'POST', headers: { Cookie: qbittorrentSessionCookie(activeSessionId) }, body,
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
   } catch { /* Start may have reached qBittorrent; never repeat automatically. */ }
