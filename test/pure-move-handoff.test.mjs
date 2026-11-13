@@ -144,3 +144,74 @@ test('a symlinked selected source never reaches the intent', async (t) =>
     assert.equal(result.state, 'held');
     assert.equal(called, false);
   }));
+
+test('a symlinked attempt holding directory cannot redirect a selected file', async (t) =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), 'abc');
+    const outside = path.join(path.dirname(roots.importRoot), 'outside');
+    await mkdir(outside);
+    const holdingPath = path.join(roots.holdingRoot, `negev-7-${'a'.repeat(16)}`);
+    try { await symlink(outside, holdingPath, 'dir'); }
+    catch (error) {
+      if (error?.code === 'EPERM') return t.skip('Windows symlink privilege unavailable');
+      throw error;
+    }
+    let recorded = false;
+    const result = await preparePureMove({ ...roots, attemptId: 7,
+      torrentHash: 'a'.repeat(40), files: [file],
+      recordIntent: async () => { recorded = true; return { state: 'recorded' }; },
+    });
+    assert.equal(result.state, 'held');
+    assert.equal(recorded, false);
+    assert.deepEqual(await readdir(outside), []);
+    assert.equal((await readFile(path.join(roots.stagingRoot, file.name))).toString(), 'abc');
+  }));
+
+test('a symlinked nested holding parent cannot redirect a selected file', async (t) =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), 'abc');
+    const outside = path.join(path.dirname(roots.importRoot), 'outside');
+    await mkdir(outside);
+    const holdingPath = path.join(roots.holdingRoot, `negev-7-${'a'.repeat(16)}`);
+    await mkdir(holdingPath);
+    try { await symlink(outside, path.join(holdingPath, 'Show'), 'dir'); }
+    catch (error) {
+      if (error?.code === 'EPERM') return t.skip('Windows symlink privilege unavailable');
+      throw error;
+    }
+    let recorded = false;
+    const result = await preparePureMove({ ...roots, attemptId: 7,
+      torrentHash: 'a'.repeat(40), files: [file],
+      recordIntent: async () => { recorded = true; return { state: 'recorded' }; },
+    });
+    assert.equal(result.state, 'held');
+    assert.equal(recorded, false);
+    assert.deepEqual(await readdir(outside), []);
+    assert.equal((await readFile(path.join(roots.stagingRoot, file.name))).toString(), 'abc');
+  }));
+
+test('a holding parent changed after intent cannot redirect a selected file', async (t) =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), 'abc');
+    const outside = path.join(path.dirname(roots.importRoot), 'outside');
+    await mkdir(outside);
+    const holdingPath = path.join(roots.holdingRoot, `negev-7-${'a'.repeat(16)}`);
+    let linked = false;
+    const result = await preparePureMove({ ...roots, attemptId: 7,
+      torrentHash: 'a'.repeat(40), files: [file],
+      recordIntent: async () => {
+        try { await symlink(outside, holdingPath, 'dir'); linked = true; }
+        catch (error) {
+          if (error?.code !== 'EPERM') throw error;
+        }
+        return { state: 'recorded' };
+      },
+    });
+    if (!linked) return t.skip('Windows symlink privilege unavailable');
+    assert.equal(result.state, 'held');
+    assert.deepEqual(await readdir(outside), []);
+    assert.equal((await readFile(path.join(roots.stagingRoot, file.name))).toString(), 'abc');
+  }));
