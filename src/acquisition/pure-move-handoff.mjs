@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, lstat, mkdir, open, realpath, rename } from 'node:fs/promises';
+import { lstat, mkdir, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
@@ -112,7 +112,8 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
       if (!same(from) || to) return held('source_changed_after_intent');
       await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
       await renameFile(source, destination);
-      await chmod(destination, 0o644);
+      // qBittorrent owns the inode. Preserve its mode rather than trying to
+      // chmod it as Negev's different uid after the same-filesystem rename.
       await syncDirectory(path.dirname(source));
       await syncDirectory(path.dirname(destination));
     }

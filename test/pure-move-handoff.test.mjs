@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, readdir, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -51,6 +51,20 @@ test('failed intent leaves all source bytes in staging', async () =>
     assert.deepEqual(result, { state: 'held', reason: 'intent_unavailable' });
     assert.equal((await readFile(path.join(roots.stagingRoot, file.name))).toString(), 'abc');
     assert.deepEqual(await readdir(roots.holdingRoot), []);
+  }));
+
+test('preserves downloader file mode across the move', { skip: process.platform === 'win32' }, async () =>
+  withRoots(async (roots) => {
+    await mkdir(path.join(roots.stagingRoot, 'Show'));
+    await writeFile(path.join(roots.stagingRoot, file.name), 'abc');
+    await chmod(path.join(roots.stagingRoot, file.name), 0o664);
+    const result = await preparePureMove({ ...roots, attemptId: 7,
+      torrentHash: 'a'.repeat(40), files: [file],
+      recordIntent: async () => ({ state: 'recorded' }),
+    });
+    assert.equal(result.state, 'prepared');
+    assert.equal((await stat(path.join(result.holdingPath, file.name))).mode & 0o777,
+      0o664);
   }));
 
 test('wrong size and unsafe names fail before an intent or move', async () =>
