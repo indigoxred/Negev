@@ -194,7 +194,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (pureMode) return processPureCompletedAttempt({ attemptId, requests,
         acquisitions, pureMoves, stagingHostPath, qbitStagingRoot,
         holdingRoot, importRoot, qbittorrent, fetchImpl,
-        verifyStagingRoot: stagingMountReady, verifyHandoffMounts,
+        verifyStagingRoot, verifyHandoffMounts,
         nowMs: now() });
       let planned;
       try { planned = acquisitions.getFilePlan?.(attemptId); }

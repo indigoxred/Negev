@@ -103,6 +103,31 @@ test('opt-in pure move mode routes recorded attempts without invoking legacy has
   { state: 'held', reason: 'handoff_already_recorded' });
 });
 
+test('pure completion passes structured staging proof through its inner mount gate', async () => {
+  let stagingChecks = 0;
+  const stages = createAcquisitionStageProcessors({ ...options([]),
+    qbitStagingRoot: '/NegevPure', pureMode: true,
+    verifyStagingRoot: async () => { stagingChecks++;
+      return { state: 'verified_staging_root' }; },
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    pureMoves: { getIntent: () => null,
+      recordIntent: () => ({ state: 'recorded' }),
+      markPrepared: () => ({ state: 'prepared' }) },
+    acquisitions: {
+      getAttempt: () => ({ id: 7, status: 'torrent_observed', requestId: 1,
+        anidbId: 42, episodeIds: [1001], torrentHash }),
+      getStart: () => ({ torrentHash }),
+      getFilePlan: () => [{ name: '01.mkv', size: 1000,
+        episodeIds: [1001] }],
+    },
+  });
+  assert.deepEqual(await stages.processCompletion({ attemptId: 7,
+    qbittorrent: { baseUrl: 'http://qb:8080/', sessionId: 'synthetic' },
+    fetchImpl: async () => { throw Error('provider unavailable'); } }),
+  { state: 'held', reason: 'provider_transport' });
+  assert.equal(stagingChecks, 2);
+});
+
 test('missing safety providers are rejected before any work', () => {
   const calls = [];
   assert.throws(() => createAcquisitionStageProcessors({ ...options(calls),
