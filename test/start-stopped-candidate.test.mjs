@@ -331,6 +331,36 @@ test('a final qBittorrent 403 renews once, rechecks the stopped manifest, and st
     assert.ok(ledger.getStart(attemptId));
   }));
 
+test('an initial qBittorrent 403 renews once before the first manifest check', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let renewals = 0;
+    let starts = 0;
+    const provider = (renewed) => async (url, init = {}) => {
+      const endpoint = new URL(url).pathname;
+      if (!renewed) return new Response('', { status: 403 });
+      if (endpoint.endsWith('/start')) {
+        starts++;
+        assert.equal(init.headers.Cookie, 'SID=renewedSID');
+        return new Response('Ok.');
+      }
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: expected.savePath, download_path: '' });
+      return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+    };
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest, fetchImpl: provider(false),
+      renewQbittorrent: async (sid) => {
+        assert.equal(sid, 'syntheticSID');
+        renewals++;
+        return { state: 'authenticated', sessionId: 'renewedSID',
+          fetchImpl: provider(true) };
+      },
+    });
+    assert.deepEqual(result, { state: 'start_unknown', sendNow: true });
+    assert.equal(renewals, 1);
+    assert.equal(starts, 1);
+  }));
+
 test('failed final-session renewal leaves the torrent stopped without a start intent', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;
