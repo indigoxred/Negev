@@ -8,6 +8,8 @@ const validProof = (proof) => validId(proof?.fileId) &&
   [undefined, 'alternate_card'].includes(proof.presentation);
 const positiveLifetimeMs = 30 * 60_000;
 const retryMs = 5 * 60_000;
+const freshEventRetryMs = 30_000;
+const freshEventWindowMs = 3 * 60_000;
 const recentEventRetryMs = 30 * 60_000;
 const leaseMs = 10 * 60_000;
 
@@ -257,8 +259,10 @@ export function openDirectAvailabilityQueue(dbPath) {
       if (checkedMs < receipt.observedMs || checkedMs < receipt.startedMs) {
         return { state: 'held', reason: 'clock_regressed' };
       }
+      const freshEvent = state === 'unknown' && receipt.priority === 1 &&
+        checkedMs - receipt.observedMs < freshEventWindowMs;
       const dueMs = checkedMs + (state === 'available'
-        ? positiveLifetimeMs : retryMs);
+        ? positiveLifetimeMs : freshEvent ? freshEventRetryMs : retryMs);
       let begun = false;
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
