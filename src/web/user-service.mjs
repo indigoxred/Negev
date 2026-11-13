@@ -212,7 +212,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     startReview = openStartQueue(dbPath);
     completionReview = openCompletionQueue(dbPath,
       { pureMode: acquisition?.pureMode === true });
-    progress = openRequestProgress(dbPath);
+    progress = openRequestProgress(dbPath,
+      { pureMode: acquisition?.pureMode === true });
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);

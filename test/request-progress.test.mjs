@@ -7,10 +7,57 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openCompletionQueue } from '../src/acquisition/completion-queue.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
+import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
 import { openAcquisitionRequestQueue,
   reconcileUnresolvedAcquisitionClaims } from '../src/acquisition/acquisition-request-queue.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
 import { openRequestProgress } from '../src/requests/request-progress.mjs';
+
+test('pure move progress reads the move journal rather than legacy handoffs',
+  async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-progress-'));
+    const dbPath = path.join(root, 'state.sqlite');
+    const requests = openRequestLedger(dbPath);
+    const saved = requests.submit({ requesterId: 1, requestKey: 'pure-progress',
+      nowMs: 100, intent: { state: 'ready', anidbId: 42,
+        kind: 'movie', monitorFuture: false, episodeIds: [1001] } });
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const hash = 'a'.repeat(40);
+    const candidate = { indexerId: 7, guid: 'pure-progress' };
+    const attempt = acquisitions.reserve({ requestId: saved.requestId,
+      candidate, episodeIds: [1001], nowMs: 200 });
+    const attemptId = attempt.attemptId;
+    acquisitions.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    acquisitions.beginDispatch({ attemptId, nowMs: 202 });
+    acquisitions.recordTorrent({ attemptId, hash, nowMs: 203 });
+    acquisitions.beginStart({ attemptId, hash,
+      manifestDigest: 'c'.repeat(64), nowMs: 204 });
+    const moves = openPureMoveLedger(dbPath);
+    const progress = openRequestProgress(dbPath, { pureMode: true });
+    try {
+      assert.equal(progress.read(saved.requestId).state, 'download_unverified');
+      assert.deepEqual(moves.recordIntent({ attemptId, torrentHash: hash,
+        stagingRoot: path.join(root, 'staging', hash),
+        holdingPath: path.join(root, 'holding', `negev-${attemptId}-${hash.slice(0, 16)}`),
+        files: [{ name: 'Movie.mkv', size: 10, episodeIds: [1001],
+          dev: '1', ino: '2', mtimeNs: '3' }], nowMs: 205 }),
+      { state: 'recorded' });
+      assert.equal(moves.markPrepared({ attemptId, nowMs: 206 }).state,
+        'prepared');
+      assert.equal(progress.read(saved.requestId).state, 'private_copy_recorded');
+      assert.equal(moves.beginPublish({ attemptId, nowMs: 207 }).state,
+        'publish_unknown');
+      assert.equal(moves.markPublished({ attemptId, nowMs: 208 }).state,
+        'published_observed');
+      assert.deepEqual(progress.read(saved.requestId), {
+        state: 'import_unverified', targetCount: 1,
+        privateVerifiedTargets: 1, activeAttempts: 1,
+        reviewRequired: false, publicAvailability: 'unverified' });
+    } finally {
+      progress.close(); moves.close(); acquisitions.close(); requests.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
 test('an unstarted cutover hold is visible even when the queue opens after progress',
   async () => {
