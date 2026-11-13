@@ -27,6 +27,18 @@ test('holds a related installment named by an AniDB English alias before downloa
   { state: 'held', reason: 'related_installment_mismatch' });
 });
 
+test('holds a singularized related subtitle from a torrent release', () => {
+  assert.deepEqual(checkRelatedInstallment({ anidbId: 461,
+    requestedTitle: 'Kanojo to Kanojo no Neko',
+    related: { state: 'related_titles', anidbId: 461, items: [
+      { anidbId: 11874, title: 'Kanojo to Kanojo no Neko: Everything Flows',
+        aliases: ['She and Her Cat: Everything Flows'], relation: 'Sequel' },
+    ] },
+    releaseTitle: '[Draguila] Kanojo to Kanojo no Neko - Everything Flow - 01',
+    fileNames: ['[Draguila] Kanojo to Kanojo no Neko - Everything Flow - 01.mkv'] }),
+  { state: 'held', reason: 'related_installment_mismatch' });
+});
+
 test('a requested sequel is not rejected merely because it contains the original title', () => {
   assert.deepEqual(checkRelatedInstallment({ anidbId: 468,
     requestedTitle: 'Yokohama Kaidashi Kikou: Quiet Country Cafe',
