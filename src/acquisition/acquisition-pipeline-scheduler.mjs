@@ -1,4 +1,4 @@
-const stages = ['tickPublish', 'tickCompletions', 'tickStarts', 'tickRequests'];
+const stages = ['tickCompletions', 'tickPublish', 'tickStarts', 'tickRequests'];
 const hasReviewHolds = (result) => [result?.requests, result?.starts,
   result?.completions, result?.publishes]
   .some((queue) => Array.isArray(queue?.held) && queue.held.length > 0);

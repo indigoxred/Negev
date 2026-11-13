@@ -73,7 +73,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
   }
   // qBittorrent can acknowledge stop before its state changes to stoppedUP.
   // Re-read the exact hash briefly; never send another stop or relax the manifest check.
-  for (let retry = 0; retry < 2 && after?.state === 'held' &&
+  for (let retry = 0; retry < 20 && after?.state === 'held' &&
       after.reason === 'torrent_not_stopped'; retry++) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     try { after = await observe({ ...input(), requireStopped: true }); }

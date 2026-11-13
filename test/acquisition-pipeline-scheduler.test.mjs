@@ -35,7 +35,7 @@ test('one paced clock reconciles first and visits all four stages without overla
   assert.deepEqual(calls, ['reconcile']);
   assert.deepEqual(timer.delays(), [60_000]);
   for (let i = 0; i < 4; i++) await timer.advance();
-  assert.deepEqual(calls, ['reconcile', 'publish', 'completion', 'start', 'request']);
+  assert.deepEqual(calls, ['reconcile', 'completion', 'publish', 'start', 'request']);
   assert.deepEqual(timer.delays(), [60_000]);
   await scheduler.stop();
   assert.deepEqual(timer.delays(), []);
@@ -51,9 +51,9 @@ test('shutdown drains an active stage and never starts another stage', async () 
   const calls = [];
   const pipeline = {
     initialize: async () => ({ state: 'reconciled' }),
-    tickPublish: async () => { entered(); await pending;
-      calls.push('publish'); return { state: 'processed' }; },
-    tickCompletions: async () => { calls.push('completion'); },
+    tickPublish: async () => { calls.push('publish'); },
+    tickCompletions: async () => { entered(); await pending;
+      calls.push('completion'); return { state: 'processed' }; },
     tickStarts: async () => { calls.push('start'); },
     tickRequests: async () => { calls.push('request'); },
     close: async () => { calls.push('close'); },
@@ -69,7 +69,7 @@ test('shutdown drains an active stage and never starts another stage', async () 
   assert.equal(stopped, false);
   release();
   await Promise.all([inFlight, stopping]);
-  assert.deepEqual(calls, ['publish', 'close']);
+  assert.deepEqual(calls, ['completion', 'close']);
   assert.deepEqual(timer.delays(), []);
 });
 
@@ -121,7 +121,7 @@ test('unresolved crash claim allows other stages and is rechecked without a rest
   assert.equal((await scheduler.start()).state, 'reconciled');
   assert.equal(scheduler.getStatus().state, 'waiting_with_review');
   for (let i = 0; i < 4; i++) await timer.advance();
-  assert.deepEqual(stagesSeen, ['publish', 'completion', 'start', 'request']);
+  assert.deepEqual(stagesSeen, ['completion', 'publish', 'start', 'request']);
   assert.equal(checks, 2);
   assert.equal(scheduler.getStatus().state, 'waiting');
   await scheduler.stop();
@@ -169,7 +169,7 @@ test('a held target does not delay unrelated acquisition stages', async () => {
   await timer.advance();
   assert.deepEqual(timer.delays(), [60_000]);
   await timer.advance();
-  assert.deepEqual(calls, ['publish', 'completion']);
+  assert.deepEqual(calls, ['completion', 'publish']);
   await scheduler.stop();
 });
 
@@ -177,8 +177,8 @@ test('a failed worker call uses the longer retry delay', async () => {
   const timer = clock();
   const pipeline = {
     initialize: async () => ({ state: 'reconciled' }),
-    tickPublish: async () => { throw new Error('provider unavailable'); },
-    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickCompletions: async () => { throw new Error('provider unavailable'); },
     tickStarts: async () => ({ state: 'idle' }),
     tickRequests: async () => ({ state: 'idle' }),
     close: async () => {},
@@ -199,8 +199,8 @@ test('operator status distinguishes waiting, active work and a stopped worker', 
   const pending = new Promise((resolve) => { release = resolve; });
   const pipeline = {
     initialize: async () => ({ state: 'reconciled' }),
-    tickPublish: async () => { entered(); await pending; return { state: 'processed' }; },
-    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickCompletions: async () => { entered(); await pending; return { state: 'processed' }; },
     tickStarts: async () => ({ state: 'idle' }),
     tickRequests: async () => ({ state: 'pass_complete' }),
     close: async () => {},
@@ -215,12 +215,12 @@ test('operator status distinguishes waiting, active work and a stopped worker', 
   const firing = timer.advance();
   await active;
   assert.deepEqual(scheduler.getStatus(), { state: 'running',
-    activeStage: 'publish', lastStage: null, lastResult: null,
+    activeStage: 'completions', lastStage: null, lastResult: null,
     lastFinishedMs: null });
   release();
   await firing;
   assert.deepEqual(scheduler.getStatus(), { state: 'waiting',
-    activeStage: null, lastStage: 'publish', lastResult: 'processed',
+    activeStage: null, lastStage: 'completions', lastResult: 'processed',
     lastFinishedMs: 1234 });
   await scheduler.stop();
   assert.equal(scheduler.getStatus().state, 'stopped');
