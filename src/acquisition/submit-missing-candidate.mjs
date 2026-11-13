@@ -43,10 +43,12 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
   readRelatedTitles,
   readEvidence, publicLibraryIds, ledger,
+  renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
       typeof releaseQueries !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
         (typeof expectedHash !== 'string' ||
@@ -120,6 +122,23 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     .sort((a, b) => a - b)) !== JSON.stringify(mappedByName.get(file.name)))) {
     return held('file_plan_mismatch');
   }
+  // The first-time Import fence can take two minutes. Refresh the shared
+  // qBittorrent session before reserving an attempt or sending a torrent.
+  let activeQbittorrent = qbittorrent;
+  if (renewQbittorrent) {
+    let fresh;
+    try { fresh = await renewQbittorrent(qbittorrent.sessionId); }
+    catch { return held('authentication_unavailable'); }
+    if (fresh?.state !== 'authenticated' ||
+        typeof fresh.sessionId !== 'string' ||
+        typeof fresh.fetchImpl !== 'function') {
+      return held(typeof fresh?.reason === 'string' &&
+        /^[a-z][a-z0-9_]{0,79}$/.test(fresh.reason) ?
+        fresh.reason : 'authentication_unavailable');
+    }
+    activeQbittorrent = { ...qbittorrent, sessionId: fresh.sessionId,
+      fetchImpl: fresh.fetchImpl };
+  }
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
@@ -136,6 +155,6 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const plan = ledger.recordFilePlan({ attemptId: reserved.attemptId,
     hash: prepared.expected.hash, plannedFiles: selectedFiles, nowMs });
   if (plan.state !== 'planned') return plan;
-  return submitStoppedCandidate({ ...qbittorrent, ledger,
+  return submitStoppedCandidate({ ...activeQbittorrent, ledger,
     attemptId: reserved.attemptId, candidate, prepared, nowMs });
 }

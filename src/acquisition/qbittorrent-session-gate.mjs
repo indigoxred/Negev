@@ -82,6 +82,9 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
       const currentMs = clock();
       if (rejectedReason) return Promise.resolve(held(rejectedReason));
       if (pending) return pending;
+      if (retryAtMs !== null && currentMs < retryAtMs) {
+        return Promise.resolve(held('authentication_backoff'));
+      }
       if (sessionId !== expectedSessionId) {
         return fresh(currentMs)
           ? Promise.resolve({ state: 'authenticated', sessionId })

@@ -130,6 +130,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   };
   return {
     async processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
+      renewQbittorrent,
       ...claim } = {}) {
       if (typeof fetchImpl !== 'function' ||
           typeof searchFetch !== 'function' ||
@@ -155,6 +156,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           return submitMissingCandidate({ request, ...selected,
             releaseQueries, readEvidence, readRelatedTitles: relatedTitleReader,
             ledger: acquisitions, firstTimePolicy,
+            renewQbittorrent,
             publicLibraryIds: publicLibraryIds(request.kind), now,
             prowlarr: { ...prowlarr, fetchImpl: searchFetch },
             qbittorrent: { ...qbittorrent, hostPath: stagingHostPath,
