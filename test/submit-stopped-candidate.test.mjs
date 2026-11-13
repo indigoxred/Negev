@@ -168,6 +168,33 @@ test('one stopped add is durably recorded before POST and exact manifest is reco
     assert.equal(again.state, 'stopped_observed');
   }));
 
+test('a new torrent that finishes metadata checking after initial polls is reconciled without another add', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    let added = false;
+    let infoReads = 0;
+    let addCount = 0;
+    const result = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
+        if (endpoint.endsWith('/add')) {
+          added = true;
+          addCount++;
+          return new Response('Ok.');
+        }
+        if (endpoint.endsWith('/info') && !added) return Response.json([]);
+        if (endpoint.endsWith('/info')) {
+          const state = Math.floor(infoReads++ / 2) < 7 ? 'metaDL' : 'stoppedDL';
+          return Response.json([{ ...torrent, state }]);
+        }
+        return Response.json(endpoint.endsWith('/files') ? files :
+          { save_path: savePath, download_path: '' });
+      },
+    });
+    assert.equal(result.state, 'stopped_observed');
+    assert.equal(addCount, 1);
+  }));
+
 test('mount exposure or altered torrent bytes hold before any downloader write', async () =>
   withAttempt(async ({ ledger, attemptId }) => {
     let calls = 0;
@@ -314,7 +341,7 @@ test('a persistently active torrent remains held after bounded reads and one add
       } });
     assert.deepEqual(result, { state: 'held', reason: 'not_pristine_stopped' });
     assert.equal(posts, 1);
-    assert.equal(infoReads, 13);
+    assert.equal(infoReads, 43);
     assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
   }));
 

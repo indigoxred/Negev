@@ -5,6 +5,7 @@ import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
+const providerRejected = Symbol('qBittorrent session rejected');
 
 // Read-only, double-observed qBittorrent manifest. It never starts a torrent.
 export async function observeStoppedManifest({
@@ -27,6 +28,7 @@ export async function observeStoppedManifest({
     url.searchParams.set(parameter, expected.hash);
     const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status === 403) throw providerRejected;
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     return readBoundedJson(response, maxChars);
   };
@@ -44,7 +46,9 @@ export async function observeStoppedManifest({
     after = final[0];
     afterPaths = await read('properties', 'hash', 100_000);
     filesAfter = await read('files', 'hash', 2_000_000);
-  } catch { return held('provider_unavailable'); }
+  } catch (error) {
+    return held(error === providerRejected ? 'provider_http_403' : 'provider_unavailable');
+  }
   if ([beforePaths, afterPaths].some((value) =>
     typeof value?.save_path !== 'string' ||
     typeof value?.download_path !== 'string')) return held('storage_path_unverified');
