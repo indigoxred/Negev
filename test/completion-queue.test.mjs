@@ -387,6 +387,15 @@ test('session rejection retries on the next paced completion cycle', async () =>
   });
 });
 
+test('an acknowledged stop gets a prompt stopped-state recheck', async () => {
+  await fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+      state: 'held', reason: 'torrent_not_stopped', checkedMs: 1_001 });
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61_001);
+  });
+});
+
 test('completion recovery reviews every page of interrupted attempts', async () => {
   await fixture(async (ctx) => {
     for (const attemptId of ctx.attemptIds) {

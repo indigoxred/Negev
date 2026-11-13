@@ -197,7 +197,8 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const delay = ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable'].includes(reason) ? SESSION_RETRY_MS :
+          'authentication_unavailable', 'torrent_not_stopped']
+          .includes(reason) ? SESSION_RETRY_MS :
           reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
