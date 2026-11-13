@@ -58,3 +58,16 @@ test('an already recorded handoff never stops or moves a torrent again', async (
   });
   assert.deepEqual(result, { state: 'held', reason: 'handoff_already_recorded' });
 });
+
+test('completion forwards session renewal to the exact stop gate', async () => {
+  const renewQbittorrent = async () => ({ state: 'authenticated',
+    sessionId: 'newSID', fetchImpl: async () => ({ status: 200 }) });
+  let forwarded = false;
+  const result = await processPureCompletedAttempt({ ...inputs,
+    renewQbittorrent,
+    stop: async (input) => { forwarded = input.renewQbittorrent === renewQbittorrent;
+      return { state: 'held', reason: 'provider_http_403' }; },
+  });
+  assert.equal(forwarded, true);
+  assert.deepEqual(result, { state: 'held', reason: 'provider_http_403' });
+});

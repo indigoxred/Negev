@@ -11,6 +11,7 @@ const held = (reason) => ({ state: 'held', reason });
 export async function processPureCompletedAttempt({ requests, acquisitions,
   pureMoves, attemptId, nowMs, stagingHostPath, qbitStagingRoot,
   holdingRoot, importRoot, qbittorrent, fetchImpl = fetch,
+  renewQbittorrent,
   verifyStagingRoot, verifyHandoffMounts,
   stop = stopCompletedTorrent, prepare = preparePureMove } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
@@ -69,7 +70,7 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   const expected = { hash: attempt.torrentHash, category: 'negev',
     savePath: stagingSavePath(attempt.torrentHash, { saveRoot: qbitStagingRoot }) };
   const completed = await stop({ baseUrl: qbittorrent.baseUrl,
-    sessionId: qbittorrent.sessionId, expected, fetchImpl });
+    sessionId: qbittorrent.sessionId, expected, fetchImpl, renewQbittorrent });
   if (completed?.state !== 'complete') return completed ?? held('torrent_unavailable');
   if (!Array.isArray(completed.files) || completed.files.length !== plan.length ||
       completed.files.some((file) => !planned.has(file.name) ||

@@ -193,7 +193,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
       if (pureMode) return processPureCompletedAttempt({ attemptId, requests,
         acquisitions, pureMoves, stagingHostPath, qbitStagingRoot,
-        holdingRoot, importRoot, qbittorrent, fetchImpl,
+        holdingRoot, importRoot, qbittorrent, fetchImpl, renewQbittorrent,
         verifyStagingRoot, verifyHandoffMounts,
         nowMs: now() });
       let planned;

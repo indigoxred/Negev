@@ -64,3 +64,46 @@ test('403 holds without moving and permits one session renewal on the next tick'
   assert.deepEqual(result, { state: 'held', reason: 'provider_http_403' });
   assert.equal(stops, 1);
 });
+
+test('an initial 403 renews once before stopping the exact completed torrent', async () => {
+  let renewals = 0;
+  let stops = 0;
+  const result = await stopCompletedTorrent({
+    baseUrl: 'http://qbit.internal:8080', sessionId: 'testSID', expected,
+    observe: async ({ sessionId }) => sessionId === 'testSID'
+      ? { state: 'held', reason: 'provider_http_403' } : complete,
+    renewQbittorrent: async (sessionId) => {
+      assert.equal(sessionId, 'testSID');
+      renewals++;
+      return { state: 'authenticated', sessionId: 'renewedSID',
+        fetchImpl: async (url, init) => {
+          stops++;
+          assert.equal(init.headers.Cookie, 'SID=renewedSID');
+          return { status: 200 };
+        } };
+    },
+  });
+  assert.deepEqual(result, complete);
+  assert.equal(renewals, 1);
+  assert.equal(stops, 1);
+});
+
+test('a 403 after stop renews only for observation, never posts a second stop', async () => {
+  let renewals = 0;
+  let stops = 0;
+  const result = await stopCompletedTorrent({
+    baseUrl: 'http://qbit.internal:8080', sessionId: 'testSID', expected,
+    observe: async ({ sessionId, requireStopped }) =>
+      requireStopped && sessionId === 'testSID'
+        ? { state: 'held', reason: 'provider_http_403' } : complete,
+    fetchImpl: async () => { stops++; return { status: 200 }; },
+    renewQbittorrent: async () => {
+      renewals++;
+      return { state: 'authenticated', sessionId: 'renewedSID',
+        fetchImpl: async () => { throw new Error('must not stop again'); } };
+    },
+  });
+  assert.deepEqual(result, complete);
+  assert.equal(renewals, 1);
+  assert.equal(stops, 1);
+});
