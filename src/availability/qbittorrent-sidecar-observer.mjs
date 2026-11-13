@@ -27,7 +27,19 @@ export function createQbittorrentSidecarObserver({ baseUrl, username, password,
     if (session.state !== 'authenticated') return null;
     const sessionFetch = createQbittorrentSessionFetch({ baseUrl,
       sessionId: session.sessionId, sessionGate: gate, fetchImpl });
-    return readQbittorrentSidecarTorrent({ baseUrl,
+    const first = await readQbittorrentSidecarTorrent({ baseUrl,
       sessionId: session.sessionId, hash, fetchImpl: sessionFetch });
+    if (first !== null) return first;
+    // A 403 invalidates the shared session. One new authenticated GET is safe
+    // for this read-only lookup; the gate enforces its repeated-403 backoff.
+    if (!['not_started', 'waiting'].includes(gate.getStatus?.().state)) {
+      return null;
+    }
+    const replacement = await gate.get();
+    if (replacement.state !== 'authenticated') return null;
+    const replacementFetch = createQbittorrentSessionFetch({ baseUrl,
+      sessionId: replacement.sessionId, sessionGate: gate, fetchImpl });
+    return readQbittorrentSidecarTorrent({ baseUrl,
+      sessionId: replacement.sessionId, hash, fetchImpl: replacementFetch });
   } };
 }
