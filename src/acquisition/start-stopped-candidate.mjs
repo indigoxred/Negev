@@ -68,10 +68,8 @@ export async function startStoppedCandidate({
   }
   let activeSessionId = sessionId;
   let activeFetch = fetchImpl;
-  let renewedOnce = false;
   const renewSession = async () => {
-    if (!renewQbittorrent || renewedOnce) return held('provider_http_403');
-    renewedOnce = true;
+    if (!renewQbittorrent) return held('provider_http_403');
     let renewed;
     try { renewed = await renewQbittorrent(activeSessionId); }
     catch { return held('authentication_unavailable'); }

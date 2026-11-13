@@ -361,6 +361,43 @@ test('an initial qBittorrent 403 renews once before the first manifest check', a
     assert.equal(starts, 1);
   }));
 
+test('a session can be renewed once in each manifest phase across a long availability fence', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let renewals = 0;
+    let starts = 0;
+    const provider = (phase) => async (url, init = {}) => {
+      const endpoint = new URL(url).pathname;
+      if (endpoint.endsWith('/start')) {
+        starts++;
+        assert.equal(init.headers.Cookie, 'SID=finalSID');
+        return new Response('Ok.');
+      }
+      if (phase === 0 || (phase === 1 && availabilityRead)) {
+        return new Response('', { status: 403 });
+      }
+      if (endpoint.endsWith('/properties')) return Response.json({
+        save_path: expected.savePath, download_path: '' });
+      return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+    };
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => { availabilityRead = true; return options.readEvidence(); },
+      fetchImpl: provider(0),
+      renewQbittorrent: async (sid) => {
+        assert.equal(sid, renewals === 0 ? 'syntheticSID' : 'firstSID');
+        renewals++;
+        return { state: 'authenticated',
+          sessionId: renewals === 1 ? 'firstSID' : 'finalSID',
+          fetchImpl: provider(renewals) };
+      },
+    });
+    assert.deepEqual(result, { state: 'start_unknown', sendNow: true });
+    assert.equal(renewals, 2);
+    assert.equal(starts, 1);
+    assert.ok(ledger.getStart(attemptId));
+  }));
+
 test('failed final-session renewal leaves the torrent stopped without a start intent', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;
