@@ -53,8 +53,8 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
   };
   return {
     processRequest: withSession(processRequest,
-      { providerFetchImpl: fetchImpl }),
-    processStart: withSession(processStart),
+      { providerFetchImpl: fetchImpl }, true),
+    processStart: withSession(processStart, {}, true),
     processCompletion: withSession(processCompletion,
       { shokoFetchImpl: fetchImpl }, true),
     processPublish,

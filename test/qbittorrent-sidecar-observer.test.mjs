@@ -44,6 +44,29 @@ test('modern qBittorrent cookie is sent unchanged on the exact sidecar read', as
   assert.equal((await observer.readTorrent(hash)).hash, hash);
 });
 
+test('sidecar read recovers one evicted session without holding Import', async () => {
+  let logins = 0;
+  let requests = 0;
+  const observer = createQbittorrentSidecarObserver({
+    baseUrl: 'http://qbit.internal:8080', username: 'observer',
+    password: 'synthetic-password',
+    login: async () => ({ state: 'authenticated',
+      sessionId: `session${++logins}` }),
+    fetchImpl: async (_url, init) => {
+      requests++;
+      if (requests === 1) {
+        assert.equal(init.headers.Cookie, 'SID=session1');
+        return new Response(null, { status: 403 });
+      }
+      assert.equal(init.headers.Cookie, 'SID=session2');
+      return Response.json([{ hash, state: 'missingFiles' }]);
+    },
+  });
+  assert.equal((await observer.readTorrent(hash))?.state, 'missingFiles');
+  assert.equal(logins, 2);
+  assert.equal(requests, 2);
+});
+
 test('rejected sidecar session retries once, then backs off repeated 403s', async () => {
   let logins = 0;
   let requests = 0;
@@ -75,7 +98,7 @@ test('invalid sidecar hash never authenticates or contacts qBittorrent', async (
   assert.equal(networkCalls, 0);
 });
 
-test('sidecar and acquisition share one immediate session recovery', async () => {
+test('sidecar and acquisition share a backoff after two rejected sessions', async () => {
   let logins = 0;
   let requests = 0;
   const baseUrl = 'http://qbit.internal:8080';
@@ -100,7 +123,7 @@ test('sidecar and acquisition share one immediate session recovery', async () =>
     'no_candidate');
   assert.equal(await observer.readTorrent(hash), null);
   assert.equal((await runners.processStart({ attemptId: 2 })).reason,
-    'no_start');
+    'authentication_backoff');
   assert.equal(logins, 2);
-  assert.equal(requests, 1);
+  assert.equal(requests, 2);
 });

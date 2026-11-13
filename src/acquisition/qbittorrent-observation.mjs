@@ -9,7 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // AniDB byte check; it does not permit an import by itself.
 export async function observeTorrentCompletion({
   baseUrl, sessionId, expected, fetchImpl = fetch, timeoutMs = 10_000,
-  onTransfer,
+  onTransfer, requireStopped = false,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -19,6 +19,7 @@ export async function observeTorrentCompletion({
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(expected?.hash) ||
       typeof expected.category !== 'string' || !expected.category ||
       typeof expected.savePath !== 'string' || !expected.savePath.startsWith('/') ||
+      typeof requireStopped !== 'boolean' ||
       (onTransfer !== undefined && typeof onTransfer !== 'function') ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid qBittorrent observation configuration');
@@ -117,5 +118,8 @@ export async function observeTorrentCompletion({
   if (fingerprint(files) !== fingerprint(filesAfter)) return held(
     beforeCompletion.reason === 'incomplete' &&
       afterCompletion.reason === 'incomplete' ? 'incomplete' : 'manifest_changed');
+  if (requireStopped && (before.state !== 'stoppedUP' || after.state !== 'stoppedUP')) {
+    return held('torrent_not_stopped');
+  }
   return afterCompletion;
 }

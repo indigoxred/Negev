@@ -2,16 +2,19 @@ import { DatabaseSync } from 'node:sqlite';
 
 // Read-only journal summary for a request page. It never infers Plex playback
 // from a torrent, a Shoko import intent, or a private handoff record.
-export function openRequestProgress(dbPath, { now = Date.now } = {}) {
+export function openRequestProgress(dbPath, { now = Date.now,
+  pureMode = false } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
-      typeof now !== 'function') {
+      typeof now !== 'function' || typeof pureMode !== 'boolean') {
     throw new TypeError('Durable request database path required');
   }
+  const handoffTable = pureMode ? 'pure_move_intents' : 'handoff_intents';
+  const completionTable = pureMode ? 'pure_move_completion_checks' : 'completion_checks';
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     for (const table of ['requests', 'request_targets', 'acquisition_attempts',
       'acquisition_starts', 'acquisition_target_claims', 'acquisition_rejections',
-      'acquisition_releases', 'acquisition_retirements', 'handoff_intents']) {
+      'acquisition_releases', 'acquisition_retirements', handoffTable]) {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
         throw new TypeError('Request progress ledgers must be initialized first');
       }
@@ -28,7 +31,7 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
       t.attempt_id AS retired_id
     FROM acquisition_attempts a
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
-    LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+    LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
@@ -38,7 +41,7 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
   const hasSuspensions = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='acquisition_request_suspensions'`);
   const hasCompletionChecks = db.prepare(`SELECT 1 FROM sqlite_master
-    WHERE type='table' AND name='completion_checks'`);
+    WHERE type='table' AND name='${completionTable}'`);
   let oneTimeCompletion;
   let interruptedRequest;
   let scheduledRetry;
@@ -62,16 +65,16 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
   const recentTransfer = (requestId) => {
     if (!transferCheck) {
       if (!hasCompletionChecks.get() ||
-          !db.prepare('PRAGMA table_info(completion_checks)').all()
+          !db.prepare(`PRAGMA table_info(${completionTable})`).all()
             .some((column) => column.name === 'progress_bp')) return null;
       transferCheck = db.prepare(`SELECT c.progress_bp AS progressBasisPoints,
           c.eta_sec AS etaSeconds,c.speed_bps AS speedBytesPerSecond,
           c.transfer_state AS transferState,
           c.checked_ms AS observedMs
-        FROM completion_checks c
+        FROM ${completionTable} c
         JOIN acquisition_attempts a ON a.id=c.attempt_id
         JOIN acquisition_starts s ON s.attempt_id=a.id
-        LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+        LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
         LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
         LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
         LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
@@ -95,10 +98,10 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
     if (!inconclusiveFileCheck) {
       if (!hasCompletionChecks.get()) return null;
       inconclusiveFileCheck = db.prepare(`SELECT si.attempt_id AS retirement_id
-        FROM completion_checks c
+        FROM ${completionTable} c
         JOIN acquisition_attempts a ON a.id=c.attempt_id
         JOIN acquisition_starts s ON s.attempt_id=a.id
-        LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+        LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
         LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
         LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
         LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
@@ -191,7 +194,7 @@ export function openRequestProgress(dbPath, { now = Date.now } = {}) {
       const latestStarted = active.filter((row) => row.start_status).at(-1);
       if (latestStarted && hasCompletionChecks.get()) {
         activeCompletionCheck ??= db.prepare(`SELECT state,reason
-          FROM completion_checks WHERE attempt_id=?`);
+          FROM ${completionTable} WHERE attempt_id=?`);
         const check = activeCompletionCheck.get(latestStarted.attempt_id);
         completionRetrying = check?.reason === 'interrupted_retry';
         completionChecking = check?.state === null;

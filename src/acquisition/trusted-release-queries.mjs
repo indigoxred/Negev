@@ -3,7 +3,10 @@
 export function trustedReleaseQueries(title, aliases = []) {
   const queries = [];
   const seen = new Set();
-  for (const value of [title, ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
+  const withoutCatalogueYear = typeof title === 'string'
+    ? title.replace(/\s+\((?:19|20)\d{2}\)$/, '') : null;
+  for (const value of [title, withoutCatalogueYear,
+    ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
     if (typeof value !== 'string') continue;
     const query = value.trim();
     const key = query.toLocaleLowerCase('en');

@@ -5,6 +5,8 @@ import { processCompletedAttempt } from './process-completed-attempt.mjs';
 import { checkExistingShokoBatch } from './existing-shoko-batch.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { processRecordedHandoff } from './process-recorded-handoff.mjs';
+import { processPureCompletedAttempt } from './process-pure-completed-attempt.mjs';
+import { processPurePublish } from './process-pure-publish.mjs';
 import { previewAniDbRelease } from '../identity/shoko-preview.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { verifyHandoffMountRoots } from './handoff-mount-roots.mjs';
@@ -20,7 +22,8 @@ const held = (reason) => ({ state: 'held', reason });
 // does not create a timer or perform I/O. The caller must still prove installed
 // availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
-  handoffs, discoverCandidates, previewCandidate, loadDetail,
+  handoffs, pureMoves = null, pureMode = false,
+  discoverCandidates, previewCandidate, loadDetail,
   releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
   verifyStagingRoot, realpathImpl,
@@ -37,6 +40,10 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   if (typeof requests?.getRequest !== 'function' ||
       typeof acquisitions?.getAttempt !== 'function' ||
       typeof handoffs?.getHandoff !== 'function' ||
+      typeof pureMode !== 'boolean' ||
+      (pureMode && (typeof pureMoves?.getIntent !== 'function' ||
+        typeof pureMoves?.recordIntent !== 'function' ||
+        typeof pureMoves?.markPrepared !== 'function')) ||
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
         verifyHandoffMounts, ensureImportRoot, readEd2kMode,
@@ -123,6 +130,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   };
   return {
     async processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
+      renewQbittorrent,
       ...claim } = {}) {
       if (typeof fetchImpl !== 'function' ||
           typeof searchFetch !== 'function' ||
@@ -142,12 +150,14 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readPublicCoverage,
         inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
         discoverCandidates, previewCandidate, loadDetail,
+        ...(readRelatedTitles ? { readRelatedTitles: relatedTitleReader } : {}),
         submitCandidate: async ({ request, ...selected }) => {
           const ownership = await checkOwnership(request.anidbId);
           if (ownership) return ownership;
           return submitMissingCandidate({ request, ...selected,
             releaseQueries, readEvidence, readRelatedTitles: relatedTitleReader,
             ledger: acquisitions, firstTimePolicy,
+            renewQbittorrent,
             publicLibraryIds: publicLibraryIds(request.kind), now,
             prowlarr: { ...prowlarr, fetchImpl: searchFetch },
             qbittorrent: { ...qbittorrent, hostPath: stagingHostPath,
@@ -158,7 +168,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       });
       return process(claim);
     },
-    async processStart({ attemptId, qbittorrent, fetchImpl } = {}) {
+    async processStart({ attemptId, qbittorrent, fetchImpl,
+      renewQbittorrent } = {}) {
       let attempt, request;
       try {
         attempt = acquisitions.getAttempt(attemptId);
@@ -175,12 +186,17 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         readRelatedTitles: relatedTitleReader,
-        fetchImpl, now });
+        fetchImpl, renewQbittorrent, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
       shokoFetchImpl, renewQbittorrent } = {}) {
       if (!await stagingMountReady()) return held('staging_root_unverified');
       if (!await handoffMountReady()) return held('handoff_mount_unavailable');
+      if (pureMode) return processPureCompletedAttempt({ attemptId, requests,
+        acquisitions, pureMoves, stagingHostPath, qbitStagingRoot,
+        holdingRoot, importRoot, qbittorrent, fetchImpl, renewQbittorrent,
+        verifyStagingRoot, verifyHandoffMounts,
+        nowMs: now() });
       let planned;
       try { planned = acquisitions.getFilePlan?.(attemptId); }
       catch { return held('file_plan_unavailable'); }
@@ -195,6 +211,12 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         nowMs: now(), ed2kMode });
     },
     async processPublish({ attemptId } = {}) {
+      if (pureMode) {
+        if (!await handoffMountReady()) return held('handoff_mount_unavailable');
+        if (!await stagingMountReady()) return held('staging_root_unverified');
+        return processPurePublish({ attemptId, nowMs: now(), pureMoves,
+          stagingHostPath, holdingRoot, importRoot });
+      }
       let handoff;
       try { handoff = handoffs.getHandoff(attemptId); }
       catch { return held('handoff_unavailable'); }

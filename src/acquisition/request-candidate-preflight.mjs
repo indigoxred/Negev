@@ -100,7 +100,8 @@ export async function previewRequestCandidate({ requestId, candidate,
       torrentFileKind(file.name) === 'subtitle').map((file) => ({
       name: file.name, size: file.size })),
     filesToExclude: prepared.files.filter((file) =>
-      torrentFileKind(file.name) === 'passive').map((file) => ({
+      torrentFileKind(file.name) === 'passive' ||
+      plan.excludedVideoNames?.includes(file.name)).map((file) => ({
       name: file.name, size: file.size })),
     registeredInAniDb: false, downloadStarted: false };
 }

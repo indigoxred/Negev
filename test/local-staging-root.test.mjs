@@ -17,6 +17,20 @@ test('accepts separate canonical read-only staging without Docker inspection', a
     { state: 'verified_staging_root' });
 });
 
+test('pure move needs one writable bind for staging, holding and Import', async () => {
+  const oneMount = '1 0 0:1 / / rw - overlay overlay rw\n' +
+    '2 1 0:2 / /handoff rw - btrfs /dev/pure rw\n';
+  const pure = { ...input, stagingRoot: '/handoff/staging',
+    holdingRoot: '/handoff/holding', importRoot: '/handoff/source/Negev',
+    writablePureMove: true, read: async () => oneMount };
+  assert.deepEqual(await verifyLocalStagingRoot(pure),
+    { state: 'verified_staging_root' });
+  assert.deepEqual(await verifyLocalStagingRoot({ ...pure,
+    read: async () => oneMount +
+      '3 2 0:3 / /handoff/staging rw - btrfs /dev/pure rw\n' }),
+  { state: 'held', reason: 'staging_root_unverified' });
+});
+
 test('holds a missing, redirected, overlapping, or overlay staging root', async () => {
   for (const change of [
     { resolve: async (value) => value === '/staging' ? '/other' : value },

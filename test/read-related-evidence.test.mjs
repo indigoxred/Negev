@@ -30,3 +30,17 @@ test('keeps Shoko relations when available', async () => {
   assert.equal(result, local);
   assert.equal(archiveRead, false);
 });
+
+test('adds cached AniDB aliases to a local relation for acquisition checks', async () => {
+  const result = await readRelatedEvidence({ anidbId: 461,
+    readLocal: async () => ({ state: 'related_titles', anidbId: 461,
+      items: [{ anidbId: 11874,
+        title: 'Kanojo to Kanojo no Neko: Everything Flows',
+        relation: 'Sequel' }] }),
+    readArchive: async () => { throw new Error('unneeded'); },
+    aliasesForId: (id) => id === 11874
+      ? ['Kanojo to Kanojo no Neko: Everything Flows',
+        'She and Her Cat: Everything Flows'] : [] });
+  assert.deepEqual(result.items[0].aliases,
+    ['She and Her Cat: Everything Flows']);
+});

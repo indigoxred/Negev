@@ -83,6 +83,20 @@ test('completed seeding state may change while the exact file evidence stays sta
   { state: 'held', reason: 'torrent_changed' });
 });
 
+test('move handoff requires a stopped completed torrent on both observations', async () => {
+  const respond = (items) => async () => ({ status: 200,
+    text: async () => JSON.stringify(items.shift()) });
+  assert.deepEqual(await observeTorrentCompletion({ ...config, requireStopped: true,
+    fetchImpl: respond([[torrent], properties, files, [torrent], properties, files]) }),
+  { state: 'held', reason: 'torrent_not_stopped' });
+  const stopped = { ...torrent, state: 'stoppedUP' };
+  assert.deepEqual(await observeTorrentCompletion({ ...config, requireStopped: true,
+    fetchImpl: respond([[stopped], properties, files,
+      [stopped], properties, files]) }),
+  { state: 'complete', files: [{ index: 0, name: 'Example/01.mkv', size: 1000 }],
+    subtitles: [] });
+});
+
 test('completion holds if incomplete storage points outside staging or changes', async () => {
   const respond = (items) => async () => ({ status: 200, text: async () => JSON.stringify(items.shift()) });
   assert.deepEqual(await observeTorrentCompletion({ ...config,

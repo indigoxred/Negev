@@ -28,6 +28,7 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
     stagingHostPath: a.stagingHostPath, qbitStagingRoot: a.qbitStagingRoot,
     holdingRoot: a.holdingRoot,
     importRoot: a.importRoot,
+    ...(a.pureMode ? { pureMode: true } : {}),
     verifyShokoSource,
     verifyStagingRoot: async () => {
       const source = await verifyShokoSource();
@@ -38,7 +39,8 @@ export async function startAcquisitionRuntime({ config, service, sessionGate,
         importRoot: a.importRoot });
       return ready?.state === 'import_child_ready'
         ? verifyRoot({ stagingRoot: a.stagingHostPath,
-          holdingRoot: a.holdingRoot, importRoot: a.importRoot })
+          holdingRoot: a.holdingRoot, importRoot: a.importRoot,
+          ...(a.pureMode ? { writablePureMove: true } : {}) })
         : { state: 'held', reason: 'import_child_unavailable' };
     },
     realpathImpl, shokoProviderId: a.shokoProviderId,

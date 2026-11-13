@@ -92,6 +92,7 @@ test('two rejected sessions in quick succession pause reauthentication', async (
   time += 1_000;
   gate.invalidate('sid_2');
   assert.equal((await gate.get()).reason, 'authentication_backoff');
+  assert.equal((await gate.renew('sid_2')).reason, 'authentication_backoff');
   assert.equal(calls, 2);
   time += 30_000;
   assert.equal((await gate.get()).sessionId, 'sid_3');
@@ -113,7 +114,7 @@ test('renewing an established session before a long hash final check logs in onc
   assert.equal(calls, 2);
 });
 
-test('a cached login is renewed before its known one-hour WebUI lifetime', async () => {
+test('a cached login is renewed before the observed short WebUI lifetime', async () => {
   let time = 1_000;
   let calls = 0;
   const gate = createQbittorrentSessionGate({
@@ -122,9 +123,9 @@ test('a cached login is renewed before its known one-hour WebUI lifetime', async
     now: () => time,
   });
   assert.equal((await gate.get()).sessionId, 'sid_1');
-  time += 29 * 60_000;
+  time += 59_000;
   assert.equal((await gate.get()).sessionId, 'sid_1');
-  time += 60_000;
+  time += 1_000;
   assert.equal((await gate.get()).sessionId, 'sid_2');
   assert.equal((await gate.get()).sessionId, 'sid_2');
   assert.equal(calls, 2);

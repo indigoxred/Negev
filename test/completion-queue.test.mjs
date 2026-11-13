@@ -8,6 +8,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
+import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
 import { openCompletionQueue, createCompletionWorker } from '../src/acquisition/completion-queue.mjs';
 import { createPipelineScheduler } from '../src/acquisition/acquisition-pipeline-scheduler.mjs';
 import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs';
@@ -53,6 +54,24 @@ async function fixture(run) {
     await rm(root, { recursive: true, force: true });
   }
 }
+
+test('pure completion uses separate cursor and checks alongside legacy queue', async () => {
+  await fixture(async (ctx) => {
+    const pureMoves = openPureMoveLedger(ctx.dbPath);
+    const pureQueue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+    try {
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId, ctx.attemptIds[0]);
+      assert.equal(pureQueue.claimNext({ nowMs: 1_000 }).attemptId, ctx.attemptIds[0]);
+      assert.equal(ctx.queue.getResult(ctx.attemptIds[0]).state, null);
+      assert.equal(pureQueue.getResult(ctx.attemptIds[0]).state, null);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM completion_checks').get().n, 1);
+        assert.equal(db.prepare('SELECT COUNT(*) AS n FROM pure_move_completion_checks').get().n, 1);
+      } finally { db.close(); }
+    } finally { pureQueue.close(); pureMoves.close(); }
+  });
+});
 
 test('one-attempt pages advance after incomplete work and retry only when due', async () => {
   await fixture(async (ctx) => {
@@ -364,6 +383,15 @@ test('session rejection retries on the next paced completion cycle', async () =>
     const claim = ctx.queue.claimNext({ nowMs: 1_000 });
     ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
       state: 'held', reason: 'provider_http_403', checkedMs: 1_001 });
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61_001);
+  });
+});
+
+test('an acknowledged stop gets a prompt stopped-state recheck', async () => {
+  await fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+      state: 'held', reason: 'torrent_not_stopped', checkedMs: 1_001 });
     assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61_001);
   });
 });

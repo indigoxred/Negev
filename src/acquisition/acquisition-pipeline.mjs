@@ -17,7 +17,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   processRequest, processStart, processCompletion, processPublish,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
-  fetchImpl = fetch, now = Date.now } = {}) {
+  fetchImpl = fetch, now = Date.now, pureMode = false } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
       [processRequest, processStart, processCompletion, processPublish, now]
@@ -32,8 +32,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     queues.push(openAcquisitionRequestQueue(dbPath, {
       allowedAnidbIds, ownershipGate }));
     queues.push(openStartQueue(dbPath));
-    queues.push(openCompletionQueue(dbPath));
-    queues.push(openHandoffPublishQueue(dbPath));
+    queues.push(openCompletionQueue(dbPath, { pureMode }));
+    queues.push(openHandoffPublishQueue(dbPath, { pureMode }));
   } catch (error) {
     for (const queue of queues.reverse()) queue.close();
     throw error;

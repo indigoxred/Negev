@@ -4,7 +4,7 @@ import { matchesStagingSavePath } from './staging-save-path.mjs';
 const STOPPED_STATES = new Set(['stoppedDL', 'pausedDL']);
 const VIDEO = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts']);
 const SUBTITLE = new Set(['.srt', '.ass', '.ssa', '.vtt']);
-const PASSIVE_EXCLUDED = new Set(['.txt', '.nfo', '.jpg', '.jpeg', '.png', '.webp']);
+const PASSIVE_EXCLUDED = new Set(['.txt', '.nfo', '.md5', '.jpg', '.jpeg', '.png', '.webp']);
 const held = (reason) => ({ state: 'held', reason });
 
 function safeName(name) {
@@ -25,10 +25,20 @@ export function torrentFileKind(name) {
   return null;
 }
 
+// These are standalone, non-episode opening/ending clips. An explicitly
+// requested Special remains a video in the file plan; only an unplanned clip
+// may be excluded before qBittorrent starts.
+export function isOptionalClip(name) {
+  if (torrentFileKind(name) !== 'video') return false;
+  const stem = path.posix.basename(name, path.posix.extname(name));
+  return /(?:^|[ ._-])NC(?:OP|ED)(?:v\d+)?(?=$|[ ._-])/i.test(stem) &&
+    !/[Ss]\d{1,3}[Ee]\d{1,4}|(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem);
+}
+
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
 export function evaluateStoppedManifest({ torrent, files, expected,
-  allowSelectedPassive = false, saveRoot }) {
+  allowSelectedPassive = false, plannedFileNames, saveRoot }) {
   if (!matchesStagingSavePath(expected, { saveRoot }) || expected.category !== 'negev') {
     throw new TypeError('Invalid stopped-torrent expectation');
   }
@@ -46,6 +56,11 @@ export function evaluateStoppedManifest({ torrent, files, expected,
   const videos = [];
   const subtitles = [];
   const passive = [];
+  const planned = plannedFileNames === undefined ? null : new Set(plannedFileNames);
+  if (planned && (planned.size !== plannedFileNames.length ||
+      plannedFileNames.some((name) => torrentFileKind(name) !== 'video'))) {
+    return held('invalid_file_plan');
+  }
   for (const file of files) {
     if (!Number.isSafeInteger(file?.index) || file.index < 0 || indexes.has(file.index) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
@@ -58,7 +73,10 @@ export function evaluateStoppedManifest({ torrent, files, expected,
     names.add(file.name.toLowerCase());
     if (file.priority === 0) continue;
     const item = { index: file.index, name: file.name, size: file.size };
-    if (kind === 'video') videos.push(item);
+    if (kind === 'video' && planned && !planned.has(file.name) && isOptionalClip(file.name)) {
+      if (!allowSelectedPassive) return held('unexpected_selected_file');
+      passive.push(item);
+    } else if (kind === 'video') videos.push(item);
     else if (kind === 'subtitle') subtitles.push(item);
     else if (allowSelectedPassive && kind === 'passive') passive.push(item);
     else return held('unexpected_selected_file');

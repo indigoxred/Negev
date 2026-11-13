@@ -23,7 +23,7 @@ export function openAcquisitionRuntime(options = {}) {
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
     holdingRoot: providers.holdingRoot,
     qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate,
-    fetchImpl, now, ...stages });
+    fetchImpl, now, pureMode: providers.pureMode === true, ...stages });
   const scheduler = createPipelineScheduler({ pipeline, now });
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),

@@ -72,6 +72,21 @@ test('a temporary session backoff remains retryable after the second start check
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
   }));
 
+test('an unavailable Import quiet window retries without adding another torrent', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId, version: first.version,
+      state: 'held', reason: 'import_quiet_window_unverified', checkedMs: 1_001 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 301_001);
+    const second = ctx.queue.claimNext({ nowMs: 301_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    ctx.queue.recordResult({ attemptId: second.attemptId, version: second.version,
+      state: 'held', reason: 'import_quiet_window_unverified', checkedMs: 301_002 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 601_002);
+    assert.equal(ctx.acquisitions.getAttempt(first.attemptId).status,
+      'torrent_observed');
+  }));
+
 test('cutover hold excludes saved starts until explicit resume', async () =>
   fixture(async (ctx) => {
     const later = ctx.requests.submit({ requesterId: 1,

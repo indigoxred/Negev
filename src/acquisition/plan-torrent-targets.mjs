@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
@@ -129,6 +129,12 @@ export function planTorrentTargets({ request, detail, prepared,
         episodeIds: [...request.episodeIds] }] };
   }
 
+  const hasRequestedSpecial = detail.episodes.some((episode) =>
+    episode.type === 'Special' && requested.has(episode.id));
+  const excludedVideoNames = hasRequestedSpecial ? [] : videos.filter((file) =>
+    isOptionalClip(file.name)).map((file) => file.name);
+  const targetVideos = videos.filter((file) => !excludedVideoNames.includes(file.name));
+
   const byNumber = new Map();
   for (const episode of detail.episodes.filter((item) =>
     item.type === 'Episode' || item.type === 'Special')) {
@@ -143,11 +149,11 @@ export function planTorrentTargets({ request, detail, prepared,
   const trustedUnnumberedTitle = typeof trustedTitle === 'string' &&
     trustedTitle.length <= 120 && releaseTitle?.length <= 500 &&
     titleMatched;
-  const soleUnnumberedTarget = videos.length === 1 &&
+  const soleUnnumberedTarget = targetVideos.length === 1 &&
     request.episodeIds.length === 1 && regular.length === 1 &&
     regular[0].id === request.episodeIds[0] && trustedUnnumberedTitle
     ? regular[0].id : null;
-  for (const file of videos) {
+  for (const file of targetVideos) {
     const episode = episodeNumbers(file.name);
     const ids = episode?.type === 'Unnumbered' && soleUnnumberedTarget
       ? [soleUnnumberedTarget]
@@ -160,6 +166,8 @@ export function planTorrentTargets({ request, detail, prepared,
     for (const id of ids) targets.add(id);
     plannedFiles.push({ name: file.name, size: file.size, episodeIds: ids });
   }
+  if (plannedFiles.length === 0) return held('no_requested_video');
   return { state: 'planned_targets',
-    episodeIds: [...targets].sort((a, b) => a - b), plannedFiles };
+    episodeIds: [...targets].sort((a, b) => a - b), plannedFiles,
+    ...(excludedVideoNames.length ? { excludedVideoNames } : {}) };
 }

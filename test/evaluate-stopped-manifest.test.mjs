@@ -74,6 +74,20 @@ test('can identify passive files that need exclusion while torrent stays stopped
   allowSelectedPassive: true }).reason, 'unsafe_file');
 });
 
+test('only an explicitly named optional clip can be excluded before download', () => {
+  const clip = { index: 1, name: 'Show/NCOP.mkv', size: 200,
+    priority: 1, progress: 0 };
+  assert.deepEqual(evaluateStoppedManifest({ torrent, files: [video, clip], expected,
+    allowSelectedPassive: true, plannedFileNames: ['Show/01.mkv'] }), {
+    state: 'manifest_needs_exclusions', passive: [{ index: 1,
+      name: 'Show/NCOP.mkv', size: 200 }],
+  });
+  assert.equal(evaluateStoppedManifest({ torrent, files: [video, clip], expected,
+    plannedFileNames: ['Show/01.mkv'] }).reason, 'unexpected_selected_file');
+  assert.equal(evaluateStoppedManifest({ torrent, files: [video, clip], expected,
+    allowSelectedPassive: true, plannedFileNames: ['Show/01.mkv', 'Show/NCOP.mkv'] }).state, 'manifest_safe');
+});
+
 test('holds duplicate, incomplete, empty, or excessive manifests', () => {
   for (const files of [[], [video, { ...video }], [video, { ...video, index: 1 }],
     [{ ...video, size: 0 }], [{ ...video, progress: 0.1 }],

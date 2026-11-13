@@ -81,6 +81,74 @@ test('a proven absent pre-start related-installment mismatch releases only its c
     } finally { queue.close(); ledger.close(); }
   }));
 
+test('a wrong-installment retirement can be reassigned to a different AniDB title', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const requests = openRequestLedger(dbPath);
+    const sequel = requests.submit({ requesterId: 4,
+      requestKey: 'sequel-cross-title', nowMs: 110,
+      intent: { state: 'ready', anidbId: 468, kind: 'series',
+        monitorFuture: false, episodeIds: [5351, 8124] } });
+    const another = requests.submit({ requesterId: 5,
+      requestKey: 'other-cross-title', nowMs: 111,
+      intent: { state: 'ready', anidbId: 469, kind: 'series',
+        monitorFuture: false, episodeIds: [9001] } });
+    requests.close();
+    let ledger = openAcquisitionLedger(dbPath);
+    const queue = openStartQueue(dbPath);
+    try {
+      const hash = 'd'.repeat(40);
+      const wrong = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      assert.equal(wrong.state, 'reserved');
+      ledger.bindPreparedTorrent({ attemptId: wrong.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.recordFilePlan({ attemptId: wrong.attemptId, hash,
+        plannedFiles: [{ name: 'sequel.mkv', size: 1000,
+          episodeIds: [1001] }], nowMs: 202 });
+      ledger.beginDispatch({ attemptId: wrong.attemptId, nowMs: 203 });
+      ledger.recordTorrent({ attemptId: wrong.attemptId, hash, nowMs: 204 });
+      const next = queue.claimNext({ nowMs: 205 });
+      queue.recordResult({ attemptId: next.attemptId, version: next.version,
+        state: 'held', reason: 'related_installment_mismatch', checkedMs: 206 });
+      ledger.requestPrestartMismatchRetirement({
+        attemptId: wrong.attemptId, hash, nowMs: 207 });
+      ledger.beginPrestartMismatchDelete({
+        attemptId: wrong.attemptId, hash, nowMs: 208 });
+      assert.equal(ledger.retirePrestartMismatch({
+        attemptId: wrong.attemptId, hash, nowMs: 209 }).state,
+      'retired_prestart_mismatch');
+      ledger.close();
+      const old = new DatabaseSync(dbPath);
+      old.exec('DROP INDEX acquisition_expected_hash');
+      old.exec(`CREATE UNIQUE INDEX acquisition_expected_hash
+        ON acquisition_attempts(expected_hash) WHERE expected_hash IS NOT NULL`);
+      old.close();
+      ledger = openAcquisitionLedger(dbPath);
+      const migrated = new DatabaseSync(dbPath);
+      assert.equal(migrated.prepare('PRAGMA index_list(acquisition_attempts)')
+        .all().find((index) => index.name === 'acquisition_expected_hash').unique, 0);
+      migrated.close();
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 210 }),
+      { state: 'held', reason: 'candidate_retired' });
+      const correct = ledger.reserve({ requestId: sequel.requestId, candidate,
+        episodeIds: [5351, 8124], nowMs: 211 });
+      assert.equal(correct.state, 'reserved');
+      assert.notEqual(correct.attemptId, wrong.attemptId);
+      assert.equal(ledger.bindPreparedTorrent({ attemptId: correct.attemptId,
+        candidate, hash, nowMs: 212 }).state, 'prepared');
+      assert.deepEqual(ledger.reserve({ requestId: sequel.requestId, candidate,
+        episodeIds: [5351, 8124], nowMs: 213 }),
+      { state: 'existing', attemptId: correct.attemptId, status: 'reserved' });
+      const competing = ledger.reserve({ requestId: another.requestId, candidate,
+        episodeIds: [9001], nowMs: 214 });
+      assert.equal(competing.state, 'reserved');
+      assert.deepEqual(ledger.bindPreparedTorrent({
+        attemptId: competing.attemptId, candidate, hash, nowMs: 215 }),
+      { state: 'held', reason: 'torrent_claimed' });
+    } finally { queue.close(); ledger?.close(); }
+  }));
+
 test('a started attempt cannot enter the prestart mismatch deletion path', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

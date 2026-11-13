@@ -65,6 +65,47 @@ test('preflights a more seeded release first without weakening exact checks', as
   assert.equal(submitted, 'candidate-2');
 });
 
+test('known related installments do not consume the three metainfo checks', async () => {
+  const inspected = [];
+  let relationReads = 0;
+  const original = { id: 4, anidbId: 461, title: 'Kanojo to Kanojo no Neko',
+    kind: 'series', status: 'held', episodeIds: [5336] };
+  const originalDetail = { ...detail, anidbId: 461,
+    title: 'Kanojo to Kanojo no Neko', total: 1,
+    episodes: [{ id: 5336, number: 1, type: 'Episode' }] };
+  const wrong = ['Everything Flows', 'Everything Flow', 'Everything Flows',
+    'Everything Flows'].map((suffix, i) => ({ ...candidate(i + 1),
+      title: `[Group] Kanojo to Kanojo no Neko - ${suffix} - 01`,
+      targetedEpisode: true, seeders: 20 - i }));
+  const correct = { ...candidate(5),
+    title: '[Arid] Kanojo to Kanojo no Neko: Their Standing Points',
+    seeders: 7 };
+  const process = createAcquisitionRequestProcessor({ maxPreflights: 1,
+    readRequest: () => original,
+    readRelatedTitles: async () => {
+      relationReads++;
+      return { state: 'related_titles', anidbId: 461, items: [
+        { anidbId: 11874,
+          title: 'Kanojo to Kanojo no Neko: Everything Flows',
+          relation: 'Sequel' },
+      ] };
+    },
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 461, items: [...wrong, correct] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return { ...preflight, anidbId: 461, episodeIds: [5336],
+        files: [{ name: 'Kanojo to Kanojo no Neko - 01.mkv', size: 1000,
+          episodeIds: [5336] }] };
+    },
+    loadDetail: async () => originalDetail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(relationReads, 1);
+  assert.deepEqual(inspected, ['candidate-5']);
+});
+
 test('prioritizes an exact episode query before more seeded generic results', async () => {
   const inspected = [];
   const process = createAcquisitionRequestProcessor({
@@ -87,6 +128,26 @@ test('prioritizes an exact episode query before more seeded generic results', as
     submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 12 }),
   });
   assertAttempt(await process({ requestId: 4 }), 12);
+  assert.deepEqual(inspected, ['candidate-2']);
+});
+
+test('a zero-seeder episode hit yields to a seeded same-title release', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), seeders: 0, targetedEpisode: true },
+        { ...candidate(2), seeders: 7 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
   assert.deepEqual(inspected, ['candidate-2']);
 });
 

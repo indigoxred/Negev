@@ -17,7 +17,7 @@ export async function startStoppedCandidate({
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
   readRelatedTitles,
-  now = Date.now, fetchImpl = fetch, timeoutMs = 10_000,
+  now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -34,6 +34,7 @@ export async function startStoppedCandidate({
       (typeof verifyStagingRoot !== 'function' &&
         (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
       typeof fetchImpl !== 'function' || typeof ledger?.beginStart !== 'function' ||
+      (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       typeof ledger?.getAttempt !== 'function' ||
       typeof ledger?.getFilePlan !== 'function') {
     throw new TypeError('Invalid torrent start configuration');
@@ -65,9 +66,42 @@ export async function startStoppedCandidate({
       fileNames: plannedFiles.map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return checked;
   }
-  const manifest = await observeStoppedManifest({ baseUrl, sessionId, expected,
-    fetchImpl, timeoutMs, saveRoot });
+  let activeSessionId = sessionId;
+  let activeFetch = fetchImpl;
+  const renewSession = async () => {
+    if (!renewQbittorrent) return held('provider_http_403');
+    let renewed;
+    try { renewed = await renewQbittorrent(activeSessionId); }
+    catch { return held('authentication_unavailable'); }
+    if (renewed?.state !== 'authenticated') {
+      return held(typeof renewed?.reason === 'string' ? renewed.reason :
+        'authentication_unavailable');
+    }
+    if (!validQbittorrentSessionId(renewed.sessionId) ||
+        typeof renewed.fetchImpl !== 'function') {
+      return held('authentication_unavailable');
+    }
+    activeSessionId = renewed.sessionId;
+    activeFetch = renewed.fetchImpl;
+    return { state: 'authenticated' };
+  };
+  let manifest = await observeStoppedManifest({ baseUrl,
+    sessionId: activeSessionId, expected, fetchImpl: activeFetch,
+    timeoutMs, saveRoot });
+  if (manifest.reason === 'provider_http_403') {
+    const renewed = await renewSession();
+    if (renewed.state !== 'authenticated') return renewed;
+    manifest = await observeStoppedManifest({ baseUrl,
+      sessionId: activeSessionId, expected, fetchImpl: activeFetch,
+      timeoutMs, saveRoot });
+  }
   if (manifest.state !== 'manifest_safe') return manifest;
+  let manifestAtMs;
+  try { manifestAtMs = now(); }
+  catch { return held('availability_evidence_stale'); }
+  if (!Number.isSafeInteger(manifestAtMs) || manifestAtMs < 0) {
+    return held('availability_evidence_stale');
+  }
   const sorted = (files) => files.map((file) => [file.name, file.size])
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   if (JSON.stringify(sorted(manifest.videos)) !== JSON.stringify(sorted(plannedFiles))) {
@@ -77,8 +111,8 @@ export async function startStoppedCandidate({
   try {
     const url = new URL('/api/v2/torrents/properties', base);
     url.searchParams.set('hash', expected.hash);
-    const response = await fetchImpl(url, { method: 'GET',
-      headers: { Cookie: qbittorrentSessionCookie(sessionId),
+    const response = await activeFetch(url, { method: 'GET',
+      headers: { Cookie: qbittorrentSessionCookie(activeSessionId),
         Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) return held('storage_path_unverified');
@@ -94,6 +128,9 @@ export async function startStoppedCandidate({
     firstTimePolicy: attempt.evidencePolicy === 'first_time_permissive'
       ? 'single_uncertain_attempt' : 'strict', now });
   if (checked.state !== 'missing_confirmed') return checked;
+  if (checked.checkedAtMs < manifestAtMs) {
+    return held('availability_evidence_stale');
+  }
   let currentRequest;
   try { currentRequest = await readRequest(attempt.requestId); }
   catch { return held('request_unavailable'); }
@@ -106,8 +143,25 @@ export async function startStoppedCandidate({
   }
   // The availability probe may take long enough for qBittorrent priorities or
   // paths to change. Recheck immediately before recording the one-send intent.
-  const finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
-    expected, fetchImpl, timeoutMs, saveRoot });
+  let refreshedForFinal = false;
+  if (renewQbittorrent && checked.checkedAtMs - manifestAtMs >= 60_000) {
+    const renewed = await renewSession();
+    if (renewed.state !== 'authenticated') return renewed;
+    refreshedForFinal = true;
+  }
+  let finalManifest = await observeStoppedManifest({ baseUrl,
+    sessionId: activeSessionId, expected, fetchImpl: activeFetch,
+    timeoutMs, saveRoot });
+  if (finalManifest.reason === 'provider_http_403') {
+    if (refreshedForFinal) return finalManifest;
+    const renewed = await renewSession();
+    if (renewed.state !== 'authenticated') return renewed;
+    finalManifest = await observeStoppedManifest({ baseUrl,
+      sessionId: activeSessionId, expected, fetchImpl: activeFetch,
+      timeoutMs, saveRoot });
+  }
+  if (finalManifest.reason === 'provider_http_403' ||
+      finalManifest.reason === 'provider_unavailable') return finalManifest;
   if (finalManifest.state !== 'manifest_safe' ||
       JSON.stringify(finalManifest.videos) !== JSON.stringify(manifest.videos) ||
       JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
@@ -147,8 +201,8 @@ export async function startStoppedCandidate({
 
   const body = new URLSearchParams({ hashes: expected.hash });
   try {
-    await fetchImpl(new URL('/api/v2/torrents/start', base), {
-      method: 'POST', headers: { Cookie: qbittorrentSessionCookie(sessionId) }, body,
+    await activeFetch(new URL('/api/v2/torrents/start', base), {
+      method: 'POST', headers: { Cookie: qbittorrentSessionCookie(activeSessionId) }, body,
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
   } catch { /* Start may have reached qBittorrent; never repeat automatically. */ }

@@ -1,7 +1,7 @@
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
-import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
+import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
@@ -9,7 +9,7 @@ import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
-function exactFilePlan(prepared, plannedFiles, episodeIds) {
+function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
   if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > 50 ||
       !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > 50) return false;
   const plannedByName = new Map();
@@ -27,7 +27,10 @@ function exactFilePlan(prepared, plannedFiles, episodeIds) {
   }
   if (plannedTargets.size !== episodeIds.length ||
       episodeIds.some((id) => !plannedTargets.has(id))) return false;
-  const videos = prepared.files.filter((file) => torrentFileKind(file.name) === 'video');
+  const videos = prepared.files.filter((file) =>
+    torrentFileKind(file.name) === 'video' &&
+    !(allowOptionalClips && isOptionalClip(file.name) &&
+      !plannedByName.has(file.name.toLowerCase())));
   if (videos.length !== plannedFiles.length || prepared.files.some((file) =>
     !['video', 'subtitle', 'passive'].includes(torrentFileKind(file.name)))) return false;
   return videos.every((file) => {
@@ -43,10 +46,12 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
   readRelatedTitles,
   readEvidence, publicLibraryIds, ledger,
+  renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
       typeof releaseQueries !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
         (typeof expectedHash !== 'string' ||
@@ -102,8 +107,10 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {
     return held('preflight_torrent_changed');
   }
+  const allowOptionalClips = !detail.episodes.some((episode) =>
+    episode.type === 'Special' && request.episodeIds.includes(episode.id));
   if ((episodeIds !== undefined || plannedFiles !== undefined) &&
-      !exactFilePlan(prepared, plannedFiles, episodeIds)) {
+      !exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips)) {
     return held('file_plan_mismatch');
   }
   // Re-derive the episode map even when a caller supplies a reviewed plan.
@@ -113,7 +120,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (mapped.state !== 'planned_targets') return mapped;
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;
-  if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds)) return held('file_plan_mismatch');
+  if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds,
+    allowOptionalClips)) return held('file_plan_mismatch');
   const mappedByName = new Map(mapped.plannedFiles.map((file) =>
     [file.name, file.episodeIds]));
   if (selectedFiles.some((file) => JSON.stringify([...file.episodeIds]
@@ -129,6 +137,23 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (reserved.state === 'existing' && reserved.status === 'torrent_observed') {
     return held('target_busy');
   }
+  // The final first-time evidence read can itself wait two minutes. Renew
+  // only after it finishes, just before qBittorrent preflight and dispatch.
+  let activeQbittorrent = qbittorrent;
+  if (renewQbittorrent) {
+    let fresh;
+    try { fresh = await renewQbittorrent(qbittorrent.sessionId); }
+    catch { return held('authentication_unavailable'); }
+    if (fresh?.state !== 'authenticated' ||
+        typeof fresh.sessionId !== 'string' ||
+        typeof fresh.fetchImpl !== 'function') {
+      return held(typeof fresh?.reason === 'string' &&
+        /^[a-z][a-z0-9_]{0,79}$/.test(fresh.reason) ?
+        fresh.reason : 'authentication_unavailable');
+    }
+    activeQbittorrent = { ...qbittorrent, sessionId: fresh.sessionId,
+      fetchImpl: fresh.fetchImpl };
+  }
   const nowMs = now();
   const bound = ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,
     candidate, hash: prepared.expected.hash, nowMs });
@@ -136,6 +161,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const plan = ledger.recordFilePlan({ attemptId: reserved.attemptId,
     hash: prepared.expected.hash, plannedFiles: selectedFiles, nowMs });
   if (plan.state !== 'planned') return plan;
-  return submitStoppedCandidate({ ...qbittorrent, ledger,
-    attemptId: reserved.attemptId, candidate, prepared, nowMs });
+  return submitStoppedCandidate({ ...activeQbittorrent, ledger,
+    attemptId: reserved.attemptId, candidate, prepared, nowMs,
+    plannedFileNames: selectedFiles.map((file) => file.name) });
 }

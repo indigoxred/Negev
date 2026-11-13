@@ -481,14 +481,40 @@ test('a recent Shoko event retries ahead of backfill when Plex indexes after the
     assert.deepEqual(first.target, { anidbId: 43, episodeId: 2001 });
     ctx.queue.recordResult({ claim: first, state: 'unknown', checkedMs: 103 });
     ctx.reopen();
-    const retry = ctx.queue.claimNext({ nowMs: 103 + 5 * 60_000 });
+    assert.deepEqual(ctx.queue.claimNext({ nowMs: 103 + 29_999 }).target,
+      { anidbId: 42, episodeId: 1001 });
+    const retry = ctx.queue.claimNext({ nowMs: 103 + 30_000 });
     assert.deepEqual(retry.target, { anidbId: 43, episodeId: 2001 });
-    const verifiedMs = 103 + 5 * 60_000;
+    const verifiedMs = 103 + 30_000;
     ctx.queue.recordResult({ claim: retry, state: 'available',
       checkedMs: verifiedMs, proof: { fileId: 51, libraryId: 102,
         ratingKey: 500, partId: 600 } });
     assert.deepEqual(ctx.queue.getStatus({ anidbId: 43, episodeId: 2001,
       nowMs: verifiedMs }), { state: 'available', verifiedAtMs: verifiedMs });
+  });
+});
+
+test('an unresolved new Shoko event returns to five-minute retry after a short window', async () => {
+  await fixture(async (ctx) => {
+    ctx.queue.enqueue({ anidbId: 43, episodeId: 2001,
+      observedMs: 100, priority: 'event' });
+    for (const checkedMs of [100, 30_100, 60_100, 90_100, 120_100,
+      150_100]) {
+      const claim = ctx.queue.claimNext({ nowMs: checkedMs });
+      assert.equal(claim.state, 'claimed');
+      assert.deepEqual(ctx.queue.recordResult({ claim, state: 'unknown',
+        checkedMs }), { state: 'recorded' });
+    }
+    assert.deepEqual(ctx.queue.claimNext({ nowMs: 180_099 }),
+      { state: 'idle' });
+    const finalFast = ctx.queue.claimNext({ nowMs: 180_100 });
+    assert.equal(finalFast.state, 'claimed');
+    ctx.queue.recordResult({ claim: finalFast, state: 'unknown',
+      checkedMs: 180_100 });
+    assert.deepEqual(ctx.queue.claimNext({ nowMs: 180_100 + 30_000 }),
+      { state: 'idle' });
+    assert.equal(ctx.queue.claimNext({ nowMs: 180_100 + 5 * 60_000 }).state,
+      'claimed');
   });
 });
 

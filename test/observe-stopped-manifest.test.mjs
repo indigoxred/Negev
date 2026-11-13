@@ -56,7 +56,7 @@ test('changed manifest, missing torrent and provider errors hold', async () => {
       [{ ...files[0], name: 'run.exe' }]]) }),
   { state: 'held', reason: 'manifest_changed' });
   assert.deepEqual(await observeStoppedManifest({ ...config, fetchImpl: async () => ({ status: 403 }) }),
-    { state: 'held', reason: 'provider_unavailable' });
+    { state: 'held', reason: 'provider_http_403' });
 });
 
 test('rejects malformed configuration before contacting the downloader', async () => {

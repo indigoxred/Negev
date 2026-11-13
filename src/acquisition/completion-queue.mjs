@@ -25,27 +25,31 @@ const INCONCLUSIVE_RETRY_MS = [RETRY_MS, 2 * 60 * 60_000,
 // the acquisition and handoff ledgers have created their tables. A crash with
 // an unfinished claim is intentionally not auto-retried: a private copy may
 // exist even when the handoff journal write was interrupted.
-export function openCompletionQueue(dbPath) {
+export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable completion queue path required');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  if (typeof pureMode !== 'boolean') throw new TypeError('Invalid handoff mode');
+  const handoffTable = pureMode ? 'pure_move_intents' : 'handoff_intents';
+  const cursorTable = pureMode ? 'pure_move_completion_cursor' : 'completion_cursor';
+  const checksTable = pureMode ? 'pure_move_completion_checks' : 'completion_checks';
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA foreign_keys=ON');
     for (const table of ['requests', 'acquisition_attempts', 'acquisition_starts',
       'acquisition_rejections', 'acquisition_retirements', 'acquisition_releases',
-      'acquisition_stall_retirement_intents', 'handoff_intents']) {
+      'acquisition_stall_retirement_intents', handoffTable]) {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table)) {
         throw new TypeError('Completion ledgers must be initialized first');
       }
     }
-    db.exec(`CREATE TABLE IF NOT EXISTS completion_cursor (
+    db.exec(`CREATE TABLE IF NOT EXISTS ${cursorTable} (
       id INTEGER PRIMARY KEY CHECK(id=1),
       after_id INTEGER NOT NULL CHECK(after_id>=0),
       pass INTEGER NOT NULL CHECK(pass>0)
     ) STRICT`);
-    db.exec(`CREATE TABLE IF NOT EXISTS completion_checks (
+    db.exec(`CREATE TABLE IF NOT EXISTS ${checksTable} (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       pass INTEGER NOT NULL CHECK(pass>0),
       state TEXT CHECK(state IN ('held','handoff_prepared','rejected_held')),
@@ -59,9 +63,9 @@ export function openCompletionQueue(dbPath) {
       transfer_state TEXT CHECK(transfer_state IN
         ('active','stalled','queued','paused'))
     ) STRICT`);
-    if (!db.prepare('PRAGMA table_info(completion_checks)').all()
+    if (!db.prepare(`PRAGMA table_info(${checksTable})`).all()
       .some((column) => column.name === 'inconclusive_count')) {
-      db.exec(`ALTER TABLE completion_checks ADD COLUMN inconclusive_count
+      db.exec(`ALTER TABLE ${checksTable} ADD COLUMN inconclusive_count
         INTEGER NOT NULL DEFAULT 0 CHECK(inconclusive_count>=0)`);
     }
     for (const [name, definition] of [
@@ -70,15 +74,15 @@ export function openCompletionQueue(dbPath) {
       ['speed_bps', 'INTEGER CHECK(speed_bps>=0 AND speed_bps<=10737418240)'],
       ['transfer_state', "TEXT CHECK(transfer_state IN ('active','stalled','queued','paused'))"],
     ]) {
-      if (!db.prepare('PRAGMA table_info(completion_checks)').all()
+      if (!db.prepare(`PRAGMA table_info(${checksTable})`).all()
         .some((column) => column.name === name)) {
-        db.exec(`ALTER TABLE completion_checks ADD COLUMN ${name} ${definition}`);
+        db.exec(`ALTER TABLE ${checksTable} ADD COLUMN ${name} ${definition}`);
       }
     }
-    db.exec('INSERT INTO completion_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
+    db.exec(`INSERT INTO ${cursorTable} VALUES (1,0,1) ON CONFLICT(id) DO NOTHING`);
   } catch (error) { db.close(); throw error; }
 
-  const cursor = db.prepare('SELECT after_id AS afterId,pass FROM completion_cursor WHERE id=1');
+  const cursor = db.prepare(`SELECT after_id AS afterId,pass FROM ${cursorTable} WHERE id=1`);
   const next = db.prepare(`SELECT a.id FROM acquisition_attempts a
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     JOIN acquisition_starts s ON s.attempt_id=a.id AND s.torrent_hash=a.torrent_hash
@@ -87,8 +91,8 @@ export function openCompletionQueue(dbPath) {
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
     LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
-    LEFT JOIN handoff_intents h ON h.attempt_id=a.id
-    LEFT JOIN completion_checks c ON c.attempt_id=a.id
+    LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
+    LEFT JOIN ${checksTable} c ON c.attempt_id=a.id
     WHERE a.id>? AND a.status='torrent_observed' AND
       hold.request_id IS NULL AND x.attempt_id IS NULL AND
       j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
@@ -97,36 +101,36 @@ export function openCompletionQueue(dbPath) {
     -- The durable cursor is an attempt ID, so traversal must follow ID order.
     -- Priority before ID can skip an older due retry on every pass.
     ORDER BY a.id LIMIT 1`);
-  const advance = db.prepare('UPDATE completion_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
-  const wrap = db.prepare('UPDATE completion_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO completion_checks(attempt_id,pass,state,reason,checked_ms,next_due_ms)
+  const advance = db.prepare(`UPDATE ${cursorTable} SET after_id=? WHERE id=1 AND after_id=? AND pass=?`);
+  const wrap = db.prepare(`UPDATE ${cursorTable} SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?`);
+  const claim = db.prepare(`INSERT INTO ${checksTable}(attempt_id,pass,state,reason,checked_ms,next_due_ms)
     VALUES (?,?,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,
     progress_bp=NULL,eta_sec=NULL,speed_bps=NULL,transfer_state=NULL`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,pass,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
-    FROM completion_checks WHERE attempt_id=?`);
-  const save = db.prepare(`UPDATE completion_checks SET
+    FROM ${checksTable} WHERE attempt_id=?`);
+  const save = db.prepare(`UPDATE ${checksTable} SET
       state=?,reason=?,checked_ms=?,next_due_ms=?,inconclusive_count=?,
       progress_bp=?,eta_sec=?,speed_bps=?,transfer_state=?
     WHERE attempt_id=? AND pass=? AND state IS NULL`);
   const lookupCount = db.prepare(`SELECT inconclusive_count AS count
-    FROM completion_checks WHERE attempt_id=? AND pass=? AND state IS NULL`);
-  const prepared = db.prepare('SELECT 1 FROM handoff_intents WHERE attempt_id=?');
+    FROM ${checksTable} WHERE attempt_id=? AND pass=? AND state IS NULL`);
+  const prepared = db.prepare(`SELECT 1 FROM ${handoffTable} WHERE attempt_id=?`);
   const rejected = db.prepare('SELECT 1 FROM acquisition_rejections WHERE attempt_id=?');
-  const retryInterrupted = db.prepare(`UPDATE completion_checks SET
+  const retryInterrupted = db.prepare(`UPDATE ${checksTable} SET
     state='held',reason='interrupted_retry',checked_ms=?,next_due_ms=?,
     progress_bp=NULL,eta_sec=NULL,speed_bps=NULL,transfer_state=NULL
     WHERE attempt_id=? AND pass=? AND state IS NULL
-      AND NOT EXISTS (SELECT 1 FROM handoff_intents WHERE attempt_id=?)
+      AND NOT EXISTS (SELECT 1 FROM ${handoffTable} WHERE attempt_id=?)
       AND NOT EXISTS (SELECT 1 FROM acquisition_rejections WHERE attempt_id=?)`);
-  const unresolved = db.prepare(`SELECT attempt_id AS attemptId,pass FROM completion_checks
+  const unresolved = db.prepare(`SELECT attempt_id AS attemptId,pass FROM ${checksTable}
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
-    FROM completion_checks c
+    FROM ${checksTable} c
     JOIN acquisition_attempts a ON a.id=c.attempt_id AND a.status='torrent_observed'
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
-    LEFT JOIN handoff_intents h ON h.attempt_id=a.id
+    LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
     LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
     LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
     LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
@@ -193,7 +197,8 @@ export function openCompletionQueue(dbPath) {
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const delay = ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable'].includes(reason) ? SESSION_RETRY_MS :
+          'authentication_unavailable', 'torrent_not_stopped']
+          .includes(reason) ? SESSION_RETRY_MS :
           reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');

@@ -7,6 +7,7 @@ import { createPendingTitleWorker } from '../requests/pending-title-worker.mjs';
 import { openRequestProgress } from '../requests/request-progress.mjs';
 import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
+import { openPureMoveLedger } from '../acquisition/pure-move-ledger.mjs';
 import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mjs';
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
@@ -102,6 +103,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   dataDir = null,
   shokoImportRoot = null, shokoImportFolderId = null,
   acquisitionImportParent = null, acquisitionImportFolderId = null,
+  acquisition = null,
   qbitSidecarObserver = null,
   acquisitionAllowedAnidbIds = null,
   acquisitionOwnershipGate = null,
@@ -183,6 +185,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let pendingTitles;
   let acquisitions;
   let handoffs;
+  let pureMoves;
   let publishReview;
   let startReview;
   let completionReview;
@@ -203,10 +206,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     pendingTitles = openPendingTitleLedger(dbPath);
     acquisitions = openAcquisitionLedger(dbPath);
     handoffs = openHandoffLedger(dbPath);
-    publishReview = openHandoffPublishQueue(dbPath);
+    if (acquisition?.pureMode === true) pureMoves = openPureMoveLedger(dbPath);
+    publishReview = openHandoffPublishQueue(dbPath,
+      { pureMode: acquisition?.pureMode === true });
     startReview = openStartQueue(dbPath);
-    completionReview = openCompletionQueue(dbPath);
-    progress = openRequestProgress(dbPath);
+    completionReview = openCompletionQueue(dbPath,
+      { pureMode: acquisition?.pureMode === true });
+    progress = openRequestProgress(dbPath,
+      { pureMode: acquisition?.pureMode === true });
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);
@@ -409,6 +416,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     // Preview, submission, and start must use identical relation evidence.
     // Shoko may not know an unowned season yet, while the AniDB archive does.
     const readRelatedTitles = ({ anidbId }) => readRelatedEvidence({ anidbId,
+      aliasesForId: (relatedId) => titleSource?.releaseQueries(relatedId) ?? [],
       readLocal: () => metadata.run(() => readAniDbRelatedTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
       readArchive: async () => {
@@ -930,7 +938,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       openAcquisitionWorkers({ qbBaseUrl, sessionGate, stagingHostPath,
         qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
         verifyStagingRoot, verifyShokoSource, realpathImpl,
-        shokoProviderId, allowedAnidbIds, ownershipGate, readPacer } = {}) {
+        shokoProviderId, allowedAnidbIds, ownershipGate, readPacer,
+        pureMode = false } = {}) {
         if (stopping || acquisitionRuntime) {
           throw new Error('Acquisition workers unavailable');
         }
@@ -959,7 +968,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           throw new TypeError('Acquisition provider evidence unconfigured');
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
-          dbPath, requests, acquisitions, handoffs, qbBaseUrl, sessionGate,
+          dbPath, requests, acquisitions, handoffs, pureMoves, pureMode,
+          qbBaseUrl, sessionGate,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
@@ -1008,7 +1018,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               recent?.close();
               inventory.close(); hydration.close(); progress.close();
               completionReview.close(); startReview.close(); publishReview.close();
-              handoffs.close(); acquisitions.close();
+              pureMoves?.close(); handoffs.close(); acquisitions.close();
               pendingTitles.close(); requests.close(); accounts.close();
             }
           })();
@@ -1022,7 +1032,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     inventory?.close(); hydration?.close();
     progress?.close(); completionReview?.close(); startReview?.close();
     publishReview?.close();
-    handoffs?.close(); acquisitions?.close();
+    pureMoves?.close(); handoffs?.close(); acquisitions?.close();
     pendingTitles?.close(); requests?.close(); accounts?.close();
     throw error;
   }
