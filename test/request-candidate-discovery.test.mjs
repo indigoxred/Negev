@@ -25,6 +25,24 @@ test('discovers candidates for an existing exact request without authorizing the
   assert.deepEqual(queries, [{ query: 'Canonical Anime' }]);
 });
 
+test('a catalogue year does not hide same-title Airing releases', async () => {
+  const queries = [];
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: 'Ice Wall (2026)' }),
+    pause: async () => {},
+    searchReleases: async ({ query }) => {
+      queries.push(query);
+      return { state: 'candidates', items: query === 'Ice Wall'
+        ? [{ indexerId: 7, guid: 'episode', title: 'Ice Wall S02E01',
+          evidence: 'unverified' }] : [] };
+    },
+  });
+  const result = await discover({ requestId: 12 });
+  assert.deepEqual(queries, ['Ice Wall (2026)', 'Ice Wall']);
+  assert.deepEqual(result.items.map((item) => item.guid), ['episode']);
+});
+
 test('a missing episode search reaches older releases without losing title aliases', async () => {
   const queries = [];
   const discover = createRequestCandidateDiscovery({
