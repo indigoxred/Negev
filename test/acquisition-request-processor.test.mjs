@@ -131,6 +131,26 @@ test('prioritizes an exact episode query before more seeded generic results', as
   assert.deepEqual(inspected, ['candidate-2']);
 });
 
+test('a zero-seeder episode hit yields to a seeded same-title release', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), seeders: 0, targetedEpisode: true },
+        { ...candidate(2), seeders: 7 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.deepEqual(inspected, ['candidate-2']);
+});
+
 test('new episode target leads the unvisited sweep on a later queue pass', async () => {
   const inspected = [];
   const process = createAcquisitionRequestProcessor({
