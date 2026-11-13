@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { observePureMoveImport } from '../src/acquisition/observe-pure-move-import.mjs';
 
 const move = { status: 'published_observed', manifest: {
@@ -17,17 +20,42 @@ const file = { fileId: 77, anidbId: 500, episodeIds: [901],
 test('associates only the exact journalled inode with the Shoko identity', async () => {
   const result = await observePureMoveImport({ move, target, shokoMount,
     readEpisode: async () => ({ state: 'ok', complete: true, files: [file] }),
-    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100' }),
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100:56' }),
   });
   assert.deepEqual(result, { state: 'shoko_files_identified',
     files: [{ name: 'Movie.mkv', fileId: 77,
       releaseEvidence: 'shoko_offline_link' }] });
 });
 
+test('the default probe checks real inode, size and mtime without reading bytes', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-observer-'));
+  try {
+    const pathname = path.join(root, 'Movie.mkv');
+    await writeFile(pathname, Buffer.alloc(100));
+    const physical = await stat(pathname, { bigint: true });
+    const actualMove = { ...move, manifest: { files: [{
+      ...move.manifest.files[0], dev: String(physical.dev),
+      ino: String(physical.ino), mtimeNs: String(physical.mtimeNs),
+    }] } };
+    const actualMount = { appRoot: '/pure', localRoot: root };
+    const readEpisode = async () => ({ state: 'ok', complete: true, files: [
+      { ...file, sourcePaths: ['/pure/Movie.mkv'] },
+    ] });
+    assert.equal((await observePureMoveImport({ move: actualMove, target,
+      shokoMount: actualMount, readEpisode })).state, 'shoko_files_identified');
+    const changedMove = { ...actualMove, manifest: { files: [{
+      ...actualMove.manifest.files[0], mtimeNs: '1',
+    }] } };
+    assert.deepEqual(await observePureMoveImport({ move: changedMove, target,
+      shokoMount: actualMount, readEpisode }),
+    { state: 'awaiting_shoko', episodeId: 901 });
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('an older matching episode cannot prove the new handoff', async () => {
   const result = await observePureMoveImport({ move, target, shokoMount,
     readEpisode: async () => ({ state: 'ok', complete: true, files: [file] }),
-    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:35:100' }),
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:35:100:56' }),
   });
   assert.deepEqual(result, { state: 'awaiting_shoko', episodeId: 901 });
 });
@@ -38,7 +66,7 @@ test('a wrong Shoko anime or incomplete episode link cannot prove the handoff', 
       { ...file, anidbId: 501 },
       { ...file, fileId: 78, coverage: [{ episodeId: 901, start: 0, end: 50 }] },
     ] }),
-    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100' }),
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100:56' }),
   });
   assert.deepEqual(result, { state: 'awaiting_shoko', episodeId: 901 });
 });
@@ -48,7 +76,7 @@ test('ambiguous Shoko file IDs stay held', async () => {
     readEpisode: async () => ({ state: 'ok', complete: true, files: [
       file, { ...file, fileId: 78 },
     ] }),
-    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100' }),
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100:56' }),
   });
   assert.deepEqual(result, { state: 'held', reason: 'ambiguous_shoko_file' });
 });
@@ -63,7 +91,7 @@ test('a multi-episode video must be listed under every claimed Shoko episode', a
       files: episodeId === 901 ? [{ ...file, episodeIds: [901, 902],
         coverage: [{ episodeId: 901, start: 0, end: 100 },
           { episodeId: 902, start: 0, end: 100 }] }] : [] }),
-    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100' }),
+    probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100:56' }),
   });
   assert.deepEqual(result, { state: 'awaiting_shoko', episodeId: 902 });
 });

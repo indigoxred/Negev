@@ -1,17 +1,44 @@
+import { lstat, realpath } from 'node:fs/promises';
+import path from 'node:path';
 import { localPath, validMount } from '../availability/known-card-availability.mjs';
-import { probePhysicalCandidate } from '../availability/physical-plex-part.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const sameIds = (left, right) => Array.isArray(left) &&
   left.length === right.length && new Set(left).size === left.length &&
   left.every((id) => right.includes(id));
+const within = (root, candidate) => {
+  const relative = path.relative(root, candidate);
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative);
+};
+
+async function probePureMovedFile({ filePath, allowedRoot, expectedSize }) {
+  try {
+    const [rootReal, fileReal, before] = await Promise.all([
+      realpath(allowedRoot), realpath(filePath),
+      lstat(filePath, { bigint: true }),
+    ]);
+    if (!within(rootReal, fileReal) || !before.isFile() ||
+        before.isSymbolicLink() || before.size !== BigInt(expectedSize)) {
+      return held('file_unavailable');
+    }
+    const [after, afterReal] = await Promise.all([
+      lstat(filePath, { bigint: true }), realpath(filePath),
+    ]);
+    if (afterReal !== fileReal || before.dev !== after.dev ||
+        before.ino !== after.ino || before.size !== after.size ||
+        before.mtimeNs !== after.mtimeNs) return held('file_changed');
+    return { state: 'candidate', candidateKey:
+      `${before.dev}:${before.ino}:${before.size}:${before.mtimeNs}` };
+  } catch { return held('file_unavailable'); }
+}
 
 // A Shoko episode already in the library may have the same title and size as
 // a new handoff. Only the physical inode recorded before the pure move can
 // associate Shoko's file ID with this attempt, without rehashing the video.
 export async function observePureMoveImport({ move, target, shokoMount,
-  readEpisode, probeImpl = probePhysicalCandidate } = {}) {
+  readEpisode, probeImpl = probePureMovedFile } = {}) {
   if (move?.status !== 'published_observed') return held('publish_not_observed');
   const manifestFiles = move.manifest?.files;
   const files = Array.isArray(manifestFiles) ? manifestFiles.filter((file) =>
@@ -23,7 +50,7 @@ export async function observePureMoveImport({ move, target, shokoMount,
       files.some((file) => !Array.isArray(file.episodeIds) ||
         file.episodeIds.length < 1 || file.episodeIds.some((id) => !validId(id)) ||
         !validId(file.size) || !/^\d+$/.test(file.dev) ||
-        !/^\d+$/.test(file.ino)) ||
+        !/^\d+$/.test(file.ino) || !/^\d+$/.test(file.mtimeNs)) ||
       !sameIds([...new Set(files.flatMap((file) => file.episodeIds))],
         target.episodeIds) || !validMount(shokoMount) ||
       typeof readEpisode !== 'function' || typeof probeImpl !== 'function') {
@@ -61,7 +88,8 @@ export async function observePureMoveImport({ move, target, shokoMount,
           allowedRoot: shokoMount.localRoot, expectedSize: expected.size }); }
         catch { continue; }
         if (probe?.state === 'candidate' &&
-            probe.candidateKey === `${expected.dev}:${expected.ino}:${expected.size}`) {
+            probe.candidateKey ===
+              `${expected.dev}:${expected.ino}:${expected.size}:${expected.mtimeNs}`) {
           matching.set(file.fileId, file);
         }
       }
