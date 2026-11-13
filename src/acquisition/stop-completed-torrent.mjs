@@ -39,6 +39,14 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
   let after;
   try { after = await observe({ ...input, requireStopped: true }); }
   catch { return held('torrent_unavailable_after_stop'); }
+  // qBittorrent can acknowledge stop before its state changes to stoppedUP.
+  // Re-read the exact hash briefly; never send another stop or relax the manifest check.
+  for (let retry = 0; retry < 2 && after?.state === 'held' &&
+      after.reason === 'torrent_not_stopped'; retry++) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    try { after = await observe({ ...input, requireStopped: true }); }
+    catch { return held('torrent_unavailable_after_stop'); }
+  }
   if (after?.state !== 'complete') return after ?? held('torrent_unavailable_after_stop');
   const fingerprint = (value) => JSON.stringify({ files: value.files,
     subtitles: value.subtitles ?? [] });

@@ -37,6 +37,23 @@ test('an incomplete torrent never receives stop', async () => {
   assert.equal(called, false);
 });
 
+test('rechecks a delayed stopped state without sending a second stop', async () => {
+  let stops = 0;
+  let observations = 0;
+  const result = await stopCompletedTorrent({
+    baseUrl: 'http://qbit.internal:8080', sessionId: 'testSID', expected,
+    observe: async ({ requireStopped }) => {
+      observations++;
+      return requireStopped && observations === 2
+        ? { state: 'held', reason: 'torrent_not_stopped' } : complete;
+    },
+    fetchImpl: async () => { stops++; return { status: 200 }; },
+  });
+  assert.deepEqual(result, complete);
+  assert.equal(stops, 1);
+  assert.equal(observations, 3);
+});
+
 test('403 holds without moving and permits one session renewal on the next tick', async () => {
   let stops = 0;
   const result = await stopCompletedTorrent({
