@@ -19,6 +19,13 @@ export function parseRetirementArgs(args) {
   return { attemptId: Number(args[0]), hash: args[1].toLowerCase() };
 }
 
+export function retirementStagingOptions(acquisition) {
+  return { stagingRoot: acquisition.stagingHostPath,
+    holdingRoot: acquisition.holdingRoot,
+    importRoot: acquisition.importRoot,
+    writablePureMove: acquisition.pureMode === true };
+}
+
 async function main() {
   const { attemptId, hash } = parseRetirementArgs(process.argv.slice(2));
   const config = parseUserServerConfig(process.env);
@@ -36,9 +43,8 @@ async function main() {
     const result = await runStalledRetirement({ ledger, attemptId, hash,
       baseUrl: config.qbitSidecar.baseUrl,
       stagingRoot: a.stagingHostPath, saveRoot: a.qbitStagingRoot,
-      verifyStagingRoot: () => verifyLocalStagingRoot({
-        stagingRoot: a.stagingHostPath, holdingRoot: a.holdingRoot,
-        importRoot: a.importRoot }),
+      verifyStagingRoot: () => verifyLocalStagingRoot(
+        retirementStagingOptions(a)),
       sessionGate: gate });
     process.stdout.write(`Negev stalled retirement: ${result.state}` +
       `${result.reason ? ` (${result.reason})` : ''}\n`);

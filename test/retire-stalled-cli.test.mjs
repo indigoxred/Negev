@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseRetirementArgs } from '../src/admin/retire-stalled.mjs';
+import { parseRetirementArgs, retirementStagingOptions } from '../src/admin/retire-stalled.mjs';
+
+test('stalled retirement verifies the configured pure-move mount as writable', () => {
+  const roots = { stagingHostPath: '/handoff/staging',
+    holdingRoot: '/handoff/holding', importRoot: '/handoff/source/Negev' };
+  assert.deepEqual(retirementStagingOptions({ ...roots, pureMode: true }), {
+    stagingRoot: roots.stagingHostPath, holdingRoot: roots.holdingRoot,
+    importRoot: roots.importRoot, writablePureMove: true });
+  assert.deepEqual(retirementStagingOptions(roots), {
+    stagingRoot: roots.stagingHostPath, holdingRoot: roots.holdingRoot,
+    importRoot: roots.importRoot, writablePureMove: false });
+});
 
 test('operator must name one attempt and exact hash and confirm staged-file deletion', () => {
   const hash = 'a'.repeat(40);
