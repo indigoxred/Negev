@@ -122,8 +122,17 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     .sort((a, b) => a - b)) !== JSON.stringify(mappedByName.get(file.name)))) {
     return held('file_plan_mismatch');
   }
-  // The first-time Import fence can take two minutes. Refresh the shared
-  // qBittorrent session before reserving an attempt or sending a torrent.
+  const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
+    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
+  if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
+  // Once the stopped torrent is recorded, start/completion workers own it.
+  // Replaying its manifest here cannot make progress after it has downloaded,
+  // and must not pin an Airing request ahead of its other episodes.
+  if (reserved.state === 'existing' && reserved.status === 'torrent_observed') {
+    return held('target_busy');
+  }
+  // The final first-time evidence read can itself wait two minutes. Renew
+  // only after it finishes, just before qBittorrent preflight and dispatch.
   let activeQbittorrent = qbittorrent;
   if (renewQbittorrent) {
     let fresh;
@@ -138,15 +147,6 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     }
     activeQbittorrent = { ...qbittorrent, sessionId: fresh.sessionId,
       fetchImpl: fresh.fetchImpl };
-  }
-  const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
-    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
-  if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
-  // Once the stopped torrent is recorded, start/completion workers own it.
-  // Replaying its manifest here cannot make progress after it has downloaded,
-  // and must not pin an Airing request ahead of its other episodes.
-  if (reserved.state === 'existing' && reserved.status === 'torrent_observed') {
-    return held('target_busy');
   }
   const nowMs = now();
   const bound = ledger.bindPreparedTorrent({ attemptId: reserved.attemptId,

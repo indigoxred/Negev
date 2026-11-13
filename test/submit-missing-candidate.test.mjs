@@ -123,15 +123,20 @@ test('one exact missing target is reserved then submitted stopped once', async (
     assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
   }));
 
-test('a first-time request refreshes its qBittorrent session before reservation', async () =>
+test('a first-time request refreshes its qBittorrent session after final evidence', async () =>
   withLedgers(async ({ request, ledger }) => {
     const calls = [];
-    const input = options({ request, ledger, readEvidence: async () => absent(),
+    let finalEvidenceRead = false;
+    const input = options({ request, ledger, readEvidence: async () => {
+      finalEvidenceRead = true;
+      return absent();
+    },
       prowlarrFetch: prowlarrFetch(), qbittorrentFetch: async () => {
         throw new Error('old session must not be used');
       } });
     const result = await submitMissingCandidate({ ...input,
       renewQbittorrent: async (sid) => {
+        assert.equal(finalEvidenceRead, true);
         assert.equal(sid, 'syntheticSID');
         return { state: 'authenticated', sessionId: 'freshSID',
           fetchImpl: qbittorrentFetch(calls) };
