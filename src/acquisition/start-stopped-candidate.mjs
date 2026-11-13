@@ -96,6 +96,12 @@ export async function startStoppedCandidate({
       timeoutMs, saveRoot });
   }
   if (manifest.state !== 'manifest_safe') return manifest;
+  let manifestAtMs;
+  try { manifestAtMs = now(); }
+  catch { return held('availability_evidence_stale'); }
+  if (!Number.isSafeInteger(manifestAtMs) || manifestAtMs < 0) {
+    return held('availability_evidence_stale');
+  }
   const sorted = (files) => files.map((file) => [file.name, file.size])
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   if (JSON.stringify(sorted(manifest.videos)) !== JSON.stringify(sorted(plannedFiles))) {
@@ -122,6 +128,9 @@ export async function startStoppedCandidate({
     firstTimePolicy: attempt.evidencePolicy === 'first_time_permissive'
       ? 'single_uncertain_attempt' : 'strict', now });
   if (checked.state !== 'missing_confirmed') return checked;
+  if (checked.checkedAtMs < manifestAtMs) {
+    return held('availability_evidence_stale');
+  }
   let currentRequest;
   try { currentRequest = await readRequest(attempt.requestId); }
   catch { return held('request_unavailable'); }
@@ -134,10 +143,17 @@ export async function startStoppedCandidate({
   }
   // The availability probe may take long enough for qBittorrent priorities or
   // paths to change. Recheck immediately before recording the one-send intent.
+  let refreshedForFinal = false;
+  if (renewQbittorrent && checked.checkedAtMs - manifestAtMs >= 60_000) {
+    const renewed = await renewSession();
+    if (renewed.state !== 'authenticated') return renewed;
+    refreshedForFinal = true;
+  }
   let finalManifest = await observeStoppedManifest({ baseUrl,
     sessionId: activeSessionId, expected, fetchImpl: activeFetch,
     timeoutMs, saveRoot });
   if (finalManifest.reason === 'provider_http_403') {
+    if (refreshedForFinal) return finalManifest;
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     finalManifest = await observeStoppedManifest({ baseUrl,

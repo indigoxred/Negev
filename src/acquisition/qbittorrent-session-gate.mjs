@@ -3,9 +3,9 @@ import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validSid = validQbittorrentSessionId;
-// Refresh before qBittorrent's default one-hour WebUI session lifetime.
-// A configured shorter lifetime is recovered through one shared re-login.
-const MAX_SESSION_AGE_MS = 30 * 60_000;
+// Refresh before the short effective lifetime observed through the installed
+// WebUI, even when its advertised timeout is longer.
+const MAX_SESSION_AGE_MS = 60_000;
 const REPEATED_REJECTION_WINDOW_MS = 60_000;
 
 // One session for the paced acquisition runtime. A bad password latches until
