@@ -274,6 +274,29 @@ test('a download path changed during the availability probe blocks start', async
     assert.equal(posts, 0);
   }));
 
+test('a final qBittorrent 403 is retryable and never records a start intent', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    let availabilityRead = false;
+    let starts = 0;
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest,
+      readEvidence: async () => {
+        availabilityRead = true;
+        return options.readEvidence();
+      },
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/start')) { starts++; return new Response(''); }
+        if (availabilityRead) return new Response('', { status: 403 });
+        if (endpoint.endsWith('/properties')) return Response.json({
+          save_path: expected.savePath, download_path: '' });
+        return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+      } });
+    assert.deepEqual(result, { state: 'held', reason: 'provider_http_403' });
+    assert.equal(ledger.getStart(attemptId), null);
+    assert.equal(starts, 0);
+  }));
+
 test('a file priority changed during the availability probe blocks start', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let availabilityRead = false;

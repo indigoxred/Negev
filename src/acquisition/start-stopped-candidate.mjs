@@ -108,6 +108,8 @@ export async function startStoppedCandidate({
   // paths to change. Recheck immediately before recording the one-send intent.
   const finalManifest = await observeStoppedManifest({ baseUrl, sessionId,
     expected, fetchImpl, timeoutMs, saveRoot });
+  if (finalManifest.reason === 'provider_http_403' ||
+      finalManifest.reason === 'provider_unavailable') return finalManifest;
   if (finalManifest.state !== 'manifest_safe' ||
       JSON.stringify(finalManifest.videos) !== JSON.stringify(manifest.videos) ||
       JSON.stringify(finalManifest.subtitles) !== JSON.stringify(manifest.subtitles)) {
