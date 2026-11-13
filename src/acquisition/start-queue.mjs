@@ -7,6 +7,7 @@ const validReason = (value) => typeof value === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(value);
 const RETRY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
+const IMPORT_RETRY_MS = 5 * 60_000;
 const INTERRUPTED_RETRY_MS = 5 * 60_000;
 
 // One stopped torrent per explicit tick. Only a guarded start coordinator may
@@ -110,6 +111,8 @@ export function openStartQueue(dbPath) {
         'authentication_unavailable'].includes(reason);
       const due = state === 'held' && sessionRetry
         ? checkedMs + SESSION_RETRY_MS :
+        state === 'held' && reason === 'import_quiet_window_unverified'
+          ? checkedMs + IMPORT_RETRY_MS :
         state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid start clock');
       return transact(() => {
