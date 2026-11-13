@@ -81,7 +81,13 @@ export function openAcquisitionLedger(dbPath) {
       .some((column) => column.name === 'evidence_policy')) {
       db.exec("ALTER TABLE acquisition_attempts ADD COLUMN evidence_policy TEXT NOT NULL DEFAULT 'strict' CHECK(evidence_policy IN ('strict','first_time_permissive'))");
     }
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS acquisition_expected_hash
+    // A torrent retired as the wrong installment can later be requested for
+    // its correct AniDB title. Keep the historical hash, and enforce active
+    // exclusivity in the immediate reservation transaction below.
+    const hashIndex = db.prepare('PRAGMA index_list(acquisition_attempts)').all()
+      .find((index) => index.name === 'acquisition_expected_hash');
+    if (hashIndex?.unique === 1) db.exec('DROP INDEX acquisition_expected_hash');
+    db.exec(`CREATE INDEX IF NOT EXISTS acquisition_expected_hash
       ON acquisition_attempts(expected_hash) WHERE expected_hash IS NOT NULL`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_target_claims (
       attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
@@ -154,7 +160,11 @@ export function openAcquisitionLedger(dbPath) {
     LEFT JOIN acquisition_retirements retired ON retired.attempt_id=claim.attempt_id
     WHERE claim.anidb_id=? AND claim.episode_id=?
       AND released.attempt_id IS NULL AND retired.attempt_id IS NULL LIMIT 1`);
-  const busyHash = db.prepare('SELECT id FROM acquisition_attempts WHERE expected_hash=? AND id<>?');
+  const busyHash = db.prepare(`SELECT a.id FROM acquisition_attempts a
+    LEFT JOIN acquisition_retirements r ON r.attempt_id=a.id
+    WHERE a.expected_hash=? AND a.id<>? AND
+      (r.reason IS NULL OR r.reason<>'file_wrong_identity' OR a.anidb_id=?)
+    LIMIT 1`);
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
     (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
     VALUES (?,?,?,?,'reserved',?,?,?)`);
@@ -181,6 +191,16 @@ export function openAcquisitionLedger(dbPath) {
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
   const findRetirement = db.prepare('SELECT torrent_hash,reason,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const digestForCandidate = (candidate, anidbId) => {
+    const legacyDigest = createHash('sha256').update(candidate.guid).digest('hex');
+    const legacy = candidateRow.get(candidate.indexerId, legacyDigest);
+    if (legacy && legacy.anidb_id !== anidbId &&
+        findRetirement.get(legacy.id)?.reason === 'file_wrong_identity') {
+      return createHash('sha256').update(JSON.stringify(
+        ['wrong-installment-reassignment-v1', anidbId, candidate.guid])).digest('hex');
+    }
+    return legacyDigest;
+  };
   const findPrestartMismatchRetirement = db.prepare(
     'SELECT retired_ms FROM acquisition_prestart_mismatch_retirements WHERE attempt_id=?');
   const insertPrestartMismatchRetirement = db.prepare(
@@ -236,7 +256,7 @@ export function openAcquisitionLedger(dbPath) {
       }
       const request = requestRow.get(requestId);
       if (!request) return { state: 'unavailable' };
-      const digest = createHash('sha256').update(candidate.guid).digest('hex');
+      const digest = digestForCandidate(candidate, request.anidb_id);
       const own = candidateRow.get(candidate.indexerId, digest);
       for (const id of episodeIds) {
         const active = busyTarget.get(request.anidb_id, id);
@@ -262,7 +282,7 @@ export function openAcquisitionLedger(dbPath) {
       const request = requestRow.get(requestId);
       if (request?.status !== 'held' || episodeIds.some((id) =>
         !requestedEpisode.get(requestId, request.anidb_id, id))) return null;
-      const digest = createHash('sha256').update(candidate.guid).digest('hex');
+      const digest = digestForCandidate(candidate, request.anidb_id);
       const existing = candidateRow.get(candidate.indexerId, digest);
       if (existing?.status !== 'torrent_observed' ||
           existing.request_id !== requestId ||
@@ -296,10 +316,10 @@ export function openAcquisitionLedger(dbPath) {
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid acquisition reservation');
       }
-      const digest = createHash('sha256').update(candidate.guid).digest('hex');
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
+        const digest = digestForCandidate(candidate, request.anidb_id);
         if (episodeIds.some((id) => !requestedEpisode.get(requestId, request.anidb_id, id))) {
           return held('target_not_requested');
         }
@@ -626,13 +646,13 @@ export function openAcquisitionLedger(dbPath) {
         if (findRelease.get(attemptId)) return held('candidate_released');
         if (findRejection.get(attemptId)) return held('candidate_rejected');
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
-        const digest = createHash('sha256').update(candidate.guid).digest('hex');
+        const digest = digestForCandidate(candidate, row.anidb_id);
         if (row.indexer_id !== candidate.indexerId || row.candidate_digest !== digest) {
           return held('candidate_mismatch');
         }
         const normalizedHash = hash.toLowerCase();
         if (row.expected_hash && row.expected_hash !== normalizedHash) return held('torrent_conflict');
-        if (busyHash.get(normalizedHash, attemptId)) return held('torrent_claimed');
+        if (busyHash.get(normalizedHash, attemptId, row.anidb_id)) return held('torrent_claimed');
         if (row.status === 'reserved' && !row.expected_hash) {
           prepare.run(normalizedHash, nowMs, attemptId);
           return { state: 'prepared', expectedHash: normalizedHash };
