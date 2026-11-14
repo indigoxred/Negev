@@ -105,18 +105,84 @@ async function inspectMobile(url, profile, width = 390) {
         hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
     await send('Page.navigate', { url: url.replace('#/discover',
-      '#/discover?year=2025&season=ALL&after=18') });
+      '#/discover?year=2025&season=ALL') });
     await wait(800);
-    const mobilePager = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `(() => { const pager = document.querySelector('.season-pages');
-        const previous = document.querySelector('#season-previous');
-        const next = document.querySelector('#season-next');
-        return {label: document.querySelector('#season-page-position')?.textContent,
-          visible: !pager?.hidden,
-          fits: pager?.getBoundingClientRect().right <= innerWidth &&
-            pager?.getBoundingClientRect().left >= 0,
-          previousEnabled: !previous?.disabled, nextEnabled: !next?.disabled}; })()`,
+    const browseFirst = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#season-list .poster-card').length`,
     });
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(1200);
+    const browseScrolled = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({cards: document.querySelectorAll('#season-list .poster-card').length,
+        first: document.querySelector('#season-list .poster-card strong')?.textContent,
+        retry: Boolean(document.querySelector('#season-list + .browse-page-marker button'))})`,
+    });
+    await send('Runtime.evaluate', { expression: `(() => {
+      const sort = document.querySelector('#season-sort');
+      sort.value = 'title_asc'; sort.dispatchEvent(new Event('change', {bubbles: true}));
+    })()` });
+    await wait(1000);
+    const browseSorted = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({hash: location.hash,
+        cards: document.querySelectorAll('#season-list .poster-card').length,
+        first: document.querySelector('#season-list .poster-card strong')?.textContent})`,
+    });
+    await send('Page.navigate', { url: url.replace('#/discover',
+      '#/discover?year=2024&season=ALL') });
+    await wait(800);
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(800);
+    const browseRetry = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const retry = document.querySelector(
+        '#season-list + .browse-page-marker button');
+        const before = document.querySelectorAll('#season-list .poster-card').length;
+        retry?.click(); return {before, visible: Boolean(retry)}; })()`,
+    });
+    await wait(800);
+    const browseRecovered = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#season-list .poster-card').length`,
+    });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
+    await wait(900);
+    await send('Runtime.evaluate', { expression: `(() => {
+      document.querySelector('#airing-year').value = '2025';
+      document.querySelector('#airing-form').requestSubmit();
+    })()` });
+    await wait(900);
+    const airingFirst = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#airing-season-list .tracked-title').length`,
+    });
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(1200);
+    const airingScrolled = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({cards: document.querySelectorAll('#airing-season-list .tracked-title').length,
+        retry: Boolean(document.querySelector('#airing-season-list + .browse-page-marker button'))})`,
+    });
+    await send('Runtime.evaluate', { expression: `(() => {
+      document.querySelector('#airing-year').value = '2024';
+      document.querySelector('#airing-form').requestSubmit();
+    })()` });
+    await wait(800);
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(800);
+    const airingRetry = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const retry = document.querySelector(
+        '#airing-season-list + .browse-page-marker button');
+        const before = document.querySelectorAll('#airing-season-list .tracked-title').length;
+        retry?.click(); return {before, visible: Boolean(retry)}; })()`,
+    });
+    await wait(800);
+    const airingRecovered = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#airing-season-list .tracked-title').length`,
+    });
+    await send('Runtime.evaluate', { expression: `(() => {
+      document.querySelector('#airing-year').value = '0';
+      document.querySelector('#airing-form').requestSubmit();
+    })()` });
     await send('Page.navigate', { url });
     await wait(300);
     const tagBrowse = await send('Runtime.evaluate', { returnByValue: true,
@@ -459,7 +525,13 @@ async function inspectMobile(url, profile, width = 390) {
       })()` });
       await wait(300);
     }
-    return { ...result.value, mobilePager: mobilePager.result.value,
+    return { ...result.value,
+      browseScroll: { first: browseFirst.result.value,
+        after: browseScrolled.result.value, sorted: browseSorted.result.value,
+        retry: browseRetry.result.value, recovered: browseRecovered.result.value },
+      airingScroll: { first: airingFirst.result.value,
+        after: airingScrolled.result.value,
+        retry: airingRetry.result.value, recovered: airingRecovered.result.value },
       tagBrowse: tagBrowse.result.value,
       menu: menu.result.value,
       adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
@@ -504,6 +576,8 @@ test('signed-in consumer routes render real shell with search, library and reque
     let coldSeasonReads = 0;
     let completedColdSeasonReads = 0;
     let failedRelatedReads = 0;
+    let failedDiscoverContinuation = false;
+    let failedAiringContinuation = false;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -642,6 +716,42 @@ test('signed-in consumer routes render real shell with search, library and reque
       }
       if (path === '/api/seasons') {
         const params = new URL(request.url, 'http://localhost').searchParams;
+        if (params.get('year') === '2024') {
+          const after = Number(params.get('after') ?? 0);
+          const ongoing = params.get('status') === 'ongoing';
+          if (after && !(ongoing ? failedAiringContinuation : failedDiscoverContinuation)) {
+            if (ongoing) failedAiringContinuation = true;
+            else failedDiscoverContinuation = true;
+            response.statusCode = 503;
+            response.end(JSON.stringify({ error: 'Temporary page failure' }));
+            return;
+          }
+          const total = ongoing ? 13 : 19;
+          const limit = ongoing ? 12 : 18;
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'ready', year: 2024,
+            season: 'ALL', sourceDate: '2026-11-05', availableTags: [], total,
+            items: Array.from({ length: Math.min(limit, total - after) }, (_, index) => ({
+              anidbId: (ongoing ? 30_000 : 40_000) + after + index,
+              title: `${ongoing ? 'Airing' : 'Discover'} retry ${after + index + 1}`,
+              type: 'TV', adult: false,
+              libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } })),
+            nextAfter: after + limit < total ? after + limit : null }));
+          return;
+        }
+        if (params.get('year') === '2025' && params.get('status') === 'ongoing') {
+          const after = Number(params.get('after') ?? 0);
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'ready', year: 2025,
+            season: 'ALL', sourceDate: '2026-11-05', availableTags: [], total: 15,
+            items: Array.from({ length: Math.min(12, 15 - after) }, (_, index) => ({
+              anidbId: 20_000 + after + index,
+              title: `Ongoing title ${after + index + 1}`,
+              type: 'TV', adult: false,
+              libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } })),
+            nextAfter: after + 12 < 15 ? after + 12 : null }));
+          return;
+        }
         if (params.get('year') === '2025') {
           const after = Number(params.get('after') ?? 0);
           response.setHeader('Content-Type', 'application/json');
@@ -649,7 +759,8 @@ test('signed-in consumer routes render real shell with search, library and reque
             season: 'ALL', sourceDate: '2026-11-05', availableTags: [], total: 25,
             items: Array.from({ length: Math.min(18, 25 - after) }, (_, index) => ({
               anidbId: 10_000 + after + index,
-              title: `Title ${after + index + 1}`,
+              title: params.get('sort') === 'title_asc'
+                ? `Sorted title ${after + index + 1}` : `Title ${after + index + 1}`,
               type: 'OVA', adult: false })),
             nextAfter: after + 18 < 25 ? after + 18 : null }));
           return;
@@ -1056,8 +1167,17 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
-      assert.deepEqual(mobile.mobilePager, { label: 'Page 2 of 2',
-        visible: true, fits: true, previousEnabled: true, nextEnabled: false });
+      assert.deepEqual(mobile.browseScroll, { first: 18,
+        after: { cards: 25, first: 'Title 1', retry: false },
+        sorted: { hash: '#/discover?year=2025&season=ALL&sort=title_asc',
+          cards: 18, first: 'Sorted title 1' },
+        retry: { before: 18, visible: true }, recovered: 19 });
+      assert.ok([12, 15].includes(mobile.airingScroll.first),
+        'a short Airing page can load its continuation before scrolling');
+      assert.deepEqual(mobile.airingScroll.after, { cards: 15, retry: false });
+      assert.deepEqual(mobile.airingScroll.retry,
+        { before: 12, visible: true });
+      assert.equal(mobile.airingScroll.recovered, 13);
       assert.deepEqual(mobile.tagBrowse, { before: 40, after: 68,
         moreHidden: true, selected: true, summary: 'Genres & themes · 1' });
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
@@ -1215,17 +1335,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(season, /✓ In library · 1 verified item/);
       const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
         join(dir, 'page-one'));
-      assert.match(pageOne, /Page 1 of 2/);
       assert.equal((pageOne.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
         18, 'Discover renders more than twelve titles on its first page');
-      assert.match(pageOne, /id="season-previous"[^>]*disabled/);
+      assert.match(pageOne, /browse-page-marker/);
       const pageTwo = await dump(`${base}/#/discover?year=2025&season=ALL&after=18`,
         join(dir, 'page-two'));
-      assert.match(pageTwo, /Page 2 of 2/);
       assert.equal((pageTwo.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
         7, 'the final Discover page contains only the remaining titles');
-      assert.doesNotMatch(pageTwo, /id="season-previous"[^>]*disabled/);
-      assert.match(pageTwo, /id="season-next"[^>]*disabled/);
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
