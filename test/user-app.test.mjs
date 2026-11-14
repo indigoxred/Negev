@@ -644,12 +644,14 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=2026&season=FALL&kind=movies&tag=action',
       headers: { cookie } })).statusCode, 200);
     assert.deepEqual(seasonalInputs.at(-1), { year: 2026, season: 'FALL',
-      after: 0, limit: 12, kind: 'movies', tag: 'action', status: 'all',
+      after: 0, limit: 18, kind: 'movies', tag: 'action', status: 'all',
       sort: 'newest' });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL&status=ongoing',
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).status, 'ongoing');
+    assert.equal(seasonalInputs.at(-1).limit, 12,
+      'Airing keeps its existing bounded page size');
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=title_desc',
       headers: { cookie } })).statusCode, 200);

@@ -105,7 +105,7 @@ async function inspectMobile(url, profile, width = 390) {
         hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
     await send('Page.navigate', { url: url.replace('#/discover',
-      '#/discover?year=2025&season=ALL&after=12') });
+      '#/discover?year=2025&season=ALL&after=18') });
     await wait(800);
     const mobilePager = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const pager = document.querySelector('.season-pages');
@@ -647,9 +647,11 @@ test('signed-in consumer routes render real shell with search, library and reque
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify({ state: 'ready', year: 2025,
             season: 'ALL', sourceDate: '2026-11-05', availableTags: [], total: 25,
-            items: [{ anidbId: 4158, title: `Page ${after / 12 + 1}`,
-              type: 'OVA', adult: false }],
-            nextAfter: after + 12 < 25 ? after + 12 : null }));
+            items: Array.from({ length: Math.min(18, 25 - after) }, (_, index) => ({
+              anidbId: 10_000 + after + index,
+              title: `Title ${after + index + 1}`,
+              type: 'OVA', adult: false })),
+            nextAfter: after + 18 < 25 ? after + 18 : null }));
           return;
         }
         const ongoing = params.get('status') === 'ongoing';
@@ -1054,8 +1056,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
-      assert.deepEqual(mobile.mobilePager, { label: 'Page 2 of 3',
-        visible: true, fits: true, previousEnabled: true, nextEnabled: true });
+      assert.deepEqual(mobile.mobilePager, { label: 'Page 2 of 2',
+        visible: true, fits: true, previousEnabled: true, nextEnabled: false });
       assert.deepEqual(mobile.tagBrowse, { before: 40, after: 68,
         moreHidden: true, selected: true, summary: 'Genres & themes · 1' });
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
@@ -1213,16 +1215,17 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(season, /✓ In library · 1 verified item/);
       const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
         join(dir, 'page-one'));
-      assert.match(pageOne, /Page 1 of 3/);
+      assert.match(pageOne, /Page 1 of 2/);
+      assert.equal((pageOne.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
+        18, 'Discover renders more than twelve titles on its first page');
       assert.match(pageOne, /id="season-previous"[^>]*disabled/);
-      const pageTwo = await dump(`${base}/#/discover?year=2025&season=ALL&after=12`,
+      const pageTwo = await dump(`${base}/#/discover?year=2025&season=ALL&after=18`,
         join(dir, 'page-two'));
-      assert.match(pageTwo, /Page 2 of 3/);
+      assert.match(pageTwo, /Page 2 of 2/);
+      assert.equal((pageTwo.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
+        7, 'the final Discover page contains only the remaining titles');
       assert.doesNotMatch(pageTwo, /id="season-previous"[^>]*disabled/);
-      const pageThree = await dump(`${base}/#/discover?year=2025&season=ALL&after=24`,
-        join(dir, 'page-three'));
-      assert.match(pageThree, /Page 3 of 3/);
-      assert.match(pageThree, /id="season-next"[^>]*disabled/);
+      assert.match(pageTwo, /id="season-next"[^>]*disabled/);
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
