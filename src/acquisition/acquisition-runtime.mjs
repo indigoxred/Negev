@@ -23,9 +23,13 @@ export function openAcquisitionRuntime(options = {}) {
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
     holdingRoot: providers.holdingRoot,
     qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate,
-    fetchImpl, now, pureMode: providers.pureMode === true, ...stages });
+    fetchImpl, now, pureMode: providers.pureMode === true,
+    // Give completed imports a turn between each potentially two-minute
+    // first-time request check. The four stages remain strictly serial.
+    requestPageLimit: 1, ...stages });
   const scheduler = createPipelineScheduler({ pipeline, now });
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),
     getStatus: () => scheduler.getStatus() };
 }
+
