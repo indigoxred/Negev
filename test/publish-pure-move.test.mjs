@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { preparePureMove } from '../src/acquisition/pure-move-handoff.mjs';
 import { publishPureMove } from '../src/acquisition/publish-pure-move.mjs';
+import { processPurePublish } from '../src/acquisition/process-pure-publish.mjs';
 
 async function withPrepared(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-publish-'));
@@ -76,4 +77,49 @@ test('changed private bytes stop before watched import', async () =>
     const result = await publishPureMove({ attemptId: 7, ledger, holdingRoot,
       importRoot, nowMs: 100 });
     assert.deepEqual(result, { state: 'held', reason: 'manifest_changed' });
+  }));
+
+test('a Shoko-consumed destination after a failed journal write is uncertain, not changed',
+  async () => withPrepared(async ({ ledger, holdingRoot, importRoot, row }) => {
+    ledger.markPublished = () => { throw Error('journal unavailable'); };
+    assert.deepEqual(await publishPureMove({ attemptId: 7, ledger,
+      holdingRoot, importRoot, nowMs: 100 }),
+    { state: 'held', reason: 'publish_outcome_unknown' });
+    await rename(path.join(importRoot, 'negev-7-aaaaaaaaaaaaaaaa'),
+      path.join(importRoot, 'Shoko-consumed'));
+    assert.deepEqual(await publishPureMove({ attemptId: 7, ledger,
+      holdingRoot, importRoot, nowMs: 101 }),
+    { state: 'held', reason: 'published_tree_absent' });
+    assert.equal(row.status, 'publish_unknown');
+  }));
+
+test('consumed unknown move records the exact Shoko file without rereading video',
+  async () => withPrepared(async ({ ledger, holdingRoot, importRoot, row }) => {
+    ledger.markPublished = () => { throw Error('journal unavailable'); };
+    const first = await publishPureMove({ attemptId: 7, ledger,
+      holdingRoot, importRoot, nowMs: 100 });
+    assert.deepEqual(first, { state: 'held', reason: 'publish_outcome_unknown' });
+    const shokoRoot = path.join(path.dirname(importRoot), 'Shoko');
+    await mkdir(shokoRoot);
+    await rename(path.join(importRoot, 'negev-7-aaaaaaaaaaaaaaaa'),
+      path.join(shokoRoot, 'Consumed'));
+    let recorded;
+    ledger.recordContentPresent = (input) => { recorded = input;
+      return { state: 'content_present', publicationProven: false }; };
+    const result = await processPurePublish({ attemptId: 7, pureMoves: ledger,
+      nowMs: 101, stagingHostPath: path.dirname(row.manifest.stagingRoot),
+      holdingRoot, importRoot, target: { anidbId: 42, episodeIds: [1001] },
+      shokoMount: { appRoot: '/pure', localRoot: shokoRoot },
+      readEpisode: async () => ({ state: 'ok', complete: true, files: [{
+        fileId: 77, anidbId: 42, episodeIds: [1001], size: 3,
+        coverage: [{ episodeId: 1001, start: 0, end: 100 }],
+        releaseEvidence: 'registered',
+        sourcePaths: ['/pure/Consumed/Show/01.mkv'],
+      }] }) });
+    assert.deepEqual(result, { state: 'held', reason: 'content_present_unattributed' });
+    assert.deepEqual(recorded.files, [{ name: 'Show/01.mkv', fileId: 77,
+      releaseEvidence: 'registered' }]);
+    assert.equal(row.status, 'publish_unknown');
+    assert.equal((await readFile(path.join(shokoRoot, 'Consumed/Show/01.mkv'))).toString(),
+      'abc');
   }));

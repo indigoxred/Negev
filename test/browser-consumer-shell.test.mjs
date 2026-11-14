@@ -386,6 +386,25 @@ async function inspectMobile(url, profile, width = 390) {
         triggerEnabled: !document.querySelector('.season-request-trigger')?.disabled,
         notice: document.querySelector('.season-lookup-notice')?.textContent }))()`,
     });
+    const failedSeasonDetail = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const row = document.querySelector(
+          '.season-request-row[data-anidb-id="48"]');
+        return { status: row?.querySelector('.season-request-status')?.textContent,
+          disabled: row?.querySelector('input')?.disabled,
+          triggerEnabled: !document.querySelector('.season-request-trigger')?.disabled }; })()`,
+    });
+    await send('Runtime.evaluate', { expression: `(() => {
+      document.querySelector('.season-request-close')?.click();
+      document.querySelector('.season-request-trigger')?.click();
+    })()` });
+    await wait(350);
+    const recoveredSeasonDetail = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const row = document.querySelector(
+          '.season-request-row[data-anidb-id="48"]');
+        return { open: document.querySelector('.season-request-dialog')?.open,
+          status: row?.querySelector('.season-request-status')?.textContent,
+          disabled: row?.querySelector('input')?.disabled }; })()`,
+    });
     await send('Runtime.evaluate', { expression: `document.querySelector('#adult-toggle').click()` });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/46') });
     await wait(1_500);
@@ -551,6 +570,8 @@ async function inspectMobile(url, profile, width = 390) {
       popupClosed: popupClosed.result.value,
       failedSeasonLookup: failedSeasonLookup.result.value,
       recoveredSeasonLookup: recoveredSeasonLookup.result.value,
+      failedSeasonDetail: failedSeasonDetail.result.value,
+      recoveredSeasonDetail: recoveredSeasonDetail.result.value,
       closedPilotTitle: closedPilotTitle.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
@@ -576,6 +597,7 @@ test('signed-in consumer routes render real shell with search, library and reque
     let coldSeasonReads = 0;
     let completedColdSeasonReads = 0;
     let failedRelatedReads = 0;
+    let failedRelatedDetailReads = 0;
     let failedDiscoverContinuation = false;
     let failedAiringContinuation = false;
     const server = createServer(async (request, response) => {
@@ -941,6 +963,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/catalogue/47' || path === '/api/catalogue/48') {
         const id = Number(path.split('/')[3]);
         response.setHeader('Content-Type', 'application/json');
+        if (id === 48 && ++failedRelatedDetailReads === 1) {
+          response.writeHead(503);
+          response.end(JSON.stringify({ error: 'Temporarily unavailable' }));
+          return;
+        }
         response.end(JSON.stringify({ state: 'details', anidbId: id,
           title: id === 47 ? 'Already complete season' : 'Related season after retry',
           kind: 'series', restricted: false, monitorFuture: false,
@@ -1234,6 +1261,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(mobile.failedSeasonLookup.notice ?? '', /temporarily unavailable/i);
       assert.deepEqual(mobile.recoveredSeasonLookup,
         { open: true, related: true, triggerEnabled: true, notice: '' });
+      assert.deepEqual(mobile.failedSeasonDetail,
+        { status: 'Episode details unavailable · retry later', disabled: true,
+          triggerEnabled: true });
+      assert.deepEqual(mobile.recoveredSeasonDetail,
+        { open: true, status: 'Availability unconfirmed · 0/1 verified',
+          disabled: false });
       assert.equal(mobile.closedPilotTitle.notice,
         'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
         JSON.stringify(mobile.closedPilotTitle));

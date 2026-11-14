@@ -7,6 +7,8 @@ test('a later season page keeps Request series openable after a full first page'
   assert.equal(canOpenSeasonRequest(full, true), true);
   assert.equal(canOpenSeasonRequest(full, false), false);
   assert.equal(canOpenSeasonRequest([{ status: { selectable: true }, requested: false }], false), true);
+  assert.equal(canOpenSeasonRequest([{ status: { selectable: false },
+    detailFailed: true, requested: false }], false), true);
 });
 
 test('season rows distinguish available, partial, unconfirmed and future without claiming files missing', () => {

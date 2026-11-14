@@ -52,6 +52,16 @@ test('one saved torrent gets one durable move intent and publish transition', as
         { state: 'publish_unknown', sendNow: true });
       assert.deepEqual(restarted.beginPublish({ attemptId, nowMs: 208 }),
         { state: 'publish_unknown', sendNow: false });
+      const observed = [{ name: 'Show/01.mkv', fileId: 77,
+        releaseEvidence: 'registered' }];
+      assert.deepEqual(restarted.recordContentPresent({ attemptId,
+        files: observed, nowMs: 209 }),
+      { state: 'content_present', publicationProven: false, files: observed });
+      assert.deepEqual(restarted.getContentObservation(attemptId),
+        { state: 'content_present', publicationProven: false, files: observed });
+      assert.deepEqual(restarted.recordContentPresent({ attemptId,
+        files: [{ ...observed[0], fileId: 78 }], nowMs: 210 }),
+      { state: 'held', reason: 'content_observation_conflict' });
       assert.deepEqual(restarted.markPublished({ attemptId, nowMs: 209 }),
         { state: 'published_observed' });
       assert.equal(restarted.getIntent(attemptId).status, 'published_observed');
