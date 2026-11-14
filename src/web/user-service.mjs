@@ -570,7 +570,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           const checkedMs = now();
           return { ...result, items: result.items.map((item) => {
             return { ...item, libraryPresence:
-              publicPresenceForTitle(item.anidbId, checkedMs) };
+              publicPresenceForTitle(item.anidbId, checkedMs),
+              verifiedLibraryPresence: libraryPresenceForTitle(item.anidbId) };
           }) };
         };
         const sourceStatus = await titleSource?.refresh();

@@ -62,6 +62,7 @@
         <section id="search-results-section" class="section" hidden><div class="section-head"><h2 id="results-title">Search the catalogue</h2>
           <p>Search by name to see series and films.</p></div>
           <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
+          <p><a id="search-verified-library" class="text-link" href="#/library">Check these titles in Negev’s Library →</a></p>
         </section>
         <section class="section" aria-label="Catalogue filters and titles">
           <form id="season-form" class="season-controls">
@@ -153,9 +154,16 @@
       </section>
       <section id="view-library" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">On this server</p><h1>Negev’s Library</h1>
-          <p>Shows and films with recently verified playable files in Plex, including owner imports. New imports appear as they are checked.</p></header>
-        <button id="refresh-library" class="quiet" type="button">Refresh verified titles</button>
-        <div id="library-list" class="empty-state">The public-library browse index is being prepared. Search results show verified library matches now.</div>
+          <p>Shows and films with recently verified playable files in Plex, including owner imports. Use the search at the top to check a title.</p></header>
+        <section id="library-search-section" class="section" hidden><div class="section-head"><h2>Search Negev’s Library</h2>
+          <p>Matches use the same anime search as Discover. Only verified playable files count as in the library.</p></div>
+          <div id="library-search-results" class="results poster-grid" aria-live="polite"></div>
+          <p><a id="search-all-catalogue" class="text-link" href="#/discover">Browse all catalogue matches →</a></p>
+        </section>
+        <div id="library-browse">
+          <button id="refresh-library" class="quiet" type="button">Refresh verified titles</button>
+          <div id="library-list" class="empty-state">The public-library browse index is being prepared. Search results show verified library matches now.</div>
+        </div>
       </section>
       <section id="view-requests" class="page-view" hidden>
         <header class="page-head"><p class="eyebrow">Your activity</p><h1>My requests</h1>

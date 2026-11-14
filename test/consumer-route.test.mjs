@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseConsumerRoute, titleRoute, searchRoute,
+import { parseConsumerRoute, titleRoute, searchRoute, librarySearchRoute,
   seasonRoute, browseReturnDestination } from '../src/web/public/consumer-route.mjs';
 
 test('consumer routes use stable URLs for all main pages and exact AniDB title IDs', () => {
@@ -24,6 +24,17 @@ test('search query survives reload and Back/Forward without permitting arbitrary
   assert.deepEqual(parseConsumerRoute('#/totally-unknown'),
     { page: 'discover', anidbId: null, query: '' });
   assert.deepEqual(parseConsumerRoute('#/discover?q=' + 'x'.repeat(121)),
+    { page: 'discover', anidbId: null, query: '' });
+});
+
+test('library search keeps the same query when moving to catalogue search and back', () => {
+  const route = librarySearchRoute('  The Garden of Words ');
+  assert.equal(route, '#/library?q=The+Garden+of+Words');
+  assert.deepEqual(parseConsumerRoute(route),
+    { page: 'library', anidbId: null, query: 'The Garden of Words' });
+  assert.deepEqual(browseReturnDestination(parseConsumerRoute(route)),
+    { href: route, label: 'Library' });
+  assert.deepEqual(parseConsumerRoute('#/library?other=1'),
     { page: 'discover', anidbId: null, query: '' });
 });
 
