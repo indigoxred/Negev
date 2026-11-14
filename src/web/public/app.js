@@ -143,6 +143,7 @@ function renderRoute() {
   }
   if (page === 'discover' || page === 'library') {
     byId('query').value = route.query;
+    if (page === 'discover') byId('discover-query').value = route.query;
     const searching = route.query.length >= 2;
     byId('search-results-section').hidden = page !== 'discover' || !searching;
     byId('library-search-section').hidden = page !== 'library' || !searching;
@@ -1375,6 +1376,23 @@ async function loadUsers() {
   }
 }
 byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
+function submitDiscoverSearch() {
+  const query = byId('discover-query').value.trim();
+  if (query.length < 2) {
+    byId('discover-query').focus();
+    return;
+  }
+  byId('query').value = query;
+  byId('search-form').requestSubmit();
+}
+
+byId('discover-search-button').addEventListener('click', submitDiscoverSearch);
+byId('discover-query').addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  submitDiscoverSearch();
+});
+
 byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = byId('query').value.trim();
