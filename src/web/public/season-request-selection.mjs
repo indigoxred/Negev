@@ -29,6 +29,21 @@ export function seasonRequestStatus(detail) {
     return requestGate({ state: 'unverified',
       text: 'Episode list not published yet · request can be queued', selectable: true }, detail);
   }
+  const schedule = detail?.regularSchedule;
+  if (schedule?.total === season.total && schedule.upcoming > 0 &&
+      Number.isSafeInteger(schedule.aired) &&
+      Number.isSafeInteger(schedule.verifiedAired) &&
+      schedule.verifiedAired >= 0 && schedule.verifiedAired <= schedule.aired) {
+    const suffix = `${schedule.verifiedAired}/${schedule.aired} aired · ${schedule.upcoming} upcoming`;
+    if (schedule.verifiedAired === schedule.aired) return detail.monitorFuture === true
+      ? requestGate({ state: 'watching', text: `Available so far · ${suffix}`,
+        selectable: true }, detail)
+      : { state: 'available', text: `Available so far · ${suffix}`,
+        selectable: false };
+    return requestGate({ state: schedule.verifiedAired ? 'partial' : 'missing',
+      text: `${schedule.verifiedAired ? 'Partial' : 'Missing'} · ${suffix}`,
+      selectable: true }, detail);
+  }
   if (season.verified === season.total) return detail.monitorFuture === true
     ? requestGate({ state: 'watching', text: 'Available so far · watch future episodes',
       selectable: true }, detail)

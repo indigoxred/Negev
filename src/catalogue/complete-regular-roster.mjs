@@ -1,7 +1,7 @@
 // Count a season only after every AniDB entry page has been seen. This reads
 // metadata, not media, and never turns a partial or changing roster into proof.
 export async function completeRegularRoster({ first, loadPage, maxPages = 5,
-  deadlineMs = 1_400, now = Date.now } = {}) {
+  deadlineMs = 1_400, now = Date.now, includeEpisodes = false } = {}) {
   if (typeof loadPage !== 'function' || typeof now !== 'function' ||
       !Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 10 ||
       !Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 3_000) {
@@ -19,6 +19,7 @@ export async function completeRegularRoster({ first, loadPage, maxPages = 5,
   const started = now();
   const seen = new Set();
   const regularIds = [];
+  const regularEpisodes = [];
   let count = 0;
   let current = first;
   for (let page = 1; page <= maxPages; page++) {
@@ -28,7 +29,10 @@ export async function completeRegularRoster({ first, loadPage, maxPages = 5,
       if (!Number.isSafeInteger(episode?.id) || episode.id < 1 ||
           seen.has(episode.id) || typeof episode.type !== 'string') return null;
       seen.add(episode.id);
-      if (episode.type === 'Episode') regularIds.push(episode.id);
+      if (episode.type === 'Episode') {
+        regularIds.push(episode.id);
+        if (includeEpisodes) regularEpisodes.push(episode);
+      }
     }
     count += current.episodes.length;
     if (count > current.total) return null;
@@ -36,7 +40,7 @@ export async function completeRegularRoster({ first, loadPage, maxPages = 5,
       if (count !== current.total ||
           Number.isSafeInteger(first.episodeCount) &&
           regularIds.length !== first.episodeCount) return null;
-      return regularIds;
+      return includeEpisodes ? regularEpisodes : regularIds;
     }
     if (count === current.total || page === maxPages) return null;
     const remaining = deadlineMs - (now() - started);

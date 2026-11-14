@@ -20,7 +20,7 @@ const assets = new Map([
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'season-request-selection.mjs',
+    'season-request-selection.mjs', 'episode-schedule.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
@@ -872,6 +872,23 @@ test('signed-in consumer routes render real shell with search, library and reque
           })) }));
         return;
       }
+      if (path === '/api/catalogue/19742') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 19742,
+          title: 'Scheduled Precure', kind: 'series', restricted: false,
+          monitorFuture: true, episodeCount: 44, scheduleAsOf: '2026-11-13',
+          regularSeason: { verified: 40, total: 44 },
+          regularSchedule: { aired: 40, upcoming: 4, undated: 0,
+            verifiedAired: 40, total: 44, asOf: '2026-11-13' },
+          page: 1, total: 44, nextPage: null,
+          episodes: Array.from({ length: 44 }, (_, index) => ({
+            id: 1974200 + index, number: index + 1, type: 'Episode',
+            title: `Episode ${index + 1}`,
+            airDate: index < 40 ? '2026-11-12' : '2026-11-20',
+            availability: index < 40 ? 'available' : 'unknown',
+          })) }));
+        return;
+      }
       if (path === '/api/catalogue/97') {
         const page = Number(new URL(request.url, 'http://localhost')
           .searchParams.get('page') ?? 1);
@@ -1141,6 +1158,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(seriesDetail, /Recheck unknown entries in background/);
       assert.match(seriesDetail, /class="season-request-row"/);
       assert.doesNotMatch(seriesDetail, /Already available/);
+      const upcomingDetail = await dump(`${base}/#/title/19742`,
+        join(dir, 'upcoming-detail'));
+      assert.match(upcomingDetail, /40 of 40 aired regular episodes verified playable in Plex/);
+      assert.match(upcomingDetail, /4 upcoming episodes are scheduled; they are not missing downloads/);
+      assert.match(upcomingDetail, /Episode 44 · Upcoming · scheduled 2026-11-20 · title not published yet/);
+      assert.match(upcomingDetail, /Available so far · 40\/40 aired · 4 upcoming/);
       const partialSeason = await dump(`${base}/#/title/96`,
         join(dir, 'partial-season'));
       assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);

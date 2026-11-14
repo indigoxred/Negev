@@ -109,6 +109,8 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
       const hit = cache.get(anidbId);
       if (!hit?.value || hit.expiresMs <= now()) return null;
       return { totalEntries: hit.value.episodes.length,
+        regularEpisodes: hit.value.episodes.filter((episode) =>
+          episode.type === 'Episode'),
         regularIds: hit.value.episodes.filter((episode) =>
           episode.type === 'Episode').map((episode) => episode.id) };
     },

@@ -71,6 +71,7 @@ test('a first title view counts a complete multi-page regular season from curren
     shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic',
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
     fileProofLifetimeMs: 30 * 60_000, now: () => clock,
+    today: () => '2026-11-13',
     plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
       publicSections: { episode: [102], movie: [] },
       shokoMount: { appRoot: '/pure', localRoot: dir },
@@ -87,9 +88,10 @@ test('a first title view counts a complete multi-page regular season from curren
         return Response.json({ Total: 102, List: page === 1
           ? Array.from({ length: 100 }, (_, offset) => ({
             ID: offset + 1, AnimeID: 144, EpisodeNumber: offset + 1,
-            Type: 'Episode', Title: `Episode ${offset + 1}` }))
+            Type: 'Episode', Title: `Episode ${offset + 1}`,
+            AirDate: offset < 98 ? '2026-11-12' : '2026-11-14' }))
           : [{ ID: 101, AnimeID: 144, EpisodeNumber: 101,
-            Type: 'Episode', Title: 'Episode 101' },
+            Type: 'Episode', Title: 'Episode 101', AirDate: '2026-11-15' },
           { ID: 102, AnimeID: 144, EpisodeNumber: 1,
             Type: 'Special', Title: 'Extra' }] });
       }
@@ -104,6 +106,9 @@ test('a first title view counts a complete multi-page regular season from curren
       url: '/api/catalogue/144', headers: { cookie } });
     assert.equal(response.statusCode, 200, response.body);
     assert.deepEqual(response.json().regularSeason, { verified: 2, total: 101 });
+    assert.deepEqual(response.json().regularSchedule,
+      { aired: 98, upcoming: 3, undated: 0, verifiedAired: 1,
+        total: 101, asOf: '2026-11-13' });
     assert.deepEqual(pageReads, [1, 2]);
     expireDuringPageRead = true;
     const expired = await service.app.inject({ method: 'GET',

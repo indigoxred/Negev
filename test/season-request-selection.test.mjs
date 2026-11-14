@@ -32,6 +32,21 @@ test('season rows distinguish available, partial, missing, future and unverified
   assert.equal(seasonRequestStatus({ ...base, kind: 'movie' }), null);
 });
 
+test('future scheduled entries do not make an aired-complete season partial', () => {
+  const detail = { kind: 'series', episodes: [], nextPage: null,
+    monitorFuture: true, regularSeason: { verified: 40, total: 44 },
+    regularSchedule: { aired: 40, upcoming: 4, undated: 0,
+      verifiedAired: 40, total: 44, asOf: '2026-11-13' } };
+  assert.deepEqual(seasonRequestStatus(detail), {
+    state: 'watching', text: 'Available so far · 40/40 aired · 4 upcoming',
+    selectable: true });
+  assert.deepEqual(seasonRequestStatus({ ...detail,
+    regularSeason: { verified: 39, total: 44 },
+    regularSchedule: { ...detail.regularSchedule, verifiedAired: 39 } }), {
+    state: 'partial', text: 'Partial · 39/40 aired · 4 upcoming',
+    selectable: true });
+});
+
 test('season review names each selected installment and partial completion', () => {
   assert.equal(seasonSelectionSummary([
     { title: 'Season One', status: { state: 'missing' } },
