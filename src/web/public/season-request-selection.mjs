@@ -35,13 +35,16 @@ export function seasonRequestStatus(detail) {
       Number.isSafeInteger(schedule.verifiedAired) &&
       schedule.verifiedAired >= 0 && schedule.verifiedAired <= schedule.aired) {
     const suffix = `${schedule.verifiedAired}/${schedule.aired} aired · ${schedule.upcoming} upcoming`;
+    if (schedule.aired === 0) return requestGate({ state: 'unverified',
+      text: `No aired episodes yet · ${schedule.upcoming} upcoming`,
+      selectable: true }, detail);
     if (schedule.verifiedAired === schedule.aired) return detail.monitorFuture === true
       ? requestGate({ state: 'watching', text: `Available so far · ${suffix}`,
         selectable: true }, detail)
       : { state: 'available', text: `Available so far · ${suffix}`,
         selectable: false };
-    return requestGate({ state: schedule.verifiedAired ? 'partial' : 'missing',
-      text: `${schedule.verifiedAired ? 'Partial' : 'Missing'} · ${suffix}`,
+    return requestGate({ state: schedule.verifiedAired ? 'partial' : 'unverified',
+      text: `${schedule.verifiedAired ? 'Partial' : 'Availability unconfirmed'} · ${suffix}`,
       selectable: true }, detail);
   }
   if (season.verified === season.total) return detail.monitorFuture === true
@@ -50,12 +53,13 @@ export function seasonRequestStatus(detail) {
     : { state: 'available', text: `Available · ${season.total}/${season.total}`, selectable: false };
   if (season.verified > 0) return requestGate({ state: 'partial',
     text: `Partial · ${season.verified}/${season.total}`, selectable: true }, detail);
-  return requestGate({ state: 'missing', text: `Missing · 0/${season.total}`,
+  return requestGate({ state: 'unverified',
+    text: `Availability unconfirmed · 0/${season.total} verified`,
     selectable: true }, detail);
 }
 
 export function seasonSelectionSummary(rows) {
   return rows.map((row) => `${row.title} · ${row.status.state === 'partial'
-    ? 'complete missing episodes' : row.status.state === 'watching'
-      ? 'watch future episodes' : 'request missing episodes'}`).join('; ');
+    ? 'complete episodes not verified in Plex' : row.status.state === 'watching'
+      ? 'watch future episodes' : 'request episodes not verified in Plex'}`).join('; ');
 }
