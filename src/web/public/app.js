@@ -156,7 +156,7 @@ function renderRoute() {
   }
   if (page === 'discover') {
     const choice = seasonChoice(route);
-    const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}`;
+    const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}-${choice.sort}`;
     if (state.seasonalRouteKey !== key) {
       state.seasonalRouteKey = key;
       void loadSeasonal(choice);
@@ -746,6 +746,41 @@ function appendLibraryPageMarker(list) {
   libraryPageObserver = observer;
   observer.observe(marker);
 }
+const browsePageObservers = { discover: null, airing: null };
+function stopBrowsePageObserver(view) {
+  browsePageObservers[view]?.observer.disconnect();
+  browsePageObservers[view]?.marker.remove();
+  browsePageObservers[view] = null;
+}
+function appendBrowsePageMarker(view, list, loadPage) {
+  stopBrowsePageObserver(view);
+  const marker = element('div', 'Loading more titles as you scroll…',
+    'browse-page-marker muted');
+  marker.setAttribute('role', 'status');
+  list.after(marker);
+  const continuation = { marker, showError() {
+    marker.replaceChildren(element('p',
+      'The next page could not be loaded. Titles already shown remain available.',
+      'muted'));
+    const retry = element('button', 'Retry loading more titles', 'text-link');
+    retry.type = 'button';
+    retry.addEventListener('click', () => {
+      if (retry.disabled) return;
+      retry.disabled = true;
+      marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
+      void loadPage(continuation);
+    });
+    marker.append(retry);
+  } };
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    marker.textContent = 'Loading more titles…';
+    void loadPage(continuation);
+  }, { rootMargin: '150px 0px' });
+  browsePageObservers[view] = { observer, marker };
+  observer.observe(marker);
+}
 async function loadLibrary(append = false, continuation = null) {
   if (!append) stopLibraryPageObserver();
   const session = sessionResponses.current();
@@ -849,23 +884,24 @@ function renderGenres(prefix, availableTags, selected) {
   render();
 }
 async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
-  scoreRefresh = 0) {
+  scoreRefresh = 0, continuation = null) {
+  const append = continuation !== null;
+  if (!append) stopBrowsePageObserver('discover');
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
   const userId = state.user?.id;
   const list = byId('season-list');
   const notice = byId('season-state');
-  byId('season-year').value = String(year);
-  byId('season-name').value = season;
-  byId('season-kind').value = kind;
-  byId('season-sort').value = sort;
-  byId('season-previous').disabled = true;
-  byId('season-next').disabled = true;
-  byId('season-previous').parentElement.hidden = true;
-  notice.textContent = year === 0 && season === 'ALL'
-    ? 'Loading the anime catalogue…'
-    : `Loading ${season === 'ALL' ? 'all seasons' : season.toLowerCase()} ${year || 'across all years'}…`;
-  list.replaceChildren();
+  if (!append) {
+    byId('season-year').value = String(year);
+    byId('season-name').value = season;
+    byId('season-kind').value = kind;
+    byId('season-sort').value = sort;
+    notice.textContent = year === 0 && season === 'ALL'
+      ? 'Loading the anime catalogue…'
+      : `Loading ${season === 'ALL' ? 'all seasons' : season.toLowerCase()} ${year || 'across all years'}…`;
+    list.replaceChildren();
+  }
   try {
     const params = new URLSearchParams({ year: String(year), season });
     if (after) params.set('after', String(after));
@@ -876,11 +912,13 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (page.state === 'unavailable') {
-      notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
+      if (append) continuation.showError();
+      else notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
       return;
     }
-    renderGenres('season', page.availableTags ?? [], tag);
-    notice.textContent = page.state === 'stale'
+    if (append) stopBrowsePageObserver('discover');
+    else renderGenres('season', page.availableTags ?? [], tag);
+    if (!append) notice.textContent = page.state === 'stale'
       ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
         ? `Catalogue updated ${page.sourceDate}. Some title details could not be checked; try again later.`
@@ -891,7 +929,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
             : page.orderState === 'score_unavailable'
               ? `Catalogue updated ${page.sourceDate}. Ratings are unavailable; showing catalogue order.`
             : `Catalogue updated ${page.sourceDate}. Local availability is checked separately.${page.scorePending ? ' Ratings are filling in.' : ''}`;
-    if (page.items.length === 0) list.append(element('p',
+    if (page.items.length === 0 && page.nextAfter === null) list.append(element('p',
       'No verified titles on this page. Search may find titles missing from the season map.',
       'empty-state'));
     for (const item of page.items) {
@@ -921,24 +959,10 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       });
       list.append(button);
     }
-    const previous = byId('season-previous');
-    const total = Number(page.total);
-    const discoverPageSize = 18;
-    const pageCount = Math.ceil(total / discoverPageSize);
-    const pageNumber = Math.floor(after / discoverPageSize) + 1;
-    const validPosition = Number.isSafeInteger(total) && total >= 0 &&
-      pageNumber <= pageCount;
-    previous.parentElement.hidden = !validPosition;
-    if (validPosition) byId('season-page-position').textContent =
-      `Page ${pageNumber} of ${pageCount}`;
-    previous.disabled = after === 0;
-    previous.onclick = () => { location.hash = seasonRoute(year, season,
-      Math.max(0, after - discoverPageSize), { kind, tag, sort }); };
-    const next = byId('season-next');
-    next.disabled = page.nextAfter === null;
-    next.onclick = () => { location.hash = seasonRoute(year, season,
-      page.nextAfter, { kind, tag, sort }); };
-    if (page.scorePending && scoreRefresh < 2) {
+    if (page.nextAfter !== null) appendBrowsePageMarker('discover', list,
+      (retry) => loadSeasonal({ year, season, after: page.nextAfter,
+        kind, tag, sort }, 0, retry));
+    if (!append && page.scorePending && scoreRefresh < 2) {
       setTimeout(() => {
         if (sessionResponses.isCurrent(session) &&
             seasonalResponses.isCurrent(epoch) &&
@@ -952,7 +976,8 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
-    notice.textContent = 'Seasonal browsing is unavailable right now. Search still works.';
+    if (append) continuation.showError();
+    else notice.textContent = 'Seasonal browsing is unavailable right now. Search still works.';
   }
 }
 byId('season-form').addEventListener('submit', (event) => {
@@ -968,12 +993,16 @@ byId('season-form').addEventListener('submit', (event) => {
     after: 0, kind, tag, sort });
   else location.hash = route;
 });
-async function loadCurrentAiring(session, epoch, userId, after = 0) {
+byId('season-sort').addEventListener('change', () =>
+  byId('season-form').requestSubmit());
+let airingBrowseAfter = 0;
+async function loadCurrentAiring(session, epoch, userId, after = 0,
+  continuation = null) {
   const list = byId('airing-season-list');
   const notice = byId('airing-season-state');
-  const more = byId('airing-season-more');
-  more.hidden = true;
   if (after === 0) {
+    airingBrowseAfter = 0;
+    stopBrowsePageObserver('airing');
     notice.textContent = 'Loading ongoing titles…';
     list.replaceChildren();
   }
@@ -992,11 +1021,14 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (page.state === 'unavailable') {
-      notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
+      if (continuation) continuation.showError();
+      else notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
       return;
     }
+    if (continuation) stopBrowsePageObserver('airing');
+    airingBrowseAfter = after;
     if (after === 0) renderGenres('airing', page.availableTags ?? [], tag);
-    notice.textContent = page.orderState === 'score_loading'
+    if (after === 0) notice.textContent = page.orderState === 'score_loading'
       ? 'Ratings are loading in the background. Showing season order until ranking is ready; this page refreshes automatically.'
       : page.orderState === 'score_unavailable'
       ? 'Ratings are unavailable. Showing season order.'
@@ -1048,15 +1080,15 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
       setTimeout(() => {
         if (sessionResponses.isCurrent(session) &&
             airingResponses.isCurrent(epoch) &&
-            state.user?.id === userId && state.routePage === 'airing') {
+            state.user?.id === userId && state.routePage === 'airing' &&
+            airingBrowseAfter === 0) {
           void loadCurrentAiring(session, epoch, userId);
         }
       }, 30_000);
     }
     if (page.nextAfter !== null && page.nextAfter !== undefined) {
-      more.hidden = false;
-      more.onclick = () => { void loadCurrentAiring(session, epoch, userId,
-        page.nextAfter); };
+      appendBrowsePageMarker('airing', list, (retry) =>
+        loadCurrentAiring(session, epoch, userId, page.nextAfter, retry));
     } else if (!list.childElementCount) {
       list.append(element('p', 'No ongoing titles match these filters.',
         'empty-state'));
@@ -1064,7 +1096,8 @@ async function loadCurrentAiring(session, epoch, userId, after = 0) {
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
-    notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
+    if (continuation) continuation.showError();
+    else notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
   }
 }
 byId('airing-form').addEventListener('submit', (event) => {
@@ -1084,6 +1117,7 @@ byId('airing-form').addEventListener('submit', (event) => {
   void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);
 });
 async function loadAiring() {
+  stopBrowsePageObserver('airing');
   const session = sessionResponses.current();
   const epoch = airingResponses.invalidate();
   const userId = state.user?.id;
