@@ -58,6 +58,12 @@ function episodeNumbers(name) {
   for (const match of stem.matchAll(/(?:^|\s)-\s+[Ss](0*[1-9]\d*)(?=\s|$)/g)) {
     matches.push({ type: 'Special', digits: match[1] });
   }
+  // Older DVD releases often put the episode immediately before a bracketed
+  // source tag and CRC32, e.g. Show_01_[DVD][4BD6D6B5]. Do not treat a
+  // bare underscore number or a release year as an episode coordinate.
+  for (const match of stem.matchAll(/_(0*[1-9]\d{0,3})_(?=\[(?:DVD|BD|WEB|1080p|720p)\])/gi)) {
+    matches.push({ type: 'Episode', digits: match[1] });
+  }
   if (matches.length === 0) {
     // A title-only one-off can be planned provisionally, but an explicit
     // episode coordinate in a format we do not parse must stay ambiguous.

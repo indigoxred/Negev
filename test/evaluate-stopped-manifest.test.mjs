@@ -88,6 +88,20 @@ test('only an explicitly named optional clip can be excluded before download', (
     allowSelectedPassive: true, plannedFileNames: ['Show/01.mkv', 'Show/NCOP.mkv'] }).state, 'manifest_safe');
 });
 
+test('a separately named Specials video is excluded only when outside the exact file plan', () => {
+  const extra = { index: 1, name: 'Specials/Show_07_[DVD].mkv',
+    size: 200, priority: 1, progress: 0 };
+  const proposed = evaluateStoppedManifest({ torrent, files: [video, extra],
+    expected, allowSelectedPassive: true, plannedFileNames: [video.name] });
+  assert.deepEqual(proposed, { state: 'manifest_needs_exclusions',
+    passive: [{ index: 1, name: extra.name, size: 200 }] });
+  assert.equal(evaluateStoppedManifest({ torrent, files: [video, extra],
+    expected, plannedFileNames: [video.name] }).reason, 'unexpected_selected_file');
+  assert.equal(evaluateStoppedManifest({ torrent, files: [video,
+    { ...extra, priority: 0 }], expected,
+    plannedFileNames: [video.name] }).state, 'manifest_safe');
+});
+
 test('holds duplicate, incomplete, empty, or excessive manifests', () => {
   for (const files of [[], [video, { ...video }], [video, { ...video, index: 1 }],
     [{ ...video, size: 0 }], [{ ...video, progress: 0.1 }],

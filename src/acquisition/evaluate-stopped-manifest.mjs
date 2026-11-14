@@ -25,11 +25,12 @@ export function torrentFileKind(name) {
   return null;
 }
 
-// These are standalone, non-episode opening/ending clips. An explicitly
-// requested Special remains a video in the file plan; only an unplanned clip
-// may be excluded before qBittorrent starts.
+// Only an unplanned video in an explicit top-level Specials directory or a
+// standalone opening/ending clip may be excluded before qBittorrent starts.
+// An explicitly requested Special stays in the file plan.
 export function isOptionalClip(name) {
   if (torrentFileKind(name) !== 'video') return false;
+  if (/^Specials\//i.test(name)) return true;
   const stem = path.posix.basename(name, path.posix.extname(name));
   return /(?:^|[ ._-])NC(?:OP|ED)(?:v\d+)?(?=$|[ ._-])/i.test(stem) &&
     !/[Ss]\d{1,3}[Ee]\d{1,4}|(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem);
