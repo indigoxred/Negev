@@ -298,6 +298,28 @@ async function inspectMobile(url, profile, width = 390) {
         dialog.querySelector('.season-request-close').click();
         return {closed: !dialog.open, trigger: document.querySelector('.season-request-trigger')?.textContent}; })()`,
     });
+    await send('Page.navigate', { url: url.replace('#/discover', '#/title/47') });
+    await wait(700);
+    const failedSeasonLookup = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => {
+        const trigger = document.querySelector('.season-request-trigger');
+        const before = { enabled: !trigger?.disabled, label: trigger?.textContent };
+        trigger?.click();
+        const dialog = document.querySelector('.season-request-dialog');
+        return { ...before, open: dialog?.open,
+          retry: dialog?.querySelector('.season-lookup-retry')?.textContent,
+          notice: dialog?.querySelector('.season-lookup-notice')?.textContent };
+      })()`,
+    });
+    await send('Runtime.evaluate', { expression: `document.querySelector('.season-lookup-retry')?.click()` });
+    await wait(350);
+    const recoveredSeasonLookup = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => ({ open: document.querySelector('.season-request-dialog')?.open,
+        related: [...document.querySelectorAll('.season-request-row')].some(
+          row => row.dataset.anidbId === '48'),
+        triggerEnabled: !document.querySelector('.season-request-trigger')?.disabled,
+        notice: document.querySelector('.season-lookup-notice')?.textContent }))()`,
+    });
     await send('Runtime.evaluate', { expression: `document.querySelector('#adult-toggle').click()` });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/46') });
     await wait(1_500);
@@ -455,6 +477,8 @@ async function inspectMobile(url, profile, width = 390) {
       requestCancelled: requestCancelled.result.value,
       requestSaved: requestSaved.result.value,
       popupClosed: popupClosed.result.value,
+      failedSeasonLookup: failedSeasonLookup.result.value,
+      recoveredSeasonLookup: recoveredSeasonLookup.result.value,
       closedPilotTitle: closedPilotTitle.result.value,
       coldBeforeFallback: coldBeforeFallback.result.value,
       coldRequestReview: coldRequestReview.result.value,
@@ -479,6 +503,7 @@ test('signed-in consumer routes render real shell with search, library and reque
     let airingPreference = { mode: 'library', trackedAnidbIds: [] };
     let coldSeasonReads = 0;
     let completedColdSeasonReads = 0;
+    let failedRelatedReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -770,6 +795,35 @@ test('signed-in consumer routes render real shell with search, library and reque
             relation: 'Sequel' }] }));
         return;
       }
+      if (path === '/api/catalogue/47/related') {
+        failedRelatedReads++;
+        response.setHeader('Content-Type', 'application/json');
+        if (failedRelatedReads === 1) {
+          response.writeHead(503);
+          response.end(JSON.stringify({ error: 'Temporarily unavailable' }));
+        } else response.end(JSON.stringify({ state: 'related_titles',
+          anidbId: 47, completeness: 'unproven', items: [{ anidbId: 48,
+            title: 'Related season after retry', relation: 'Sequel' }] }));
+        return;
+      }
+      if (path === '/api/catalogue/48/related') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'related_titles', anidbId: 48,
+          completeness: 'unproven', items: [] }));
+        return;
+      }
+      if (path === '/api/catalogue/47' || path === '/api/catalogue/48') {
+        const id = Number(path.split('/')[3]);
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: id,
+          title: id === 47 ? 'Already complete season' : 'Related season after retry',
+          kind: 'series', restricted: false, monitorFuture: false,
+          regularSeason: { verified: id === 47 ? 1 : 0, total: 1 },
+          page: 1, total: 1, nextPage: null,
+          episodes: [{ id: id * 100 + 1, number: 1, type: 'Episode',
+            title: 'First', availability: id === 47 ? 'available' : 'unknown' }] }));
+        return;
+      }
       if (path === '/api/catalogue/44') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 44,
@@ -1039,6 +1093,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /2 seasons requested/);
       assert.deepEqual(mobile.popupClosed, { closed: true, trigger: 'Request series' });
+      assert.equal(mobile.failedSeasonLookup.enabled, true);
+      assert.equal(mobile.failedSeasonLookup.open, true);
+      assert.match(mobile.failedSeasonLookup.retry ?? '', /Retry finding seasons/);
+      assert.match(mobile.failedSeasonLookup.notice ?? '', /temporarily unavailable/i);
+      assert.deepEqual(mobile.recoveredSeasonLookup,
+        { open: true, related: true, triggerEnabled: true, notice: '' });
       assert.equal(mobile.closedPilotTitle.notice,
         'Requests for this title are not open yet. Please use Seerr for now.',
         JSON.stringify(mobile.closedPilotTitle));
