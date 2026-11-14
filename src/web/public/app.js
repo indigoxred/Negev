@@ -15,7 +15,7 @@ import { episodeScheduleLabel } from './episode-schedule.mjs';
 import { canOpenSeasonRequest, seasonRequestStatus,
   seasonSelectionSummary } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
-import { parseConsumerRoute, searchRoute, titleRoute,
+import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
@@ -84,7 +84,8 @@ function applyAdultVisibility() {
   for (const node of document.querySelectorAll('[data-anidb-id]')) {
     node.hidden = !state.showAdult && (node.dataset.adult === 'true' ||
       state.searchItems.get(Number(node.dataset.anidbId))?.adult === true ||
-      node.closest('#results') && node.dataset.adult !== 'false');
+      (node.closest('#results') || node.closest('#library-search-results')) &&
+        node.dataset.adult !== 'false');
   }
   const toggle = byId('adult-toggle');
   toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :
@@ -140,20 +141,28 @@ function renderRoute() {
       state.selected = null;
     }
   }
-  if (page === 'discover') {
+  if (page === 'discover' || page === 'library') {
     byId('query').value = route.query;
-    byId('search-results-section').hidden = route.query.length < 2;
+    const searching = route.query.length >= 2;
+    byId('search-results-section').hidden = page !== 'discover' || !searching;
+    byId('library-search-section').hidden = page !== 'library' || !searching;
+    byId('library-browse').hidden = page === 'library' && searching;
+    if (page === 'library') byId('search-all-catalogue').href = searchRoute(route.query);
+    else byId('search-verified-library').href = librarySearchRoute(route.query);
     if (route.query.length >= 2 &&
-        (returning || route.query !== state.lastSearchQuery)) {
+        (returning || `${page}:${route.query}` !== state.lastSearchQuery)) {
       byId('search-form').requestSubmit();
     }
+  }
+  if (page === 'discover') {
     const choice = seasonChoice(route);
     const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}`;
     if (state.seasonalRouteKey !== key) {
       state.seasonalRouteKey = key;
       void loadSeasonal(choice);
     }
-  } else if (page === 'library' && (returning || !state.libraryLoaded)) {
+  } else if (page === 'library' && route.query.length < 2 &&
+      (returning || !state.libraryLoaded)) {
     void loadLibrary();
   } else if (page === 'requests' && returning) {
     void loadRequests();
@@ -1247,14 +1256,14 @@ byId('adult-toggle').addEventListener('click', () => {
 });
 async function classifySearchCards(searchToken) {
   const userId = state.user?.id;
-  const ids = [...document.querySelectorAll('#results [data-anidb-id]')]
+  const ids = [...document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')]
     .filter((node) => node.dataset.adult === 'unknown')
     .map((node) => Number(node.dataset.anidbId));
   await adultSearchVerifier.verify(ids, (id, adult) => {
     if (state.searchToken !== searchToken || state.user?.id !== userId) return;
     const item = state.searchItems.get(id);
     if (item) state.searchItems.set(id, { ...item, adult });
-    for (const node of document.querySelectorAll('#results [data-anidb-id]')) {
+    for (const node of document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')) {
       if (Number(node.dataset.anidbId) === id) {
         node.dataset.adult = String(adult);
         if (adult && !node.querySelector('.adult-label')) {
@@ -1320,12 +1329,17 @@ byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const query = byId('query').value.trim();
   if (query.length < 2) return;
-  state.lastSearchQuery = query;
-  const route = searchRoute(query);
+  const inLibrary = parseConsumerRoute(location.hash).page === 'library';
+  state.lastSearchQuery = `${inLibrary ? 'library' : 'discover'}:${query}`;
+  const route = inLibrary ? librarySearchRoute(query) : searchRoute(query);
   if (location.hash !== route) location.hash = route;
   const token = ++state.searchToken;
-  const results = byId('results');
-  byId('search-results-section').hidden = false;
+  const results = byId(inLibrary ? 'library-search-results' : 'results');
+  byId(inLibrary ? 'library-search-section' : 'search-results-section').hidden = false;
+  if (inLibrary) {
+    byId('library-browse').hidden = true;
+    byId('search-all-catalogue').href = searchRoute(query);
+  } else byId('search-verified-library').href = librarySearchRoute(query);
   results.replaceChildren(element('p', 'Searching…', 'muted'));
   const appendItems = (items) => {
     for (const item of items) {
@@ -1344,7 +1358,10 @@ byId('search-form').addEventListener('submit', async (event) => {
       const copy = element('span', undefined, 'result-copy');
       copy.append(element('strong', item.title),
         element('small', `AniDB ${item.anidbId}`));
-      copy.append(publicPresenceBadge(item.libraryPresence));
+      const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
+      copy.append(inLibrary && presence?.state !== 'in_library'
+        ? element('span', 'Not found in Negev’s verified library', 'presence unknown')
+        : publicPresenceBadge(presence));
       if (entry.adult === true) copy.append(
         element('span', '18+', 'badge partial adult-label'));
       button.append(tile, copy);
@@ -1362,7 +1379,8 @@ byId('search-form').addEventListener('submit', async (event) => {
       'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
     if (data.catalogueCacheWriteFailed) results.append(element('p',
       'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
-    if (data.items.length === 0) results.append(element('p', 'No matching titles in the current catalogue.', 'muted'));
+    if (data.items.length === 0) results.append(element('p',
+      'No matching anime titles found. Try another name or browse the catalogue.', 'muted'));
     appendItems(data.items);
     const addMore = () => {
       if (pager.nextPage === null) return;

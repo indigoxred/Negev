@@ -36,7 +36,7 @@ export function parseConsumerRoute(hash) {
         ...(params.has('sort') ? { sort: params.get('sort') } : {}),
         ...(params.has('tag') ? { tag: params.get('tag') } : {}) } : home();
   }
-  if (path !== 'discover') return search ? home() : { page: path, anidbId: null, query: '' };
+  if (path !== 'discover' && path !== 'library') return search ? home() : { page: path, anidbId: null, query: '' };
   const params = new URLSearchParams(search);
   if ([...params.keys()].some((key) => key !== 'q')) return home();
   const query = params.get('q')?.trim() ?? '';
@@ -75,6 +75,14 @@ export function searchRoute(query) {
   return term ? `#/discover?${new URLSearchParams({ q: term })}` : '#/discover';
 }
 
+export function librarySearchRoute(query) {
+  if (typeof query !== 'string' || query.trim().length > 120) {
+    throw new TypeError('Invalid search query');
+  }
+  const term = query.trim();
+  return term ? `#/library?${new URLSearchParams({ q: term })}` : '#/library';
+}
+
 export function browseReturnDestination(route) {
   if (route?.page === 'discover') return {
     href: route.year !== undefined && route.season
@@ -83,7 +91,7 @@ export function browseReturnDestination(route) {
           sort: route.sort ?? 'newest' })
       : searchRoute(route.query ?? ''), label: 'Discover' };
   if (['airing', 'library', 'requests'].includes(route?.page)) return {
-    href: `#/${route.page}`,
+    href: route.page === 'library' ? librarySearchRoute(route.query ?? '') : `#/${route.page}`,
     label: route.page[0].toUpperCase() + route.page.slice(1) };
   return null;
 }

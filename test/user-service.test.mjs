@@ -1307,6 +1307,9 @@ test('request history reflects recent title-check proof and loses it on expiry',
     assert.equal((await read()).publicVerifiedTargets, 1);
     assert.deepEqual((await search()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
+    assert.deepEqual((await search()).verifiedLibraryPresence,
+      { state: 'unknown', verifiedEpisodeCount: 0 },
+      'temporary title proof does not make a verified Library search match');
     assert.deepEqual((await season()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
     assert.deepEqual(await airingSeason(), [],
@@ -1320,6 +1323,8 @@ test('request history reflects recent title-check proof and loses it on expiry',
         proof: { fileId: 10, libraryId: 102, ratingKey: 20, partId: 30 },
         checkedMs: 998 });
     } finally { exact.close(); }
+    assert.deepEqual((await search()).verifiedLibraryPresence,
+      { state: 'in_library', verifiedEpisodeCount: 1 });
     assert.deepEqual((await airingSeason()).map((item) => item.libraryPresence),
       [{ state: 'in_library', verifiedEpisodeCount: 1 }]);
     assert.deepEqual((await airingWeek()).map((item) => item.libraryPresence),

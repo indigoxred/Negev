@@ -573,7 +573,20 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/catalogue/search') {
-        if (new URL(request.url, 'http://localhost').searchParams.get('q') === 'Lovely') {
+        const query = new URL(request.url, 'http://localhost').searchParams.get('q');
+        if (query === 'Garden') {
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify({ state: 'results', page: 1, total: 2,
+            catalogueSource: 'test', items: [
+              { anidbId: 9589, title: 'The Garden of Words', adult: false,
+                libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
+                verifiedLibraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } },
+              { anidbId: 4158, title: 'Pale Cocoon', adult: false,
+                libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
+                verifiedLibraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] }));
+          return;
+        }
+        if (query === 'Lovely') {
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify({ state: 'results', page: 1, total: 3,
             catalogueSource: 'test', items: [
@@ -1170,6 +1183,18 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(library, /The Garden of Words/);
       assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
       assert.match(library, /1 verified item/);
+      const librarySearch = await dump(`${base}/#/library?q=Garden`,
+        join(dir, 'library-search'), 'library');
+      assert.match(librarySearch, /Search Negev’s Library/);
+      assert.match(librarySearch, /The Garden of Words/);
+      assert.match(librarySearch, /✓ In library · 1 verified item/);
+      assert.match(librarySearch, /Pale Cocoon/);
+      assert.match(librarySearch, /Not found in Negev’s verified library/);
+      assert.match(librarySearch, /id="search-all-catalogue"[^>]*href="#\/discover\?q=Garden"/);
+      const catalogueSearch = await dump(`${base}/#/discover?q=Garden`,
+        join(dir, 'catalogue-search'), 'discover');
+      assert.match(catalogueSearch,
+        /id="search-verified-library"[^>]*href="#\/library\?q=Garden"/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
       assert.match(airing, /<h1>Airing anime<\/h1>/);
       assert.doesNotMatch(airing, /Ongoing this season/);
