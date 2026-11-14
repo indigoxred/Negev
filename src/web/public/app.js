@@ -923,8 +923,9 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     }
     const previous = byId('season-previous');
     const total = Number(page.total);
-    const pageCount = Math.ceil(total / 12);
-    const pageNumber = Math.floor(after / 12) + 1;
+    const discoverPageSize = 18;
+    const pageCount = Math.ceil(total / discoverPageSize);
+    const pageNumber = Math.floor(after / discoverPageSize) + 1;
     const validPosition = Number.isSafeInteger(total) && total >= 0 &&
       pageNumber <= pageCount;
     previous.parentElement.hidden = !validPosition;
@@ -932,7 +933,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       `Page ${pageNumber} of ${pageCount}`;
     previous.disabled = after === 0;
     previous.onclick = () => { location.hash = seasonRoute(year, season,
-      Math.max(0, after - 12), { kind, tag, sort }); };
+      Math.max(0, after - discoverPageSize), { kind, tag, sort }); };
     const next = byId('season-next');
     next.disabled = page.nextAfter === null;
     next.onclick = () => { location.hash = seasonRoute(year, season,

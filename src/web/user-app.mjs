@@ -411,9 +411,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (typeof listSeasonalTitles !== 'function') {
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
+    const pageLimit = query.status === 'ongoing' ? 12 : 18;
     let page;
     try { page = await listSeasonalTitles({ year, season: query.season,
-      after, limit: 12, kind: query.kind ?? 'all', tag: query.tag ?? '',
+      after, limit: pageLimit, kind: query.kind ?? 'all', tag: query.tag ?? '',
       status: query.status ?? 'all', sort: query.sort ?? 'newest',
       ...(query.status === 'ongoing' ? { airingPreference:
         accounts.getAiringPreferences({ userId: request.negevUser.id }) } : {}) }); }
@@ -423,7 +424,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         page.year !== year || page.season !== query.season ||
         typeof page.sourceDate !== 'string' ||
         !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
-        !Array.isArray(page.items) || page.items.length > 12 ||
+        !Array.isArray(page.items) || page.items.length > pageLimit ||
         !Number.isSafeInteger(page.total) || page.total < 0 ||
         page.total > 100_000 || page.total < page.items.length ||
         !Array.isArray(page.availableTags) || page.availableTags.length > 5_000 ||
