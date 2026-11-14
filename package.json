@@ -1,6 +1,6 @@
 {
   "name": "negev",
-  "version": "0.0.193",
+  "version": "0.0.194",
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "type": "module",
@@ -17,3 +17,4 @@
     "fastify": "5.12.7"
   }
 }
+
