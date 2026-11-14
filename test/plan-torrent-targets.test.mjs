@@ -17,6 +17,29 @@ const pack = { state: 'prepared_stopped', files: [
   { name: 'Show/[Group] Show - 02 (1080p).ass', size: 25 },
 ] };
 
+test('selects requested regular episodes while excluding a separate Specials folder', () => {
+  const files = [
+    { name: '[Group]_Show_01_[DVD][4BD6D6B5].mkv', size: 1200 },
+    { name: '[Group]_Show_02_[DVD][41541F2A].mkv', size: 1300 },
+    { name: 'Specials/[Group]_Show_03_[DVD][C84024AB].mkv', size: 1400 },
+  ];
+  const subset = { ...request, episodeIds: [1001, 1002] };
+  assert.deepEqual(planTorrentTargets({ request: subset, detail,
+    prepared: { state: 'prepared_stopped', files } }), {
+    state: 'planned_targets', episodeIds: [1001, 1002],
+    plannedFiles: [
+      { ...files[0], episodeIds: [1001] },
+      { ...files[1], episodeIds: [1002] },
+    ],
+    excludedVideoNames: [files[2].name],
+  });
+  const unsafe = planTorrentTargets({ request: subset, detail,
+    prepared: { state: 'prepared_stopped', files: [
+      files[0], { ...files[2], name: 'More/[Group]_Show_03_[DVD][C84024AB].mkv' },
+    ] } });
+  assert.equal(unsafe.reason, 'ambiguous_or_unrequested_video');
+});
+
 test('plans an exact subset from unambiguous AniDB regular episode numbers', () => {
   assert.deepEqual(planTorrentTargets({ request, detail, prepared: pack }), {
     state: 'planned_targets', episodeIds: [1001, 1002], plannedFiles: [
