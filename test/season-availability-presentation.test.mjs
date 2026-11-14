@@ -31,6 +31,24 @@ test('title headline keeps exact regular-season and main-film proof', () => {
     available: true });
 });
 
+test('an airing season distinguishes aired availability from scheduled entries', () => {
+  assert.deepEqual(titleAvailabilitySummary({ kind: 'series', episodes: [],
+    nextPage: null, regularSeason: { verified: 40, total: 44 },
+    regularSchedule: { aired: 40, upcoming: 4, undated: 0, verifiedAired: 40, total: 44,
+      asOf: '2026-11-13' } }), {
+    text: '40 of 40 aired regular episodes verified playable in Plex. 4 upcoming episodes are scheduled; they are not missing downloads. Specials are separate.',
+    available: true });
+});
+
+test('undated older entries do not claim that zero episodes aired', () => {
+  const result = titleAvailabilitySummary({ kind: 'series', episodes: [],
+    nextPage: null, regularSeason: { verified: 12, total: 12 },
+    regularSchedule: { aired: 0, upcoming: 0, undated: 12,
+      verifiedAired: 0, total: 12, asOf: '2026-11-13' } });
+  assert.match(result.text, /12 of 12 listed regular episodes verified playable/);
+  assert.doesNotMatch(result.text, /0 of 0 aired/);
+});
+
 test('season summary counts regular episodes, not trailers or Specials', () => {
   assert.deepEqual(summarizeSeasonAvailability({ kind: 'series',
     nextPage: null, episodes: [

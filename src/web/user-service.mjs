@@ -38,6 +38,7 @@ import { loadAniDbDetail } from '../catalogue/shoko-detail.mjs';
 import { requestAniDbHydration } from '../catalogue/shoko-hydration.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { completeRegularRoster } from '../catalogue/complete-regular-roster.mjs';
+import { regularEpisodeSchedule } from './public/episode-schedule.mjs';
 import { pollAiringWatches } from '../requests/airing-watch-poll.mjs';
 import { createAiringPageWorker } from '../requests/airing-page-worker.mjs';
 import { buildUserApp } from './user-app.mjs';
@@ -658,25 +659,36 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const cachedRegularIds = index?.totalEntries === detail.total &&
           detail.episodes.every((episode) => episode.type !== 'Episode' ||
             index.regularIds.includes(episode.id)) ? index.regularIds : null;
+        const cachedRegularEpisodes = cachedRegularIds ? index.regularEpisodes : null;
         const proofBeforeRoster = publicAvailableIdsForTitle(detail.anidbId,
           checkedMs);
         // Only titles with current exact file proof need an immediate full
         // season count. Page reads use Shoko's metadata limiter and a short
         // deadline; uncertainty leaves the season count absent.
-        const regularIds = cachedRegularIds ??
+        const regularEpisodes = cachedRegularEpisodes ??
           (detail.kind === 'series' && input.page === 1 &&
             proofBeforeRoster.size > 0 ? await completeRegularRoster({ first: detail,
+              includeEpisodes: true,
               loadPage: (page, remainingMs) => metadata.run(() =>
                 loadAniDbDetail({ baseUrl: shokoBaseUrl,
                   apiKey: shokoApiKey, anidbId: detail.anidbId, page,
                   fetchImpl, timeoutMs: Math.min(600,
-                    Math.max(1, Math.floor(remainingMs / 2))) })) }) : null);
+                    Math.max(1, Math.floor(remainingMs / 2))) })) }) :
+          detail.kind === 'series' && detail.nextPage === null
+            ? detail.episodes.filter((episode) => episode.type === 'Episode') : null);
         // A proof may expire or be withdrawn while metadata pages are read.
         const verifiedIds = publicAvailableIdsForTitle(detail.anidbId, now());
+        const regularIds = regularEpisodes?.map((episode) => episode.id) ?? null;
         const regularSeason = countVerifiedRegularEpisodes({ regularIds,
           verifiedIds });
+        const scheduleAsOf = today();
+        const regularSchedule = regularEpisodes === null ? null :
+          regularEpisodeSchedule({ episodes: regularEpisodes, asOf: scheduleAsOf,
+            verifiedIds });
         return { ...detail, ...requestMode,
+          scheduleAsOf,
           ...(regularSeason === null ? {} : { regularSeason }),
+          ...(regularSchedule === null ? {} : { regularSchedule }),
           libraryPresence: { state: verifiedIds.size > 0 ? 'in_library' : 'unknown',
             verifiedEpisodeCount: verifiedIds.size },
           episodes: detail.episodes.map((episode) => {

@@ -122,7 +122,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'season-request-selection.mjs',
+    'season-request-selection.mjs', 'episode-schedule.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>

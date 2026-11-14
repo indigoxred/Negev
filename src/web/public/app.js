@@ -9,7 +9,9 @@ import { createFranchiseExplorer, expandFranchiseBatch,
   groupFranchiseItems } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
-  installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
+  installmentRequestState, filmEntryRequestState,
+  seasonAvailabilityText } from './season-availability-presentation.mjs';
+import { episodeScheduleLabel } from './episode-schedule.mjs';
 import { canOpenSeasonRequest, seasonRequestStatus,
   seasonSelectionSummary } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
@@ -1559,7 +1561,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ['Runtime', display.durationMinutes ? `${display.durationMinutes} min` : null],
       ['First aired', display.startDate],
       ['Last aired', display.endDate],
-      ['Listed episodes', display.episodeCount],
+      ['Listed episodes (including upcoming)', display.episodeCount],
     ]) {
       if (value === null || value === undefined || value === '') continue;
       const fact = element('div');
@@ -1660,7 +1662,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       state.detailHydrationQueued.delete(item.anidbId);
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
-    if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`, 'detail-meta'));
+    if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'}${data.regularSchedule?.upcoming ? ` · ${data.regularSchedule.aired} aired, ${data.regularSchedule.upcoming} upcoming` : ''} · AniDB ${item.anidbId}`, 'detail-meta'));
     let refreshAvailabilitySummary = () => {};
     if (pager) {
       const savedCount = data.libraryPresence?.state === 'in_library' &&
@@ -1672,6 +1674,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const headline = titleAvailabilitySummary({ kind: data.kind,
           episodes: pager.episodes, nextPage: pager.nextPage,
           regularSeason: data.regularSeason,
+          regularSchedule: data.regularSchedule,
           verifiedTitleItems: savedCount });
         summary.textContent = headline.text;
         summary.className = headline.available
@@ -1703,9 +1706,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               return;
             }
             data.regularSeason = season;
+            data.regularSchedule = updated.regularSchedule;
             refreshAvailabilitySummary();
             refreshRequestAction();
-            seasonResult.textContent = `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`;
+            seasonResult.textContent = seasonAvailabilityText(season,
+              data.regularSchedule);
           } catch {
             if (isCurrentDetail()) seasonResult.textContent =
               'The season check is temporarily unavailable. Existing verified items remain shown above.';
@@ -1732,6 +1737,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
                 updated.regularSeason.verified >= 0 &&
                 updated.regularSeason.verified <= updated.regularSeason.total) {
               data.regularSeason = updated.regularSeason;
+              data.regularSchedule = updated.regularSchedule;
               refreshAvailabilitySummary();
               refreshRequestAction();
               return;
@@ -1940,15 +1946,20 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         placeholder.value = '';
         select.append(placeholder);
       }
-      const optionText = (episode) =>
-        `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
-        `${episode.title ? ` · ${episode.title}` : ''}` +
+      const optionText = (episode) => {
+        const schedule = data.kind === 'series' && episode.type === 'Episode'
+          ? episodeScheduleLabel(episode, data.scheduleAsOf ??
+            data.regularSchedule?.asOf) : '';
+        return `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
+        `${episode.title && episode.title.toLowerCase() !== `episode ${episode.number}` ? ` · ${episode.title}` : ''}` +
+        `${schedule ? ` · ${schedule}` : ''}` +
         `${episode.availability === 'available' ?
           episode.availabilityNote === 'alternate_card'
             ? ' · Playable in Plex; episode card not linked to this episode'
             : ' · Playable in Plex' :
           episode.availability === 'previously_available'
             ? ' · Previously playable; recheck needed' : ''}`;
+      };
       const appendOptions = (episodes) => {
         for (const episode of episodes) {
           const option = element('option', optionText(episode));
@@ -2009,7 +2020,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           requestSelected.disabled = requesting ||
             !['Episode', 'Special'].includes(episode?.type) ||
-            episode?.availability === 'available';
+            episode?.availability === 'available' ||
+            episode?.type === 'Episode' &&
+              episodeScheduleLabel(episode, data.scheduleAsOf ??
+                data.regularSchedule?.asOf).startsWith('Upcoming');
           requestSelected.textContent = episode?.type === 'Special'
             ? 'Request this Special' : 'Request this episode';
         };
@@ -2019,7 +2033,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           if (requesting) return;
           const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
           if (!['Episode', 'Special'].includes(episode?.type) ||
-              episode.availability === 'available') return;
+              episode.availability === 'available' ||
+              episode.type === 'Episode' &&
+                episodeScheduleLabel(episode, data.scheduleAsOf ??
+                  data.regularSchedule?.asOf).startsWith('Upcoming')) return;
           const scope = { userId: state.user.id, anidbId: item.anidbId,
             selection: `episode-${episode.id}` };
           requesting = true;

@@ -17,6 +17,7 @@ const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'adult-search-visibility.mjs',
   'acquisition-notice.mjs', 'consumer-route.mjs',
   'season-availability-presentation.mjs', 'season-request-selection.mjs',
+  'episode-schedule.mjs',
   'detail-refresh.mjs',
   'relation-label.mjs']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

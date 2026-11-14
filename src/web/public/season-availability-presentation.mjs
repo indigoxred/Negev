@@ -6,8 +6,33 @@ export function summarizeSeasonAvailability({ kind, episodes, nextPage }) {
   total: regular.length, completeList: nextPage === null };
 }
 
+export function seasonAvailabilityText(season, schedule) {
+  const valid = Number.isSafeInteger(season?.total) &&
+    Number.isSafeInteger(season?.verified) &&
+    Number.isSafeInteger(schedule?.total) && schedule.total === season.total &&
+    Number.isSafeInteger(schedule.aired) &&
+    Number.isSafeInteger(schedule.upcoming) &&
+    Number.isSafeInteger(schedule.undated) &&
+    schedule.aired + schedule.upcoming + schedule.undated === season.total &&
+    Number.isSafeInteger(schedule.verifiedAired) &&
+    schedule.verifiedAired >= 0 && schedule.verifiedAired <= schedule.aired;
+  if (!valid || schedule.upcoming === 0 && schedule.undated === 0) {
+    return `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`;
+  }
+  if (schedule.aired === 0 && schedule.upcoming === 0) {
+    return `${season.verified} of ${season.total} listed regular episodes verified playable in Plex. Air dates are not confirmed; these entries are not classified as upcoming or missing. Specials are separate.`;
+  }
+  const portions = [
+    `${schedule.verifiedAired} of ${schedule.aired} aired regular episodes verified playable in Plex.`,
+    ...(schedule.upcoming ? [`${schedule.upcoming} upcoming episode${schedule.upcoming === 1 ? ' is' : 's are'} scheduled; ${schedule.upcoming === 1 ? 'it is' : 'they are'} not missing downloads.`] : []),
+    ...(schedule.undated ? [`${schedule.undated} listed episode${schedule.undated === 1 ? ' has' : 's have'} no confirmed air date.`] : []),
+    'Specials are separate.',
+  ];
+  return portions.join(' ');
+}
+
 export function titleAvailabilitySummary({ kind, episodes, nextPage,
-  regularSeason, verifiedTitleItems = 0 }) {
+  regularSeason, regularSchedule, verifiedTitleItems = 0 }) {
   const pageCount = episodes.filter((episode) =>
     episode.availability === 'available').length;
   const titleHasProof = verifiedTitleItems > 0 || pageCount > 0;
@@ -34,7 +59,7 @@ export function titleAvailabilitySummary({ kind, episodes, nextPage,
       summarizeSeasonAvailability({ kind, episodes, nextPage });
     if (season?.total > 0) return {
       text: validFull || season.completeList
-        ? `${season.verified} of ${season.total} regular episodes verified playable in Plex. Specials are separate.`
+        ? seasonAvailabilityText(season, regularSchedule)
         : `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`,
       available: season.verified > 0 };
     if (titleHasProof) return {
