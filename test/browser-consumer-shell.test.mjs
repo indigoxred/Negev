@@ -1074,10 +1074,10 @@ test('signed-in consumer routes render real shell with search, library and reque
         opened: true, centered: true, heading: 'Request Series', close: 'Close' });
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
-        summary: 'Example Season Two · request missing episodes; Partly available season · complete missing episodes' });
+        summary: 'Example Season Two · request episodes not verified in Plex; Partly available season · complete episodes not verified in Plex' });
       assert.deepEqual(mobile.requestOwnedSelection, [
         { id: 42, status: 'Available so far · watch future episodes', disabled: false },
-        { id: 43, status: 'Missing · 0/2', disabled: false },
+        { id: 43, status: 'Availability unconfirmed · 0/2 verified', disabled: false },
         { id: 44, status: 'Available · 2/2', disabled: true },
         { id: 45, status: 'Partial · 1/2', disabled: false },
       ]);

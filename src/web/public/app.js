@@ -2171,7 +2171,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       popupHeading.append(headingTitle, closePopup);
       action.append(popupHeading);
       action.append(element('p',
-        'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only its missing episodes. Specials stay separate.',
+        'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only episodes not verified in Plex. Specials stay separate.',
         'muted'));
       const chooser = element('details', undefined, 'season-request-chooser');
       chooser.open = true;
