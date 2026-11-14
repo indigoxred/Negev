@@ -1235,7 +1235,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.recoveredSeasonLookup,
         { open: true, related: true, triggerEnabled: true, notice: '' });
       assert.equal(mobile.closedPilotTitle.notice,
-        'Requests for this title are not open yet. Please use Seerr for now.',
+        'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
         JSON.stringify(mobile.closedPilotTitle));
       assert.equal(mobile.closedPilotTitle.disabled, true);
       assert.deepEqual(mobile.coldRequestReview, { button: 'Confirm request',

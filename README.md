@@ -2,6 +2,8 @@
 
 Negev is a self-hosted anime request and acquisition project for series and films. It aims to combine a searchable anime catalogue, user requests, airing episode monitoring, guarded torrent acquisition, Shoko import, and public Plex availability in one Docker-hosted service.
 
+For this server, make new anime series and anime film requests in Negev. Seerr remains the request service for TV and regular movies and retains historical anime requests. Seerr does not forward new anime requests to Negev. A Negev title that cannot currently be requested must stay in Negev's retry path; sending it through Seerr would bypass the anime owner.
+
 **Status:** Public review and measured handover. The installed pilot has verified completed-series and film requests, a later Airing episode, a manual Shoko import, and exact public Plex availability. It also runs signed-in catalogue browsing, requests, and guarded acquisition. Replacing an existing anime request service still requires a title-by-title ownership transfer and observation; a healthy container alone does not prove that handover is finished. The Docker example below is deliberately a safe, acquisition-disabled starting point, not a complete installation.
 
 ## Design

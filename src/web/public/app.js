@@ -1716,7 +1716,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (data.state === 'detail_pending') {
       panel.append(element('p', requestAccess
         ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
-        : 'Episode details are not cached yet. Requests for this title are not open yet; please use Seerr for now.', 'muted'));
+        : 'Episode details are not cached yet. Anime requests for this title are temporarily unavailable in Negev. Please try again later.', 'muted'));
       const pendingAction = requestAccess ? earlyRequest : null;
       if (pendingAction) panel.append(pendingAction);
       if (state.detailLoad) {
@@ -2260,7 +2260,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       const trigger = element('button', 'Request series', 'primary season-request-trigger');
       trigger.type = 'button';
       if (data.requestsOpen === false) panel.append(element('p',
-        'Requests for this title are not open yet. Please use Seerr for now.',
+        'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
         'muted request-preview-gate'));
       const action = element('dialog', undefined,
         'request-action season-request-action season-request-dialog');
@@ -2510,7 +2510,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         feedback.textContent = saved.length
           ? `${saved.length} season${saved.length === 1 ? '' : 's'} requested · ${saved.join(', ')}${failed.length ? ` · ${failed.length} could not be saved; retry those seasons` : ''}`
           : failed.length && closedByPilot === failed.length
-            ? 'Requests for these titles are not open yet. Please use Seerr for now.'
+            ? 'Anime requests for these titles are temporarily unavailable in Negev. Please try again later.'
             : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
             : 'Selected seasons are already available.';
         view.hidden = saved.length === 0;
