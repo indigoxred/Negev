@@ -270,9 +270,12 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(recoveredDisplayReads, 2,
         'a failed display read must be retried when the title is reopened');
       await evaluate("location.hash = '#/library'");
-      await until("document.querySelector('#library-list')?.textContent.includes('Show more verified titles')");
-      await evaluate("[...document.querySelectorAll('#library-list button')].find(b => b.textContent.includes('Show more')).click()");
+      await until("document.querySelector('#library-list')?.textContent.includes('First title')");
+      assert.equal(await evaluate("document.querySelector('#library-list')?.textContent.includes('Show more verified titles')"), false,
+        'the next page starts automatically when the list bottom is visible');
+      await evaluate("document.querySelector('.library-page-marker')?.scrollIntoView()");
       await until("document.querySelector('#library-list')?.textContent.includes('Retry loading more titles')");
+      assert.equal(pageTwoReads, 1, 'one automatic fetch fails without a retry loop');
       assert.equal(await evaluate("document.querySelector('#library-list')?.textContent.includes('First title')"), true);
       await evaluate("[...document.querySelectorAll('#library-list button')].find(b => b.textContent.includes('Retry')).click()");
       await until("document.querySelector('#library-list')?.textContent.includes('Second title')");
