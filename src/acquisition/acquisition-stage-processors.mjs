@@ -30,7 +30,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyShokoSource,
   readRelatedTitles,
   ownershipGate = null,
-  shoko, providerFetchImpl = fetch, readPacer, now = Date.now,
+  shoko, shokoMount = null, providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
@@ -214,8 +214,20 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (pureMode) {
         if (!await handoffMountReady()) return held('handoff_mount_unavailable');
         if (!await stagingMountReady()) return held('staging_root_unverified');
+        let target = null;
+        try {
+          const attempt = acquisitions.getAttempt(attemptId);
+          const request = requests.getRequest(attempt?.requestId);
+          const move = pureMoves.getIntent(attemptId);
+          const episodeIds = [...new Set(move?.manifest?.files
+            ?.flatMap((file) => file.episodeIds ?? []) ?? [])];
+          if (request?.anidbId && episodeIds.length > 0) {
+            target = { anidbId: request.anidbId, episodeIds };
+          }
+        } catch { /* Publication still proceeds; uncertain recovery stays held. */ }
         return processPurePublish({ attemptId, nowMs: now(), pureMoves,
-          stagingHostPath, holdingRoot, importRoot });
+          stagingHostPath, holdingRoot, importRoot, target, shokoMount,
+          readEpisode: readHandoffEpisode });
       }
       let handoff;
       try { handoff = handoffs.getHandoff(attemptId); }

@@ -2370,20 +2370,35 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               const detail = await api(`/api/catalogue/${row.anidbId}`,
                 { signal: AbortSignal.timeout(5_000) });
               if (isCurrentDetail() && rows.get(row.anidbId) === row) {
+                row.detailFailed = false;
                 updateRow(row, detail);
               }
             } catch {
               if (isCurrentDetail() && rows.get(row.anidbId) === row) {
+                row.detailFailed = true;
                 updateRow(row, { state: 'detail_unavailable' });
               }
-            } finally { active--; drain(); }
+            } finally {
+              row.loading = false;
+              if (isCurrentDetail() && rows.get(row.anidbId) === row) refresh();
+              active--;
+              drain();
+            }
           })();
         }
+      };
+      const loadRow = (row) => {
+        if (row.loading || pending.includes(row)) return;
+        row.loading = true;
+        row.detailFailed = false;
+        row.statusText.textContent = 'Checking episode details…';
+        pending.push(row);
+        drain();
       };
       const addRow = (entry) => {
         if (rows.has(entry.anidbId)) return;
         const row = { anidbId: entry.anidbId, title: entry.title,
-          status: null, requested: false };
+          status: null, requested: false, detailFailed: false, loading: false };
         const label = element('label', undefined, 'season-request-row');
         label.dataset.anidbId = String(entry.anidbId);
         const input = document.createElement('input');
@@ -2408,7 +2423,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (entry.anidbId === item.anidbId) {
           updateRow(row, { ...data, episodes: pager.episodes,
             nextPage: pager.nextPage });
-        } else { pending.push(row); drain(); }
+        } else loadRow(row);
       };
       syncSeasonRows = () => {
         for (const entry of family.items()) addRow(entry);
@@ -2438,6 +2453,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       });
       trigger.addEventListener('click', () => {
         action.showModal();
+        for (const row of rows.values()) {
+          if (row.detailFailed) loadRow(row);
+        }
         if (family.next() && !lastRelatedFailure) {
           if (relatedLoading) expandForOpenPopup = true;
           else void loadRelated({ batch: true });

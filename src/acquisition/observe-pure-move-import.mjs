@@ -39,7 +39,12 @@ async function probePureMovedFile({ filePath, allowedRoot, expectedSize }) {
 // associate Shoko's file ID with this attempt, without rehashing the video.
 export async function observePureMoveImport({ move, target, shokoMount,
   readEpisode, probeImpl = probePureMovedFile } = {}) {
-  if (move?.status !== 'published_observed') return held('publish_not_observed');
+  // An uncertain durable move may have been consumed by Shoko before Negev
+  // saved publication. The exact inode match proves downstream content, not
+  // that Negev's publication journal completed.
+  if (!['published_observed', 'publish_unknown'].includes(move?.status)) {
+    return held('publish_not_observed');
+  }
   const manifestFiles = move.manifest?.files;
   const files = Array.isArray(manifestFiles) ? manifestFiles.filter((file) =>
     Array.isArray(file.episodeIds)) : null;

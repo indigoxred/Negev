@@ -991,6 +991,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },
           publicSections: plex.publicSections, prowlarr,
+          shokoMount: plex.shokoMount,
           firstTimePolicy: 'single_uncertain_attempt',
           readPublicCoverage: ({ anidbId, episodeIds }) => {
             const checkedMs = now();

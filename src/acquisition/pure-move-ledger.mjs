@@ -68,6 +68,12 @@ export function openPureMoveLedger(dbPath) {
       created_ms INTEGER NOT NULL CHECK(created_ms>=0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms>=created_ms)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS pure_move_content_observations (
+      attempt_id INTEGER PRIMARY KEY REFERENCES pure_move_intents(attempt_id),
+      manifest_digest TEXT NOT NULL,
+      files_json TEXT NOT NULL,
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)
+    ) STRICT`);
   } catch (error) { db.close(); throw error; }
   const attempt = db.prepare(`SELECT status,torrent_hash,expected_hash,updated_ms
     FROM acquisition_attempts WHERE id=?`);
@@ -87,6 +93,10 @@ export function openPureMoveLedger(dbPath) {
     VALUES (?,?,?,?,'moving',?,?)`);
   const transition = db.prepare(`UPDATE pure_move_intents SET status=?,updated_ms=?
     WHERE attempt_id=? AND status=?`);
+  const content = db.prepare(`SELECT manifest_digest AS manifestDigest,
+    files_json AS filesJson FROM pure_move_content_observations WHERE attempt_id=?`);
+  const insertContent = db.prepare(`INSERT INTO pure_move_content_observations
+    (attempt_id,manifest_digest,files_json,observed_ms) VALUES (?,?,?,?)`);
   const transact = (fn) => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; }
@@ -165,6 +175,44 @@ export function openPureMoveLedger(dbPath) {
           'publish_unknown').changes === 1
           ? { state: 'published_observed' } : held('move_state_conflict');
       });
+    },
+    recordContentPresent({ attemptId, files, nowMs }) {
+      if (!validId(attemptId) || !validTime(nowMs) ||
+          !Array.isArray(files) || files.length < 1 || files.length > 100 ||
+          files.some((file) => typeof file?.name !== 'string' ||
+            !validId(file.fileId) ||
+            typeof file.releaseEvidence !== 'string' ||
+            !/^[a-z][a-z_]{0,39}$/.test(file.releaseEvidence)) ||
+          new Set(files.map((file) => file.name)).size !== files.length ||
+          new Set(files.map((file) => file.fileId)).size !== files.length) {
+        throw new TypeError('Invalid pure move content observation');
+      }
+      return transact(() => {
+        const row = get.get(attemptId);
+        if (row?.status !== 'publish_unknown') return held('publish_intent_missing');
+        const manifest = JSON.parse(row.manifestJson);
+        if (canonical(manifest)?.digest !== row.manifestDigest ||
+            nowMs < row.updatedMs ||
+            files.length !== manifest.files.filter((file) => file.episodeIds).length ||
+            files.some((file) => !manifest.files.some((expected) =>
+              expected.episodeIds && expected.name === file.name))) {
+          return held('move_evidence_mismatch');
+        }
+        const prior = content.get(attemptId);
+        if (prior && (prior.manifestDigest !== row.manifestDigest ||
+            prior.filesJson !== JSON.stringify(files))) {
+          return held('content_observation_conflict');
+        }
+        if (!prior) insertContent.run(attemptId, row.manifestDigest,
+          JSON.stringify(files), nowMs);
+        return { state: 'content_present', publicationProven: false, files };
+      });
+    },
+    getContentObservation(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid move attempt');
+      const row = content.get(attemptId);
+      return row ? { state: 'content_present', publicationProven: false,
+        files: JSON.parse(row.filesJson) } : null;
     },
     close() { db.close(); },
   };

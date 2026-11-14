@@ -27,6 +27,15 @@ test('associates only the exact journalled inode with the Shoko identity', async
       releaseEvidence: 'shoko_offline_link' }] });
 });
 
+test('an uncertain durable publication can prove exact Shoko content without publication proof', async () => {
+  const result = await observePureMoveImport({ move: { ...move,
+    status: 'publish_unknown' }, target, shokoMount,
+  readEpisode: async () => ({ state: 'ok', complete: true, files: [file] }),
+  probeImpl: async () => ({ state: 'candidate', candidateKey: '12:34:100:56' }) });
+  assert.equal(result.state, 'shoko_files_identified');
+  assert.equal(move.status, 'published_observed');
+});
+
 test('registered provenance requires Shoko to supply an AniDB file ID', async () => {
   const readEpisode = async (value) => ({ state: 'ok', complete: true,
     files: [{ ...file, releaseEvidence: undefined, anidbFileId: value }] });

@@ -1,12 +1,14 @@
 import path from 'node:path';
 import { preparePureMove } from './pure-move-handoff.mjs';
 import { publishPureMove } from './publish-pure-move.mjs';
+import { observePureMoveImport } from './observe-pure-move-import.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
 export async function processPurePublish({ attemptId, nowMs, pureMoves,
-  stagingHostPath, holdingRoot, importRoot,
-  prepare = preparePureMove, publish = publishPureMove } = {}) {
+  stagingHostPath, holdingRoot, importRoot, target, shokoMount, readEpisode,
+  prepare = preparePureMove, publish = publishPureMove,
+  observe = observePureMoveImport } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       typeof pureMoves?.getIntent !== 'function' ||
@@ -35,5 +37,26 @@ export async function processPurePublish({ attemptId, nowMs, pureMoves,
     const saved = pureMoves.markPrepared({ attemptId, nowMs });
     if (saved?.state !== 'prepared') return held('move_outcome_unknown');
   }
-  return publish({ attemptId, ledger: pureMoves, holdingRoot, importRoot, nowMs });
+  const result = await publish({ attemptId, ledger: pureMoves,
+    holdingRoot, importRoot, nowMs });
+  if (result?.reason !== 'published_tree_absent' ||
+      row.status !== 'publish_unknown') return result;
+  if (!target || !shokoMount || typeof readEpisode !== 'function' ||
+      typeof pureMoves.recordContentPresent !== 'function') {
+    return held('publish_outcome_unknown');
+  }
+  let observed;
+  try { observed = await observe({ move: row, target, shokoMount,
+    readEpisode }); }
+  catch { return held('publish_outcome_unknown'); }
+  if (observed?.state !== 'shoko_files_identified') {
+    return observed?.reason === 'ambiguous_shoko_file'
+      ? observed : held('publish_outcome_unknown');
+  }
+  try {
+    const saved = pureMoves.recordContentPresent({ attemptId,
+      files: observed.files, nowMs });
+    return saved?.state === 'content_present'
+      ? held('content_present_unattributed') : held('publish_outcome_unknown');
+  } catch { return held('publish_outcome_unknown'); }
 }

@@ -102,6 +102,8 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       const due = state === 'publish_unknown' ? checkedMs + 60_000 :
         state === 'held' && reason === 'handoff_mount_unavailable'
           ? checkedMs + MOUNT_RETRY_MS :
+        pureMode && state === 'held' && reason === 'publish_outcome_unknown' &&
+          version <= 12 ? checkedMs + MOUNT_RETRY_MS :
         state === 'held' && RETRYABLE_HOLDS.has(reason) && version === 1
           ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid publish clock');

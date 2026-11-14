@@ -107,6 +107,11 @@ export async function publishPureMove({ attemptId, ledger, holdingRoot,
         !await inspectTree(destination, manifest.files)) return held('publish_outcome_unknown');
     return ledger.markPublished({ attemptId, nowMs });
   }
+  // Shoko may consume the watched directory before a failed journal write is
+  // retried. Its absence is uncertain, not evidence that file bytes changed.
+  if (!from && !to && row.status === 'publish_unknown') {
+    return held('published_tree_absent');
+  }
   if (!from || to || !from.isDirectory() || from.isSymbolicLink() ||
       from.dev !== (await lstat(roots[0], { bigint: true })).dev ||
       !await inspectTree(manifest.holdingPath, manifest.files)) {
