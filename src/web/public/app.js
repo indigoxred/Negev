@@ -260,6 +260,7 @@ function showSession(data) {
   renderRoute();
 }
 function clearWorkspace() {
+  stopLibraryPageObserver();
   sessionResponses.invalidate();
   invalidateRequestResponses();
   reviewResponses.invalidate();
@@ -711,7 +712,42 @@ function publicPresenceBadge(presence) {
     : 'Availability not checked',
   `presence ${available ? 'available' : 'unknown'}`);
 }
+let libraryPageObserver = null;
+function stopLibraryPageObserver() {
+  libraryPageObserver?.disconnect();
+  libraryPageObserver = null;
+}
+function appendLibraryPageMarker(list) {
+  const marker = element('div', 'Loading more titles as you scroll…',
+    'library-page-marker muted');
+  marker.setAttribute('role', 'status');
+  list.append(marker);
+  const continuation = { marker, showError() {
+    marker.replaceChildren(element('p',
+      'The next page could not be loaded. Titles already shown remain available.',
+      'muted'));
+    const retry = element('button', 'Retry loading more titles', 'text-link');
+    retry.type = 'button';
+    retry.addEventListener('click', () => {
+      if (retry.disabled) return;
+      retry.disabled = true;
+      marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
+      void loadLibrary(true, continuation);
+    });
+    marker.append(retry);
+  } };
+  const observer = new IntersectionObserver((entries) => {
+    if (!entries.some((entry) => entry.isIntersecting)) return;
+    observer.disconnect();
+    if (libraryPageObserver === observer) libraryPageObserver = null;
+    marker.textContent = 'Loading more titles…';
+    void loadLibrary(true, continuation);
+  }, { rootMargin: '150px 0px' });
+  libraryPageObserver = observer;
+  observer.observe(marker);
+}
 async function loadLibrary(append = false, continuation = null) {
+  if (!append) stopLibraryPageObserver();
   const session = sessionResponses.current();
   const epoch = libraryResponses.invalidate();
   const userId = state.user?.id;
@@ -728,9 +764,7 @@ async function loadLibrary(append = false, continuation = null) {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
-    else {
-      continuation?.button.remove();
-    }
+    else continuation?.marker.remove();
     state.libraryLoaded = true;
     if (!append && page.items.length === 0) {
       list.append(element('p',
@@ -743,26 +777,7 @@ async function loadLibrary(append = false, continuation = null) {
         'In library', true));
     }
     state.libraryAfter = page.nextAfterAnidbId;
-    if (state.libraryAfter !== null) {
-      const more = element('button', 'Show more verified titles', 'text-link');
-      more.type = 'button';
-      let notice = null;
-      more.addEventListener('click', () => {
-        if (more.disabled) return;
-        more.disabled = true;
-        notice?.remove();
-        notice = null;
-        void loadLibrary(true, { button: more, showError() {
-          more.disabled = false;
-          more.textContent = 'Retry loading more titles';
-          notice = element('p',
-            'The next page could not be loaded. Titles already shown are still available.',
-            'empty-state');
-          more.after(notice);
-        } });
-      });
-      list.append(more);
-    }
+    if (state.libraryAfter !== null) appendLibraryPageMarker(list);
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
