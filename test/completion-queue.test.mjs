@@ -73,6 +73,34 @@ test('pure completion uses separate cursor and checks alongside legacy queue', a
   });
 });
 
+test('pure completion does not revisit a torrent proven outside its staging mount', async () => {
+  await fixture(async (ctx) => {
+    const pureMoves = openPureMoveLedger(ctx.dbPath);
+    const queue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+    try {
+      const first = queue.claimNext({ nowMs: 1_000 });
+      assert.equal(first.attemptId, ctx.attemptIds[0]);
+      assert.deepEqual(queue.recordResult({ attemptId: first.attemptId,
+        pass: first.pass, state: 'held',
+        reason: 'incomplete_path_outside_staging', checkedMs: 1_000 }),
+      { state: 'recorded' });
+      assert.equal(queue.getResult(first.attemptId).nextDueMs, null);
+      const db = new DatabaseSync(ctx.dbPath);
+      try {
+        db.prepare('UPDATE pure_move_completion_checks SET next_due_ms=? WHERE attempt_id=?')
+          .run(1_000, first.attemptId);
+      } finally { db.close(); }
+      assert.equal(queue.claimNext({ nowMs: 1_000 }).attemptId, ctx.attemptIds[1]);
+      assert.equal(queue.claimNext({ nowMs: 1_000 }).attemptId, ctx.attemptIds[2]);
+      assert.equal(queue.claimNext({ nowMs: 1_000 }).state, 'pass_complete');
+      assert.equal(queue.claimNext({ nowMs: 1_000 + 24 * 60 * 60_000 }).state,
+        'pass_complete');
+      assert.equal(ctx.queue.claimNext({ nowMs: 1_000 }).attemptId,
+        ctx.attemptIds[0], 'the legacy queue retains its separate policy');
+    } finally { queue.close(); pureMoves.close(); }
+  });
+});
+
 test('one-attempt pages advance after incomplete work and retry only when due', async () => {
   await fixture(async (ctx) => {
     const worker = createCompletionWorker({ queue: ctx.queue, now: () => 1_000,

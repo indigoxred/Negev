@@ -83,6 +83,12 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
   } catch (error) { db.close(); throw error; }
 
   const cursor = db.prepare(`SELECT after_id AS afterId,pass FROM ${cursorTable} WHERE id=1`);
+  // In pure-move mode, a torrent already proved outside the dedicated staging
+  // mount cannot become eligible through another timed retry. Preserve its
+  // recorded hold for review and let newer in-staging attempts advance.
+  const outsideStagingFilter = pureMode
+    ? "AND (c.attempt_id IS NULL OR c.reason!='incomplete_path_outside_staging')"
+    : '';
   const next = db.prepare(`SELECT a.id FROM acquisition_attempts a
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
     JOIN acquisition_starts s ON s.attempt_id=a.id AND s.torrent_hash=a.torrent_hash
@@ -98,6 +104,7 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
       j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
       h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
+      ${outsideStagingFilter}
     -- The durable cursor is an attempt ID, so traversal must follow ID order.
     -- Priority before ID can skip an older due retry on every pass.
     ORDER BY a.id LIMIT 1`);
@@ -202,8 +209,10 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
           reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
+        const outsideStagingHold = pureMode && state === 'held' &&
+          reason === 'incomplete_path_outside_staging';
         return save.run(state, reason, checkedMs,
-          state === 'held' ? checkedMs + delay : null,
+          state === 'held' && !outsideStagingHold ? checkedMs + delay : null,
           inconclusiveCount, transfer?.progressBasisPoints ?? null,
           transfer?.etaSeconds ?? null,
           transfer?.speedBytesPerSecond ?? null,
