@@ -1,4 +1,4 @@
-import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
+nimport { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
@@ -144,6 +144,7 @@ function renderRoute() {
   if (page === 'discover' || page === 'library') {
     byId('query').value = route.query;
     if (page === 'discover') byId('discover-query').value = route.query;
+    if (page === 'library') byId('library-query').value = route.query;
     const searching = route.query.length >= 2;
     byId('search-results-section').hidden = page !== 'discover' || !searching;
     byId('library-search-section').hidden = page !== 'library' || !searching;
@@ -1208,7 +1209,13 @@ byId('airing-view-mode').addEventListener('change', async (event) => {
   } finally { select.disabled = false; }
 });
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
-byId('refresh-library').addEventListener('click', () => { void loadLibrary(); });
+byId('refresh-library').addEventListener('click', () => {
+  if (parseConsumerRoute(location.hash).query) {
+    location.hash = '#/library';
+    return;
+  }
+  void loadLibrary();
+});
 byId('more-requests').addEventListener('click', () => { void loadRequestView('history', true); });
 byId('more-preparations').addEventListener('click', () => { void loadPreparations(false, true); });
 byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
@@ -1376,22 +1383,33 @@ async function loadUsers() {
   }
 }
 byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
-function submitDiscoverSearch() {
-  const query = byId('discover-query').value.trim();
+function submitInlineSearch(inputId, destination) {
+  const input = byId(inputId);
+  const query = input.value.trim();
   if (query.length < 2) {
-    byId('discover-query').focus();
+    input.focus();
     return;
   }
   byId('query').value = query;
+  if (destination === 'discover' && parseConsumerRoute(location.hash).page === 'airing') {
+    location.hash = searchRoute(query);
+  }
   byId('search-form').requestSubmit();
 }
 
-byId('discover-search-button').addEventListener('click', submitDiscoverSearch);
-byId('discover-query').addEventListener('keydown', (event) => {
-  if (event.key !== 'Enter') return;
-  event.preventDefault();
-  submitDiscoverSearch();
-});
+for (const [inputId, buttonId, destination] of [
+  ['discover-query', 'discover-search-button', 'discover'],
+  ['airing-query', 'airing-search-button', 'discover'],
+  ['library-query', 'library-search-button', 'library'],
+]) {
+  const submit = () => submitInlineSearch(inputId, destination);
+  byId(buttonId).addEventListener('click', submit);
+  byId(inputId).addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    submit();
+  });
+}
 
 byId('search-form').addEventListener('submit', async (event) => {
   event.preventDefault();
