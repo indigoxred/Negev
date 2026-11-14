@@ -1842,6 +1842,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedButton.disabled = true;
     }
     let relatedLoading = false;
+    let lastRelatedFailure = null;
+    let syncSeasonLookup = () => {};
     let expandForOpenPopup = false;
     let openSeasonDialog = null;
     const loadRelated = async ({ batch = false, initial = false } = {}) => {
@@ -1850,6 +1852,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       relatedLoading = true;
       relatedButton.disabled = true;
       relatedButton.textContent = 'Loading related titles…';
+      syncSeasonLookup();
       try {
         const result = await expandFranchiseBatch({ explorer: family,
           read: (anidbId) => api(`/api/catalogue/${anidbId}/related`),
@@ -1859,16 +1862,16 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           shouldContinue: isCurrentDetail });
         if (isCurrentDetail()) {
           renderFamily();
-          if (result.failures === 0) return;
-          const error = element('p',
+          lastRelatedFailure = result.failures === 0 ? null :
             result.state === 'rate_limited'
               ? 'Related titles are temporarily rate limited. Try again in about a minute.'
               : result.state === 'temporarily_unavailable'
               ? 'Related titles are temporarily unavailable. Try again shortly.'
               : result.state === 'root_unavailable'
               ? 'Related titles could not be loaded. Try again or search for another installment.'
-              : 'Some relationships could not be loaded. You can open that title directly or continue exploring.',
-            'muted related-error');
+              : 'Some relationships could not be loaded. You can open that title directly or continue exploring.';
+          if (!lastRelatedFailure) return;
+          const error = element('p', lastRelatedFailure, 'muted related-error');
           if (relatedList.querySelector('.related-card')) {
             relatedList.querySelector('.related-error')?.remove();
             relatedList.append(error);
@@ -1879,11 +1882,23 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             relatedButton.disabled = false;
           }
         }
+      } catch {
+        if (!isCurrentDetail()) return;
+        lastRelatedFailure = 'Related titles could not be loaded. Try again shortly.';
+        renderFamily();
+        relatedList.querySelector('.related-error')?.remove();
+        relatedList.append(element('p', lastRelatedFailure, 'muted related-error'));
+        relatedButton.textContent = 'Try related titles again';
+        relatedButton.hidden = false;
+        relatedButton.disabled = false;
       } finally {
         relatedLoading = false;
+        syncSeasonLookup();
         if (expandForOpenPopup) {
           expandForOpenPopup = false;
-          if (openSeasonDialog?.open && family.next()) void loadRelated({ batch: true });
+          if (openSeasonDialog?.open && family.next() && !lastRelatedFailure) {
+            void loadRelated({ batch: true });
+          }
         }
       }
     };
@@ -2169,9 +2184,19 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       const list = element('div', undefined, 'season-request-list');
       const moreSeasons = element('button', 'Find more seasons or installments', 'quiet');
       moreSeasons.type = 'button';
-      moreSeasons.hidden = family.next() === null;
+      moreSeasons.classList.add('season-lookup-retry');
+      const lookupNotice = element('p', '', 'muted season-lookup-notice');
+      lookupNotice.setAttribute('role', 'status');
+      syncSeasonLookup = () => {
+        moreSeasons.hidden = family.next() === null;
+        moreSeasons.disabled = relatedLoading;
+        moreSeasons.textContent = lastRelatedFailure
+          ? 'Retry finding seasons' : 'Find more seasons or installments';
+        lookupNotice.textContent = lastRelatedFailure ?? '';
+      };
+      syncSeasonLookup();
       moreSeasons.addEventListener('click', () => { void loadRelated({ batch: true }); });
-      chooser.append(heading, list, moreSeasons);
+      chooser.append(heading, list, lookupNotice, moreSeasons);
       const review = element('div', undefined, 'request-review');
       review.hidden = true;
       review.append(element('strong', 'Review your request'));
@@ -2283,7 +2308,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       syncSeasonRows = () => {
         for (const entry of family.items()) addRow(entry);
-        moreSeasons.hidden = family.next() === null;
+        syncSeasonLookup();
       };
       syncSeasonRows();
       refreshRequestAction = () => {
@@ -2309,7 +2334,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       });
       trigger.addEventListener('click', () => {
         action.showModal();
-        if (family.next()) {
+        if (family.next() && !lastRelatedFailure) {
           if (relatedLoading) expandForOpenPopup = true;
           else void loadRelated({ batch: true });
         }
