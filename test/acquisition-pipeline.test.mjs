@@ -90,6 +90,7 @@ test('restart reconciliation precedes worker ticks and later requests advance', 
   let pipeline;
   try {
     pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      requestPageLimit: 1,
       qbBaseUrl, sessionGate: authorizedSession,
       processRequest: async ({ requestId }) => {
         visited.push(requestId);
@@ -104,9 +105,13 @@ test('restart reconciliation precedes worker ticks and later requests advance', 
     const recovery = await pipeline.initialize();
     assert.deepEqual(recovery.requests.resolved, [1]);
     const page = await pipeline.tickRequests();
-    assert.equal(page.state, 'pass_complete');
+    assert.equal(page.state, 'page');
+    assert.deepEqual(visited, [2]);
+    assert.deepEqual(page.results.map((entry) => entry.requestId), [2]);
+    assert.equal((await pipeline.tickCompletions()).state, 'pass_complete');
+    const nextPage = await pipeline.tickRequests();
+    assert.deepEqual(nextPage.results.map((entry) => entry.requestId), [3]);
     assert.deepEqual(visited, [2, 3]);
-    assert.deepEqual(page.results.map((entry) => entry.requestId), [2, 3]);
     assert.deepEqual(await pipeline.tickStarts(), { state: 'idle' });
     assert.deepEqual(await pipeline.tickPublish(), { state: 'idle' });
     await pipeline.close();
@@ -305,3 +310,4 @@ test('a held request does not block a later synthetic request-to-publish chain',
     await rm(dir, { recursive: true, force: true });
   }
 });
+
