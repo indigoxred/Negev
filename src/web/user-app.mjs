@@ -1057,7 +1057,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       beforeId, limit: 20 });
     return { items: page.items.map((item) => ({ id: item.id,
       anidbId: item.anidbId, title: item.title, state: item.state,
-      reason: item.reason, createdMs: item.nowMs })),
+      reason: item.reason, createdMs: item.nowMs,
+      requesterName: request.negevUser.username })),
       nextBeforeId: page.nextBeforeId };
   });
   app.post('/api/request-preparations/:id/cancel',

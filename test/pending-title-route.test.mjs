@@ -208,6 +208,7 @@ test('pending history and cancellation are owner scoped and CSRF guarded',
         url: '/api/request-preparations', headers: { cookie: headers.cookie } });
       assert.equal(listed.statusCode, 200, listed.body);
       assert.deepEqual(listed.json().items.map((row) => row.id), [12]);
+      assert.equal(listed.json().items[0].requesterName, 'Owner');
       assert.equal((await app.inject({ method: 'POST',
         url: '/api/request-preparations/12/cancel',
         headers: { cookie: headers.cookie, origin },

@@ -46,6 +46,16 @@ test('a started movie or all expected regular episodes aired is completed', () =
   ] }).state, 'completed');
 });
 
+test('an old movie remains completed when its AniDB film and episode dates differ', () => {
+  const movie = { today: '2026-11-15', kind: 'movie', airDate: '2009-07-28',
+    endDate: '2009-07-28', episodeCount: 1,
+    episodes: [{ type: 'Episode', airDate: '2009-08-22' }] };
+  assert.deepEqual(inferReleaseState(movie),
+    { state: 'completed', confidence: 'inferred' });
+  assert.deepEqual(inferReleaseState({ ...movie, today: '2009-08-01' }),
+    { state: 'unknown', confidence: 'none' });
+});
+
 test('a one-episode series waits for its actual episode air date', () => {
   assert.equal(inferReleaseState({ ...base, episodeCount: 1,
     episodes: [{ type: 'Episode', airDate: '2026-11-01' }] }).state, 'airing');

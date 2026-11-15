@@ -26,10 +26,14 @@ export function inferReleaseState({ today, kind, airDate, endDate = null, episod
       (end && end.last < start.first) ||
       !['series', 'movie'].includes(kind) || !Array.isArray(episodes) ||
       (episodeCount !== null && (!Number.isSafeInteger(episodeCount) || episodeCount < 0))) return unknown;
-  if (end && episodes.some((episode) => episode?.type === 'Episode' &&
-      episode.airDate != null &&
-      (!parsePartialDate(episode.airDate) ||
-        parsePartialDate(episode.airDate).first > end.last))) return unknown;
+  if (end && episodes.some((episode) => {
+    if (episode?.type !== 'Episode' || episode.airDate == null) return false;
+    const date = parsePartialDate(episode.airDate);
+    // AniDB movie records can date the film and its complete-file episode
+    // differently. Once both dates have passed, this is still a released film.
+    return !date || (date.first > end.last &&
+      (kind !== 'movie' || date.first > current.last));
+  })) return unknown;
   if (end && end.last <= current.last) return inferred('completed');
   // An exact episode date inside a partial start interval is stronger
   // evidence than the interval's latest possible day.
