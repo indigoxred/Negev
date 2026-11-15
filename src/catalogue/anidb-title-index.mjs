@@ -59,6 +59,7 @@ function finishIndex(byId) {
   }
   for (const entry of byId.values()) {
     entry.releaseQueries = [...new Set([entry.title, ...entry.englishOfficial])].slice(0, 3);
+    entry.englishTitle = entry.englishOfficial.values().next().value ?? null;
     delete entry.englishOfficial;
   }
   return byId;

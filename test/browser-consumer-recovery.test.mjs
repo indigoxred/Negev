@@ -320,7 +320,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("location.hash = '#/requests'");
       await until("!document.querySelector('#view-requests').hidden");
       await evaluate("location.hash = '#/discover?q=Pending'");
-      await until("document.querySelector('#results')?.textContent.includes('Availability not checked')");
+      await until("document.querySelector('#results')?.textContent.includes('Pending title') && !document.querySelector('#results')?.textContent.includes('In library')");
       assert.ok(searchReads > searchReadsBeforeReturn,
         'returning to the same search must revalidate the availability badge');
       holdWatchingRequests = true;

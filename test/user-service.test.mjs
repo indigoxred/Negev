@@ -119,6 +119,49 @@ test('a first title view counts a complete multi-page regular season from curren
   } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
+test('an unreleased title does not inspect public Plex availability', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-future-title-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+  accounts.close();
+  const paths = [];
+  const service = await createUserService({ dbPath,
+    shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic',
+    sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    now: () => 1_000, today: () => '2026-11-15',
+    plex: { plexBaseUrl: 'http://plex.internal:32400', plexToken: 'synthetic',
+      publicSections: { episode: [102], movie: [] },
+      shokoMount: { appRoot: '/pure', localRoot: dir },
+      plexMounts: [{ appRoot: '/source-pure', localRoot: dir }] },
+    fetchImpl: async (url) => {
+      const pathname = new URL(url).pathname;
+      paths.push(pathname);
+      if (pathname === '/api/v3/Series/AniDB/18626') return Response.json({
+        ID: 18626, Title: 'Free Fire Daybreak', Type: 'TV',
+        AirDate: '2027-01-01', EndDate: null, EpisodeCount: 0,
+        Restricted: false });
+      if (pathname === '/api/v3/Series/AniDB/18626/Episode') {
+        return Response.json({ Total: 0, List: [] });
+      }
+      throw new Error(`Unexpected read: ${pathname}`);
+    } });
+  try {
+    const login = await service.app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner',
+        password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const response = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/18626', headers: { cookie } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(response.json().releaseState, 'upcoming');
+    assert.equal(response.json().monitorFuture, true);
+    assert.equal(response.json().libraryPresence, undefined);
+    assert.equal(response.json().regularSeason, undefined);
+    assert.equal(paths.some((pathname) => pathname.startsWith('/library/')), false);
+  } finally { await service.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('weekly Airing applies saved tracking mode after the async schedule read', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-airing-schedule-'));
   const dbPath = path.join(dir, 'negev.sqlite');
@@ -367,7 +410,7 @@ test('opt-in AniDB dump search finds an unowned title and marks stale results', 
   let dumpAvailable = true;
   let shokoSearches = 0;
   let time = 1_000;
-  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n4158|4|en|The Pale Cocoon\n');
   const service = await createUserService({ dbPath,
     shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
@@ -389,7 +432,11 @@ test('opt-in AniDB dump search finds an unowned title and marks stale results', 
       url: '/api/catalogue/search?q=Pale', headers: { cookie } });
     assert.equal(broad.statusCode, 200, broad.body);
     assert.equal(broad.json().items[0].anidbId, 4158);
+    assert.equal(broad.json().items[0].englishTitle, 'The Pale Cocoon');
     assert.equal(broad.json().catalogueSource, 'anidb_dump');
+    const english = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=The%20Pale%20Cocoon', headers: { cookie } });
+    assert.equal(english.json().items[0].anidbId, 4158);
     assert.equal(shokoSearches, 0);
     dumpAvailable = false;
     time += 86_400_000;
@@ -661,6 +708,12 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       url: '/api/catalogue/1234', headers: { cookie } });
     assert.equal(airingDetail.statusCode, 200, airingDetail.body);
     assert.equal(airingDetail.json().monitorFuture, true);
+    calendarDay = '2026-08-30';
+    const unreleased = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/1234', headers: { cookie } });
+    assert.equal(unreleased.json().releaseState, 'upcoming');
+    assert.equal(unreleased.json().libraryPresence, undefined);
+    calendarDay = '2026-10-31';
     const beforeHydration = methods.length;
     const disabledHydration = await service.app.inject({ method: 'POST',
       url: '/api/catalogue/1234/load-detail', headers: auth(cookie, csrf),

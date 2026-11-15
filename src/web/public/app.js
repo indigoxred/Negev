@@ -32,7 +32,7 @@ const state = { csrf: null, user: null, selected: null,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
   requestScope: 'mine',
-  showAdult: true, usersLoaded: false,
+  showAdult: true, preferEnglish: false, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
 const requestResponses = {
@@ -69,6 +69,28 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+function titleLabel(item) {
+  const english = item.englishTitle?.trim();
+  const label = element('strong', state.preferEnglish && english || item.title);
+  if (english && english !== item.title) {
+    label.dataset.originalTitle = item.title;
+    label.dataset.englishTitle = english;
+    label.title = state.preferEnglish ? `Original: ${item.title}` : `English: ${english}`;
+  }
+  return label;
+}
+function applyTitlePreference() {
+  const toggle = byId('english-title-toggle');
+  toggle.textContent = `English titles: ${state.preferEnglish ? 'On' : 'Off'}`;
+  toggle.setAttribute('aria-pressed', String(state.preferEnglish));
+  for (const label of document.querySelectorAll('[data-english-title]')) {
+    label.textContent = state.preferEnglish
+      ? label.dataset.englishTitle : label.dataset.originalTitle;
+    label.title = state.preferEnglish
+      ? `Original: ${label.dataset.originalTitle}`
+      : `English: ${label.dataset.englishTitle}`;
+  }
 }
 function updateTrackControls() {
   for (const button of document.querySelectorAll('[data-track-id]')) {
@@ -200,6 +222,11 @@ function adultPreferenceKey(userId) { return `negev:show-adult:${userId}`; }
 function readAdultPreference(userId) {
   try { return localStorage.getItem(adultPreferenceKey(userId)) !== 'off'; }
   catch { return true; }
+}
+function englishTitlePreferenceKey(userId) { return `negev:english-titles:${userId}`; }
+function readEnglishTitlePreference(userId) {
+  try { return localStorage.getItem(englishTitlePreferenceKey(userId)) === 'on'; }
+  catch { return false; }
 }
 function markAdult(node, item, { hideUnknown = false } = {}) {
   node.dataset.anidbId = String(item.anidbId);
@@ -388,6 +415,7 @@ function showSession(data) {
   void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
   state.showAdult = data.user.adultAllowed !== false &&
     readAdultPreference(data.user.id);
+  state.preferEnglish = readEnglishTitlePreference(data.user.id);
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
@@ -404,6 +432,7 @@ function showSession(data) {
   byId('identity').hidden = false;
   byId('adult-toggle').hidden = false;
   applyAdultVisibility();
+  applyTitlePreference();
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
   byId('admin-link').hidden = data.user.role !== 'admin';
@@ -856,8 +885,9 @@ function discoveryCard(item, note, badge, available = false) {
   poster.addEventListener('load', () => frame.classList.add('has-poster'));
   frame.append(poster);
   const copy = element('span', undefined, 'poster-copy');
-  copy.append(element('strong', item.title), element('small', note),
-    element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
+  copy.append(titleLabel(item), element('small', note));
+  if (badge) copy.append(element('span', badge,
+    `badge ${available ? 'ready' : 'unknown'}`));
   if (item.rating) {
     const members = new Intl.NumberFormat('en', { notation: 'compact',
       maximumFractionDigits: 1 }).format(item.rating.members);
@@ -875,11 +905,11 @@ function discoveryCard(item, note, badge, available = false) {
 }
 function publicPresenceBadge(presence) {
   const available = presence?.state === 'in_library';
+  if (!available) return document.createDocumentFragment();
   const count = presence?.verifiedEpisodeCount ?? 0;
-  return element('span', available
-    ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
-    : 'Availability not checked',
-  `presence ${available ? 'available' : 'unknown'}`);
+  return element('span',
+    `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`,
+    'presence available');
 }
 let libraryPageObserver = null;
 function stopLibraryPageObserver() {
@@ -1107,7 +1137,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       const frame = element('span', undefined, 'poster-frame');
       frame.append(posterImage(item));
       const copy = element('span', undefined, 'poster-copy');
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', item.type || 'Anime'),
         publicPresenceBadge(item.libraryPresence));
       if (item.rating) {
@@ -1216,7 +1246,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
       if (state.airingPreferences?.mode === 'library' && !available) continue;
       const card = discoveryCard(item, item.type || 'Anime', available
         ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
-        : 'Availability not checked', available);
+        : null, available);
       list.append(trackedCard(card, item));
     }
     if (after === 0 && page.orderState === 'score_loading') {
@@ -1311,10 +1341,10 @@ async function loadAiring() {
       const available = item.libraryPresence?.state === 'in_library' &&
         item.libraryPresence.verifiedEpisodeCount > 0;
       if (state.airingPreferences?.mode === 'library' && !available) continue;
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
         element('span', available
-          ? '✓ Show has playable items' : 'Local availability not checked',
+          ? '✓ Show has playable items' : 'Scheduled episode',
         `presence ${available ? 'available' : 'unknown'}`));
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
       button.append(art, copy);
@@ -1456,6 +1486,13 @@ byId('adult-toggle').addEventListener('click', () => {
     void showDetail(item);
   }
 });
+byId('english-title-toggle').addEventListener('click', () => {
+  if (!state.user) return;
+  state.preferEnglish = !state.preferEnglish;
+  try { localStorage.setItem(englishTitlePreferenceKey(state.user.id),
+    state.preferEnglish ? 'on' : 'off'); } catch { /* Applies for this session. */ }
+  applyTitlePreference();
+});
 async function classifySearchCards(searchToken) {
   const userId = state.user?.id;
   const ids = [...document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')]
@@ -1586,7 +1623,7 @@ byId('search-form').addEventListener('submit', async (event) => {
       poster.addEventListener('error', () => poster.remove());
       tile.append(poster);
       const copy = element('span', undefined, 'result-copy');
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', `AniDB ${item.anidbId}`));
       const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
       copy.append(inLibrary && presence?.state !== 'in_library'
@@ -1918,9 +1955,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       state.detailHydrationQueued.delete(item.anidbId);
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
+    const notReleased = data.releaseState === 'upcoming';
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'}${data.regularSchedule?.upcoming ? ` · ${data.regularSchedule.aired} aired, ${data.regularSchedule.upcoming} upcoming` : ''} · AniDB ${item.anidbId}`, 'detail-meta'));
     let refreshAvailabilitySummary = () => {};
-    if (pager) {
+    if (notReleased) panel.append(element('p',
+      'Not yet released. You can request this title now; Negev will watch for its release.',
+      'detail-release-note'));
+    if (pager && !notReleased) {
       const savedCount = data.libraryPresence?.state === 'in_library' &&
         Number.isSafeInteger(data.libraryPresence.verifiedEpisodeCount) &&
         data.libraryPresence.verifiedEpisodeCount > 0
@@ -1969,7 +2010,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         setTimeout(() => { void refreshFullSeason(0); }, 1_000);
       }
     }
-    if (pager?.episodes.length === 0) panel.append(element('p',
+    if (pager?.episodes.length === 0 && !notReleased) panel.append(element('p',
       data.kind === 'movie'
         ? 'AniDB has no exact film entry listed yet. You can save a request; Negev will wait for an exact film entry before any download.'
         : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
@@ -2061,8 +2102,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             ? installment.libraryPresence.verifiedEpisodeCount : 0;
           const availabilityText = relatedDetail
             ? relatedAvailabilityText(relatedDetail) : knownCount > 0
-              ? `${knownCount} verified item${knownCount === 1 ? '' : 's'} in library · checking availability…`
-              : 'Checking availability…';
+              ? `${knownCount} verified item${knownCount === 1 ? '' : 's'} in library · loading details…`
+              : 'Loading title details…';
           copy.append(element('span', availabilityText,
             `related-presence ${availabilityText.startsWith('Available')
               ? 'available' : availabilityText.startsWith('Partial')
@@ -2196,7 +2237,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     let loadNextEpisodePage = null;
     // One explicit check at a time: a pending or incomplete public observation
     // is Unknown, never a claim that an episode is missing.
-    if (pager.episodes.length > 0) {
+    if (pager.episodes.length > 0 && !notReleased) {
       const check = element('div', undefined, 'availability-check');
       if (pager.episodes.some((episode) => episode.availability)) {
         check.append(element('p',
@@ -2425,9 +2466,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       closePopup.addEventListener('click', () => action.close());
       popupHeading.append(headingTitle, closePopup);
       action.append(popupHeading);
-      action.append(element('p',
-        'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only episodes not verified in Plex. Specials stay separate.',
-        'muted'));
+      action.append(element('p', notReleased
+        ? 'Choose one or more installments to watch for their release. Specials stay separate.'
+        : 'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only episodes not verified in Plex. Specials stay separate.',
+      'muted'));
       const chooser = element('details', undefined, 'season-request-chooser');
       chooser.open = true;
       chooser.append(element('summary', 'Choose seasons'));
@@ -2745,6 +2787,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     requestAction.append(element('h2', 'Request this installment'));
     requestAction.append(element('p', data.kind === 'movie'
       ? 'A film request includes one main film entry, not extras or trailers.'
+      : notReleased
+        ? 'This installment has not aired yet. The request will watch for its first episode. Other installments have separate requests.'
       : data.monitorFuture === true
         ? 'This airing installment includes its aired regular episodes and watches for new ones. Other installments have separate requests; Specials can be requested separately.'
         : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
