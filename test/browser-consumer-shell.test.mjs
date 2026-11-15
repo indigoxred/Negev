@@ -853,6 +853,15 @@ test('signed-in consumer routes render real shell with search, library and reque
             availability: 'unknown' }] }));
         return;
       }
+      if (path === '/api/catalogue/9589') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 9589,
+          title: 'The Garden of Words', kind: 'movie', restricted: false,
+          page: 1, total: 1, nextPage: null,
+          episodes: [{ id: 958901, number: 1, type: 'Episode',
+            title: 'Film', availability: 'available' }] }));
+        return;
+      }
       if (path === '/api/catalogue/20291') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 20291,
@@ -1379,6 +1388,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
+      assert.match(detail,
+        /class="related-presence available"[^>]*>Available · 1\/1</,
+        'a related film shows availability on title open');
       assert.match(detail, /A quiet archive and a lost world/);
       assert.match(detail, /Listed episodes/);
       assert.match(detail, /class="detail-main"/,
@@ -1390,6 +1402,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
       assert.match(seriesDetail, /Choose seasons or installments/);
+      assert.match(seriesDetail,
+        /class="related-presence available"[^>]*>Available · 2\/2</,
+        'a related completed season shows its own availability on title open');
+      assert.match(seriesDetail,
+        /class="related-presence partial"[^>]*>Partial · 1\/2</,
+        'a related partial season shows its own availability on title open');
       assert.doesNotMatch(seriesDetail, /Check season availability/);
       assert.match(seriesDetail, /Check selected episode/);
       assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);

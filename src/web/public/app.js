@@ -5,13 +5,13 @@ import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
-import { createFranchiseExplorer, expandFranchiseBatch,
+import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch,
   groupFranchiseItems } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { episodeScheduleLabel } from './episode-schedule.mjs';
-import { canOpenSeasonRequest, seasonRequestStatus,
+import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
@@ -1823,6 +1823,25 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       'muted'));
     const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
       title: data.title || item.title });
+    const relatedDetails = createRelatedDetailCache({ read: (anidbId) =>
+      api(`/api/catalogue/${anidbId}`,
+        { signal: AbortSignal.timeout(5_000) }) });
+    const checkedCards = new Set();
+    const checkCard = (anidbId) => {
+      if (checkedCards.has(anidbId)) return;
+      checkedCards.add(anidbId);
+      void relatedDetails.get(anidbId).then(() => {
+        if (isCurrentDetail()) renderFamily();
+      });
+    };
+    const relatedObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          relatedObserver.unobserve(entry.target);
+          checkCard(Number(entry.target.dataset.anidbId));
+        }
+      }
+    }, { rootMargin: '250px' });
     const relatedButton = element('button', 'Show more related titles', 'text-link related-trigger');
     const relatedList = element('div', undefined, 'related-list');
     let relatedExpanded = false;
@@ -1852,12 +1871,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       installmentSelect.value = String(selectedInstallmentId);
     };
     const renderFamily = () => {
+      relatedObserver.disconnect();
       relatedList.replaceChildren();
       const groups = groupFranchiseItems(family.items(), item.anidbId);
       const capacity = relatedRowCapacity();
       const allRelated = groups.flatMap((group) => group.items);
       const visibleIds = new Set((relatedExpanded ? allRelated :
         allRelated.slice(0, capacity)).map((entry) => entry.anidbId));
+      const firstRowIds = new Set(allRelated.slice(0, capacity).map((entry) =>
+        entry.anidbId));
       const titles = new Map(family.items().map((entry) =>
         [entry.anidbId, entry.title]));
       if (groups.length === 0) relatedList.append(element('p',
@@ -1869,6 +1891,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           if (!visibleIds.has(installment.anidbId)) continue;
           const open = element('button', undefined, 'related-card');
           open.title = installment.title;
+          open.dataset.anidbId = String(installment.anidbId);
           const art = element('span', 'N', 'related-art poster-fallback');
           const image = posterImage(installment);
           image.addEventListener('load', () => art.classList.add('has-poster'));
@@ -1880,17 +1903,26 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           copy.append(element('small', source
             ? `${relation} · via ${source}` : relation, 'related-relation'));
           copy.append(element('strong', installment.title));
-          const count = installment.libraryPresence?.state === 'in_library'
+          const relatedDetail = relatedDetails.peek(installment.anidbId);
+          const knownCount = installment.libraryPresence?.state === 'in_library'
             ? installment.libraryPresence.verifiedEpisodeCount : 0;
-          if (count > 0) copy.append(element('span',
-            `${count} verified item${count === 1 ? '' : 's'} in library`,
-            'related-presence'));
+          const availabilityText = relatedDetail
+            ? relatedAvailabilityText(relatedDetail) : knownCount > 0
+              ? `${knownCount} verified item${knownCount === 1 ? '' : 's'} in library · checking availability…`
+              : 'Checking availability…';
+          copy.append(element('span', availabilityText,
+            `related-presence ${availabilityText.startsWith('Available')
+              ? 'available' : availabilityText.startsWith('Partial')
+                ? 'partial' : 'unconfirmed'}`));
           open.append(art, copy);
           open.addEventListener('click', () => {
             state.searchItems.set(installment.anidbId, installment);
             location.hash = titleRoute(installment.anidbId);
           });
           relatedList.append(open);
+          if (firstRowIds.has(installment.anidbId)) {
+            checkCard(installment.anidbId);
+          } else relatedObserver.observe(open);
         }
       }
       const overflow = allRelated.length > capacity;
@@ -2340,10 +2372,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           active++;
           void (async () => {
             try {
-              const detail = await api(`/api/catalogue/${row.anidbId}`,
-                { signal: AbortSignal.timeout(5_000) });
+              const detail = await relatedDetails.get(row.anidbId);
               if (isCurrentDetail() && rows.get(row.anidbId) === row) {
-                row.detailFailed = false;
+                row.detailFailed = detail.state === 'detail_unavailable';
                 updateRow(row, detail);
               }
             } catch {
@@ -2396,7 +2427,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (entry.anidbId === item.anidbId) {
           updateRow(row, { ...data, episodes: pager.episodes,
             nextPage: pager.nextPage });
-        } else loadRow(row);
+        } else if (relatedDetails.peek(row.anidbId)) {
+          const detail = relatedDetails.peek(row.anidbId);
+          row.detailFailed = detail.state === 'detail_unavailable';
+          updateRow(row, detail);
+        } else if (action.open || rows.size <= 8) loadRow(row);
       };
       syncSeasonRows = () => {
         for (const entry of family.items()) addRow(entry);
@@ -2427,7 +2462,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       trigger.addEventListener('click', () => {
         action.showModal();
         for (const row of rows.values()) {
-          if (row.detailFailed) loadRow(row);
+          if (row.detailFailed || !row.status) loadRow(row);
         }
         if (family.next() && !lastRelatedFailure) {
           if (relatedLoading) expandForOpenPopup = true;
