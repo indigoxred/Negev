@@ -73,6 +73,23 @@ test('pure completion uses separate cursor and checks alongside legacy queue', a
   });
 });
 
+test('pure completion retries an incomplete transfer within one minute', async () => {
+  await fixture(async (ctx) => {
+    const pureMoves = openPureMoveLedger(ctx.dbPath);
+    const pureQueue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+    try {
+      const pure = pureQueue.claimNext({ nowMs: 1_000 });
+      pureQueue.recordResult({ attemptId: pure.attemptId, pass: pure.pass,
+        state: 'held', reason: 'incomplete', checkedMs: 1_000 });
+      assert.equal(pureQueue.getResult(pure.attemptId).nextDueMs, 61_000);
+      const legacy = ctx.queue.claimNext({ nowMs: 1_000 });
+      ctx.queue.recordResult({ attemptId: legacy.attemptId, pass: legacy.pass,
+        state: 'held', reason: 'incomplete', checkedMs: 1_000 });
+      assert.equal(ctx.queue.getResult(legacy.attemptId).nextDueMs, 301_000);
+    } finally { pureQueue.close(); pureMoves.close(); }
+  });
+});
+
 test('pure completion does not revisit a torrent proven outside its staging mount', async () => {
   await fixture(async (ctx) => {
     const pureMoves = openPureMoveLedger(ctx.dbPath);
