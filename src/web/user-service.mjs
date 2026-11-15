@@ -658,7 +658,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ]);
         if (!Array.isArray(page.items)) return page;
         return { ...page, items: page.items.map((item) => ({ ...item,
-          englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+          englishTitle: item.englishTitle ??
+            titleSource?.getEnglishTitle(item.anidbId) ?? null,
           libraryPresence: presence(item.anidbId) })) };
       },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),

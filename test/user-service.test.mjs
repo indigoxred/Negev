@@ -1329,7 +1329,7 @@ test('request history reflects recent title-check proof and loses it on expiry',
       }
       if (endpoint.pathname === '/api/anidb/42') {
         return Response.json({ anidb_id: 42, title: 'Example',
-          type: 'TV Series', restricted: false });
+          title_english: 'English Example', type: 'TV Series', restricted: false });
       }
       if (endpoint.pathname === '/api/anidb/schedule') {
         return Response.json({ period: { week: '2026-W45',
@@ -1370,6 +1370,7 @@ test('request history reflects recent title-check proof and loses it on expiry',
       'temporary title proof does not make a verified Library search match');
     assert.deepEqual((await season()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
+    assert.equal((await season()).englishTitle, 'English Example');
     assert.deepEqual(await airingSeason(), [],
       'a title check alone must not place a show in the library-only Airing view');
     assert.deepEqual(await airingWeek(), [],
