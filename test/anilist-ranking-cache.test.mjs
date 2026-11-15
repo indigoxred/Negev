@@ -64,3 +64,21 @@ test('an outage retains the last good list, but malformed source cannot be cache
     empty.close();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('a repeated exact MAL ID keeps its first higher rank', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'negev-anilist-'));
+  let source;
+  try {
+    source = openAniListRankingCache({ dbPath: join(dir, 'test.sqlite'),
+      now: () => 1_000, fetchImpl: async () => reply(payload([
+        media(52991, 90, 499125), media(5114, 90, 744418),
+        media(52991, 89, 499125)], [media(5114, 90, 744418)])) });
+    const result = await source.read('all');
+    assert.equal(result.state, 'ready');
+    assert.deepEqual(result.score.map(({ malId, rank }) => ({ malId, rank })),
+      [{ malId: 52991, rank: 1 }, { malId: 5114, rank: 2 }]);
+  } finally {
+    source?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

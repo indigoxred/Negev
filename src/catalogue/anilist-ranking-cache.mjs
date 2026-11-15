@@ -38,7 +38,9 @@ function decode(data) {
           throw new TypeError('Invalid AniList item');
         }
         if (item.idMal === null) continue;
-        if (seen.has(item.idMal)) throw new TypeError('Duplicate AniList MAL ID');
+        // AniList can repeat an exact MAL ID in its ranked pages. Keep its
+        // first (higher) position; never infer a replacement by title.
+        if (seen.has(item.idMal)) continue;
         seen.add(item.idMal);
         result.push({ malId: item.idMal, rank: (page - 1) * 50 + offset + 1,
           score: item.averageScore === null ? null : item.averageScore / 10,
