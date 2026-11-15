@@ -529,10 +529,10 @@ async function inspectMobile(url, profile, width = 390) {
             badge: card.querySelector('.presence')?.textContent})))()`,
       });
       await send('Runtime.evaluate', { expression:
-        `document.querySelector('.tracked-title button')?.click()` });
+        `document.querySelector('.tracked-title [data-track-id]')?.click()` });
       await wait(300);
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
-        expression: `document.querySelector('.tracked-title button')?.textContent`,
+        expression: `document.querySelector('.tracked-title [data-track-id]')?.textContent`,
       });
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
