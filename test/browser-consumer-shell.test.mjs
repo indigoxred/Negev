@@ -1464,7 +1464,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(busyDetail, /Request if missing/);
       assert.doesNotMatch(busyDetail, /id="message"[^>]*>Too Many Requests/);
       const alternateFilm = await dump(`${base}/#/title/7`, join(dir, 'alternate-film'));
-      assert.match(alternateFilm, /Available in Plex · 1 verified main film entry/);
+      assert.match(alternateFilm, /Already available · 1 verified main film entry playable in Plex/);
       assert.match(alternateFilm, /Choose one film entry/);
       assert.match(alternateFilm, /Playable in Plex; episode card not linked to this episode/);
       assert.match(alternateFilm, /Request selected film entry/);
