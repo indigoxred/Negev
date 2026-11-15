@@ -8,12 +8,12 @@ test('a verified Special does not become a regular episode or main film claim', 
   const episodes = [{ type: 'Special', availability: 'available' }];
   assert.deepEqual(titleAvailabilitySummary({ kind: 'series', episodes,
     nextPage: 2, verifiedTitleItems: 1 }), {
-    text: 'Some items for this title are verified playable in Plex. Regular-season availability is not confirmed yet; Specials are separate.',
-    available: false });
+    text: 'Availability unconfirmed · Some items for this title are verified playable in Plex, but regular-season availability is not confirmed yet; Specials are separate.',
+    available: false, state: 'unverified' });
   assert.deepEqual(titleAvailabilitySummary({ kind: 'movie', episodes,
     nextPage: 2, verifiedTitleItems: 1 }), {
-    text: 'Some items for this title are verified playable in Plex. A main film entry is not confirmed on this page.',
-    available: false });
+    text: 'Availability unconfirmed · Some items for this title are verified playable in Plex, but a main film entry is not confirmed on this page.',
+    available: false, state: 'unverified' });
 });
 
 test('title headline keeps exact regular-season and main-film proof', () => {
@@ -21,14 +21,14 @@ test('title headline keeps exact regular-season and main-film proof', () => {
     episodes: [{ type: 'Episode', availability: 'available' }],
     nextPage: 2, regularSeason: { verified: 9, total: 12 },
     verifiedTitleItems: 10 }), {
-    text: '9 of 12 regular episodes verified playable in Plex. Specials are separate.',
-    available: true });
+    text: 'Partially available · 9 of 12 regular episodes verified playable in Plex. 3 episodes remain unverified. Specials are separate.',
+    available: true, state: 'partial' });
   assert.deepEqual(titleAvailabilitySummary({ kind: 'movie',
     episodes: [{ type: 'Episode', availability: 'available' },
       { type: 'Special', availability: 'available' }],
     nextPage: null, verifiedTitleItems: 2 }), {
-    text: 'Available in Plex · 1 verified main film entry. Other editions and extras are separate.',
-    available: true });
+    text: 'Already available · 1 verified main film entry playable in Plex. Other editions and extras are separate.',
+    available: true, state: 'available' });
 });
 
 test('an airing season distinguishes aired availability from scheduled entries', () => {
@@ -36,8 +36,27 @@ test('an airing season distinguishes aired availability from scheduled entries',
     nextPage: null, regularSeason: { verified: 40, total: 44 },
     regularSchedule: { aired: 40, upcoming: 4, undated: 0, verifiedAired: 40, total: 44,
       asOf: '2026-11-13' } }), {
-    text: '40 of 40 aired regular episodes verified playable in Plex. 4 upcoming episodes are scheduled; they are not missing downloads. Specials are separate.',
-    available: true });
+    text: 'Available so far · 40 of 40 aired regular episodes verified playable in Plex. 4 upcoming episodes are scheduled; they are not missing downloads. Specials are separate.',
+    available: true, state: 'available' });
+});
+
+test('series and films use the same clear available and unverified vocabulary', () => {
+  const full = titleAvailabilitySummary({ kind: 'series', episodes: [], nextPage: 2,
+    regularSeason: { verified: 12, total: 12 } });
+  assert.match(full.text, /^Already available ·/);
+  assert.equal(full.state, 'available');
+  const unverifiedSeries = titleAvailabilitySummary({ kind: 'series', episodes: [],
+    nextPage: 2, regularSeason: { verified: 0, total: 12 } });
+  assert.match(unverifiedSeries.text, /^Availability unconfirmed ·/);
+  assert.equal(unverifiedSeries.state, 'unverified');
+  const unverifiedFilm = titleAvailabilitySummary({ kind: 'movie', episodes: [
+    { type: 'Episode', availability: 'unknown' }], nextPage: null });
+  assert.match(unverifiedFilm.text, /^Availability unconfirmed ·/);
+  assert.equal(unverifiedFilm.state, 'unverified');
+  const airing = titleAvailabilitySummary({ kind: 'series', episodes: [],
+    nextPage: null, monitorFuture: true, regularSeason: { verified: 6, total: 6 } });
+  assert.match(airing.text, /^Available so far ·/);
+  assert.equal(airing.state, 'available');
 });
 
 test('undated older entries do not claim that zero episodes aired', () => {

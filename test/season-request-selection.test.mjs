@@ -17,6 +17,15 @@ test('complete installment is already available while other seasons remain disco
     showAvailable: false, showTrigger: true, triggerText: 'Watch future episodes' });
 });
 
+test('a partial installment offers completion while unverified installments offer a request', () => {
+  const partial = { anidbId: 239, status: { state: 'partial', selectable: true } };
+  assert.deepEqual(seasonTriggerPresentation([partial], 239, false), {
+    showAvailable: false, showTrigger: true, triggerText: 'Complete season' });
+  const unverified = { anidbId: 239, status: { state: 'unverified', selectable: true } };
+  assert.deepEqual(seasonTriggerPresentation([unverified], 239, false), {
+    showAvailable: false, showTrigger: true, triggerText: 'Request series' });
+});
+
 test('a later season page keeps Request series openable after a full first page', () => {
   const full = [{ status: { selectable: false }, requested: false }];
   assert.equal(canOpenSeasonRequest(full, true), true);
