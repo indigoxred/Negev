@@ -8,6 +8,16 @@ const relatedTitleVariants = (title) => {
   const singular = title.replace(/(\p{L}{3,}[^s])s$/iu, '$1');
   return singular === title ? [title] : [title, singular];
 };
+const roman = { ii: 2, iii: 3, iv: 4, v: 5 };
+const titleSeason = (title) => {
+  const match = /\bseason[ ._-]+(ii|iii|iv|v|[2-9]\d?)\b/i.exec(title) ??
+    /\b([2-9]\d?)(?:nd|rd|th)[ ._-]+season\b/i.exec(title);
+  return match ? (roman[match[1].toLowerCase()] ?? Number(match[1])) : null;
+};
+const releaseSeasons = (name) => [
+  ...name.matchAll(/(?:^|[ ._/-])s0*([2-9]\d?)(?=e\d{1,4}(?:$|[ ._/-])|$|[ ._/-])/gi),
+  ...name.matchAll(/\bseason[ ._-]+([2-9]\d?)\b/gi),
+].map((match) => Number(match[1]));
 
 // A title can be the prefix of a separately listed sequel or side story.
 // Direct AniDB relations provide conservative negative evidence before any
@@ -32,6 +42,18 @@ export function checkRelatedInstallment({ anidbId, requestedTitle, related,
     return held('related_title_unavailable');
   }
   const names = releaseTitle === undefined ? fileNames : [releaseTitle, ...fileNames];
+  const namedSeason = titleSeason(requestedTitle);
+  const hasPrequel = related.items.some((item) =>
+    item.relation?.toLowerCase() === 'prequel');
+  const hasSequel = related.items.some((item) =>
+    item.relation?.toLowerCase() === 'sequel');
+  // Some indexers label a separately catalogued sequel S02 under the first
+  // installment's name. Episode numbers alone must not cross that boundary.
+  if (names.some((name) => releaseSeasons(name).some((season) =>
+    (namedSeason !== null && season !== namedSeason) ||
+    (namedSeason === null && !hasPrequel && hasSequel)))) {
+    return held('related_installment_mismatch');
+  }
   if (related.items.some((item) => {
     const titles = [item.title, ...(item.aliases ?? [])]
       .flatMap(relatedTitleVariants);

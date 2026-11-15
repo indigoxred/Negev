@@ -39,6 +39,32 @@ test('holds a singularized related subtitle from a torrent release', () => {
   { state: 'held', reason: 'related_installment_mismatch' });
 });
 
+test('holds season-two coordinates when AniDB lists the sequel separately', () => {
+  for (const [requestedTitle, sequelTitle, releaseTitle] of [
+    ['Trigun Stampede', 'Trigun Stargaze',
+      'TRIGUN.STAMPEDE.S02E12.QUO.VADIS.1080p.CR.WEB-DL.mkv'],
+    ['The War Ends the World / Raises the World',
+      'Kimi to Boku no Saigo no Senjou Season II',
+      '[SubsPlease] Kimi to Boku no Saigo no Senjou S2 - 08 (1080p).mkv'],
+  ]) {
+    assert.deepEqual(checkRelatedInstallment({ anidbId: 424,
+      requestedTitle, related: { state: 'related_titles', anidbId: 424,
+        items: [{ anidbId: 468, title: sequelTitle, relation: 'Sequel' }] },
+      releaseTitle, fileNames: [releaseTitle] }),
+    { state: 'held', reason: 'related_installment_mismatch' });
+  }
+});
+
+test('keeps a numbered installment eligible when it has a known prequel', () => {
+  const releaseTitle = '[SubsPlease] Kimi to Boku no Saigo no Senjou S2 - 08 (1080p).mkv';
+  assert.deepEqual(checkRelatedInstallment({ anidbId: 468,
+    requestedTitle: 'Kimi to Boku no Saigo no Senjou Season II',
+    related: { state: 'related_titles', anidbId: 468,
+      items: [{ anidbId: 424, title: 'The War Ends the World / Raises the World',
+        relation: 'Prequel' }] }, releaseTitle, fileNames: [releaseTitle] }),
+  { state: 'related_title_clear' });
+});
+
 test('a requested sequel is not rejected merely because it contains the original title', () => {
   assert.deepEqual(checkRelatedInstallment({ anidbId: 468,
     requestedTitle: 'Yokohama Kaidashi Kikou: Quiet Country Cafe',
