@@ -101,6 +101,9 @@ export function openRequestLedger(dbPath) {
 
   const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key,cancelled_ms
     FROM requests WHERE requester_id=? AND request_key=?`);
+  const activeWatch = db.prepare(`SELECT id FROM requests
+    WHERE requester_id=? AND anidb_id=? AND kind='series' AND monitor_future=1
+      AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id LIMIT 1`);
   const insertRequest = db.prepare(`INSERT INTO requests
     (requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
     VALUES (?,?,?,?,?,?,?,?,?,'held',?)`);
@@ -283,6 +286,12 @@ export function openRequestLedger(dbPath) {
       return { state: 'held', reason: REASON, requestId: existing.id,
         targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
     },
+    findActiveWatch({ requesterId, anidbId }) {
+      if (![requesterId, anidbId].every((id) => Number.isSafeInteger(id) && id > 0)) {
+        throw new TypeError('Invalid active watch lookup');
+      }
+      return activeWatch.get(requesterId, anidbId)?.id ?? null;
+    },
     submit({ requesterId, requestKey, commandKey = null, intent, nowMs }) {
       if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
           typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
@@ -303,6 +312,12 @@ export function openRequestLedger(dbPath) {
           }
           return { state: 'held', reason: REASON, requestId: existing.id,
             targetIds: findLinks.all(existing.id).map((row) => row.id), created: false };
+        }
+        if (item.kind === 'series' && item.monitorFuture) {
+          const watch = activeWatch.get(requesterId, item.anidbId);
+          if (watch) return { state: 'held', reason: 'already_monitored',
+            requestId: watch.id,
+            targetIds: findLinks.all(watch.id).map((row) => row.id), created: false };
         }
         const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.title, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);

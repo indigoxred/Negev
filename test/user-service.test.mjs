@@ -805,15 +805,17 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       headers: auth(cookie, csrf), payload: { anidbId: 1234,
         scope: 'installment', requestKey: 'future-only' } });
     assert.equal(future.statusCode, 202, future.body);
-    assert.deepEqual(future.json().targetIds, []);
+    assert.equal(future.json().requestId, id);
+    assert.equal(future.json().reason, 'already_monitored');
+    assert.equal(future.json().created, false);
     const futureRead = await service.app.inject({ method: 'GET',
       url: `/api/requests/${future.json().requestId}`, headers: { cookie } });
-    assert.deepEqual(futureRead.json().episodeIds, []);
+    assert.deepEqual(futureRead.json().episodeIds, [1001, 1002]);
     assert.equal(futureRead.json().monitorFuture, true);
     const futureHistory = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.deepEqual(futureHistory.json().items[0].progress, { state: 'saved',
-      targetCount: 0, privateVerifiedTargets: 0, activeAttempts: 0,
+      targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
       reviewRequired: false, publicAvailability: 'unverified' });
     await service.close();
     service = await createUserService({ ...config, fetchImpl: async () => {

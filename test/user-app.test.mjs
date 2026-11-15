@@ -105,6 +105,10 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
     acquisitionAllowedAnidbIds: [1234],
     loadDetail: async ({ anidbId }) => ({ state: 'details', anidbId,
       kind: 'series', restricted: false, episodes: [], nextPage: null }),
+    findActiveWatch: ({ requesterId, anidbId }) => {
+      assert.equal(requesterId, 7);
+      return anidbId === 1234 ? 17 : null;
+    },
     submitRequest: async (input) => { submitted.push(input); return {
       state: 'held', requestId: 1, reason: 'test_request' }; },
     readRequest: () => null });
@@ -120,7 +124,9 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
     const closedDetail = await app.inject({ method: 'GET', url: '/api/catalogue/1235',
       headers: { cookie } });
     assert.equal(openDetail.json().requestsOpen, true);
+    assert.equal(openDetail.json().activeWatchRequestId, 17);
     assert.equal(closedDetail.json().requestsOpen, false);
+    assert.equal(closedDetail.json().activeWatchRequestId, null);
     const blocked = await app.inject({ method: 'POST', url: '/api/requests',
       headers, payload: { anidbId: 1235, scope: 'installment', requestKey: 'outside' } });
     assert.equal(blocked.statusCode, 409);

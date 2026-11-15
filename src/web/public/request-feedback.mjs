@@ -16,6 +16,9 @@ export function requestFailureMessage(error) {
 
 export function savedRequestMessage(saved) {
   const hasId = Number.isSafeInteger(saved?.requestId) && saved.requestId > 0;
+  if (saved?.reason === 'already_monitored') {
+    return `Future episodes are already monitored by your request${hasId ? ` #${saved.requestId}` : ''}. View it under My Requests.`;
+  }
   const receipt = hasId
     ? `Request #${saved.requestId} saved.` : 'Request saved.';
   if (saved?.state === 'pending' && saved.waitingFor === 'release_schedule') {

@@ -35,6 +35,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   localOrigin = null, secureCookies = true,
   now = Date.now, submitRequest, queuePendingTitle,
   cancelRequest, reviewHeldRequest, readRequest, listRequests,
+  findActiveWatch = () => null,
   listPendingTitles, readPendingTitle, readPendingTitleByKey,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
@@ -665,14 +666,17 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       acquisitionAllowedAnidbIds.includes(id);
     const ownershipOpen = !ownershipGate ||
       ownershipGate.status(id) === 'eligible';
+    const activeWatchRequestId = findActiveWatch({
+      requesterId: request.negevUser.id, anidbId: id });
     if (result.state === 'detail_pending') return { state: 'detail_pending',
       anidbId: id, requestable: false,
+      activeWatchRequestId,
       requestsOpen: requestsOpen && ownershipOpen };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     if (!request.negevUser.adultAllowed && result.restricted !== false) {
       return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
-    return { ...result, requestable: false,
+    return { ...result, requestable: false, activeWatchRequestId,
       requestsOpen: requestsOpen && ownershipOpen };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,

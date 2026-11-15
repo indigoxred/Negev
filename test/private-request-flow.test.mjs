@@ -121,11 +121,9 @@ test('private search to exact held request never dispatches acquisition', async 
     const laterRequest = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'submission-2' } });
     assert.equal(laterRequest.statusCode, 202);
-    const laterSaved = await service.app.inject({ method: 'GET',
-      url: `/api/requests/${laterRequest.json().requestId}`, headers: auth });
-    // A new request after the stated final episode aired is one-time. The
-    // existing watch stays open until an explicit end date is published.
-    assert.equal(laterSaved.json().monitorFuture, false);
+    assert.equal(laterRequest.json().requestId, requestId);
+    assert.equal(laterRequest.json().reason, 'already_monitored');
+    assert.equal(laterRequest.json().created, false);
     assert.equal(methods.every((entry) => entry.startsWith('GET ')), true);
     const forged = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'forged', releaseState: 'completed', requesterId: 999 } });
@@ -136,8 +134,8 @@ test('private search to exact held request never dispatches acquisition', async 
     airDate = null;
     const unknown = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'unknown' } });
-    assert.equal(unknown.statusCode, 409);
-    assert.equal(unknown.json().reason, 'release_state_unknown');
+    assert.equal(unknown.statusCode, 202);
+    assert.equal(unknown.json().reason, 'already_monitored');
     airDate = '2026-10-01';
     restricted = true;
     const adult = await service.app.inject({ method: 'POST', url: '/api/requests',
@@ -146,8 +144,8 @@ test('private search to exact held request never dispatches acquisition', async 
     restricted = null;
     const blocked = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth, payload: { ...body, requestKey: 'unverified-age' } });
-    assert.equal(blocked.statusCode, 409);
-    assert.equal(blocked.json().reason, 'restricted_or_unverified');
+    assert.equal(blocked.statusCode, 202);
+    assert.equal(blocked.json().reason, 'already_monitored');
   } finally {
     await service.close();
     assert.equal(path.dirname(path.resolve(dir)), base);

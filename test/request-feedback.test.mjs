@@ -27,4 +27,7 @@ test('saved request feedback explains uncertain catalogue dates without assuming
   'Request #7 saved. Negev is checking catalogue dates and episodes. No download has started. Follow it under My Requests.');
   assert.equal(savedRequestMessage({ state: 'held', requestId: 13 }),
     'Request #13 saved. View its progress under My Requests.');
+  assert.equal(savedRequestMessage({ state: 'held', requestId: 13,
+    reason: 'already_monitored' }),
+  'Future episodes are already monitored by your request #13. View it under My Requests.');
 });
