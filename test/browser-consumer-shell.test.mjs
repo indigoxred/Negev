@@ -1395,7 +1395,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);
       assert.doesNotMatch(seriesDetail, /Recheck unknown entries in background/);
       assert.match(seriesDetail, /class="season-request-row"/);
-      assert.doesNotMatch(seriesDetail, /Already available/);
+      assert.match(seriesDetail, /Watch future episodes/);
       const upcomingDetail = await dump(`${base}/#/title/19742`,
         join(dir, 'upcoming-detail'));
       assert.match(upcomingDetail, /40 of 40 aired regular episodes verified playable in Plex/);
