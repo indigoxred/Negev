@@ -32,23 +32,23 @@ export function seasonAvailabilityText(season, schedule) {
 }
 
 export function titleAvailabilitySummary({ kind, episodes, nextPage,
-  regularSeason, regularSchedule, verifiedTitleItems = 0 }) {
+  regularSeason, regularSchedule, monitorFuture = false, verifiedTitleItems = 0 }) {
   const pageCount = episodes.filter((episode) =>
     episode.availability === 'available').length;
   const titleHasProof = verifiedTitleItems > 0 || pageCount > 0;
   if (kind === 'movie') {
     const film = summarizeFilmAvailability({ kind, episodes, nextPage });
     if (film.available) return {
-      text: `Available in Plex · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'}. Other editions and extras are separate.`,
-      available: true };
+      text: `Already available · ${film.verified} verified main film entr${film.verified === 1 ? 'y' : 'ies'} playable in Plex. Other editions and extras are separate.`,
+      available: true, state: 'available' };
     if (titleHasProof) return {
-      text: 'Some items for this title are verified playable in Plex. A main film entry is not confirmed on this page.',
-      available: false };
+      text: 'Availability unconfirmed · Some items for this title are verified playable in Plex, but a main film entry is not confirmed on this page.',
+      available: false, state: 'unverified' };
     if (film.total > 0) return {
       text: film.completeList
-        ? 'No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
-        : 'No main film entry on this page is verified playable in Plex. More entries remain to load.',
-      available: false };
+        ? 'Availability unconfirmed · No main film entry is currently verified playable in Plex. This does not establish that it is missing.'
+        : 'Availability unconfirmed · No main film entry on this page is verified playable in Plex. More entries remain to load.',
+      available: false, state: 'unverified' };
   }
   if (kind === 'series') {
     const validFull = Number.isSafeInteger(regularSeason?.total) &&
@@ -57,17 +57,37 @@ export function titleAvailabilitySummary({ kind, episodes, nextPage,
       regularSeason.verified <= regularSeason.total;
     const season = validFull ? regularSeason :
       summarizeSeasonAvailability({ kind, episodes, nextPage });
-    if (season?.total > 0) return {
-      text: validFull || season.completeList
-        ? seasonAvailabilityText(season, regularSchedule)
-        : `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`,
-      available: season.verified > 0 };
+    if (season?.total > 0) {
+      const completeCount = validFull || season.completeList;
+      const airedComplete = regularSchedule?.total === season.total &&
+        regularSchedule.upcoming > 0 && regularSchedule.aired > 0 &&
+        regularSchedule.verifiedAired === regularSchedule.aired;
+      const label = !completeCount ? season.verified > 0
+        ? 'Partially verified' : 'Availability unconfirmed'
+        : airedComplete ? 'Available so far'
+          : season.verified === season.total ? monitorFuture
+            ? 'Available so far' : 'Already available'
+            : season.verified > 0 ? 'Partially available' : 'Availability unconfirmed';
+      const missingCount = completeCount && season.verified > 0 &&
+        season.verified < season.total && !regularSchedule?.upcoming
+        ? ` ${season.total - season.verified} episode${season.total - season.verified === 1 ? ' remains' : 's remain'} unverified.` : '';
+      const description = completeCount
+        ? seasonAvailabilityText(season, regularSchedule).replace(
+          / Specials are separate\.$/, `${missingCount} Specials are separate.`)
+        : `${season.verified} regular episodes on this page verified playable in Plex. More episodes remain to load.`;
+      return {
+        text: `${label} · ${description}`,
+        available: season.verified > 0,
+        state: season.verified === 0 ? 'unverified' :
+          label === 'Already available' || label === 'Available so far'
+            ? 'available' : 'partial' };
+    }
     if (titleHasProof) return {
-      text: 'Some items for this title are verified playable in Plex. Regular-season availability is not confirmed yet; Specials are separate.',
-      available: false };
+      text: 'Availability unconfirmed · Some items for this title are verified playable in Plex, but regular-season availability is not confirmed yet; Specials are separate.',
+      available: false, state: 'unverified' };
   }
-  return { text: 'Current Plex availability has not been verified for this title.',
-    available: false };
+  return { text: 'Availability unconfirmed · Current Plex availability has not been verified for this title.',
+    available: false, state: 'unverified' };
 }
 
 export function summarizeFilmAvailability({ kind, episodes, nextPage }) {

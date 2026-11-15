@@ -1778,10 +1778,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           episodes: pager.episodes, nextPage: pager.nextPage,
           regularSeason: data.regularSeason,
           regularSchedule: data.regularSchedule,
+          monitorFuture: data.monitorFuture,
           verifiedTitleItems: savedCount });
         summary.textContent = headline.text;
-        summary.className = headline.available
-          ? 'presence available' : 'presence unknown';
+        summary.className = `presence ${headline.state}`;
       };
       refreshAvailabilitySummary();
       panel.append(summary);
