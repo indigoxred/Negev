@@ -588,7 +588,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           }
           const checkedMs = now();
           return { ...result, items: result.items.map((item) => {
-            return { ...item, libraryPresence:
+            return { ...item,
+              englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+              libraryPresence:
               publicPresenceForTitle(item.anidbId, checkedMs),
               verifiedLibraryPresence: libraryPresenceForTitle(item.anidbId) };
           }) };
@@ -616,16 +618,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           const page = fileProofs.listCurrentTitles({ afterAnidbId, limit });
           return { state: 'current_proofs',
             items: page.items.map((item) => ({ ...item,
+              englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
               title: titleSource?.getTitle(item.anidbId) ??
                 titleRegistry.getTitle({ anidbId: item.anidbId }) ??
                 `Anime title unavailable (${item.anidbId})` })),
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
       listAiringSchedule: async ({ airingPreference } = {}) => {
-        const schedule = await weeklySchedule.read();
+        const [schedule] = await Promise.all([
+          weeklySchedule.read(), titleSource?.refresh(),
+        ]);
         if (!Array.isArray(schedule.items)) return schedule;
         const tracked = new Set(airingPreference?.trackedAnidbIds ?? []);
         const items = schedule.items.map((item) => ({ ...item,
+          englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
           libraryPresence: libraryPresenceForTitle(item.anidbId) }));
         return { ...schedule, items: items.filter((item) =>
           airingPreference?.mode === 'custom' ? tracked.has(item.anidbId)
@@ -641,11 +647,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           : undefined;
         const eligibleIds = airingPreference?.mode === 'custom'
           ? new Set(airingPreference.trackedAnidbIds) : undefined;
-        const page = await seasonalCatalogue.read({ ...input,
-          ...(eligibleTitle ? { eligibleTitle } : {}),
-          ...(eligibleIds ? { eligibleIds } : {}) });
+        const [page] = await Promise.all([
+          seasonalCatalogue.read({ ...input,
+            ...(eligibleTitle ? { eligibleTitle } : {}),
+            ...(eligibleIds ? { eligibleIds } : {}) }),
+          titleSource?.refresh(),
+        ]);
         if (!Array.isArray(page.items)) return page;
         return { ...page, items: page.items.map((item) => ({ ...item,
+          englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
           libraryPresence: presence(item.anidbId) })) };
       },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),

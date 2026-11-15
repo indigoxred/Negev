@@ -367,7 +367,7 @@ test('opt-in AniDB dump search finds an unowned title and marks stale results', 
   let dumpAvailable = true;
   let shokoSearches = 0;
   let time = 1_000;
-  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n');
+  const dump = gzipSync('# aid|type|language|title\n4158|1|x-jat|Pale Cocoon\n4158|4|en|The Pale Cocoon\n');
   const service = await createUserService({ dbPath,
     shokoBaseUrl: 'http://shoko.internal:8111', shokoApiKey: 'synthetic-shoko-key',
     sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
@@ -389,7 +389,11 @@ test('opt-in AniDB dump search finds an unowned title and marks stale results', 
       url: '/api/catalogue/search?q=Pale', headers: { cookie } });
     assert.equal(broad.statusCode, 200, broad.body);
     assert.equal(broad.json().items[0].anidbId, 4158);
+    assert.equal(broad.json().items[0].englishTitle, 'The Pale Cocoon');
     assert.equal(broad.json().catalogueSource, 'anidb_dump');
+    const english = await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/search?q=The%20Pale%20Cocoon', headers: { cookie } });
+    assert.equal(english.json().items[0].anidbId, 4158);
     assert.equal(shokoSearches, 0);
     dumpAvailable = false;
     time += 86_400_000;

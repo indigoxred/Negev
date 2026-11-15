@@ -24,6 +24,8 @@ test('a validated title dump survives restart and an AniDB outage', async () => 
   assert.deepEqual(await restarted.refresh(), { state: 'stale', titles: 1 });
   assert.equal(restarted.search({ query: 'English Name' }).items[0].anidbId, 17);
   assert.equal(restarted.getTitle(17), 'Main Name');
+  assert.equal(restarted.getEnglishTitle(17), 'English Name');
+  assert.equal(restarted.getEnglishTitle(18), null);
   assert.equal(restarted.getTitle(18), null);
 });
 

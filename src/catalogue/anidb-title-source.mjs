@@ -154,6 +154,10 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
       return Number.isSafeInteger(anidbId) && anidbId > 0
         ? index?.get(anidbId)?.title ?? null : null;
     },
+    getEnglishTitle(anidbId) {
+      return Number.isSafeInteger(anidbId) && anidbId > 0
+        ? index?.get(anidbId)?.englishTitle ?? null : null;
+    },
     releaseQueries(anidbId) {
       return Number.isSafeInteger(anidbId) && anidbId > 0
         ? [...(index?.get(anidbId)?.releaseQueries ?? [])] : [];

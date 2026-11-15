@@ -32,7 +32,7 @@ const state = { csrf: null, user: null, selected: null,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
   requestScope: 'mine',
-  showAdult: true, usersLoaded: false,
+  showAdult: true, preferEnglish: false, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
 const requestResponses = {
@@ -69,6 +69,28 @@ function element(tag, text, className) {
   if (text !== undefined) node.textContent = text;
   if (className) node.className = className;
   return node;
+}
+function titleLabel(item) {
+  const english = item.englishTitle?.trim();
+  const label = element('strong', state.preferEnglish && english || item.title);
+  if (english && english !== item.title) {
+    label.dataset.originalTitle = item.title;
+    label.dataset.englishTitle = english;
+    label.title = state.preferEnglish ? `Original: ${item.title}` : `English: ${english}`;
+  }
+  return label;
+}
+function applyTitlePreference() {
+  const toggle = byId('english-title-toggle');
+  toggle.textContent = `English titles: ${state.preferEnglish ? 'On' : 'Off'}`;
+  toggle.setAttribute('aria-pressed', String(state.preferEnglish));
+  for (const label of document.querySelectorAll('[data-english-title]')) {
+    label.textContent = state.preferEnglish
+      ? label.dataset.englishTitle : label.dataset.originalTitle;
+    label.title = state.preferEnglish
+      ? `Original: ${label.dataset.originalTitle}`
+      : `English: ${label.dataset.englishTitle}`;
+  }
 }
 function updateTrackControls() {
   for (const button of document.querySelectorAll('[data-track-id]')) {
@@ -200,6 +222,11 @@ function adultPreferenceKey(userId) { return `negev:show-adult:${userId}`; }
 function readAdultPreference(userId) {
   try { return localStorage.getItem(adultPreferenceKey(userId)) !== 'off'; }
   catch { return true; }
+}
+function englishTitlePreferenceKey(userId) { return `negev:english-titles:${userId}`; }
+function readEnglishTitlePreference(userId) {
+  try { return localStorage.getItem(englishTitlePreferenceKey(userId)) === 'on'; }
+  catch { return false; }
 }
 function markAdult(node, item, { hideUnknown = false } = {}) {
   node.dataset.anidbId = String(item.anidbId);
@@ -388,6 +415,7 @@ function showSession(data) {
   void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
   state.showAdult = data.user.adultAllowed !== false &&
     readAdultPreference(data.user.id);
+  state.preferEnglish = readEnglishTitlePreference(data.user.id);
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
   state.detailLoad = data.capabilities?.detailLoad === true;
@@ -404,6 +432,7 @@ function showSession(data) {
   byId('identity').hidden = false;
   byId('adult-toggle').hidden = false;
   applyAdultVisibility();
+  applyTitlePreference();
   byId('username').textContent = data.user.username;
   byId('invite').hidden = data.user.role !== 'admin';
   byId('admin-link').hidden = data.user.role !== 'admin';
@@ -856,7 +885,7 @@ function discoveryCard(item, note, badge, available = false) {
   poster.addEventListener('load', () => frame.classList.add('has-poster'));
   frame.append(poster);
   const copy = element('span', undefined, 'poster-copy');
-  copy.append(element('strong', item.title), element('small', note),
+  copy.append(titleLabel(item), element('small', note),
     element('span', badge, `badge ${available ? 'ready' : 'unknown'}`));
   if (item.rating) {
     const members = new Intl.NumberFormat('en', { notation: 'compact',
@@ -1107,7 +1136,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       const frame = element('span', undefined, 'poster-frame');
       frame.append(posterImage(item));
       const copy = element('span', undefined, 'poster-copy');
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', item.type || 'Anime'),
         publicPresenceBadge(item.libraryPresence));
       if (item.rating) {
@@ -1311,7 +1340,7 @@ async function loadAiring() {
       const available = item.libraryPresence?.state === 'in_library' &&
         item.libraryPresence.verifiedEpisodeCount > 0;
       if (state.airingPreferences?.mode === 'library' && !available) continue;
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', `Episode ${item.episodeNumber} · scheduled ${item.scheduledDate}`),
         element('span', available
           ? '✓ Show has playable items' : 'Local availability not checked',
@@ -1456,6 +1485,13 @@ byId('adult-toggle').addEventListener('click', () => {
     void showDetail(item);
   }
 });
+byId('english-title-toggle').addEventListener('click', () => {
+  if (!state.user) return;
+  state.preferEnglish = !state.preferEnglish;
+  try { localStorage.setItem(englishTitlePreferenceKey(state.user.id),
+    state.preferEnglish ? 'on' : 'off'); } catch { /* Applies for this session. */ }
+  applyTitlePreference();
+});
 async function classifySearchCards(searchToken) {
   const userId = state.user?.id;
   const ids = [...document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')]
@@ -1586,7 +1622,7 @@ byId('search-form').addEventListener('submit', async (event) => {
       poster.addEventListener('error', () => poster.remove());
       tile.append(poster);
       const copy = element('span', undefined, 'result-copy');
-      copy.append(element('strong', item.title),
+      copy.append(titleLabel(item),
         element('small', `AniDB ${item.anidbId}`));
       const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
       copy.append(inLibrary && presence?.state !== 'in_library'
