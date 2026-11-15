@@ -527,12 +527,16 @@ async function inspectMobile(url, profile, width = 390) {
           .map((card) => ({title: card.querySelector('strong')?.textContent,
             badge: card.querySelector('.presence')?.textContent})))()`,
       });
+      await send('Page.navigate', { url: url.replace('#/discover', '#/title/19847') });
+      await wait(800);
       await send('Runtime.evaluate', { expression:
-        `document.querySelector('.tracked-title [data-track-id]')?.click()` });
+        `document.querySelector('#detail .detail-action-row [data-track-id]')?.click()` });
       await wait(300);
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
-        expression: `document.querySelector('.tracked-title [data-track-id]')?.textContent`,
+        expression: `document.querySelector('#detail .detail-action-row [data-track-id]')?.textContent`,
       });
+      await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
+      await wait(800);
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'custom'; mode.dispatchEvent(new Event('change'));
