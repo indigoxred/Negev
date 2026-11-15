@@ -1473,12 +1473,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       const specialOnlySeries = await dump(`${base}/#/title/9`,
         join(dir, 'special-only-series'));
       assert.match(specialOnlySeries,
-        /Regular-season availability is not confirmed yet; Specials are separate/);
+        /regular-season availability is not confirmed yet; Specials are separate/i);
       assert.doesNotMatch(specialOnlySeries, /1 episode verified playable/);
       const filmExtrasOnly = await dump(`${base}/#/title/8`,
         join(dir, 'film-extras-only'));
       assert.match(filmExtrasOnly,
-        /A main film entry is not confirmed on this page/);
+        /a main film entry is not confirmed on this page/i);
       assert.doesNotMatch(filmExtrasOnly, /1 film entry verified playable/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
