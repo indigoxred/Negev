@@ -1,5 +1,5 @@
 const messages = {
-  release_state_unknown: 'Negev could not confirm when this title starts airing. Please try again when its release date is listed.',
+  release_state_unknown: 'Negev could not confirm this title’s release timing from catalogue dates. Please try again shortly.',
   invalid_episode_selection: 'The episode selection changed. Refresh this title and choose again.',
   episode_not_aired: 'That episode has not aired yet. Request the series to watch for future episodes.',
   already_available: 'This installment is already available in Negev’s Library.',
@@ -19,7 +19,7 @@ export function savedRequestMessage(saved) {
   const receipt = hasId
     ? `Request #${saved.requestId} saved.` : 'Request saved.';
   if (saved?.state === 'pending' && saved.waitingFor === 'release_schedule') {
-    return `${receipt} Negev will watch for the release schedule and first episode. Follow it under My Requests.`;
+    return `${receipt} Negev is checking catalogue dates and episodes. No download has started. Follow it under My Requests.`;
   }
   if (saved?.state === 'pending') {
     return `${receipt} Negev will check the episode list and library before any download. Follow it under My Requests.`;

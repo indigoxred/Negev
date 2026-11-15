@@ -4,7 +4,7 @@ import { requestFailureMessage, savedRequestMessage } from '../src/web/public/re
 
 test('request feedback explains an unverified release date without leaking a reason code', () => {
   assert.equal(requestFailureMessage(new Error('release_state_unknown')),
-    'Negev could not confirm when this title starts airing. Please try again when its release date is listed.');
+    'Negev could not confirm this title’s release timing from catalogue dates. Please try again shortly.');
 });
 
 test('request feedback explains a changed selection and has a safe generic fallback', () => {
@@ -19,12 +19,12 @@ test('request feedback explains a changed selection and has a safe generic fallb
     'The request could not be saved. Please try again.');
 });
 
-test('saved request feedback distinguishes a pending release schedule', () => {
+test('saved request feedback explains uncertain catalogue dates without assuming a future release', () => {
   assert.equal(savedRequestMessage({ state: 'pending', waitingFor: 'release_schedule' }),
-    'Request saved. Negev will watch for the release schedule and first episode. Follow it under My Requests.');
+    'Request saved. Negev is checking catalogue dates and episodes. No download has started. Follow it under My Requests.');
   assert.equal(savedRequestMessage({ state: 'pending', requestId: 7,
     waitingFor: 'release_schedule' }),
-  'Request #7 saved. Negev will watch for the release schedule and first episode. Follow it under My Requests.');
+  'Request #7 saved. Negev is checking catalogue dates and episodes. No download has started. Follow it under My Requests.');
   assert.equal(savedRequestMessage({ state: 'held', requestId: 13 }),
     'Request #13 saved. View its progress under My Requests.');
 });

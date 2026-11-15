@@ -875,7 +875,8 @@ async function loadPreparations(silent = false, append = false) {
       const heading = element('div');
       heading.append(element('strong', item.title),
         element('small', item.reason === 'release_state_unknown'
-          ? 'Waiting for release schedule' : 'Preparing episode details'));
+          ? 'Checking catalogue release dates' : 'Preparing episode details'),
+        element('small', `Requested by ${item.requesterName || 'your account'}`));
       const open = element('a', 'View title →', 'text-link');
       open.href = titleRoute(item.anidbId);
       heading.append(open);
@@ -902,7 +903,7 @@ async function loadPreparations(silent = false, append = false) {
         : item.state === 'resolving'
           ? 'Finishing the request. Cancellation is unavailable during this step.'
           : item.reason === 'release_state_unknown'
-            ? 'Waiting for a release date and first episode before any download.'
+            ? 'Negev cannot confirm this title’s release timing yet. No download has started.'
             : 'Waiting for a verified episode list before any download.',
       'muted'));
       rows.append(row);
