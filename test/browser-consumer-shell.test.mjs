@@ -20,6 +20,7 @@ const assets = new Map([
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
+    'title-preference.mjs',
     'season-request-selection.mjs', 'episode-schedule.mjs',
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']
@@ -1085,6 +1086,24 @@ test('signed-in consumer routes render real shell with search, library and reque
           tags: [] }));
         return;
       }
+      if (path === '/api/catalogue/99999/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 99999,
+          title: 'Chainsaw Man the Movie: Reze Arc',
+          englishTitle: 'Chainsaw Man the Movie: Reze Arc',
+          type: 'Movie', restricted: false, tags: [] }));
+        return;
+      }
+      if (path === '/api/catalogue/99999') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'details', anidbId: 99999,
+          title: 'Chainsaw Man the Movie: Reze Arc',
+          originalTitle: 'Chainsaw Man: Reze-hen', kind: 'movie',
+          restricted: false, page: 1, total: 1, nextPage: null,
+          episodes: [{ id: 9999901, number: 1, type: 'Episode',
+            title: 'Movie', availability: 'unknown' }] }));
+        return;
+      }
       if (path === '/api/catalogue/99' || path === '/api/catalogue/98') {
         const secondPage = new URL(request.url, 'http://localhost')
           .searchParams.get('page') === '2';
@@ -1418,6 +1437,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(detail, /Recheck unknown entries in background/);
       assert.match(detail, /Episode and Special options/);
       assert.doesNotMatch(detail, /Choose a season or installment/);
+      const originalTitleDetail = await dump(`${base}/#/title/99999`,
+        join(dir, 'original-title-detail'));
+      assert.match(originalTitleDetail,
+        /class="detail-title"[^>]*>Chainsaw Man: Reze-hen<\/h1>/,
+        'English titles off keeps the AniDB main title on an opened title');
+      assert.doesNotMatch(originalTitleDetail,
+        /class="detail-title"[^>]*>Chainsaw Man the Movie: Reze Arc<\/h1>/);
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
       assert.match(seriesDetail, /Choose seasons or installments/);

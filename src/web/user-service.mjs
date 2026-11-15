@@ -686,6 +686,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const detail = await loadFastDetail(input);
         if (detail?.state !== 'details' || !Array.isArray(detail.episodes) ||
             detail.episodes.length > 100) return detail;
+        const originalTitle = titleSource?.getTitle(detail.anidbId) ?? null;
         const releaseState = requestReleaseState(detail, today());
         const requestMode = detail.nextPage === null && detail.complete === true
           ? { monitorFuture: ['airing', 'upcoming'].includes(releaseState) }
@@ -693,7 +694,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         // A confirmed future premiere has no public episode availability to
         // inspect. Keep the request/watch path, but skip Plex evidence work.
         if (releaseState === 'upcoming' || !plexObserver) {
-          return { ...detail, releaseState, ...requestMode };
+          return { ...detail, originalTitle, releaseState, ...requestMode };
         }
         const checkedMs = now();
         const index = detail.kind === 'series'
@@ -727,7 +728,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const regularSchedule = regularEpisodes === null ? null :
           regularEpisodeSchedule({ episodes: regularEpisodes, asOf: scheduleAsOf,
             verifiedIds });
-        return { ...detail, releaseState, ...requestMode,
+        return { ...detail, originalTitle, releaseState, ...requestMode,
           scheduleAsOf,
           ...(regularSeason === null ? {} : { regularSeason }),
           ...(regularSchedule === null ? {} : { regularSchedule }),

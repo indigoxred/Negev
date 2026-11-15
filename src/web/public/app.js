@@ -15,6 +15,7 @@ import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
+import { detailOriginalTitle } from './title-preference.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
 
@@ -1936,19 +1937,20 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const detailPoster = posterImage(item);
     detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
     detailArt.append(detailPoster);
+    const originalTitle = detailOriginalTitle(item, data);
     panel.replaceChildren(detailArt,
-      titleLabel({ title: data.title || item.title,
+      titleLabel({ title: originalTitle,
         englishTitle: item.englishTitle },
       { tag: 'h1', className: 'detail-title' }));
-    trackDetail.dataset.trackTitle = data.title || item.title;
+    trackDetail.dataset.trackTitle = originalTitle;
     state.searchItems.set(item.anidbId, {
       ...item, ...state.searchItems.get(item.anidbId),
-      title: data.title || item.title,
+      title: originalTitle,
       ...(typeof data.restricted === 'boolean' ? { adult: data.restricted } : {}) });
     updateTrackControls();
     setPendingTitleKind(earlyRequest, { title: data.title || item.title }, data.kind);
     panel.append(displaySummary);
-    void displayRead.then((display) => renderDisplay(display, data.title || item.title));
+    void displayRead.then((display) => renderDisplay(display, originalTitle));
     if (data.state === 'detail_pending') {
       panel.append(element('p', requestAccess
         ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
