@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canOpenSeasonRequest, seasonRequestStatus, seasonSelectionSummary,
+import { canOpenSeasonRequest, relatedAvailabilityText,
+  seasonRequestStatus, seasonSelectionSummary,
   seasonTriggerPresentation } from '../src/web/public/season-request-selection.mjs';
 
 test('complete installment is already available while other seasons remain discoverable', () => {
@@ -37,6 +38,9 @@ test('a later season page keeps Request series openable after a full first page'
 
 test('season rows distinguish available, partial, unconfirmed and future without claiming files missing', () => {
   const base = { kind: 'series', episodes: [], nextPage: null };
+  assert.deepEqual(seasonRequestStatus({ ...base, releaseState: 'upcoming',
+    regularSeason: { verified: 0, total: 12 } }),
+  { state: 'upcoming', text: 'Not yet released · request can be saved', selectable: true });
   assert.deepEqual(seasonRequestStatus({ ...base, regularSeason: { verified: 12, total: 12 } }),
     { state: 'available', text: 'Available · 12/12', selectable: false });
   assert.deepEqual(seasonRequestStatus({ ...base, regularSeason: { verified: 5, total: 12 } }),
@@ -56,6 +60,15 @@ test('season rows distinguish available, partial, unconfirmed and future without
     regularSeason: { verified: 0, total: 11 } }),
     { state: 'unverified', text: 'Availability unconfirmed · 0/11 verified · requests not open yet', selectable: false });
   assert.equal(seasonRequestStatus({ ...base, kind: 'movie' }), null);
+});
+
+test('an unreleased installment has no availability language in its related row or review', () => {
+  const upcoming = { kind: 'series', state: 'details', releaseState: 'upcoming',
+    episodes: [], nextPage: null };
+  assert.equal(relatedAvailabilityText(upcoming), 'Not yet released');
+  assert.equal(seasonSelectionSummary([{ title: 'Future Season',
+    status: seasonRequestStatus(upcoming) }]),
+  'Future Season · watch for release and future episodes');
 });
 
 test('future scheduled entries do not make an aired-complete season partial', () => {

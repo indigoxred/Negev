@@ -31,6 +31,8 @@ export function seasonTriggerPresentation(rows, currentAnidbId, hasMore) {
 
 export function seasonRequestStatus(detail) {
   if (detail?.kind === 'movie') return null;
+  if (detail?.releaseState === 'upcoming') return requestGate({ state: 'upcoming',
+    text: 'Not yet released · request can be saved', selectable: true }, detail);
   if (detail?.state === 'detail_unavailable') return { state: 'unverified',
     text: 'Episode details unavailable · retry later', selectable: false };
   if (detail?.state !== 'details' && detail?.state !== undefined) {
@@ -78,6 +80,7 @@ export function seasonRequestStatus(detail) {
 }
 
 export function relatedAvailabilityText(detail) {
+  if (detail?.releaseState === 'upcoming') return 'Not yet released';
   if (detail?.state !== 'details') return 'Availability unconfirmed';
   if (detail.kind === 'series') {
     const status = seasonRequestStatus({ ...detail, requestsOpen: true });
@@ -101,5 +104,7 @@ export function relatedAvailabilityText(detail) {
 export function seasonSelectionSummary(rows) {
   return rows.map((row) => `${row.title} · ${row.status.state === 'partial'
     ? 'complete episodes not verified in Plex' : row.status.state === 'watching'
-      ? 'watch future episodes' : 'request episodes not verified in Plex'}`).join('; ');
+      ? 'watch future episodes' : row.status.state === 'upcoming'
+        ? 'watch for release and future episodes'
+        : 'request episodes not verified in Plex'}`).join('; ');
 }
