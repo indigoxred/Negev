@@ -229,9 +229,7 @@ async function inspectMobile(url, profile, width = 390) {
           ['14974', '11003'].includes(card.dataset.anidbId)).every((card) => card.hidden)}; })()`,
     });
     const searchTrack = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `(() => { const button = [...document.querySelectorAll('#results .tracked-title')]
-        .find((row) => !row.hidden)?.querySelector('.track-toggle');
-        return {label: button?.textContent, enabled: !button?.disabled}; })()`,
+      expression: `({present: Boolean(document.querySelector('#results .tracked-title .track-toggle'))})`,
     });
     const searchAdultLabels = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { document.querySelector('#adult-toggle').click();
@@ -258,8 +256,9 @@ async function inspectMobile(url, profile, width = 390) {
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
     await wait(800);
     const titleTrack = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `({label: document.querySelector('#detail > .track-toggle')?.textContent,
-        enabled: !document.querySelector('#detail > .track-toggle')?.disabled})`,
+      expression: `(() => { const button = document.querySelector('#detail .detail-action-row .track-toggle');
+        return {label: button?.textContent, enabled: !button?.disabled,
+          nextToRequest: Boolean(button?.parentElement.querySelector('.primary'))}; })()`,
     });
     const franchiseBefore = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const button = document.querySelector('.related-trigger');
@@ -528,12 +527,16 @@ async function inspectMobile(url, profile, width = 390) {
           .map((card) => ({title: card.querySelector('strong')?.textContent,
             badge: card.querySelector('.presence')?.textContent})))()`,
       });
+      await send('Page.navigate', { url: url.replace('#/discover', '#/title/19847') });
+      await wait(800);
       await send('Runtime.evaluate', { expression:
-        `document.querySelector('.tracked-title [data-track-id]')?.click()` });
+        `document.querySelector('#detail .detail-action-row [data-track-id]')?.click()` });
       await wait(300);
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
-        expression: `document.querySelector('.tracked-title [data-track-id]')?.textContent`,
+        expression: `document.querySelector('#detail .detail-action-row [data-track-id]')?.textContent`,
       });
+      await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
+      await wait(800);
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'custom'; mode.dispatchEvent(new Event('change'));
@@ -1233,10 +1236,9 @@ test('signed-in consumer routes render real shell with search, library and reque
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.searchAdult, { shown: [2498], adultsHidden: true });
-      assert.deepEqual(mobile.searchTrack,
-        { label: 'Track this title', enabled: true });
+      assert.deepEqual(mobile.searchTrack, { present: false });
       assert.deepEqual(mobile.titleTrack,
-        { label: 'Track this title', enabled: true });
+        { label: 'Track this title', enabled: true, nextToRequest: true });
       assert.deepEqual(mobile.searchAdultLabels, [
         { id: 14974, label: '18+' }, { id: 11003, label: '18+' }]);
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });

@@ -163,7 +163,7 @@ function trackedCard(card, item, { hideUnknown = false } = {}) {
   delete card.dataset.anidbId;
   delete card.dataset.adult;
   card.hidden = false;
-  wrapper.append(card, makeTrackButton(item));
+  wrapper.append(card);
   return wrapper;
 }
 function renderTrackedTitles() {
@@ -1786,14 +1786,33 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   loadingArt.append(loadingPoster);
   const displaySummary = element('div', undefined, 'detail-display');
   const trackDetail = makeTrackButton(item);
-  panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'), trackDetail,
+  trackDetail.classList.add('detail-track-action');
+  const detailActionRow = (...controls) => {
+    const row = element('div', undefined, 'detail-action-row');
+    if (controls.length === 1 && controls[0].classList.contains('request-action')) {
+      const action = controls[0];
+      const button = action.querySelector('.primary');
+      const existing = button.closest('.detail-action-row');
+      if (existing && action.contains(existing)) {
+        existing.querySelector('.track-toggle')?.remove();
+        existing.append(trackDetail);
+        return action;
+      }
+      button.replaceWith(row);
+      row.append(button, trackDetail);
+      return action;
+    }
+    row.append(...controls, trackDetail);
+    return row;
+  };
+  panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
     element('p', 'Loading episode details…', 'muted'), displaySummary);
   // An uncached catalogue read must not make the request path wait for Shoko.
   const earlyRequest = previousAction ?? pendingTitleAction(item);
   const fallbackTimer = earlyRequest ? setTimeout(() => {
     if (!isCurrentDetail() || !panel.contains(loadingArt) ||
         !state.showAdult && state.searchItems.get(item.anidbId)?.adult !== false) return;
-    panel.append(earlyRequest);
+    panel.append(detailActionRow(earlyRequest));
   }, 4_000) : null;
   let displayRead = displayCache.get(item.anidbId);
   if (!displayRead) {
@@ -1892,7 +1911,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
     detailArt.append(detailPoster);
     panel.replaceChildren(detailArt,
-      element('h1', data.title || item.title, 'detail-title'), trackDetail);
+      element('h1', data.title || item.title, 'detail-title'));
     trackDetail.dataset.trackTitle = data.title || item.title;
     state.searchItems.set(item.anidbId, {
       ...item, ...state.searchItems.get(item.anidbId),
@@ -1907,7 +1926,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
         : 'Episode details are not cached yet. Anime requests for this title are temporarily unavailable in Negev. Please try again later.', 'muted'));
       const pendingAction = requestAccess ? earlyRequest : null;
-      if (pendingAction) panel.append(pendingAction);
+      panel.append(detailActionRow(...(pendingAction ? [pendingAction] : [])));
       if (state.detailLoad) {
         const preparationStatus = element('p', '', 'muted');
         const begin = async () => {
@@ -2433,14 +2452,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         adult: data.restricted });
       setPendingTitleKind(pendingFilmAction,
         { title: data.title || item.title }, 'movie');
-      if (pendingFilmAction) panel.insertBefore(pendingFilmAction, relatedHeading);
+      panel.insertBefore(detailActionRow(...(pendingFilmAction ? [pendingFilmAction] : [])),
+        relatedHeading);
       return;
     }
     // Keep the original control mounted while its save is in flight so the
     // asynchronous result and request number remain visible after hydration.
     if (earlyRequest?.dataset.saving === 'true' ||
         earlyRequest?.dataset.saved === 'true') {
-      panel.insertBefore(earlyRequest, relatedHeading);
+      panel.insertBefore(detailActionRow(earlyRequest), relatedHeading);
       return;
     }
     if (data.kind === 'series') {
@@ -2778,8 +2798,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         continueCheck.addEventListener('click', () => { void checkPages(); });
         void checkPages();
       }
-      panel.insertBefore(availableButton, relatedHeading);
-      panel.insertBefore(trigger, relatedHeading);
+      panel.insertBefore(detailActionRow(availableButton, trigger), relatedHeading);
       panel.append(action);
       return;
     }
@@ -2999,7 +3018,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         refreshRequestAction();
       }
     });
-    requestAction.append(requestReview, button, requestStatus, viewRequest);
+    requestAction.append(requestReview, detailActionRow(button), requestStatus, viewRequest);
     if (checkingCompleteSeries && loadNextEpisodePage) {
       // A title-level count is only a hint. Keep the request closed until
       // every exact regular episode has been checked, even after page eight.
@@ -3041,10 +3060,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? 'Episode details are temporarily unavailable because the server is busy. The title information above is still available; try again shortly.'
       : 'Episode details are temporarily unavailable. Try again to load request options.',
     'muted');
-    panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'), trackDetail,
+    panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
       displaySummary, unavailable, retry);
     const pendingAction = requestAccess === false ? null : earlyRequest;
-    if (pendingAction) panel.append(pendingAction);
+    panel.append(detailActionRow(...(pendingAction ? [pendingAction] : [])));
     void displayRead.then((display) => renderDisplay(display, item.title));
   }
 }
