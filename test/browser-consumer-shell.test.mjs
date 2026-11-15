@@ -956,8 +956,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         failedRelatedReads++;
         response.setHeader('Content-Type', 'application/json');
         if (failedRelatedReads === 1) {
-          response.writeHead(503);
-          response.end(JSON.stringify({ error: 'Temporarily unavailable' }));
+          response.writeHead(429);
+          response.end(JSON.stringify({ error: 'Rate limited' }));
         } else response.end(JSON.stringify({ state: 'related_titles',
           anidbId: 47, completeness: 'unproven', items: [{ anidbId: 48,
             title: 'Related season after retry', relation: 'Sequel' }] }));
@@ -1268,7 +1268,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.failedSeasonLookup.label, 'Find other seasons');
       assert.equal(mobile.failedSeasonLookup.open, true);
       assert.match(mobile.failedSeasonLookup.retry ?? '', /Retry finding seasons/);
-      assert.match(mobile.failedSeasonLookup.notice ?? '', /temporarily unavailable/i);
+      assert.match(mobile.failedSeasonLookup.notice ?? '', /Season list incomplete.*rate limited/i);
       assert.deepEqual(mobile.recoveredSeasonLookup,
         { open: true, related: true, triggerEnabled: true, notice: '' });
       assert.deepEqual(mobile.failedSeasonDetail,

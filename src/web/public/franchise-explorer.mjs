@@ -53,6 +53,7 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
       if (result?.state !== 'related_titles' ||
           result.completeness !== 'unproven' ||
           !members.has(result.anidbId) || expanded.has(result.anidbId) ||
+          (result.incomplete !== undefined && typeof result.incomplete !== 'boolean') ||
           !Array.isArray(result.items) || result.items.length > 50) {
         throw new TypeError('Invalid franchise relations');
       }
@@ -81,7 +82,7 @@ export function createFranchiseExplorer(seed, maxItems = 50) {
         anidbId: item.anidbId, title: item.title.trim(),
         relation: item.relation.trim(), relatedFrom: result.anidbId,
         ...(item.libraryPresence ? { libraryPresence: item.libraryPresence } : {}) });
-      expanded.add(result.anidbId);
+      if (!result.incomplete) expanded.add(result.anidbId);
     },
   };
 }
@@ -131,7 +132,12 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
         added: explorer.items().length - before,
         failures: failures + 1, hasMore: true };
     }
-    try { explorer.add(response); }
+    try {
+      explorer.add(response);
+      if (response.incomplete) return { state: 'temporarily_unavailable',
+        reads, added: explorer.items().length - before,
+        failures: failures + 1, hasMore: true };
+    }
     catch {
       if (next.anidbId === explorer.items()[0].anidbId) {
         return { state: 'root_unavailable', reads, added: 0,

@@ -72,6 +72,26 @@ test('a rate-limited related read keeps its branch for a later retry', async () 
   assert.equal(view.items().at(-1).anidbId, 30);
 });
 
+test('a partial relation list shows known seasons but remains incomplete and retryable', async () => {
+  const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
+  const partial = await expandFranchiseBatch({ explorer: view,
+    read: async () => ({ anidbId: 10, state: 'related_titles',
+      completeness: 'unproven', incomplete: true,
+      items: [{ anidbId: 20, title: 'Known season', relation: 'Sequel' }] }) });
+  assert.deepEqual(partial, { state: 'temporarily_unavailable', reads: 1,
+    added: 1, failures: 1, hasMore: true });
+  assert.deepEqual(view.items().map((item) => item.anidbId), [10, 20]);
+  assert.equal(view.next()?.anidbId, 10);
+  const recovered = await expandFranchiseBatch({ explorer: view,
+    read: async () => ({ anidbId: 10, state: 'related_titles',
+      completeness: 'unproven', items: [
+        { anidbId: 20, title: 'Known season', relation: 'Sequel' },
+        { anidbId: 30, title: 'Other season', relation: 'Sequel' }] }),
+    maxReads: 1 });
+  assert.equal(recovered.state, 'expanded');
+  assert.deepEqual(view.items().map((item) => item.anidbId), [10, 20, 30]);
+});
+
 test('a temporary related read failure keeps its branch for a later retry', async () => {
   const view = createFranchiseExplorer({ anidbId: 10, title: 'Original' });
   view.add({ anidbId: 10, state: 'related_titles', completeness: 'unproven',

@@ -75,6 +75,31 @@ test('display combines distinct exact AniDB relations while preferring Shoko tit
   }), { ...local, items: [local.items[0], archive.items[1]] });
 });
 
+test('a failed archive lookup cannot make an empty local relation list complete', async () => {
+  const local = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [] };
+  assert.deepEqual(await readDisplayRelations({ readLocal: async () => local,
+    readArchive: async () => ({ state: 'unavailable' }) }),
+  { state: 'unavailable' });
+});
+
+test('known local seasons remain visible but retryable when archive lookup fails', async () => {
+  const local = { state: 'related_titles', anidbId: 42,
+    completeness: 'unproven', items: [{ anidbId: 43,
+      title: 'Known sequel', relation: 'Sequel' }] };
+  assert.deepEqual(await readDisplayRelations({ readLocal: async () => local,
+    readArchive: async () => ({ state: 'unavailable' }) }),
+  { ...local, incomplete: true });
+  let calls = 0;
+  const cached = createCachedDisplayRelations({ read: async () => {
+    calls++;
+    return calls === 1 ? { ...local, incomplete: true } : local;
+  } });
+  assert.equal((await cached({ anidbId: 42 })).incomplete, true);
+  assert.equal((await cached({ anidbId: 42 })).incomplete, undefined);
+  assert.equal(calls, 2);
+});
+
 test('archive relations do not wait for a slow Shoko display read', async () => {
   let releaseLocal;
   const archive = { state: 'related_titles', anidbId: 42,
@@ -88,7 +113,7 @@ test('archive relations do not wait for a slow Shoko display read', async () => 
   const result = await Promise.race([read, new Promise((resolve) =>
     setTimeout(() => resolve('late'), 40))]);
   releaseLocal({ state: 'unavailable' });
-  assert.deepEqual(result, archive);
+  assert.deepEqual(result, { ...archive, incomplete: true });
 });
 
 test('cached Shoko relations do not wait for a slow archive read', async () => {
@@ -102,7 +127,7 @@ test('cached Shoko relations do not wait for a slow archive read', async () => {
   const result = await Promise.race([read, new Promise((resolve) =>
     setTimeout(() => resolve('late'), 40))]);
   releaseArchive({ state: 'unavailable' });
-  assert.deepEqual(result, local);
+  assert.deepEqual(result, { ...local, incomplete: true });
 });
 
 test('archive relations retain exact AniDB IDs and distinguish unknown names', async () => {
