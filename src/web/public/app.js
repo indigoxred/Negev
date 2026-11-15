@@ -2049,12 +2049,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     void displayRead.then((display) => renderDisplay(display, originalTitle));
     if (data.state === 'detail_pending') {
       if (data.futureEpisodesMonitored) {
-        panel.append(element('p', 'Future episodes already monitored.', 'muted'));
+        const monitored = element('button', 'Future episodes already monitored', 'primary');
+        monitored.type = 'button';
+        monitored.disabled = true;
+        panel.append(detailActionRow(monitored));
         if (data.activeWatchRequestId) {
           const existingRequest = element('a', 'View in My Requests →',
             'text-link request-receipt-link');
           existingRequest.href = '#/requests';
-          panel.append(detailActionRow(existingRequest));
+          panel.append(existingRequest);
         }
       } else {
         panel.append(element('p', requestAccess
