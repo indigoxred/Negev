@@ -29,12 +29,15 @@ test('pipeline checks a fresh request before older rows and then resumes its cur
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
     qbBaseUrl, sessionGate: authorizedSession, requestPageLimit: 1,
     processRequest: async ({ requestId }) => { visited.push(requestId);
-      return { state: 'held', reason: 'no_release_candidates' }; },
+      return { state: 'held', reason: requestId === 3 ?
+        'shoko_metadata_missing' : 'no_release_candidates' }; },
     processStart: async () => {}, processCompletion: async () => {},
     processPublish: async () => {}, now: () => 100 });
   try {
     await pipeline.initialize();
-    await pipeline.tickRequests({ priorityRequestId: 3 });
+    const metadata = await pipeline.tickRequests({ priorityRequestId: 3 });
+    assert.deepEqual(metadata.results[0], { requestId: 3, state: 'held',
+      reason: 'shoko_metadata_missing', nextDueMs: 60_100 });
     await pipeline.tickRequests();
     assert.deepEqual(visited, [3, 1]);
   } finally {

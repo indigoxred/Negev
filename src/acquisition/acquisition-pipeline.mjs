@@ -107,6 +107,10 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       }
       return requestWorker.runOnce({ priorityRequestId });
     } }),
+    wakeHydratedTitle: (input) => closed ? [] :
+      requestQueue.wakeHydratedTitle(input),
+    listMetadataRetries: () => closed ? [] :
+      requestQueue.listMetadataRetries({ nowMs: now() }),
     tickStarts: () => run(startWorker),
     tickCompletions: () => run(completionWorker),
     tickPublish: () => run(publishWorker),

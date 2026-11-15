@@ -14,6 +14,7 @@ export function openAcquisitionRuntime(options = {}) {
     start: async () => ({ state: 'held', reason: 'runtime_disabled' }),
     stop: async () => {},
     wakeRequest: () => {},
+    wakeHydratedTitle: () => [],
     getStatus: () => ({ state: 'disabled' }),
   };
   const { dbPath, acquisitions, qbBaseUrl, sessionGate, allowedAnidbIds,
@@ -32,6 +33,11 @@ export function openAcquisitionRuntime(options = {}) {
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),
     wakeRequest: (requestId) => scheduler.wakeRequest(requestId),
+    wakeHydratedTitle: (anidbId) => {
+      const ids = pipeline.wakeHydratedTitle({ anidbId, nowMs: now() });
+      for (const id of ids) scheduler.wakeRequest(id);
+      return ids;
+    },
     getStatus: () => scheduler.getStatus() };
 }
 

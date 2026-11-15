@@ -41,6 +41,64 @@ test('a new request gets a prompt first turn before older queued work without st
   await scheduler.stop();
 });
 
+test('missing metadata gets a due retry without waiting for a full stage cycle', async () => {
+  const timer = clock();
+  const calls = [];
+  let nowMs = 0;
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page', results: priorityRequestId === 7 && nowMs === 0
+        ? [{ requestId: 7, state: 'held', reason: 'shoko_metadata_missing',
+          nextDueMs: 60_000 }] : [] };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    now: () => nowMs, stepDelayMs: 120_000,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(7);
+  await timer.advance();
+  assert.deepEqual(timer.delays(), [60_000]);
+  nowMs = 60_000;
+  await timer.advance();
+  assert.deepEqual(timer.delays(), [1_000]);
+  nowMs = 61_000;
+  await timer.advance();
+  assert.deepEqual(calls, [7, 'completion', 7]);
+  await scheduler.stop();
+});
+
+test('restart restores a durable missing-metadata retry', async () => {
+  const timer = clock();
+  let nowMs = 0;
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    listMetadataRetries: () => [{ requestId: 9, nextDueMs: 60_000 }],
+    tickRequests: async ({ priorityRequestId } = {}) => { calls.push(priorityRequestId);
+      return { state: 'page', results: [] }; },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => nowMs,
+    initialDelayMs: 120_000, stepDelayMs: 120_000,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  assert.deepEqual(timer.delays(), [60_000]);
+  nowMs = 60_000;
+  await timer.advance();
+  assert.deepEqual(calls, [9]);
+  await scheduler.stop();
+});
+
 test('one paced clock reconciles first and visits all four stages without overlap', async () => {
   const timer = clock();
   const calls = [];
