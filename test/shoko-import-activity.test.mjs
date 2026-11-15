@@ -235,6 +235,35 @@ test('an exact owned pending file does not block an unrelated target', async () 
   } finally { await rm(importRoot, { recursive: true, force: true }); }
 });
 
+test('a published pure move is scoped out for an unrelated target', async () => {
+  const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-pure-import-'));
+  const hash = 'a'.repeat(40);
+  const name = 'negev-45-aaaaaaaaaaaaaaaa';
+  const publishedPath = `Negev/${name}/episode.mkv`;
+  try {
+    await mkdir(path.join(importRoot, 'Negev', name), { recursive: true });
+    await writeFile(path.join(importRoot, publishedPath), 'video');
+    const result = await readShokoImportActivity({ ...input, importRoot,
+      managedFolderId: 1, ownedSubtree: 'Negev', withFingerprint: true,
+      target: { anidbId: 19823, episodeIds: [318042] },
+      getHandoff: () => null,
+      getPureMove: (id) => id === 45 ? { status: 'published_observed',
+        manifest: { attemptId: 45, torrentHash: hash,
+          holdingPath: `/pure/holding/${name}`,
+          files: [{ name: 'episode.mkv', size: 5, episodeIds: [7007] }] } } : null,
+      fetchImpl: async (url) => new URL(url).pathname === '/api/v3/Queue'
+        ? json({ WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+          TotalCount: 0, CurrentlyExecuting: [], Pools: [] })
+        : json({ Total: 1, List: [{ ID: 91, Size: 5, SeriesIDs: [],
+          Hashes: [{ Type: 'ED2K', Value: 'A'.repeat(32) }],
+          Locations: [{ ManagedFolderID: 1, RelativePath: publishedPath,
+            IsAccessible: true }] }] }),
+    });
+    assert.equal(result.state, 'quiet_observed');
+    assert.deepEqual(result.unrelatedPendingKeys, [`1:${publishedPath}`]);
+  } finally { await rm(importRoot, { recursive: true, force: true }); }
+});
+
 test('private folder-scoped quiet evidence returns only a fingerprint and timestamp', async () => {
   const importRoot = await mkdtemp(path.join(tmpdir(), 'negev-import-activity-'));
   try {

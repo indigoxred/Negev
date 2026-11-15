@@ -30,6 +30,43 @@ test('exact Negev-published pending file is attributable to another target', () 
   });
 });
 
+test('published pure move for another episode is not a pending Hotaru import', () => {
+  const hash = 'a'.repeat(40);
+  const name = 'negev-45-aaaaaaaaaaaaaaaa';
+  const path = `Negev/${name}/Space.Mercenary.S01E07.mkv`;
+  const manifest = { attemptId: 45, torrentHash: hash,
+    holdingPath: `/pure/holding/${name}`,
+    files: [{ name: 'Space.Mercenary.S01E07.mkv', size: 1000,
+      episodeIds: [7007] }] };
+  const pure = { status: 'published_observed', manifest };
+  const input = { diskFiles: [{ relativePath: path, size: 1000 }],
+    shokoPage: { Total: 1, List: [{ ID: 91, Size: 1000, SeriesIDs: [],
+      Hashes: [{ Type: 'ED2K', Value: ed2k }],
+      Locations: [{ ManagedFolderID: 1, RelativePath: path,
+        IsAccessible: true }] }] },
+    managedFolderId: 1, ownedSubtree: 'Negev',
+    getHandoff: () => null, getPureMove: (id) => id === 45 ? pure : null };
+  assert.deepEqual(partitionOwnedPendingImports({ ...input,
+    target: { anidbId: 19823, episodeIds: [318042] } }), {
+    state: 'partitioned', diskFiles: [], shokoPage: { Total: 0, List: [] },
+    unrelatedPending: 1, unrelatedPendingKeys: [`1:${path}`],
+  });
+  assert.deepEqual(partitionOwnedPendingImports({ ...input,
+    target: { anidbId: 19823, episodeIds: [7007] } }),
+  { state: 'held', reason: 'target_pending_import' });
+  assert.equal(partitionOwnedPendingImports({ ...input,
+    getPureMove: () => ({ ...pure, status: 'publish_unknown' }),
+    target: { anidbId: 19823, episodeIds: [318042] } }).state, 'held');
+  for (const changed of [
+    { diskFiles: [{ relativePath: path, size: 999 }] },
+    { shokoPage: { Total: 1, List: [{ ...input.shokoPage.List[0],
+      Hashes: [] }] } },
+    { getPureMove: () => ({ ...pure, manifest: { ...manifest,
+      torrentHash: 'b'.repeat(40) } }) },
+  ]) assert.equal(partitionOwnedPendingImports({ ...input, ...changed,
+    target: { anidbId: 19823, episodeIds: [318042] } }).state, 'held');
+});
+
 test('Shoko ED2K letter case does not change exact pending attribution', () => {
   const lowerHash = { ...file, Hashes: [{ Type: 'ED2K', Value: ed2k.toLowerCase() }] };
   assert.equal(partitionOwnedPendingImports({ ...options,

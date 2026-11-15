@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../src/acquisition/handoff-ledger.mjs';
@@ -14,6 +15,47 @@ import { evaluateHandoffEvidence } from '../src/acquisition/handoff-evidence.mjs
 const authorizedSession = { get: async () => ({ state: 'authenticated',
   sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
 const qbBaseUrl = 'http://qb:8080/';
+
+test('restart resumes a scoped observed attempt and checks the unclaimed watch target', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-observed-retry-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'watch', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      episodeIds: [1001, 1002], monitorFuture: true } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const queue = openAcquisitionRequestQueue(dbPath);
+  const claim = queue.claimNext({ nowMs: 100 });
+  queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+    state: 'held', reason: 'interrupted_attempt_present', checkedMs: 100 });
+  queue.close();
+  const db = new DatabaseSync(dbPath);
+  db.prepare(`INSERT INTO acquisition_attempts
+    (request_id,anidb_id,indexer_id,candidate_digest,status,torrent_hash,
+      created_ms,updated_ms) VALUES (1,42,5,'old','torrent_observed',?,1,1)`)
+    .run('a'.repeat(40));
+  db.prepare(`INSERT INTO acquisition_target_claims
+    (attempt_id,anidb_id,episode_id) VALUES (1,42,1001)`).run();
+  db.close();
+  const visited = [];
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession, requestPageLimit: 1,
+    processRequest: async ({ requestId }) => { visited.push(requestId);
+      return { state: 'held', reason: 'no_release_candidates' }; },
+    processStart: async () => {}, processCompletion: async () => {},
+    processPublish: async () => {}, now: () => 200 });
+  try {
+    const recovered = await pipeline.initialize();
+    assert.deepEqual(recovered.resumedRequests, [1]);
+    const result = await pipeline.tickRequests({ priorityRequestId: 1 });
+    assert.deepEqual(result.results.map((item) => item.requestId), [1]);
+    assert.deepEqual(visited, [1]);
+  } finally {
+    await pipeline.close(); handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test('pipeline checks a fresh request before older rows and then resumes its cursor', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-fresh-pipeline-'));

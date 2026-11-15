@@ -500,7 +500,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           managedFolderId: acquisitionImportFolderId, withFingerprint,
           ...(target === null ? {} : { target,
             ownedSubtree: 'Negev',
-            getHandoff: (attemptId) => handoffs.getHandoff(attemptId) }),
+            getHandoff: (attemptId) => handoffs.getHandoff(attemptId),
+            ...(pureMoves ? { getPureMove: (attemptId) =>
+              pureMoves.getIntent(attemptId) } : {}) }),
         }));
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
