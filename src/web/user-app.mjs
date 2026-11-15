@@ -34,7 +34,7 @@ const privateLanHost = (hostname) => {
 export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   localOrigin = null, secureCookies = true,
   now = Date.now, submitRequest, queuePendingTitle,
-  cancelRequest, readRequest, listRequests,
+  cancelRequest, reviewHeldRequest, readRequest, listRequests,
   listPendingTitles, readPendingTitle, readPendingTitleByKey,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
@@ -1109,6 +1109,25 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       error: result.reason === 'acquisition_started'
         ? 'Release processing has already started. This request cannot be cancelled here, even if the download has not begun.'
         : 'Request cannot be cancelled', reason: result.reason });
+  });
+  app.post('/api/admin/requests/:id/review', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
+    const requestId = Number(request.params.id);
+    const action = request.body?.action;
+    if (!Number.isSafeInteger(requestId) || requestId < 1 ||
+        !allowedBody(request.body, ['action']) ||
+        Object.keys(request.body).length !== 1 ||
+        !['approve', 'cancel'].includes(action)) {
+      return reply.code(400).send({ error: 'Invalid review action' });
+    }
+    if (typeof reviewHeldRequest !== 'function') {
+      return reply.code(503).send({ error: 'Owner review unavailable' });
+    }
+    const result = reviewHeldRequest({ requestId, action });
+    if (['resumed', 'cancelled'].includes(result.state)) return result;
+    return reply.code(409).send({ error: 'This request can no longer be reviewed here',
+      reason: result.reason });
   });
   app.get('/api/requests/:id', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

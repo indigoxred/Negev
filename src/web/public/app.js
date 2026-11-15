@@ -617,7 +617,28 @@ async function loadRequestView(view, append = false, silent = false) {
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
       row.append(heading, status, actions);
-      if (item.status === 'held' && item.canCancel !== false &&
+      if (state.user?.role === 'admin' && item.status === 'held' &&
+          item.progress?.state === 'owner_review_pending' && item.canCancel === true) {
+        for (const [action, label] of [['approve', 'Approve request'],
+          ['cancel', 'Cancel request']]) {
+          const control = element('button', label, action === 'approve' ? 'primary' : 'quiet');
+          control.type = 'button';
+          control.addEventListener('click', async () => {
+            if (!window.confirm(action === 'approve'
+              ? 'Approve this request and allow Negev to look for a download?'
+              : 'Cancel this request? No media files will be removed.')) return;
+            control.disabled = true;
+            try {
+              await api(`/api/admin/requests/${item.id}/review`, {
+                method: 'POST', body: JSON.stringify({ action }) });
+              message(action === 'approve' ? 'Request approved for acquisition.' :
+                'Request cancelled. No media files were removed.');
+              loadRequests();
+            } catch (error) { message(error.message, true); control.disabled = false; }
+          });
+          actions.append(control);
+        }
+      } else if (item.status === 'held' && item.canCancel !== false &&
           item.requesterId === state.user?.id) {
         const cancel = element('button', 'Cancel request', 'quiet');
         cancel.type = 'button';
@@ -796,6 +817,12 @@ async function refreshExpandedHistory() {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
       if (status.negevRequest?.canCancel !== item.canCancel) {
+        void loadRequestView('history', false, true);
+        return;
+      }
+      if (status.negevRequest?.progress?.state !== item.progress?.state &&
+          (status.negevRequest?.progress?.state === 'owner_review_pending' ||
+            item.progress?.state === 'owner_review_pending')) {
         void loadRequestView('history', false, true);
         return;
       }

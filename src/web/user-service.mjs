@@ -2,6 +2,7 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { openRequestLedger } from '../requests/request-ledger.mjs';
+import { openAcquisitionRequestQueue } from '../acquisition/acquisition-request-queue.mjs';
 import { openPendingTitleLedger } from '../requests/pending-title-ledger.mjs';
 import { createPendingTitleWorker } from '../requests/pending-title-worker.mjs';
 import { openRequestProgress } from '../requests/request-progress.mjs';
@@ -549,6 +550,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readActivePendingTitle: (input) => pendingTitles.getActiveForTitle(input),
       cancelPendingTitle: (input) => pendingTitles.cancel(input),
       cancelRequest: (input) => requests.cancelRequest(input),
+      reviewHeldRequest: ({ requestId, action }) => {
+        const queue = openAcquisitionRequestQueue(dbPath);
+        try {
+          const suspension = queue.getSuspension(requestId);
+          const saved = requests.getRequest(requestId);
+          if (suspension?.reason !== 'cutover_review' ||
+              saved?.status !== 'held' || saved.canCancel !== true) {
+            return { state: 'held', reason: 'not_reviewable' };
+          }
+          if (action === 'approve') return queue.resumeSuspended({ requestId });
+          return requests.cancelRequest({ requesterId: saved.requesterId,
+            requestId, nowMs: now() });
+        } finally { queue.close(); }
+      },
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);

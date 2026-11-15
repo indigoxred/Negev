@@ -344,6 +344,45 @@ test('request cancellation is owner scoped and CSRF protected', async () => {
   } finally { await app.close(); }
 });
 
+test('only an admin can approve or cancel a suspended request', async () => {
+  let user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const calls = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    reviewHeldRequest: (input) => {
+      calls.push(input);
+      return input.requestId === 21
+        ? { state: input.action === 'approve' ? 'resumed' : 'cancelled' }
+        : { state: 'held', reason: 'not_reviewable' };
+    } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/21/review',
+      headers: { cookie, origin }, payload: { action: 'approve' } })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/21/review',
+      headers, payload: { action: 'delete' } })).statusCode, 400);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/22/review',
+      headers, payload: { action: 'approve' } })).statusCode, 409);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/21/review',
+      headers, payload: { action: 'approve' } })).statusCode, 200);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/21/review',
+      headers, payload: { action: 'cancel' } })).statusCode, 200);
+    user = { ...user, role: 'user' };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/admin/requests/21/review',
+      headers, payload: { action: 'approve' } })).statusCode, 403);
+    assert.equal(calls.length, 3);
+  } finally { await app.close(); }
+});
+
 test('started release processing reports the real cancellation limit', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
