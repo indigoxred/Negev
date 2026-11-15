@@ -18,6 +18,9 @@ const validTransfer = (value) => value &&
 const RETRY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
+// Pure-move completion only reads bounded qBittorrent metadata until the
+// torrent is complete; it does not hash or copy video bytes on this retry.
+const PURE_INCOMPLETE_RETRY_MS = 60_000;
 const INCONCLUSIVE_RETRY_MS = [RETRY_MS, 2 * 60 * 60_000,
   8 * 60 * 60_000, 24 * 60 * 60_000];
 
@@ -206,7 +209,8 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
         const delay = ['provider_http_403', 'authentication_backoff',
           'authentication_unavailable', 'torrent_not_stopped']
           .includes(reason) ? SESSION_RETRY_MS :
-          reason === 'incomplete' ? INCOMPLETE_RETRY_MS :
+          reason === 'incomplete'
+            ? (pureMode ? PURE_INCOMPLETE_RETRY_MS : INCOMPLETE_RETRY_MS) :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
         if (!validTime(checkedMs + delay)) throw new TypeError('Invalid completion clock');
         const outsideStagingHold = pureMode && state === 'held' &&
