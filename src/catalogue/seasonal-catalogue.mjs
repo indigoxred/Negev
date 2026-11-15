@@ -413,7 +413,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     const items = found.filter(({ verification }) => verification.kind === 'verified')
       .map(({ entry, verification }) => {
         const ranked = rankedByMal?.get(entry.malId);
-        const snapshot = !rankings && scoreCache && entry.malId !== null
+        const snapshot = !wantsRank && scoreCache && entry.malId !== null
           ? scoreCache.get(entry.anidbId, entry.malId) : null;
         return { anidbId: entry.anidbId,
           title: verification.title, type: verification.type,

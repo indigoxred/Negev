@@ -380,6 +380,24 @@ test('AniList top order puts Frieren ahead of unrelated cached MAL scores', asyn
   assert.deepEqual(popular.items.map((item) => item.anidbId), [3, 2, 1]);
 });
 
+test('AniList ranking leaves the existing newest-page MAL card rating intact', async () => {
+  const entry = { ...row('Example', 1), sources: [
+    'https://anidb.net/anime/1', 'https://myanimelist.net/anime/100'] };
+  const reader = createSeasonalCatalogue({
+    rankings: { async read() { throw new Error('newest must not read ranking'); } },
+    scoreCache: { prime() { return { ready: true }; },
+      get() { return { state: 'rated', score: 8.2, votes: 100,
+        members: 500, checkedMs: 1000 }; } },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: [entry] })
+      : reply({ anidb_id: 1, title: 'Example', type: 'TV Series',
+        restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL' });
+  assert.deepEqual(page.items[0].rating, { score: 8.2, votes: 100,
+    members: 500, checkedMs: 1000 });
+});
+
 test('missing mapped ratings do not pretend to rank ongoing titles', async () => {
   const entries = [{ ...row('Unmapped', 1), status: 'ONGOING' }];
   const reader = createSeasonalCatalogue({
