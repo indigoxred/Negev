@@ -13,6 +13,7 @@ import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
 import { createHeldRequestSubmitter, requestReleaseState } from '../requests/submit-held-request.mjs';
+import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
 import { createObservedTitleRegistry } from '../catalogue/observed-title-registry.mjs';
 import { createCatalogueHydrator } from '../catalogue/catalogue-hydrator.mjs';
@@ -377,7 +378,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
       }),
     });
-    const submitRequest = createHeldRequestSubmitter({
+    const submitHeldRequest = createHeldRequestSubmitter({
       titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
       ledger: requests, now, today,
       authorizeRequester: ({ requesterId }) => {
@@ -394,6 +395,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }).availability === 'available';
       },
     });
+    const submitRequest = async (input) => {
+      const result = await submitHeldRequest(input);
+      // Pending-title intents resolve here too, outside the HTTP request route.
+      autoTrackSavedAiringRequest({ result, requesterId: input.requesterId,
+        anidbId: input.anidbId,
+        readRequest: (requestId) => requests.getRequest(requestId), accounts });
+      return result;
+    };
     const pendingTitleWorker = createPendingTitleWorker({
       ledger: pendingTitles, submitRequest, now,
       authorize: ({ requesterId }) =>

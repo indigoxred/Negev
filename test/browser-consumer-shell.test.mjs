@@ -21,6 +21,7 @@ const assets = new Map([
     'adult-search-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
     'season-request-selection.mjs', 'episode-schedule.mjs',
+    'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']
     .map((name) => [`/${name}`, [name, 'text/javascript']]),
 ]);
@@ -227,6 +228,11 @@ async function inspectMobile(url, profile, width = 390) {
         return {shown, adultsHidden: cards.filter((card) =>
           ['14974', '11003'].includes(card.dataset.anidbId)).every((card) => card.hidden)}; })()`,
     });
+    const searchTrack = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const button = [...document.querySelectorAll('#results .tracked-title')]
+        .find((row) => !row.hidden)?.querySelector('.track-toggle');
+        return {label: button?.textContent, enabled: !button?.disabled}; })()`,
+    });
     const searchAdultLabels = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { document.querySelector('#adult-toggle').click();
         return [...document.querySelectorAll('#results [data-adult="true"]')]
@@ -251,6 +257,10 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
     await wait(800);
+    const titleTrack = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({label: document.querySelector('#detail > .track-toggle')?.textContent,
+        enabled: !document.querySelector('#detail > .track-toggle')?.disabled})`,
+    });
     const franchiseBefore = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const button = document.querySelector('.related-trigger');
         const list = document.querySelector('.related-list');
@@ -519,10 +529,10 @@ async function inspectMobile(url, profile, width = 390) {
             badge: card.querySelector('.presence')?.textContent})))()`,
       });
       await send('Runtime.evaluate', { expression:
-        `document.querySelector('.tracked-title button')?.click()` });
+        `document.querySelector('.tracked-title [data-track-id]')?.click()` });
       await wait(300);
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
-        expression: `document.querySelector('.tracked-title button')?.textContent`,
+        expression: `document.querySelector('.tracked-title [data-track-id]')?.textContent`,
       });
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
@@ -531,7 +541,9 @@ async function inspectMobile(url, profile, width = 390) {
       await wait(800);
       const custom = await send('Runtime.evaluate', { returnByValue: true,
         expression: `({mode: document.querySelector('#airing-view-mode')?.value,
-          card: document.querySelector('.tracked-title .poster-card')?.textContent,
+          card: [...document.querySelectorAll('.tracked-title .poster-card')]
+            .map((card) => card.textContent)
+            .find((text) => text.includes('FX Senshi Kurumi-chan')),
           fits: document.documentElement.scrollWidth <= innerWidth})`,
       });
       airingTrack = { defaultMode: defaultMode.result.value,
@@ -554,6 +566,7 @@ async function inspectMobile(url, profile, width = 390) {
       tagBrowse: tagBrowse.result.value,
       menu: menu.result.value,
       adultChoice: adultChoice.result.value, searchAdult: searchAdult.result.value,
+      searchTrack: searchTrack.result.value, titleTrack: titleTrack.result.value,
       searchAdultLabels: searchAdultLabels.result.value,
       filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
@@ -1220,6 +1233,10 @@ test('signed-in consumer routes render real shell with search, library and reque
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
       assert.deepEqual(mobile.searchAdult, { shown: [2498], adultsHidden: true });
+      assert.deepEqual(mobile.searchTrack,
+        { label: 'Track this title', enabled: true });
+      assert.deepEqual(mobile.titleTrack,
+        { label: 'Track this title', enabled: true });
       assert.deepEqual(mobile.searchAdultLabels, [
         { id: 14974, label: '18+' }, { id: 11003, label: '18+' }]);
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
@@ -1346,7 +1363,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /Negev’s Library/);
       assert.match(library, /The Garden of Words/);
-      assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
+      assert.match(library, /<div id="library-list" class="poster-grid"><div class="tracked-title"[^>]*><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const librarySearch = await dump(`${base}/#/library?q=Garden`,
         join(dir, 'library-search'), 'library');
