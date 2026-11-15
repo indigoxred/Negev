@@ -5,3 +5,8 @@ export function detailOriginalTitle(item, detail) {
   if (cardTitle && !/^Anime \d+$/.test(cardTitle)) return cardTitle;
   return detail?.title?.trim() || cardTitle || '';
 }
+
+export function detailAliasText(preferEnglish, originalTitle, englishTitle) {
+  return preferEnglish ? `Original title: ${originalTitle}` :
+    `Also known as ${englishTitle}`;
+}

@@ -15,7 +15,7 @@ import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
-import { detailOriginalTitle } from './title-preference.mjs';
+import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
 
@@ -92,6 +92,10 @@ function applyTitlePreference() {
     label.title = state.preferEnglish
       ? `Original: ${label.dataset.originalTitle}`
       : `English: ${label.dataset.englishTitle}`;
+  }
+  for (const alias of document.querySelectorAll('[data-title-alias]')) {
+    alias.textContent = detailAliasText(state.preferEnglish,
+      alias.dataset.originalTitle, alias.dataset.titleAlias);
   }
 }
 function updateTrackControls() {
@@ -1866,9 +1870,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
     if (facts) main.append(element('p', facts, 'detail-facts'));
     if (display.englishTitle && display.englishTitle !== title) {
-      main.append(element('p', state.preferEnglish
-        ? `Original title: ${title}` : `Also known as ${display.englishTitle}`,
-        'detail-alias'));
+      const alias = element('p', detailAliasText(state.preferEnglish,
+        title, display.englishTitle), 'detail-alias');
+      alias.dataset.originalTitle = title;
+      alias.dataset.titleAlias = display.englishTitle;
+      main.append(alias);
     }
     if (display.description) {
       const description = element('p', display.description, 'detail-description');
