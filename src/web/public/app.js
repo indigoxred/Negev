@@ -2347,7 +2347,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
         selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
-          ? 'Clear selection' : 'Select all requestable';
+          ? 'Clear selection' : 'Select all shown';
         for (const row of rows.values()) {
           row.input.disabled = saving || row.requested || !row.status?.selectable;
           if (row.input.disabled && !saving) row.input.checked = false;
