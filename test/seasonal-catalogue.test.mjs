@@ -344,6 +344,42 @@ test('Browse ranks known mapped scores before pagination without fetching the wh
   assert.equal(primed[0].length, 2);
 });
 
+test('AniList top order puts Frieren ahead of unrelated cached MAL scores', async () => {
+  const entries = [
+    { ...row('Random recent title', 1), sources: [
+      'https://anidb.net/anime/1', 'https://myanimelist.net/anime/100'] },
+    { ...row('Sousou no Frieren', 2), sources: [
+      'https://anidb.net/anime/2', 'https://myanimelist.net/anime/52991'] },
+    { ...row('Fullmetal Alchemist Brotherhood', 3), sources: [
+      'https://anidb.net/anime/3', 'https://myanimelist.net/anime/5114'] },
+  ];
+  const reader = createSeasonalCatalogue({
+    scoreCache: { prime() { throw new Error('partial MAL cache was used'); },
+      get() { throw new Error('partial MAL cache was used'); } },
+    rankings: { async read(scope) {
+      assert.equal(scope, 'all');
+      return { state: 'ready', checkedMs: 1000,
+        score: [{ malId: 52991, rank: 1, score: 9, members: 499125 },
+          { malId: 5114, rank: 6, score: 9, members: 744418 }],
+        popular: [{ malId: 5114, rank: 1, score: 9, members: 744418 },
+          { malId: 52991, rank: 2, score: 9, members: 499125 }] };
+    } },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-05', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-09T00:00:00Z') });
+  const score = await reader.read({ year: 0, season: 'ALL',
+    sort: 'score_desc', limit: 3 });
+  assert.equal(score.orderState, 'anilist_score');
+  assert.deepEqual(score.items.map((item) => item.anidbId), [2, 3, 1]);
+  assert.deepEqual(score.items[0].rating, { source: 'anilist', score: 9,
+    votes: null, members: 499125, checkedMs: 1000 });
+  const popular = await reader.read({ year: 0, season: 'ALL',
+    sort: 'popular_desc', limit: 3 });
+  assert.deepEqual(popular.items.map((item) => item.anidbId), [3, 2, 1]);
+});
+
 test('missing mapped ratings do not pretend to rank ongoing titles', async () => {
   const entries = [{ ...row('Unmapped', 1), status: 'ONGOING' }];
   const reader = createSeasonalCatalogue({

@@ -450,15 +450,19 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
             (typeof item.rating?.score !== 'number' ||
               !Number.isFinite(item.rating.score) || item.rating.score < 0 ||
               item.rating.score > 10) ||
-            !Number.isSafeInteger(item.rating.votes) || item.rating.votes < 0 ||
-            item.rating.score !== null && item.rating.votes === 0 ||
+            (item.rating.source === 'anilist'
+              ? item.rating.votes !== null
+              : !Number.isSafeInteger(item.rating.votes) || item.rating.votes < 0 ||
+                item.rating.score !== null && item.rating.votes === 0) ||
             !Number.isSafeInteger(item.rating.members) ||
             item.rating.members < 0 ||
             !Number.isSafeInteger(item.rating.checkedMs) ||
             item.rating.checkedMs < 0)) ||
         page.orderState !== undefined &&
           !['schedule', 'fallback', 'score', 'popularity',
-            'score_loading', 'score_unavailable', 'score_partial'].includes(page.orderState) ||
+            'score_loading', 'score_unavailable', 'score_partial',
+            'anilist_score', 'anilist_popular', 'anilist_stale',
+            'anilist_unavailable'].includes(page.orderState) ||
         page.scorePending !== undefined && typeof page.scorePending !== 'boolean' ||
         page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
           page.nextAfter <= after || page.nextAfter > 100_000)) {

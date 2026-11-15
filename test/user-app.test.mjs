@@ -496,9 +496,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       seasonalInputs.push({ year, season, after, limit, kind, tag, status, sort });
       return { state: 'ready', year, season, sourceDate: '2026-11-05',
         availableTags: seasonalTags, total: 1,
+        ...(sort === 'score_desc' ? { orderState: 'anilist_score' } : {}),
         items: [{ anidbId: 1234, title: 'Example series',
           type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
-          rating: { score: 8.2, votes: 100, members: 500, checkedMs: 950 },
+          rating: sort === 'score_desc'
+            ? { source: 'anilist', score: 8.2, votes: null,
+              members: 500, checkedMs: 950 }
+            : { score: 8.2, votes: 100, members: 500, checkedMs: 950 },
           libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
         nextAfter: null,
         requestedPage: { after, limit } };
@@ -702,9 +706,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=next_episode',
       headers: { cookie } })).statusCode, 200);
     assert.equal(seasonalInputs.at(-1).sort, 'next_episode');
-    assert.equal((await app.inject({ method: 'GET',
+    const rankedSeason = await app.inject({ method: 'GET',
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=score_desc',
-      headers: { cookie } })).statusCode, 200);
+      headers: { cookie } });
+    assert.equal(rankedSeason.statusCode, 200);
+    assert.equal(rankedSeason.json().orderState, 'anilist_score');
+    assert.equal(rankedSeason.json().items[0].rating.source, 'anilist');
     assert.equal(seasonalInputs.at(-1).sort, 'score_desc');
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/seasons?year=0&season=ALL&status=ongoing&sort=popular_desc',

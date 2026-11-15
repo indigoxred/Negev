@@ -169,6 +169,7 @@ async function parseMap(response) {
 export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   readSchedule = null,
   scoreCache = null,
+  rankings = null,
   snapshotStore = null,
   cacheMs = 24 * 60 * 60_000, staleMs = 7 * 24 * 60 * 60_000,
   timeoutMs = 12_000, detailTimeoutMs = 2_500,
@@ -177,6 +178,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       readSchedule !== null && typeof readSchedule !== 'function' ||
       scoreCache !== null && (typeof scoreCache.prime !== 'function' ||
         typeof scoreCache.get !== 'function') ||
+      rankings !== null && typeof rankings.read !== 'function' ||
       ![cacheMs, staleMs, timeoutMs, detailTimeoutMs, scheduleWaitMs].every((value) =>
         Number.isSafeInteger(value) && value > 0) || staleMs <= cacheMs ||
       staleMs > 14 * 24 * 60 * 60_000 || timeoutMs > 60_000 ||
@@ -283,8 +285,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     // Read the weekly schedule beside the catalogue map so the first Airing
     // page does not pay for two sequential network requests.
-    const [mapState, schedule] = await Promise.all([loadMap(time),
-      sort === 'next_episode' ? timelySchedule() : null]);
+    const wantsRank = rankings && (sort === 'score_desc' || sort === 'popular_desc');
+    const [mapState, schedule, rankResult] = await Promise.all([loadMap(time),
+      sort === 'next_episode' ? timelySchedule() : null,
+      wantsRank ? rankings.read(status === 'ongoing' ? 'ongoing' : 'all')
+        .catch(() => ({ state: 'unavailable' })) : null]);
     if (mapState === 'unavailable') return { state: 'unavailable' };
     const seasonEntries = year === 0 || season === 'ALL'
       ? cached.allEntries.filter((entry) =>
@@ -307,7 +312,21 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         selectedTags.every((selected) => entry.tags.includes(selected)));
     let orderState;
     let scorePending = false;
-    if (scoreCache && (status === 'ongoing' ||
+    let rankedByMal = null;
+    let resultCheckedMs = null;
+    if (rankings && (sort === 'score_desc' || sort === 'popular_desc')) {
+      const result = rankResult;
+      const list = result?.[sort === 'score_desc' ? 'score' : 'popular'];
+      if (['ready', 'stale'].includes(result?.state) && Array.isArray(list)) {
+        resultCheckedMs = result.checkedMs;
+        rankedByMal = new Map(list.map((item) => [item.malId, item]));
+        entries.sort((a, b) =>
+          (rankedByMal.get(a.malId)?.rank ?? Infinity) -
+          (rankedByMal.get(b.malId)?.rank ?? Infinity));
+        orderState = result.state === 'stale' ? 'anilist_stale'
+          : sort === 'score_desc' ? 'anilist_score' : 'anilist_popular';
+      } else orderState = 'anilist_unavailable';
+    } else if (scoreCache && (status === 'ongoing' ||
         sort === 'score_desc' || sort === 'popular_desc')) {
       const eligible = entries.filter((entry) => entry.malId !== null)
         .map(({ anidbId, malId }) => ({ anidbId, malId }));
@@ -393,11 +412,14 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     const partial = found.some(({ verification }) => verification.kind === 'unknown');
     const items = found.filter(({ verification }) => verification.kind === 'verified')
       .map(({ entry, verification }) => {
-        const snapshot = scoreCache && entry.malId !== null
+        const ranked = rankedByMal?.get(entry.malId);
+        const snapshot = !rankings && scoreCache && entry.malId !== null
           ? scoreCache.get(entry.anidbId, entry.malId) : null;
         return { anidbId: entry.anidbId,
           title: verification.title, type: verification.type,
           releaseStatus: entry.releaseStatus, adult: verification.adult,
+          ...(ranked ? { rating: { source: 'anilist', score: ranked.score,
+            votes: null, members: ranked.members, checkedMs: resultCheckedMs } } : {}),
           ...(['rated', 'unrated'].includes(snapshot?.state)
             ? { rating: { score: snapshot.score, votes: snapshot.votes,
               members: snapshot.members, checkedMs: snapshot.checkedMs } } : {}) };

@@ -896,7 +896,9 @@ function discoveryCard(item, note, badge, available = false) {
       ? `${members} members · Unrated`
       : `★ ${item.rating.score.toFixed(1)} · ${members} members`,
     'muted rating-line');
-    rating.title = `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members · checked ${new Date(item.rating.checkedMs).toLocaleDateString()}`;
+    rating.title = item.rating.source === 'anilist'
+      ? `AniList average score · ${item.rating.members.toLocaleString()} members · checked ${new Date(item.rating.checkedMs).toLocaleDateString()}`
+      : `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings · ${item.rating.members.toLocaleString()} members · checked ${new Date(item.rating.checkedMs).toLocaleDateString()}`;
     copy.append(rating);
   }
   if (item.adult) copy.append(element('span', '18+', 'badge partial'));
@@ -1122,7 +1124,15 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
         ? `Catalogue updated ${page.sourceDate}. Some title details could not be checked; try again later.`
-        : page.orderState === 'score_partial'
+        : page.orderState === 'anilist_score'
+          ? `Highest rated first · AniList ranking. Titles outside its top list follow in catalogue order.`
+          : page.orderState === 'anilist_popular'
+          ? `Most popular first · AniList ranking. Titles outside its top list follow in catalogue order.`
+          : page.orderState === 'anilist_stale'
+          ? `Showing the last saved AniList ranking; a fresh ranking is unavailable.`
+          : page.orderState === 'anilist_unavailable'
+          ? `AniList ranking is unavailable; showing catalogue order.`
+          : page.orderState === 'score_partial'
           ? `Catalogue updated ${page.sourceDate}. Known ${sort === 'score_desc' ? 'scores' : 'member counts'} first; titles without a rating follow while ratings fill in.`
           : page.orderState === 'score_loading'
             ? `Catalogue updated ${page.sourceDate}. Ratings are loading; showing catalogue order for now.`
@@ -1148,7 +1158,9 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
           ? `${members} members · Unrated`
           : `★ ${item.rating.score.toFixed(1)} · ${members} members`,
         'muted rating-line');
-        rating.title = `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings`;
+        rating.title = item.rating.source === 'anilist'
+          ? `AniList average score · ${item.rating.members.toLocaleString()} members`
+          : `MAL snapshot via AniMap · ${item.rating.votes.toLocaleString()} ratings`;
         copy.append(rating);
       }
       if (item.adult) copy.append(element('span', '18+', 'badge partial'));
@@ -1228,7 +1240,15 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
     if (continuation) stopBrowsePageObserver('airing');
     airingBrowseAfter = after;
     if (after === 0) renderGenres('airing', page.availableTags ?? [], tag);
-    if (after === 0) notice.textContent = page.orderState === 'score_loading'
+    if (after === 0) notice.textContent = page.orderState === 'anilist_score'
+      ? 'Highest rated ongoing anime first · AniList ranking. Other titles follow.'
+      : page.orderState === 'anilist_popular'
+      ? 'Most popular ongoing anime first · AniList ranking. Other titles follow.'
+      : page.orderState === 'anilist_stale'
+      ? 'Showing the last saved AniList ranking; a fresh ranking is unavailable.'
+      : page.orderState === 'anilist_unavailable'
+      ? 'AniList ranking is unavailable; showing ongoing titles in catalogue order.'
+      : page.orderState === 'score_loading'
       ? 'Ratings are loading in the background. Showing season order until ranking is ready; this page refreshes automatically.'
       : page.orderState === 'score_unavailable'
       ? 'Ratings are unavailable. Showing season order.'
