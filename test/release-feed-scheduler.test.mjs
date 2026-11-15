@@ -6,6 +6,7 @@ test('one hourly cycle reads each installed indexer once and never downloads', a
   const calls = [];
   const timers = [];
   const scheduler = createReleaseFeedScheduler({ indexerIds: [5, 6],
+    now: () => 60_000,
     feedLedger: { getPollIntervalMs: () => 3_600_000,
       accept: (value) => { calls.push(['accept', value.indexerId]);
         return { state: 'processed', newItems: 1, wokenRequests: 1 }; } },
@@ -27,6 +28,7 @@ test('no active watches cause no feed request and rate limits back off', async (
   let interval = null;
   let reads = 0;
   const scheduler = createReleaseFeedScheduler({ indexerIds: [5],
+    now: () => 60_000,
     feedLedger: { getPollIntervalMs: () => interval,
       accept: () => { throw Error('must not accept failed feed'); } },
     readFeed: async () => { reads++; return { state: 'unavailable',
