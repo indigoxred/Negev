@@ -15,6 +15,8 @@ test('request feedback explains a changed selection and has a safe generic fallb
   'This installment is already available in Negev’s Library.');
   assert.equal(requestFailureMessage({ reason: 'title_not_in_cutover' }),
     'Anime requests for this title are temporarily unavailable in Negev. Please try again later.');
+  assert.equal(requestFailureMessage({ reason: 'already_monitored_elsewhere' }),
+    'Future episodes are already monitored. No second request is needed.');
   assert.equal(requestFailureMessage(new Error('internal_error')),
     'The request could not be saved. Please try again.');
 });

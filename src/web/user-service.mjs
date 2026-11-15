@@ -578,6 +578,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       readRequest: (id) => requests.getRequest(id),
       findActiveWatch: (input) => requests.findActiveWatch(input),
+      findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
         await titleSource?.refresh();
         const page = requests.listRequests(input);

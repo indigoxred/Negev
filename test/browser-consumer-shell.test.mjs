@@ -1148,7 +1148,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'details', anidbId: 19742,
           title: 'Scheduled Precure', kind: 'series', restricted: false,
-          activeWatchRequestId: 14,
+          activeWatchRequestId: null, futureEpisodesMonitored: true,
           monitorFuture: true, episodeCount: 44, scheduleAsOf: '2026-11-13',
           regularSeason: { verified: 40, total: 44 },
           regularSchedule: { aired: 40, upcoming: 4, undated: 0,
@@ -1500,7 +1500,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(upcomingDetail, /Future episodes already monitored/);
       assert.match(upcomingDetail,
         /class="primary season-already-monitored"[^>]*disabled[^>]*>Future episodes already monitored<\/button>/);
-      assert.match(upcomingDetail, /View in My Requests/);
+      assert.doesNotMatch(upcomingDetail, /class="text-link request-receipt-link"[^>]*>View in My Requests/);
       const partialSeason = await dump(`${base}/#/title/96`,
         join(dir, 'partial-season'));
       assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);

@@ -36,6 +36,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   now = Date.now, submitRequest, queuePendingTitle,
   cancelRequest, reviewHeldRequest, readRequest, listRequests,
   findActiveWatch = () => null,
+  findOtherActiveWatch = () => false,
   listPendingTitles, readPendingTitle, readPendingTitleByKey,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
@@ -668,15 +669,18 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       ownershipGate.status(id) === 'eligible';
     const activeWatchRequestId = findActiveWatch({
       requesterId: request.negevUser.id, anidbId: id });
+    const futureEpisodesMonitored = activeWatchRequestId !== null ||
+      findOtherActiveWatch({ requesterId: request.negevUser.id, anidbId: id });
     if (result.state === 'detail_pending') return { state: 'detail_pending',
       anidbId: id, requestable: false,
-      activeWatchRequestId,
+      activeWatchRequestId, futureEpisodesMonitored,
       requestsOpen: requestsOpen && ownershipOpen };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     if (!request.negevUser.adultAllowed && result.restricted !== false) {
       return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
     return { ...result, requestable: false, activeWatchRequestId,
+      futureEpisodesMonitored,
       requestsOpen: requestsOpen && ownershipOpen };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,

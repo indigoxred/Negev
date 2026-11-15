@@ -111,7 +111,7 @@ test('existing database without a title column migrates without losing requests'
   } finally { ledger.close(); }
 }));
 
-test('same-user retries are idempotent while different users share targets', async () => withPath(async (dbPath) => {
+test('an active watch rejects a second user without exposing the owner request', async () => withPath(async (dbPath) => {
   const ledger = openRequestLedger(dbPath);
   try {
     const first = ledger.submit({ requesterId: 7, requestKey: 'first', intent, nowMs: 1_000 });
@@ -119,17 +119,24 @@ test('same-user retries are idempotent while different users share targets', asy
     assert.equal(repeat.requestId, first.requestId);
     assert.equal(repeat.created, false);
     const other = ledger.submit({ requesterId: 8, requestKey: 'first', intent, nowMs: 3_000 });
-    assert.notEqual(other.requestId, first.requestId);
-    assert.deepEqual(other.targetIds, first.targetIds);
-    assert.equal(ledger.countRequests(), 2);
+    assert.deepEqual(other, { state: 'held', reason: 'already_monitored_elsewhere' });
+    assert.equal(ledger.countRequests(), 1);
     assert.equal(ledger.countTargets(), 2);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 8, anidbId: 1234 }), true);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 7, anidbId: 1234 }), false);
+    const anotherInstallment = ledger.submit({ requesterId: 8,
+      requestKey: 'different-season', intent: { ...intent, anidbId: 1235 },
+      nowMs: 3_001 });
+    assert.equal(anotherInstallment.created, true);
+    assert.equal(anotherInstallment.requestId !== first.requestId, true);
   } finally { ledger.close(); }
 }));
 
 test('request history pages only the authenticated owner and survives restart', async () => withPath(async (dbPath) => {
   const first = openRequestLedger(dbPath);
   first.submit({ requesterId: 7, requestKey: 'one', intent, nowMs: 1_000 });
-  first.submit({ requesterId: 8, requestKey: 'other', intent, nowMs: 1_001 });
+  first.submit({ requesterId: 8, requestKey: 'other',
+    intent: { ...intent, anidbId: 1237 }, nowMs: 1_001 });
   first.submit({ requesterId: 7, requestKey: 'two',
     intent: { ...intent, anidbId: 1235 }, nowMs: 1_002 });
   first.submit({ requesterId: 7, requestKey: 'three',
@@ -231,7 +238,9 @@ test('two connections cannot create a second active watch with different submiss
     assert.equal(two.countRequests(), 1);
     const otherUser = two.submit({ requesterId: 8, requestKey: 'third', intent,
       nowMs: 1_002 });
-    assert.notEqual(otherUser.requestId, first.requestId);
+    assert.deepEqual(otherUser,
+      { state: 'held', reason: 'already_monitored_elsewhere' });
+    assert.equal(two.countRequests(), 1);
   } finally { one.close(); two.close(); }
 }));
 
@@ -260,6 +269,7 @@ test('a cancelled or closed watch permits a later request for the same user', as
     const first = ledger.submit({ requesterId: 7, requestKey: 'first', intent, nowMs: 1_000 });
     ledger.cancelRequest({ requesterId: 7, requestId: first.requestId, nowMs: 2_000 });
     assert.equal(ledger.findActiveWatch({ requesterId: 7, anidbId: 1234 }), null);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 8, anidbId: 1234 }), false);
     const second = ledger.submit({ requesterId: 7, requestKey: 'second', intent, nowMs: 3_000 });
     assert.notEqual(second.requestId, first.requestId);
     const db = new DatabaseSync(dbPath);

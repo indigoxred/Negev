@@ -2048,12 +2048,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.append(displaySummary);
     void displayRead.then((display) => renderDisplay(display, originalTitle));
     if (data.state === 'detail_pending') {
-      if (data.activeWatchRequestId) {
+      if (data.futureEpisodesMonitored) {
         panel.append(element('p', 'Future episodes already monitored.', 'muted'));
-        const existingRequest = element('a', 'View in My Requests →',
-          'text-link request-receipt-link');
-        existingRequest.href = '#/requests';
-        panel.append(detailActionRow(existingRequest));
+        if (data.activeWatchRequestId) {
+          const existingRequest = element('a', 'View in My Requests →',
+            'text-link request-receipt-link');
+          existingRequest.href = '#/requests';
+          panel.append(detailActionRow(existingRequest));
+        }
       } else {
         panel.append(element('p', requestAccess
           ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
@@ -2696,12 +2698,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           row.status?.selectable && !row.requested);
         const presentation = seasonTriggerPresentation([...rows.values()],
           item.anidbId, family.next() !== null);
-        const currentMonitored = rows.get(item.anidbId)?.activeWatchRequestId > 0;
+        const currentMonitored = rows.get(item.anidbId)?.futureEpisodesMonitored === true;
         const otherRequestable = [...rows.values()].some((row) =>
           row.anidbId !== item.anidbId && row.status?.selectable &&
-          !row.activeWatchRequestId && !row.requested);
+          !row.futureEpisodesMonitored && !row.requested);
         monitoredButton.hidden = !currentMonitored;
-        monitoredLink.hidden = !currentMonitored;
+        monitoredLink.hidden = !rows.get(item.anidbId)?.activeWatchRequestId;
         availableButton.hidden = currentMonitored || !presentation.showAvailable;
         trigger.hidden = currentMonitored ? !otherRequestable && family.next() === null
           : !presentation.showTrigger;
@@ -2732,10 +2734,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           : seasonRequestStatus(detail);
         if (status === null) { row.element.remove(); rows.delete(row.anidbId); refresh(); return; }
         row.activeWatchRequestId = detail?.activeWatchRequestId ?? null;
-        row.status = row.activeWatchRequestId
+        row.futureEpisodesMonitored = detail?.futureEpisodesMonitored === true ||
+          row.activeWatchRequestId > 0;
+        row.status = row.futureEpisodesMonitored
           ? { state: 'watching', text: 'Future episodes already monitored',
             selectable: false } : status;
-        row.statusText.textContent = row.activeWatchRequestId
+        row.statusText.textContent = row.futureEpisodesMonitored
           ? 'Future episodes already monitored' : row.requested ? 'Requested' : status.text;
         row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total) &&
           detail.regularSeason.total > 0
@@ -2901,6 +2905,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             } else if (payload.reason === 'already_available') {
               row.status = { state: 'available', text: 'Already available', selectable: false };
               row.statusText.textContent = 'Already available';
+            } else if (payload.reason === 'already_monitored_elsewhere') {
+              row.futureEpisodesMonitored = true;
+              row.status = { state: 'watching',
+                text: 'Future episodes already monitored', selectable: false };
+              row.statusText.textContent = 'Future episodes already monitored';
+              alreadyMonitored++;
             } else if (payload.reason === 'title_not_in_cutover') {
               row.status = { state: 'closed', text: 'Requests not open yet', selectable: false };
               row.statusText.textContent = requestFailureMessage(payload);
