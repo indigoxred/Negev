@@ -8,7 +8,7 @@ const hasReviewHolds = (result) => [result?.requests, result?.starts,
 // independent work proceeds. A later stage cannot overlap an active media
 // read. This clock has no provider credentials or startup wiring.
 export function createPipelineScheduler({ pipeline,
-  initialDelayMs = 60_000, stepDelayMs = 60_000,
+  initialDelayMs = 15_000, stepDelayMs = 15_000,
   failureDelayMs = 5 * 60_000,
   now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {

@@ -197,14 +197,14 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
         result;
     },
-    async scanRecent({ libraryId, kind, includeLoad = false }) {
-      if (!allowed({ libraryId, kind })) {
+    async scanRecent({ libraryId, kind, offset = 0, includeLoad = false }) {
+      if (!allowed({ libraryId, kind }) || ![0, 5, 10].includes(offset)) {
         return { state: 'held', reason: 'library_not_allowed' };
       }
       const started = performance.now();
       const load = { sectionPages: 0, exactCardReads: 0,
         candidateProbes: 0 };
-      const result = await indexPlexCardPage({ libraryId, kind, offset: 0,
+      const result = await indexPlexCardPage({ libraryId, kind, offset,
         index, now, ...indexReaders(load) });
       return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
         result;

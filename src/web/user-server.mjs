@@ -145,6 +145,7 @@ try {
       sections: config.plex.publicSections,
       tickPage: service.tickPublicPlexPage,
       tickRecent: service.tickPublicPlexRecent,
+      hasRecentArrival: service.hasRecentArrival,
       intervalMs: config.plexIndexIntervalMs,
     });
     plexScheduler.start();

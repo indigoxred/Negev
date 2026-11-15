@@ -33,13 +33,34 @@ test('one paced clock reconciles first and visits all four stages without overla
     setTimer: timer.setTimer, clearTimer: timer.clearTimer });
   assert.deepEqual(await scheduler.start(), { state: 'reconciled' });
   assert.deepEqual(calls, ['reconcile']);
-  assert.deepEqual(timer.delays(), [60_000]);
+  assert.deepEqual(timer.delays(), [15_000]);
   for (let i = 0; i < 4; i++) await timer.advance();
   assert.deepEqual(calls, ['reconcile', 'completion', 'publish', 'start', 'request']);
-  assert.deepEqual(timer.delays(), [60_000]);
+  assert.deepEqual(timer.delays(), [15_000]);
   await scheduler.stop();
   assert.deepEqual(timer.delays(), []);
   assert.equal(calls.at(-1), 'close');
+});
+
+test('completion and publication get a turn within one minute without overlapping stages', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => { calls.push('publish'); return { state: 'idle' }; },
+    tickStarts: async () => { calls.push('start'); return { state: 'idle' }; },
+    tickRequests: async () => { calls.push('request'); return { state: 'idle' }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  assert.deepEqual(timer.delays(), [15_000]);
+  for (let i = 0; i < 5; i++) await timer.advance();
+  assert.deepEqual(calls,
+    ['completion', 'publish', 'start', 'request', 'completion']);
+  await scheduler.stop();
 });
 
 test('shutdown drains an active stage and never starts another stage', async () => {
@@ -96,7 +117,7 @@ test('held reconciliation retries without scheduling acquisition work', async ()
   await timer.advance();
   assert.equal(attempts, 2);
   assert.equal(scheduler.getStatus().state, 'waiting');
-  assert.deepEqual(timer.delays(), [60_000]);
+  assert.deepEqual(timer.delays(), [15_000]);
   await scheduler.stop();
   assert.equal(closed, true);
 });
@@ -167,7 +188,7 @@ test('a held target does not delay unrelated acquisition stages', async () => {
     setTimer: timer.setTimer, clearTimer: timer.clearTimer });
   await scheduler.start();
   await timer.advance();
-  assert.deepEqual(timer.delays(), [60_000]);
+  assert.deepEqual(timer.delays(), [15_000]);
   await timer.advance();
   assert.deepEqual(calls, ['completion', 'publish']);
   await scheduler.stop();
