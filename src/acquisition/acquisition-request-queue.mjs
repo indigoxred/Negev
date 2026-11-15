@@ -58,6 +58,7 @@ export function openAcquisitionRequestQueue(dbPath,
       attempt_id INTEGER CHECK(attempt_id>0),
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0),
+      empty_since_ms INTEGER CHECK(empty_since_ms>=0),
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
       candidate_fingerprint TEXT
     ) STRICT`);
@@ -77,6 +78,10 @@ export function openAcquisitionRequestQueue(dbPath,
     if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
       .some((column) => column.name === 'candidate_fingerprint')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN candidate_fingerprint TEXT');
+    }
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'empty_since_ms')) {
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN empty_since_ms INTEGER CHECK(empty_since_ms>=0)');
     }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
@@ -103,15 +108,17 @@ export function openAcquisitionRequestQueue(dbPath,
     VALUES (?,?,NULL,NULL,NULL,NULL,NULL) ON CONFLICT(request_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
-    state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,
+    state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
     candidate_offset=COALESCE(?,candidate_offset),
     candidate_fingerprint=COALESCE(?,candidate_fingerprint)
     WHERE request_id=? AND pass=? AND state IS NULL`);
   const result = db.prepare(`SELECT request_id AS requestId,pass,state,reason,
     attempt_id AS attemptId,candidate_offset AS candidateOffset,
     candidate_fingerprint AS candidateFingerprint,
-    checked_ms AS checkedMs,next_due_ms AS nextDueMs
+    checked_ms AS checkedMs,next_due_ms AS nextDueMs,
+    empty_since_ms AS emptySinceMs
     FROM acquisition_request_checks WHERE request_id=?`);
+  const watch = db.prepare('SELECT monitor_future,watch_closed FROM requests WHERE id=?');
   const unresolved = db.prepare(`SELECT request_id AS requestId,pass
     FROM acquisition_request_checks WHERE request_id>? AND state IS NULL
     ORDER BY request_id LIMIT ?`);
@@ -293,12 +300,21 @@ export function openAcquisitionRequestQueue(dbPath,
         nextCandidateFingerprint !== null &&
         nextCandidateOffset !== null &&
         nextCandidateOffset > previous.candidateOffset;
+      const empty = state === 'held' &&
+        ['no_release_candidates', 'no_safe_release'].includes(reason);
+      const emptySinceMs = empty ? previous?.emptySinceMs ?? checkedMs : null;
+      const watched = watch.get(requestId);
+      const elapsed = checkedMs - (emptySinceMs ?? checkedMs);
+      const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
+        elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : advanced ? checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable'].includes(reason)
-            ? SESSION_RETRY_MS : RETRY_DELAY_MS);
+            ? SESSION_RETRY_MS : empty && watched?.monitor_future === 1 &&
+              watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
+        emptySinceMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
@@ -307,7 +323,7 @@ export function openAcquisitionRequestQueue(dbPath,
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       const row = result.get(requestId);
       if (!row) return null;
-      const { candidateOffset, candidateFingerprint, ...other } = row;
+      const { candidateOffset, candidateFingerprint, emptySinceMs, ...other } = row;
       return { ...other,
         ...(candidateOffset > 0 ? { candidateOffset } : {}),
         ...(candidateFingerprint ? { candidateFingerprint } : {}) };

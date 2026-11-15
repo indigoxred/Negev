@@ -452,7 +452,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }) : undefined;
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
-        ledger: requests, afterId, limit, today: today(),
+        ledger: requests, afterId, limit, today: today(), nowMs: now(),
         loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
           loadPage: async ({ page }) => {
             if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));
@@ -864,6 +864,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })());
     };
     return { app,
+      cachedReleaseAliases: (anidbId) =>
+        titleSource?.releaseQueries(anidbId) ?? [],
       hasRecentArrival: () => now() < recentImportUntilMs,
       tickPendingTitle: () => stopping
         ? Promise.resolve({ state: 'held', reason: 'service_stopping' })

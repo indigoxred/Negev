@@ -1,5 +1,6 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
+import { airingCheckCadence } from './airing-check-cadence.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -7,17 +8,19 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // One paced, read-only catalogue poll for a bounded page of durable Airing
 // watches. The request ledger is the only writer. No download is dispatched.
 export async function pollAiringWatches({ ledger, loadDetail, today,
-  afterId = 0, limit = 3, intervalMs = 1_000 } = {}) {
+  afterId = 0, limit = 3, intervalMs = 1_000,
+  nowMs = Date.now() } = {}) {
   if (typeof ledger?.listActiveAirings !== 'function' ||
       typeof ledger?.advanceAiring !== 'function' ||
       typeof loadDetail !== 'function' ||
       !Number.isSafeInteger(afterId) || afterId < 0 ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > 10 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 10_000 ||
+      !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) {
     throw new TypeError('Invalid Airing poll configuration');
   }
-  const watches = ledger.listActiveAirings({ afterId, limit });
+  const watches = ledger.listActiveAirings({ afterId, limit, nowMs });
   if (!Array.isArray(watches) || watches.length > limit ||
       watches.some((item, index) => !validId(item?.requestId) ||
         item.requestId <= (index === 0 ? afterId : watches[index - 1].requestId) ||
@@ -66,6 +69,20 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
     } catch {
       results.push({ ...watch, ...held('watch_write_unavailable') });
       continue;
+    }
+    if (advanced?.state === 'advanced' && !advanced.watchClosed &&
+        typeof ledger.recordAiringTiming === 'function') {
+      const cadence = airingCheckCadence({ today, state:
+        release.state === 'upcoming' ? 'upcoming' : 'airing',
+      airDate: detail.airDate, episodes: detail.episodes });
+      try {
+        ledger.recordAiringTiming({ requestId: watch.requestId, nowMs,
+          nextMetadataMs: nowMs + cadence.metadataMs,
+          feedIntervalMs: cadence.feedMs });
+      } catch {
+        results.push({ ...watch, ...held('watch_timing_unavailable') });
+        continue;
+      }
     }
     results.push({ ...watch, ...advanced,
       ...(completionUnconfirmed ? { reason: 'completion_unconfirmed' } : {}) });

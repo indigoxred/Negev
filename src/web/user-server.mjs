@@ -28,6 +28,9 @@ import { createDirectAvailabilityScheduler } from
 import { createAvailabilityCycle } from '../availability/availability-cycle.mjs';
 import { forwardShokoEvent } from '../availability/shoko-event-consumer.mjs';
 import { startAcquisitionRuntime } from '../acquisition/start-acquisition-runtime.mjs';
+import { openReleaseFeedLedger } from '../acquisition/release-feed-ledger.mjs';
+import { readProwlarrRss } from '../acquisition/prowlarr-rss.mjs';
+import { createReleaseFeedScheduler } from '../acquisition/release-feed-scheduler.mjs';
 import { startParentWatchRuntime } from '../requests/start-parent-watch-runtime.mjs';
 
 let service;
@@ -41,6 +44,8 @@ let plexScheduler;
 let fileBackfillScheduler;
 let directAvailabilityScheduler;
 let pendingTitleScheduler;
+let releaseFeedLedger;
+let releaseFeedScheduler;
 try {
   const config = parseUserServerConfig(process.env);
   const store = await openUserStore({ dataDir: config.dataDir });
@@ -89,6 +94,16 @@ try {
     today: () => dateInZone(config.timeZone) });
   await startAcquisitionRuntime({ config, service, sessionGate: qbitSessionGate,
     shokoApiKey, ownershipGate: acquisitionOwnershipGate });
+  if (config.acquisitionRuntime && prowlarr) {
+    releaseFeedLedger = openReleaseFeedLedger(config.dbPath, {
+      aliasesForId: service.cachedReleaseAliases });
+    releaseFeedScheduler = createReleaseFeedScheduler({
+      indexerIds: prowlarr.indexerIds, feedLedger: releaseFeedLedger,
+      readFeed: (indexerId) => readProwlarrRss({
+        baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey, indexerId }),
+    });
+    releaseFeedScheduler.start();
+  }
   await service.app.listen({ host: config.host, port: config.port });
   const reportShokoFeedStatus = createShokoFeedStatusReporter();
   const flagShokoGap = (reason) => {
@@ -186,6 +201,8 @@ try {
     stopping = true;
     try {
       await airingScheduler?.stop();
+      await releaseFeedScheduler?.stop();
+      releaseFeedLedger?.close();
       await parentWatchRuntime?.close();
       await plexScheduler?.close();
       await fileBackfillScheduler?.close();
@@ -203,6 +220,8 @@ try {
 } catch (error) {
   try {
     await airingScheduler?.stop();
+    await releaseFeedScheduler?.stop();
+    releaseFeedLedger?.close();
     await parentWatchRuntime?.close();
     await plexScheduler?.close();
     await fileBackfillScheduler?.close();
