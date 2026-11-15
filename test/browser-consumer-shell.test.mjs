@@ -1363,7 +1363,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /Negev’s Library/);
       assert.match(library, /The Garden of Words/);
-      assert.match(library, /<div id="library-list" class="poster-grid"><a class="poster-card"/);
+      assert.match(library, /<div id="library-list" class="poster-grid"><div class="tracked-title"[^>]*><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const librarySearch = await dump(`${base}/#/library?q=Garden`,
         join(dir, 'library-search'), 'library');
