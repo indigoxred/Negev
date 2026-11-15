@@ -249,10 +249,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       fileProofs = openFileProofLedger(dbPath, {
         positiveLifetimeMs: fileProofLifetimeMs, now });
     }
+    let recentImportUntilMs = 0;
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {
       if (priority === 'event' && after?.state === 'linked' &&
           after.pairs?.length) {
+        recentImportUntilMs = Math.max(recentImportUntilMs,
+          observedMs + 10 * 60_000);
         fileCursor?.prioritizeFile({ fileId: after.fileId, observedMs });
       }
       const pairs = new Map();
@@ -852,6 +855,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })());
     };
     return { app,
+      hasRecentArrival: () => now() < recentImportUntilMs,
       tickPendingTitle: () => stopping
         ? Promise.resolve({ state: 'held', reason: 'service_stopping' })
         : track(pendingTitleWorker.runOnce()),

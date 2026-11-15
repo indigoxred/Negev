@@ -38,6 +38,46 @@ test('overlapping ticks do not create a Plex read backlog', async () => {
   assert.deepEqual(await scheduler.runOnce(), { state: 'held', reason: 'scheduler_closed' });
 });
 
+test('a fresh arrival checks successive newest pages and then resumes the normal sweep', async () => {
+  let arrival = true;
+  const calls = [];
+  const scheduler = createPlexIndexScheduler({
+    sections: { episode: [102], movie: [] },
+    hasRecentArrival: () => arrival,
+    tickPage: async (input) => { calls.push(['page', input]); return { state: 'page_indexed' }; },
+    tickRecent: async (input) => { calls.push(['recent', input]);
+      return { state: 'page_indexed', nextOffset: input.offset + 5 }; },
+  });
+  await scheduler.runOnce();
+  await scheduler.runOnce();
+  await scheduler.runOnce();
+  arrival = false;
+  await scheduler.runOnce();
+  assert.deepEqual(calls, [
+    ['recent', { kind: 'episode', libraryId: 102, offset: 0 }],
+    ['recent', { kind: 'episode', libraryId: 102, offset: 5 }],
+    ['recent', { kind: 'episode', libraryId: 102, offset: 10 }],
+    ['page', { kind: 'episode', libraryId: 102 }],
+  ]);
+  await scheduler.close();
+});
+
+test('a failed arrival page retries the same bounded offset', async () => {
+  const offsets = [];
+  let first = true;
+  const scheduler = createPlexIndexScheduler({
+    sections: { episode: [102], movie: [] }, hasRecentArrival: () => true,
+    tickPage: async () => ({ state: 'page_indexed' }),
+    tickRecent: async ({ offset }) => { offsets.push(offset);
+      if (first) { first = false; return { state: 'held', reason: 'plex_unavailable' }; }
+      return { state: 'page_indexed', nextOffset: 5 }; },
+  });
+  await scheduler.runOnce();
+  await scheduler.runOnce();
+  assert.deepEqual(offsets, [0, 0]);
+  await scheduler.close();
+});
+
 test('invalid section list and too-fast interval are rejected', () => {
   const base = { sections: { episode: [102], movie: [] },
     tickPage: async () => ({}), tickRecent: async () => ({}) };
