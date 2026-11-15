@@ -4,6 +4,7 @@ import Fastify from 'fastify';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
+import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 
 const safeImportReasons = new Set(['incomplete_import_baseline',
   'invalid_sidecar_evidence', 'invalid_import_file',
@@ -123,6 +124,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
     'season-request-selection.mjs', 'episode-schedule.mjs',
+    'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>
@@ -943,6 +945,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const result = await submitRequest({ ...body, requesterId: requester.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
+      autoTrackSavedAiringRequest({ result, requesterId: requester.id,
+        anidbId: body.anidbId, readRequest, accounts });
       return reply.code(202).send(result);
     }
     if (body.scope === 'installment' &&

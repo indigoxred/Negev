@@ -10,6 +10,48 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('a saved airing request is tracked for its requester without changing the Airing preset', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  let preferences = { mode: 'library', trackedAnidbIds: [11] };
+  const requests = new Map();
+  let nextId = 1;
+  const accounts = { authenticate: async () => user, getSessionUser: () => user,
+    registerInvite: async () => null, createInvite: () => null,
+    revokeSessions: () => false,
+    getAiringPreferences: ({ userId }) => userId === 7 ? preferences : null,
+    setAiringPreferences: ({ userId, mode, trackedAnidbIds }) => {
+      assert.equal(userId, 7);
+      preferences = { mode, trackedAnidbIds };
+      return preferences;
+    } };
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async ({ anidbId }) => {
+      if (anidbId === 99) return { state: 'held', reason: 'detail_unavailable' };
+      const requestId = nextId++;
+      requests.set(requestId, { id: requestId, requesterId: 7, anidbId,
+        kind: anidbId === 20 ? 'movie' : 'series',
+        monitorFuture: anidbId === 12 });
+      return { state: 'held', reason: 'queued', requestId };
+    }, readRequest: (id) => requests.get(id) ?? null });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    const send = (anidbId) => app.inject({ method: 'POST', url: '/api/requests',
+      headers, payload: { anidbId, scope: 'installment', requestKey: `title${anidbId}` } });
+    assert.equal((await send(12)).statusCode, 202);
+    assert.deepEqual(preferences, { mode: 'library', trackedAnidbIds: [11, 12] });
+    assert.equal((await send(13)).statusCode, 202);
+    assert.equal((await send(20)).statusCode, 202);
+    assert.equal((await send(99)).statusCode, 409);
+    assert.deepEqual(preferences, { mode: 'library', trackedAnidbIds: [11, 12] });
+  } finally { await app.close(); }
+});
+
 test('one season batch applies the normal request gate to every selected installment', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
