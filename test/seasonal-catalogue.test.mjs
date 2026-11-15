@@ -32,9 +32,11 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   assert.deepEqual(first, { state: 'ready', year: 2026, season: 'FALL',
     sourceDate: '2026-11-05', availableTags: [], total: 3,
     items: [{ anidbId: 1, title: 'AniDB 1',
-      type: 'TV Series', releaseStatus: 'RELEASING', adult: false },
+      type: 'TV Series', releaseStatus: 'RELEASING', adult: false,
+      chineseProduction: false },
     { anidbId: 2, title: 'AniDB 2', type: 'TV Series',
-      releaseStatus: 'RELEASING', adult: true }], nextAfter: 2 });
+      releaseStatus: 'RELEASING', adult: true,
+      chineseProduction: false }], nextAfter: 2 });
   const second = await reader.read({ year: 2026, season: 'FALL',
     after: first.nextAfter, limit: 2 });
   assert.deepEqual(second.items.map((item) => item.anidbId), [3]);
@@ -56,6 +58,26 @@ test('season cards retain the English title already returned by AniMap detail', 
         restricted: false }), now: () => 1_000 });
   const page = await reader.read({ year: 2026, season: 'FALL' });
   assert.equal(page.items[0].englishTitle, "Frieren: Beyond Journey's End");
+});
+
+test('seasonal catalogue identifies Chinese production from the exact AniMap tag', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-15', data: [
+        { ...row('Donghua', 16201), tags: ['Chinese Production', 'Action'] },
+        { ...row('Anime', 17), tags: ['Japanese production'] },
+      ] })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: `Title ${url.split('/').at(-1)}`, type: 'TV Series',
+        restricted: false }), now: () => 1_000 });
+  const page = await reader.read({ year: 2026, season: 'FALL' });
+  assert.equal(page.items.find((item) => item.anidbId === 16201)
+    .chineseProduction, true);
+  assert.equal(page.items.find((item) => item.anidbId === 17)
+    .chineseProduction, false);
+  assert.equal(reader.isChineseProduction(16201), true);
+  assert.equal(reader.isChineseProduction(17), false);
+  assert.equal(reader.isChineseProduction(99999), false);
 });
 
 test('Airing eligibility filters ongoing titles before pagination', async () => {
@@ -526,7 +548,8 @@ test('streamed map handles split Unicode and nested JSON without buffering the f
   const page = await reader.read({ year: 2026, season: 'FALL' });
   assert.equal(page.state, 'ready');
   assert.deepEqual(page.items, [{ anidbId: 9, title: '猫 { show',
-    type: 'OVA', releaseStatus: 'RELEASING', adult: true }]);
+    type: 'OVA', releaseStatus: 'RELEASING', adult: true,
+    chineseProduction: false }]);
 });
 
 test('invalid map ending and oversized decoded response never become an empty season', async () => {

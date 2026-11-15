@@ -491,6 +491,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
         scheduledDate: '2026-11-02', episodeNumber: '3', adult: false,
+        chineseProduction: false,
         libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] }),
     listSeasonalTitles: async ({ year, season, after, limit, kind, tag, status, sort }) => {
       seasonalInputs.push({ year, season, after, limit, kind, tag, status, sort });
@@ -670,6 +671,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.deepEqual(airing.json(), { state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
         scheduledDate: '2026-11-02', episodeNumber: '3', adult: false,
+        chineseProduction: false,
         libraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] });
     const seasonal = await app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } });
@@ -680,6 +682,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       items: [{ anidbId: 1234,
         title: 'Example series', type: 'TV Series',
         releaseStatus: 'RELEASING', adult: false,
+        chineseProduction: false,
         rating: { score: 8.2, votes: 100, members: 500, checkedMs: 950 },
         libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 } }],
       nextAfter: null });

@@ -16,6 +16,7 @@ import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
+import { hideChineseProduction } from './chinese-visibility.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
 
@@ -33,7 +34,7 @@ const state = { csrf: null, user: null, selected: null,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
   requestScope: 'mine',
-  showAdult: true, preferEnglish: false, usersLoaded: false,
+  showAdult: true, showChinese: true, preferEnglish: false, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
 const requestResponses = {
@@ -168,6 +169,7 @@ function trackedCard(card, item, { hideUnknown = false } = {}) {
   // The wrapper owns visibility and identity so a card counts only once.
   delete card.dataset.anidbId;
   delete card.dataset.adult;
+  delete card.dataset.chineseProduction;
   card.hidden = false;
   wrapper.append(card);
   return wrapper;
@@ -191,7 +193,8 @@ function renderTrackedTitles() {
       const known = state.searchItems.get(id);
       const title = known?.title && !/^Anime \d+$/.test(known.title)
         ? known.title : `AniDB ${id}`;
-      const item = { anidbId: id, title, adult: known?.adult };
+      const item = { anidbId: id, title, adult: known?.adult,
+        chineseProduction: known?.chineseProduction };
       const row = markAdult(element('div', undefined, 'tracked-list-row'), item);
       const link = element('a', title, 'text-link');
       link.href = titleRoute(id);
@@ -229,6 +232,11 @@ function readAdultPreference(userId) {
   try { return localStorage.getItem(adultPreferenceKey(userId)) !== 'off'; }
   catch { return true; }
 }
+function chinesePreferenceKey(userId) { return `negev:show-chinese:${userId}`; }
+function readChinesePreference(userId) {
+  try { return localStorage.getItem(chinesePreferenceKey(userId)) !== 'off'; }
+  catch { return true; }
+}
 function englishTitlePreferenceKey(userId) { return `negev:english-titles:${userId}`; }
 function readEnglishTitlePreference(userId) {
   try { return localStorage.getItem(englishTitlePreferenceKey(userId)) === 'on'; }
@@ -238,16 +246,21 @@ function markAdult(node, item, { hideUnknown = false } = {}) {
   node.dataset.anidbId = String(item.anidbId);
   node.dataset.adult = item.adult === true ? 'true' :
     item.adult === false ? 'false' : 'unknown';
+  node.dataset.chineseProduction = String(item.chineseProduction === true);
   node.hidden = !state.showAdult && (item.adult === true ||
-    hideUnknown && item.adult !== false);
+    hideUnknown && item.adult !== false) ||
+    hideChineseProduction(state.showChinese, item.chineseProduction);
   return node;
 }
 function applyAdultVisibility() {
   for (const node of document.querySelectorAll('[data-anidb-id]')) {
+    const known = state.searchItems.get(Number(node.dataset.anidbId));
     node.hidden = !state.showAdult && (node.dataset.adult === 'true' ||
       state.searchItems.get(Number(node.dataset.anidbId))?.adult === true ||
       (node.closest('#results') || node.closest('#library-search-results')) &&
-        node.dataset.adult !== 'false');
+        node.dataset.adult !== 'false') ||
+      hideChineseProduction(state.showChinese,
+        node.dataset.chineseProduction === 'true' || known?.chineseProduction);
   }
   const toggle = byId('adult-toggle');
   toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :
@@ -256,6 +269,10 @@ function applyAdultVisibility() {
   toggle.disabled = state.user?.adultAllowed === false;
   toggle.title = toggle.disabled ? '18+ access is disabled for this account' :
     'Show or hide titles marked 18+';
+  const chinese = byId('chinese-toggle');
+  chinese.textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
+  chinese.setAttribute('aria-pressed', String(state.showChinese));
+  chinese.title = 'Show or hide titles tagged Chinese production';
 }
 const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
   ? `/api/catalogue/posters/${item.posterUid}`
@@ -421,6 +438,7 @@ function showSession(data) {
   void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
   state.showAdult = data.user.adultAllowed !== false &&
     readAdultPreference(data.user.id);
+  state.showChinese = readChinesePreference(data.user.id);
   state.preferEnglish = readEnglishTitlePreference(data.user.id);
   state.csrf = data.csrfToken;
   state.releaseSearch = data.capabilities?.releaseSearch === true;
@@ -437,6 +455,7 @@ function showSession(data) {
   byId('search-form').hidden = false;
   byId('identity').hidden = false;
   byId('adult-toggle').hidden = false;
+  byId('chinese-toggle').hidden = false;
   applyAdultVisibility();
   applyTitlePreference();
   byId('username').textContent = data.user.username;
@@ -466,6 +485,7 @@ function clearWorkspace() {
   state.user = null;
   state.requestScope = 'mine';
   state.showAdult = true;
+  state.showChinese = true;
   state.usersLoaded = false;
   state.csrf = null;
   state.selected = null;
@@ -511,6 +531,7 @@ function clearWorkspace() {
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
   byId('adult-toggle').hidden = true;
+  byId('chinese-toggle').hidden = true;
   byId('identity').open = false;
   byId('workspace').hidden = true;
   byId('auth').hidden = false;
@@ -1511,6 +1532,14 @@ byId('adult-toggle').addEventListener('click', () => {
       { anidbId: state.selected, title: `Anime ${state.selected}` };
     void showDetail(item);
   }
+});
+byId('chinese-toggle').addEventListener('click', () => {
+  if (!state.user) return;
+  state.showChinese = !state.showChinese;
+  try { localStorage.setItem(chinesePreferenceKey(state.user.id),
+    state.showChinese ? 'on' : 'off'); }
+  catch { /* Choice still applies this session. */ }
+  applyAdultVisibility();
 });
 byId('english-title-toggle').addEventListener('click', () => {
   if (!state.user) return;

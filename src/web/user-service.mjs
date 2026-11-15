@@ -593,6 +593,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           return { ...result, items: result.items.map((item) => {
             return { ...item,
               englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+              chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
               libraryPresence:
               publicPresenceForTitle(item.anidbId, checkedMs),
               verifiedLibraryPresence: libraryPresenceForTitle(item.anidbId) };
@@ -622,6 +623,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           return { state: 'current_proofs',
             items: page.items.map((item) => ({ ...item,
               englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+              chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
               title: titleSource?.getTitle(item.anidbId) ??
                 titleRegistry.getTitle({ anidbId: item.anidbId }) ??
                 `Anime title unavailable (${item.anidbId})` })),
@@ -635,6 +637,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const tracked = new Set(airingPreference?.trackedAnidbIds ?? []);
         const items = schedule.items.map((item) => ({ ...item,
           englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+          chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
           libraryPresence: libraryPresenceForTitle(item.anidbId) }));
         return { ...schedule, items: items.filter((item) =>
           airingPreference?.mode === 'custom' ? tracked.has(item.anidbId)
@@ -680,6 +683,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         const checkedMs = now();
         return { ...related, items: related.items.map((item) => ({ ...item,
+          chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
           libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
