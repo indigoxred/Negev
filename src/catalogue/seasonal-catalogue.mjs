@@ -191,6 +191,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
   if (!Number.isSafeInteger(bootMs) || restored?.checkedMs > bootMs ||
       restored?.checkedMs + staleMs <= bootMs) restored = null;
   let cached = restored?.map ?? null;
+  let chineseIds = new Set(cached?.allEntries.filter((entry) =>
+    entry.tags.includes('chinese production')).map((entry) => entry.anidbId));
   let checkedMs = restored?.checkedMs ?? null;
   let attemptedMs = null;
   let pendingMap = null;
@@ -234,6 +236,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           if (response.status !== 200) throw new Error('Seasonal map unavailable');
           const parsed = await parseMap(response);
           cached = parsed;
+          chineseIds = new Set(parsed.allEntries.filter((entry) =>
+            entry.tags.includes('chinese production')).map((entry) => entry.anidbId));
           checkedMs = time;
           saveSnapshot(time);
         })().finally(() => { pendingMap = null; });
@@ -272,7 +276,9 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
       return value;
     } catch { return { kind: 'unknown' }; }
   }
-  return { async read({ year, season, after = 0, limit = 12,
+  return { isChineseProduction(anidbId) {
+    return chineseIds.has(anidbId);
+  }, async read({ year, season, after = 0, limit = 12,
     kind = 'all', tag = '', status = 'all', sort = 'newest',
     eligibleIds, eligibleTitle } = {}) {
     if (!Number.isSafeInteger(year) || year !== 0 && (year < 1900 || year > 2100) ||
@@ -424,6 +430,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           ...(verification.englishTitle
             ? { englishTitle: verification.englishTitle } : {}),
           releaseStatus: entry.releaseStatus, adult: verification.adult,
+          chineseProduction: entry.tags.includes('chinese production'),
           ...(ranked ? { rating: { source: 'anilist', score: ranked.score,
             votes: null, members: ranked.members, checkedMs: resultCheckedMs } } : {}),
           ...(['rated', 'unrated'].includes(snapshot?.state)

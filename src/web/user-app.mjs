@@ -126,7 +126,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'season-request-selection.mjs', 'episode-schedule.mjs',
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
-    'adult-search-visibility.mjs', 'title-preference.mjs'];
+    'adult-search-visibility.mjs', 'chinese-visibility.mjs',
+    'title-preference.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));
@@ -334,6 +335,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           typeof item.episodeNumber !== 'string' ||
           item.episodeNumber.length > 24 ||
           typeof item.adult !== 'boolean' ||
+          item.chineseProduction !== undefined &&
+            typeof item.chineseProduction !== 'boolean' ||
           !['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
           !Number.isSafeInteger(item.libraryPresence.verifiedEpisodeCount) ||
           item.libraryPresence.verifiedEpisodeCount < 0 ||
@@ -347,6 +350,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         request.negevUser.adultAllowed || !item.adult).map((item) => ({ anidbId: item.anidbId,
         title: item.title, scheduledDate: item.scheduledDate,
         episodeNumber: item.episodeNumber, adult: item.adult,
+        chineseProduction: item.chineseProduction === true,
         libraryPresence: item.libraryPresence })) };
   });
   app.get('/api/airing/preferences', { preHandler: requireUser }, async (request, reply) => {
@@ -440,6 +444,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
               item.englishTitle.length > 500) ||
           typeof item.type !== 'string' || item.type.length > 80 ||
           typeof item.adult !== 'boolean' ||
+          item.chineseProduction !== undefined &&
+            typeof item.chineseProduction !== 'boolean' ||
           item.libraryPresence !== undefined &&
             (!['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
               !Number.isSafeInteger(item.libraryPresence?.verifiedEpisodeCount) ||
@@ -481,6 +487,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         anidbId: item.anidbId, title: item.title, type: item.type,
         ...(item.englishTitle ? { englishTitle: item.englishTitle } : {}),
         releaseStatus: item.releaseStatus, adult: item.adult,
+        chineseProduction: item.chineseProduction === true,
         ...(item.rating === undefined ? {} : { rating: item.rating }),
         ...(item.libraryPresence === undefined ? {} :
           { libraryPresence: item.libraryPresence }) })),

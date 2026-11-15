@@ -18,7 +18,7 @@ const assets = new Map([
   ...['request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'adult-search-visibility.mjs',
+    'adult-search-visibility.mjs', 'chinese-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
     'title-preference.mjs',
     'season-request-selection.mjs', 'episode-schedule.mjs',
@@ -253,6 +253,13 @@ async function inspectMobile(url, profile, width = 390) {
         toggle.click();
         const adultHiddenAgain = document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden;
         return {adultVisible, adultHiddenAgain}; })()`,
+    });
+    const chineseChoice = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const toggle = document.querySelector('#chinese-toggle');
+        const card = document.querySelector('#season-list [data-anidb-id="4158"]');
+        const before = !card.hidden; toggle.click(); const hidden = card.hidden;
+        toggle.click(); return {before, hidden, restored: !card.hidden,
+          label: toggle.textContent}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
     await wait(800);
@@ -574,6 +581,7 @@ async function inspectMobile(url, profile, width = 390) {
       searchAdultLabels: searchAdultLabels.result.value,
       filtered: filtered.result.value,
       liveToggle: liveToggle.result.value,
+      chineseChoice: chineseChoice.result.value,
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
       seasonPopup: seasonPopup.result.value,
@@ -824,7 +832,8 @@ test('signed-in consumer routes render real shell with search, library and reque
             title: 'Pale Cocoon', type: 'OVA', releaseStatus: 'FINISHED',
             rating: { score: 8.2, votes: 2100, members: 9000,
               checkedMs: 1_000 },
-            adult: false, libraryPresence: { state: 'unknown',
+            adult: false, chineseProduction: true,
+            libraryPresence: { state: 'unknown',
               verifiedEpisodeCount: 0 } }, { anidbId: 9589, title: 'The Garden of Words',
             type: 'Movie', releaseStatus: 'FINISHED', adult: true,
             libraryPresence: { state: 'in_library',
@@ -1262,6 +1271,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         { id: 14974, label: '18+' }, { id: 11003, label: '18+' }]);
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
+      assert.deepEqual(mobile.chineseChoice,
+        { before: true, hidden: true, restored: true, label: 'Chinese: On' });
       assert.deepEqual(mobile.franchise.before,
         { button: 'Show more related titles', visible: true, count: 2, capacity: 2 });
       assert.match(mobile.franchise.listed, /The Garden of Words/);
