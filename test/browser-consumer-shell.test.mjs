@@ -1341,7 +1341,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       ]);
       assert.deepEqual(mobile.airingTrack.allWeeklyPresence, [
         { title: 'FX Senshi Kurumi-chan', badge: '✓ Show has playable items' },
-        { title: 'Psyren', badge: 'Local availability not checked' },
+        { title: 'Psyren', badge: 'Scheduled episode' },
       ]);
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
