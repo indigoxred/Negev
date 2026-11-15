@@ -106,7 +106,7 @@ test('normal title browsing can open more than ten detail pages per minute', asy
   } finally { await app.close(); }
 });
 
-test('related title browsing can expand more than five links per minute', async () => {
+test('related title browsing can expand several franchises per minute', async () => {
   const origin = 'http://localhost:3000';
   const user = { id: 1, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
@@ -127,7 +127,7 @@ test('related title browsing can expand more than five links per minute', async 
       payload: { username: 'Owner', password: 'test-passphrase' } });
     assert.equal(login.statusCode, 200);
     const cookie = login.headers['set-cookie'].split(';')[0];
-    for (let id = 1; id <= 6; id++) {
+    for (let id = 1; id <= 25; id++) {
       const result = await app.inject({ method: 'GET',
         url: `/api/catalogue/${id}/related`, headers: { cookie } });
       assert.equal(result.statusCode, 200, `related ${id}: ${result.body}`);

@@ -2280,7 +2280,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       chooser.append(element('summary', 'Choose seasons'));
       const heading = element('div', undefined, 'season-request-header');
       heading.append(element('strong', 'Choose seasons or installments'));
-      const selectAll = element('button', 'Select all requestable', 'quiet');
+      const selectAll = element('button', 'Select all shown', 'quiet');
       selectAll.type = 'button';
       heading.append(selectAll);
       const list = element('div', undefined, 'season-request-list');
@@ -2294,7 +2294,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         moreSeasons.disabled = relatedLoading;
         moreSeasons.textContent = lastRelatedFailure
           ? 'Retry finding seasons' : 'Find more seasons or installments';
-        lookupNotice.textContent = lastRelatedFailure ?? '';
+        const incomplete = relatedLoading || !!lastRelatedFailure || !!family.next();
+        lookupNotice.textContent = relatedLoading
+          ? 'Finding linked seasons. This list is not complete yet.'
+          : lastRelatedFailure
+            ? `Season list incomplete. Other seasons may be missing. ${lastRelatedFailure}`
+            : family.next()
+              ? 'More linked seasons may exist. Find more before selecting all shown.'
+              : '';
+        lookupNotice.classList.toggle('incomplete', incomplete);
       };
       syncSeasonLookup();
       moreSeasons.addEventListener('click', () => { void loadRelated({ batch: true }); });

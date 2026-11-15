@@ -5,7 +5,7 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 export function preferDisplayRelations(local, archive) {
   if (local?.state === 'related_titles' && local.items.length > 0) {
     if (archive?.state !== 'related_titles' ||
-        archive.anidbId !== local.anidbId) return local;
+        archive.anidbId !== local.anidbId) return { ...local, incomplete: true };
     const known = new Set(local.items.map((item) => item.anidbId));
     const items = [...local.items];
     for (const item of archive.items) {
@@ -17,7 +17,11 @@ export function preferDisplayRelations(local, archive) {
     }
     return { ...local, items };
   }
-  return archive?.state === 'related_titles' ? archive : local;
+  if (archive?.state === 'related_titles') {
+    return local === null ? { ...archive, incomplete: true } : archive;
+  }
+  if (local?.state === 'related_titles') return { state: 'unavailable' };
+  return local;
 }
 export async function readDisplayRelations({ readLocal, readArchive,
   mergeWaitMs = 250 }) {
@@ -73,6 +77,7 @@ export function createCachedDisplayRelations({ read, now = Date.now,
         if (result?.state === 'related_titles' &&
             result.anidbId === anidbId &&
             result.completeness === 'unproven' &&
+            result.incomplete !== true &&
             Array.isArray(result.items) && result.items.length > 0 &&
             result.items.length <= 50) {
           cache.delete(anidbId);
