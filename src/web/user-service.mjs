@@ -407,6 +407,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const submitRequest = async (input) => {
       const result = await submitHeldRequest(input);
+      if (result.created === true && Number.isSafeInteger(result.requestId) &&
+          result.requestId > 0 && result.targetIds?.length > 0) {
+        acquisitionRuntime?.wakeRequest(result.requestId);
+      }
       // Pending-title intents resolve here too, outside the HTTP request route.
       autoTrackSavedAiringRequest({ result, requesterId: input.requesterId,
         anidbId: input.anidbId,

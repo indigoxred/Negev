@@ -15,6 +15,34 @@ const authorizedSession = { get: async () => ({ state: 'authenticated',
   sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
 const qbBaseUrl = 'http://qb:8080/';
 
+test('pipeline checks a fresh request before older rows and then resumes its cursor', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-fresh-pipeline-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  for (let id = 1; id <= 3; id++) requests.submit({ requesterId: 1,
+    requestKey: `fresh-${id}`, nowMs: id,
+    intent: { state: 'ready', anidbId: 40 + id, kind: 'series',
+      episodeIds: [1000 + id], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const visited = [];
+  const handoffs = openHandoffLedger(dbPath);
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession, requestPageLimit: 1,
+    processRequest: async ({ requestId }) => { visited.push(requestId);
+      return { state: 'held', reason: 'no_release_candidates' }; },
+    processStart: async () => {}, processCompletion: async () => {},
+    processPublish: async () => {}, now: () => 100 });
+  try {
+    await pipeline.initialize();
+    await pipeline.tickRequests({ priorityRequestId: 3 });
+    await pipeline.tickRequests();
+    assert.deepEqual(visited, [3, 1]);
+  } finally {
+    await pipeline.close(); handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a failed Sonarr ownership refresh holds the request cursor before a claim', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-ownership-pipeline-'));
   const dbPath = path.join(dir, 'state.sqlite');

@@ -13,6 +13,7 @@ export function openAcquisitionRuntime(options = {}) {
   if (!options.enabled) return {
     start: async () => ({ state: 'held', reason: 'runtime_disabled' }),
     stop: async () => {},
+    wakeRequest: () => {},
     getStatus: () => ({ state: 'disabled' }),
   };
   const { dbPath, acquisitions, qbBaseUrl, sessionGate, allowedAnidbIds,
@@ -30,6 +31,7 @@ export function openAcquisitionRuntime(options = {}) {
   const scheduler = createPipelineScheduler({ pipeline, now });
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),
+    wakeRequest: (requestId) => scheduler.wakeRequest(requestId),
     getStatus: () => scheduler.getStatus() };
 }
 

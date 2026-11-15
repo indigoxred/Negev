@@ -89,7 +89,7 @@ export function openAcquisitionRequestQueue(dbPath,
   // An unfinished claim remains excluded after a crash. A one-time request
   // stops acquiring after exact public proof; its saved history remains.
   // Active Airing watches continue so later episodes can be added.
-  const next = db.prepare(`SELECT r.id,r.anidb_id AS anidbId,
+  const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
       COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
@@ -101,7 +101,12 @@ export function openAcquisitionRequestQueue(dbPath,
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
-    ORDER BY r.id LIMIT 1`);
+    ORDER BY r.id LIMIT 1`;
+  const next = db.prepare(nextSql);
+  // A freshly saved request can take its first turn ahead of older due rows.
+  // The same eligibility guards apply, and the ordinary cursor stays put.
+  const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
+    .replace('ORDER BY r.id LIMIT 1', 'AND c.request_id IS NULL LIMIT 1'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms)
@@ -245,10 +250,27 @@ export function openAcquisitionRequestQueue(dbPath,
       const row = suspended.get(requestId);
       return row ? { ...row } : null;
     },
-    claimNext({ nowMs = Date.now() } = {}) {
-      if (!validTime(nowMs)) throw new TypeError('Invalid acquisition queue clock');
+    claimNext({ nowMs = Date.now(), priorityRequestId = null } = {}) {
+      if (!validTime(nowMs) ||
+          (priorityRequestId !== null && !validId(priorityRequestId))) {
+        throw new TypeError('Invalid acquisition queue claim');
+      }
       return transact(() => {
         const position = cursor.get();
+        if (priorityRequestId !== null) {
+          const row = fresh.get(priorityRequestId,
+            ...(allowedAnidbIds ?? []), nowMs);
+          if (row) {
+            const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
+            if (ownership === 'eligible') {
+              claim.run(row.id, position.pass);
+              return { state: 'claimed', requestId: row.id, pass: position.pass };
+            }
+            if (!['owned', 'unmapped'].includes(ownership)) {
+              return held('sonarr_ownership_unavailable');
+            }
+          }
+        }
         let afterId = position.afterId;
         for (let scanned = 0; scanned < 1_000; scanned++) {
           const row = next.get(afterId, ...(allowedAnidbIds ?? []), nowMs);
@@ -351,14 +373,15 @@ export function createAcquisitionPageWorker({ queue, processRequest,
   }
   let busy = false;
   return {
-    async runOnce() {
+    async runOnce({ priorityRequestId = null } = {}) {
       if (busy) return held('page_in_progress');
       busy = true;
       const results = [];
       try {
         for (let i = 0; i < limit; i++) {
           let next;
-          try { next = queue.claimNext({ nowMs: now() }); }
+          try { next = queue.claimNext({ nowMs: now(),
+            priorityRequestId: i === 0 ? priorityRequestId : null }); }
           catch { return { state: 'held', reason: 'queue_unavailable', results }; }
           if (next.state === 'pass_complete') {
             return { state: 'pass_complete', pass: next.pass, results };

@@ -18,6 +18,29 @@ function clock() {
   };
 }
 
+test('a new request gets a prompt first turn before older queued work without starving stages', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => { calls.push('publish'); return { state: 'idle' }; },
+    tickStarts: async () => { calls.push('start'); return { state: 'idle' }; },
+    tickRequests: async (options) => { calls.push(options?.priorityRequestId ?? 'normal'); return { state: 'page' }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(23);
+  assert.deepEqual(timer.delays(), [1_000]);
+  await timer.advance();
+  assert.deepEqual(calls, [23]);
+  await timer.advance();
+  assert.deepEqual(calls, [23, 'completion']);
+  await scheduler.stop();
+});
+
 test('one paced clock reconciles first and visits all four stages without overlap', async () => {
   const timer = clock();
   const calls = [];

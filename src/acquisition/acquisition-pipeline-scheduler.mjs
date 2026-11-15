@@ -35,6 +35,8 @@ export function createPipelineScheduler({ pipeline,
   let lastStage = null;
   let lastFinishedMs = null;
   let reviewHeld = false;
+  const freshRequests = [];
+  let priorityServed = false;
   const schedule = (delay) => {
     if (closed) return;
     timer = setTimer(() => {
@@ -44,18 +46,24 @@ export function createPipelineScheduler({ pipeline,
     }, delay);
   };
   const tick = async () => {
-    const stage = stages[stageIndex];
-    stageIndex = (stageIndex + 1) % stages.length;
+    const prioritized = freshRequests.length > 0 &&
+      (!priorityServed || stages[stageIndex] === 'tickRequests');
+    const stage = prioritized ? 'tickRequests' : stages[stageIndex];
+    const priorityRequestId = prioritized ? freshRequests.shift() : null;
+    const extraTurn = prioritized && stages[stageIndex] !== 'tickRequests';
+    if (!extraTurn) stageIndex = (stageIndex + 1) % stages.length;
+    priorityServed = extraTurn;
     activeStage = stage.slice(4).toLowerCase();
     let workerFailed = false;
-    try { lastResult = await pipeline[stage](); }
+    try { lastResult = await pipeline[stage](priorityRequestId === null
+      ? undefined : { priorityRequestId }); }
     catch { workerFailed = true;
       lastResult = { state: 'held', reason: 'worker_unavailable' }; }
     lastStage = activeStage;
     activeStage = null;
     // Retry unresolved crash claims after a complete stage cycle. Their
     // queue rows stay excluded, but they cannot stall independent work.
-    if (stageIndex === 0 && reviewHeld) {
+    if (!extraTurn && stageIndex === 0 && reviewHeld) {
       try {
         const checked = await pipeline.initialize();
         reviewHeld = checked?.state !== 'reconciled' || hasReviewHolds(checked);
@@ -67,7 +75,8 @@ export function createPipelineScheduler({ pipeline,
       ? finished : null;
     // A durable worker may hold one target while later targets remain ready.
     // Reserve the longer backoff for an actual worker failure.
-    schedule(workerFailed ? failureDelayMs : stepDelayMs);
+    schedule(workerFailed ? failureDelayMs :
+      freshRequests.length > 0 && !priorityServed ? 1_000 : stepDelayMs);
   };
   const scheduleRecovery = () => {
     if (closed) return;
@@ -84,7 +93,8 @@ export function createPipelineScheduler({ pipeline,
         reviewHeld = result?.state === 'reconciled' && hasReviewHolds(result);
         recoveryState = result?.state === 'reconciled'
           ? reviewHeld ? 'waiting_with_review' : 'waiting' : 'reconciliation_held';
-        if (result?.state === 'reconciled') schedule(initialDelayMs);
+        if (result?.state === 'reconciled') schedule(freshRequests.length > 0
+          ? 1_000 : initialDelayMs);
         else scheduleRecovery();
         return result;
       } catch (error) {
@@ -96,6 +106,19 @@ export function createPipelineScheduler({ pipeline,
     return initialization;
   };
   return {
+    wakeRequest(requestId) {
+      if (!Number.isSafeInteger(requestId) || requestId < 1) {
+        throw new TypeError('Invalid fresh request ID');
+      }
+      if (closed || freshRequests.includes(requestId) ||
+          freshRequests.length >= 32) return;
+      freshRequests.push(requestId);
+      if (timer !== undefined && recoveryState.startsWith('waiting') &&
+          !priorityServed) {
+        clearTimer(timer);
+        schedule(1_000);
+      }
+    },
     start() {
       if (started || closed) throw new Error('Pipeline scheduler already started or stopped');
       started = true;

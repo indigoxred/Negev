@@ -13,6 +13,31 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a newly saved request can be checked first without advancing the ordinary cursor',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.deepEqual(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }),
+        { state: 'claimed', requestId: 3, pass: 1 });
+      assert.deepEqual(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }),
+        { state: 'claimed', requestId: 1, pass: 1 });
+    } finally { queue.close(); }
+  }));
+
+test('priority cannot bypass a suspension or title cohort',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath,
+      { allowedAnidbIds: [42] });
+    try {
+      assert.deepEqual(queue.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 10 }), { state: 'suspended' });
+      assert.equal(queue.claimNext({ nowMs: 10, priorityRequestId: 2 }).state,
+        'pass_complete');
+      assert.equal(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }).state,
+        'pass_complete');
+    } finally { queue.close(); }
+  }));
+
 test('an Airing release miss backs off hourly, then six-hourly and daily', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-rss-fallback-'));
   const dbPath = path.join(dir, 'state.sqlite');

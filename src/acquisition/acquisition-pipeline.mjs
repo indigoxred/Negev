@@ -100,12 +100,12 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       }
       return initialization;
     },
-    tickRequests: () => run({ runOnce: async () => {
+    tickRequests: ({ priorityRequestId = null } = {}) => run({ runOnce: async () => {
       if (ownershipGate) {
         const result = await ownershipGate.refresh();
         if (result?.state !== 'ready') return held('sonarr_ownership_unavailable');
       }
-      return requestWorker.runOnce();
+      return requestWorker.runOnce({ priorityRequestId });
     } }),
     tickStarts: () => run(startWorker),
     tickCompletions: () => run(completionWorker),
