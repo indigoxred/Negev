@@ -13,7 +13,7 @@ import { titleAvailabilitySummary,
   seasonAvailabilityText } from './season-availability-presentation.mjs';
 import { episodeScheduleLabel } from './episode-schedule.mjs';
 import { canOpenSeasonRequest, seasonRequestStatus,
-  seasonSelectionSummary } from './season-request-selection.mjs';
+  seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination } from './consumer-route.mjs';
@@ -2257,6 +2257,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       return;
     }
     if (data.kind === 'series') {
+      const availableButton = element('button', 'Already available',
+        'primary season-already-available');
+      availableButton.type = 'button';
+      availableButton.disabled = true;
+      availableButton.hidden = true;
       const trigger = element('button', 'Request series', 'primary season-request-trigger');
       trigger.type = 'button';
       if (data.requestsOpen === false) panel.append(element('p',
@@ -2330,6 +2335,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const selected = selectedRows();
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
+        const presentation = seasonTriggerPresentation([...rows.values()],
+          item.anidbId, family.next() !== null);
+        availableButton.hidden = !presentation.showAvailable;
+        trigger.hidden = !presentation.showTrigger;
+        trigger.textContent = presentation.triggerText;
+        trigger.classList.toggle('primary', !presentation.showAvailable);
+        trigger.classList.toggle('quiet', presentation.showAvailable);
         trigger.disabled = data.requestsOpen === false || saving || (rows.size > 0 &&
           !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
@@ -2566,6 +2578,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         continueCheck.addEventListener('click', () => { void checkPages(); });
         void checkPages();
       }
+      panel.insertBefore(availableButton, relatedHeading);
       panel.insertBefore(trigger, relatedHeading);
       panel.append(action);
       return;

@@ -1232,7 +1232,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.franchise.titleAlignment, true);
       assert.equal(mobile.franchise.moreVisible, false,
         'More disappears after all cached relations are visible');
-      assert.deepEqual(mobile.seasonPopup, { button: 'Request series', closed: true,
+      assert.deepEqual(mobile.seasonPopup, { button: 'Watch future episodes', closed: true,
         opened: true, centered: true, heading: 'Request Series', close: 'Close' });
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
@@ -1254,8 +1254,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.requestSaved.reviewHidden, true);
       assert.deepEqual(mobile.coldBeforeFallback, { loading: true, hasRequest: false });
       assert.match(mobile.requestSaved.receipt, /2 seasons requested/);
-      assert.deepEqual(mobile.popupClosed, { closed: true, trigger: 'Request series' });
+      assert.deepEqual(mobile.popupClosed, { closed: true, trigger: 'Watch future episodes' });
       assert.equal(mobile.failedSeasonLookup.enabled, true);
+      assert.equal(mobile.failedSeasonLookup.label, 'Find other seasons');
       assert.equal(mobile.failedSeasonLookup.open, true);
       assert.match(mobile.failedSeasonLookup.retry ?? '', /Retry finding seasons/);
       assert.match(mobile.failedSeasonLookup.notice ?? '', /temporarily unavailable/i);

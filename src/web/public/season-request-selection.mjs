@@ -11,6 +11,21 @@ export function canOpenSeasonRequest(rows, hasMore) {
     (row.status?.selectable || row.detailFailed || row.loading));
 }
 
+export function seasonTriggerPresentation(rows, currentAnidbId, hasMore) {
+  const current = rows.find((row) => row.anidbId === currentAnidbId);
+  if (current?.status?.state === 'watching') return {
+    showAvailable: false, showTrigger: true,
+    triggerText: 'Watch future episodes' };
+  if (current?.status?.state !== 'available') return {
+    showAvailable: false, showTrigger: true,
+    triggerText: 'Request series' };
+  const related = rows.filter((row) => row.anidbId !== currentAnidbId);
+  return { showAvailable: true,
+    showTrigger: canOpenSeasonRequest(related, hasMore),
+    triggerText: related.some((row) => !row.requested && row.status?.selectable)
+      ? 'Request other seasons' : 'Find other seasons' };
+}
+
 export function seasonRequestStatus(detail) {
   if (detail?.kind === 'movie') return null;
   if (detail?.state === 'detail_unavailable') return { state: 'unverified',

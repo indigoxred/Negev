@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canOpenSeasonRequest, seasonRequestStatus, seasonSelectionSummary } from '../src/web/public/season-request-selection.mjs';
+import { canOpenSeasonRequest, seasonRequestStatus, seasonSelectionSummary,
+  seasonTriggerPresentation } from '../src/web/public/season-request-selection.mjs';
+
+test('complete installment is already available while other seasons remain discoverable', () => {
+  const current = { anidbId: 239, status: { state: 'available', selectable: false } };
+  assert.deepEqual(seasonTriggerPresentation([current], 239, true), {
+    showAvailable: true, showTrigger: true, triggerText: 'Find other seasons' });
+  assert.deepEqual(seasonTriggerPresentation([current], 239, false), {
+    showAvailable: true, showTrigger: false, triggerText: 'Find other seasons' });
+  assert.deepEqual(seasonTriggerPresentation([current,
+    { anidbId: 240, status: { state: 'partial', selectable: true } }], 239, false), {
+    showAvailable: true, showTrigger: true, triggerText: 'Request other seasons' });
+  assert.deepEqual(seasonTriggerPresentation([
+    { anidbId: 239, status: { state: 'watching', selectable: true } }], 239, false), {
+    showAvailable: false, showTrigger: true, triggerText: 'Watch future episodes' });
+});
 
 test('a later season page keeps Request series openable after a full first page', () => {
   const full = [{ status: { selectable: false }, requested: false }];
