@@ -89,6 +89,12 @@ export function openRequestLedger(dbPath) {
       id INTEGER PRIMARY KEY CHECK(id=1),
       after_id INTEGER NOT NULL CHECK(after_id>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS rss_watch_timing (
+      request_id INTEGER PRIMARY KEY REFERENCES requests(id),
+      next_metadata_ms INTEGER NOT NULL CHECK(next_metadata_ms>=0),
+      feed_interval_ms INTEGER NOT NULL CHECK(feed_interval_ms>0),
+      rush_until_ms INTEGER NOT NULL DEFAULT 0 CHECK(rush_until_ms>=0)
+    ) STRICT`);
     db.exec('INSERT INTO airing_poll_cursor(id,after_id) VALUES (1,0) ON CONFLICT(id) DO NOTHING');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
@@ -116,8 +122,18 @@ export function openRequestLedger(dbPath) {
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
   const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed,cancelled_ms FROM requests WHERE id=?');
   const closeWatch = db.prepare('UPDATE requests SET watch_closed=1 WHERE id=? AND watch_closed=0');
-  const activeAirings = db.prepare(`SELECT id,anidb_id FROM requests
-    WHERE id>? AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id LIMIT ?`);
+  const activeAirings = db.prepare(`SELECT r.id,r.anidb_id FROM requests r
+    LEFT JOIN rss_watch_timing wt ON wt.request_id=r.id
+    WHERE r.id>? AND r.monitor_future=1 AND r.watch_closed=0 AND
+      r.cancelled_ms IS NULL AND COALESCE(wt.next_metadata_ms,0)<=?
+    ORDER BY r.id LIMIT ?`);
+  const recordWatchTiming = db.prepare(`INSERT INTO rss_watch_timing
+    (request_id,next_metadata_ms,feed_interval_ms) VALUES (?,?,?)
+    ON CONFLICT(request_id) DO UPDATE SET
+      next_metadata_ms=CASE WHEN rss_watch_timing.rush_until_ms>? THEN
+        MIN(excluded.next_metadata_ms,?+3600000)
+        ELSE excluded.next_metadata_ms END,
+      feed_interval_ms=excluded.feed_interval_ms`);
   const cancelRow = db.prepare('SELECT requester_id,cancelled_ms FROM requests WHERE id=?');
   const cancel = db.prepare('UPDATE requests SET cancelled_ms=? WHERE id=? AND requester_id=? AND cancelled_ms IS NULL');
   const attemptTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_attempts'");
@@ -180,13 +196,25 @@ export function openRequestLedger(dbPath) {
         ? { state: 'advanced', afterId: nextAfterId }
         : held('stale_cursor'));
     },
-    listActiveAirings({ afterId = 0, limit = 20 } = {}) {
+    listActiveAirings({ afterId = 0, limit = 20,
+      nowMs = Date.now() } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
-          !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+          !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
+          !Number.isSafeInteger(nowMs) || nowMs < 0) {
         throw new TypeError('Invalid airing watch page');
       }
-      return activeAirings.all(afterId, limit).map((row) => ({
+      return activeAirings.all(afterId, nowMs, limit).map((row) => ({
         requestId: row.id, anidbId: row.anidb_id }));
+    },
+    recordAiringTiming({ requestId, nextMetadataMs, feedIntervalMs,
+      nowMs = Date.now() } = {}) {
+      if (![requestId, nextMetadataMs, feedIntervalMs, nowMs].every((value) =>
+        Number.isSafeInteger(value) && value >= 0) || requestId < 1 ||
+        feedIntervalMs < 3_600_000 || feedIntervalMs > 86_400_000 ||
+        nextMetadataMs < nowMs) throw new TypeError('Invalid Airing timing');
+      return transact(() => recordWatchTiming.run(requestId,
+        nextMetadataMs, feedIntervalMs, nowMs, nowMs).changes === 1
+        ? { state: 'recorded' } : held('watch_timing_unavailable'));
     },
     // The original submission episode_key is immutable for idempotency.
     // Later aired episodes are appended as shared targets in one transaction.

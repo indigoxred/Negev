@@ -14,6 +14,19 @@ const details = (anidbId, extra = {}) => ({ state: 'details', anidbId,
     { id: 1002, type: 'Episode', airDate: '2026-02-01' },
   ], ...extra });
 
+test('successful far-future observation records a weekly metadata due time', async () => {
+  const recorded = [];
+  const nowMs = Date.parse('2026-11-15T00:00:00Z');
+  await pollAiringWatches({ today: '2026-11-15', nowMs, intervalMs: 0,
+    ledger: { listActiveAirings: () => [{ requestId: 1, anidbId: 42 }],
+      advanceAiring: () => ({ state: 'advanced', addedEpisodeIds: [] }),
+      recordAiringTiming: (value) => recorded.push(value) },
+    loadDetail: async () => details(42, { airDate: '2028-01-01',
+      total: 0, episodes: [] }) });
+  assert.equal(recorded[0].nextMetadataMs, nowMs + 7 * 86_400_000);
+  assert.equal(recorded[0].feedIntervalMs, 86_400_000);
+});
+
 test('one unavailable show holds while the next airing show advances', async () => {
   const calls = [];
   const result = await pollAiringWatches({ today: '2026-01-20',
@@ -164,6 +177,7 @@ test('an ended series stays watched until its expected final episode appears', a
         monitorFuture: true, episodeIds: [1001] }, nowMs: 1 });
     const ended = details(42, { endDate: '2026-02-15', episodeCount: 3 });
     const first = await pollAiringWatches({ ledger, today: '2026-02-20',
+      nowMs: Date.parse('2026-02-20T00:00:00Z'),
       intervalMs: 0, loadDetail: async () => ended });
     assert.equal(first.results[0].watchClosed, false);
     assert.deepEqual(ledger.getRequest(saved.requestId).episodeIds, [1001, 1002]);
@@ -172,6 +186,7 @@ test('an ended series stays watched until its expected final episode appears', a
     const complete = { ...ended, total: 3, episodes: [...ended.episodes,
       { id: 1003, type: 'Episode', airDate: '2026-02-15' }] };
     const second = await pollAiringWatches({ ledger, today: '2026-02-21',
+      nowMs: Date.parse('2026-02-21T00:00:00Z'),
       intervalMs: 0, loadDetail: async () => complete });
     assert.deepEqual(second.results[0].addedEpisodeIds, [1003]);
     assert.equal(second.results[0].watchClosed, true);

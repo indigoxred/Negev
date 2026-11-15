@@ -13,6 +13,27 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('an Airing release miss backs off hourly, then six-hourly and daily', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-rss-fallback-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'airing',
+    intent: { ...intent, monitorFuture: true }, nowMs: 1 });
+  const queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    let claim = queue.claimNext({ nowMs: 100 });
+    queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+      reason: 'no_release_candidates', checkedMs: 100 });
+    assert.equal(queue.getResult(1).nextDueMs, 100 + 3_600_000);
+    assert.equal(queue.claimNext({ nowMs: 101 }).state, 'pass_complete');
+    claim = queue.claimNext({ nowMs: 86_400_101 });
+    queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+      reason: 'no_release_candidates', checkedMs: 86_400_101 });
+    assert.equal(queue.getResult(1).nextDueMs, 86_400_101 + 6 * 3_600_000);
+  } finally { queue.close(); requests.close();
+    await rm(dir, { recursive: true, force: true }); }
+});
+
 test('temporary qBittorrent authentication backoff retries on the next request cycle',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
