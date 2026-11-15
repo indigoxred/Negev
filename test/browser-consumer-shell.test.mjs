@@ -541,7 +541,9 @@ async function inspectMobile(url, profile, width = 390) {
       await wait(800);
       const custom = await send('Runtime.evaluate', { returnByValue: true,
         expression: `({mode: document.querySelector('#airing-view-mode')?.value,
-          card: document.querySelector('.tracked-title .poster-card')?.textContent,
+          card: [...document.querySelectorAll('.tracked-title .poster-card')]
+            .map((card) => card.textContent)
+            .find((text) => text.includes('FX Senshi Kurumi-chan')),
           fits: document.documentElement.scrollWidth <= innerWidth})`,
       });
       airingTrack = { defaultMode: defaultMode.result.value,
