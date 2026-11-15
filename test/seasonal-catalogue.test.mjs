@@ -431,6 +431,31 @@ test('AniList ranking leaves the existing newest-page MAL card rating intact', a
     members: 500, checkedMs: 1000 });
 });
 
+test('Airing uses AniList card scores even when sorted by episode date', async () => {
+  const entries = [1, 2].map((id) => ({ ...row(`Ongoing ${id}`, id),
+    status: 'ONGOING', sources: [`https://anidb.net/anime/${id}`,
+      `https://myanimelist.net/anime/${id + 100}`] }));
+  const reader = createSeasonalCatalogue({
+    rankings: { async read(scope) {
+      assert.equal(scope, 'ongoing');
+      return { state: 'ready', checkedMs: 1000,
+        score: [{ malId: 101, rank: 1, score: 8.8, members: 5000 }],
+        popular: [{ malId: 101, rank: 2, score: 8.8, members: 5000 }] };
+    } },
+    scoreCache: { prime() { throw new Error('MAL cache must not warm for Airing'); },
+      get() { throw new Error('MAL score must not appear on Airing'); } },
+    fetchImpl: async (url) => url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-15', data: entries })
+      : reply({ anidb_id: Number(url.split('/').at(-1)),
+        title: 'Verified', type: 'TV Series', restricted: false }),
+    now: () => Date.parse('2026-11-15T00:00:00Z') });
+  const page = await reader.read({ year: 0, season: 'ALL',
+    status: 'ongoing', sort: 'newest' });
+  assert.deepEqual(page.items[0].rating, { source: 'anilist', score: 8.8,
+    votes: null, members: 5000, checkedMs: 1000 });
+  assert.equal(page.items[1].rating, undefined);
+});
+
 test('missing mapped ratings do not pretend to rank ongoing titles', async () => {
   const entries = [{ ...row('Unmapped', 1), status: 'ONGOING' }];
   const reader = createSeasonalCatalogue({

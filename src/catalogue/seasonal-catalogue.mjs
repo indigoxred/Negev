@@ -295,7 +295,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     if (!Number.isSafeInteger(time) || time < 0) return { state: 'unavailable' };
     // Read the weekly schedule beside the catalogue map so the first Airing
     // page does not pay for two sequential network requests.
-    const wantsRank = rankings && (sort === 'score_desc' || sort === 'popular_desc');
+    const wantsRank = rankings && (status === 'ongoing' ||
+      sort === 'score_desc' || sort === 'popular_desc');
     const [mapState, schedule, rankResult] = await Promise.all([loadMap(time),
       sort === 'next_episode' ? timelySchedule() : null,
       wantsRank ? rankings.read(status === 'ongoing' ? 'ongoing' : 'all')
@@ -323,7 +324,15 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     let orderState;
     let scorePending = false;
     let rankedByMal = null;
+    let ratingByMal = null;
     let resultCheckedMs = null;
+    if (wantsRank && ['ready', 'stale'].includes(rankResult?.state)) {
+      resultCheckedMs = rankResult.checkedMs;
+      ratingByMal = new Map();
+      for (const item of [...rankResult.score, ...rankResult.popular]) {
+        if (!ratingByMal.has(item.malId)) ratingByMal.set(item.malId, item);
+      }
+    }
     if (rankings && (sort === 'score_desc' || sort === 'popular_desc')) {
       const result = rankResult;
       const list = result?.[sort === 'score_desc' ? 'score' : 'popular'];
@@ -336,7 +345,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         orderState = result.state === 'stale' ? 'anilist_stale'
           : sort === 'score_desc' ? 'anilist_score' : 'anilist_popular';
       } else orderState = 'anilist_unavailable';
-    } else if (scoreCache && (status === 'ongoing' ||
+    } else if (!wantsRank && scoreCache && (status === 'ongoing' ||
         sort === 'score_desc' || sort === 'popular_desc')) {
       const eligible = entries.filter((entry) => entry.malId !== null)
         .map(({ anidbId, malId }) => ({ anidbId, malId }));
@@ -422,7 +431,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     const partial = found.some(({ verification }) => verification.kind === 'unknown');
     const items = found.filter(({ verification }) => verification.kind === 'verified')
       .map(({ entry, verification }) => {
-        const ranked = rankedByMal?.get(entry.malId);
+        const ranked = ratingByMal?.get(entry.malId) ?? rankedByMal?.get(entry.malId);
         const snapshot = !wantsRank && scoreCache && entry.malId !== null
           ? scoreCache.get(entry.anidbId, entry.malId) : null;
         return { anidbId: entry.anidbId,

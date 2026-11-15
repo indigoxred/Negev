@@ -1364,6 +1364,8 @@ byId('airing-form').addEventListener('submit', (event) => {
   const epoch = airingResponses.invalidate();
   void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);
 });
+byId('airing-sort').addEventListener('change', () =>
+  byId('airing-form').requestSubmit());
 async function loadAiring() {
   stopBrowsePageObserver('airing');
   const session = sessionResponses.current();
