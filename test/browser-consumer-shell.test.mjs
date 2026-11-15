@@ -643,17 +643,17 @@ test('signed-in consumer routes render real shell with search, library and reque
         }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
-          id: 1, anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
+          id: 1, requesterId: 1, requesterName: 'Owner', anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
           episodeIds: [10], monitorFuture: false, watchClosed: false, canCancel: true,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }, {
-          id: 2, anidbId: 9589, title: 'The Garden of Words', kind: 'movie',
+          id: 2, requesterId: 1, requesterName: 'Owner', anidbId: 9589, title: 'The Garden of Words', kind: 'movie',
           episodeIds: [11], monitorFuture: false, watchClosed: false,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'verified_recently', publicVerifiedTargets: 1 },
         }, {
-          id: 3, anidbId: 7, title: 'A title needing help', kind: 'series',
+          id: 3, requesterId: 1, requesterName: 'Owner', anidbId: 7, title: 'A title needing help', kind: 'series',
           episodeIds: [12], monitorFuture: false, watchClosed: false, canCancel: false,
           status: 'held',
           progress: { state: 'review_needed', targetCount: 1,
@@ -1504,7 +1504,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /id="more-preparations" type="button">Show older preparations/);
       assert.match(requests, /Cancel request/);
       assert.match(requests, /A title needing help(?:(?!class="request-row")[\s\S])*Cancellation is unavailable once release processing starts/);
-      assert.match(requests, /My requests/);
+      assert.match(requests, /All anime requests/);
+      assert.match(requests, /Requested by Owner/);
       assert.match(requests, /class="request-stage">Requested<\/strong>/);
       assert.match(requests, /No download is confirmed in progress/);
       assert.match(requests, /data-request-group="attention">(?:(?!<\/section>)[\s\S])*A title needing help/);
