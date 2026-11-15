@@ -1850,10 +1850,13 @@ function pendingTitleAction(item) {
       action.dataset.reviewing = 'false';
       review.hidden = true;
       button.disabled = true;
-      button.textContent = 'Requested';
+      button.textContent = saved.reason === 'already_monitored'
+        ? 'Future episodes already monitored' : 'Requested';
       status.textContent = savedRequestMessage(saved);
       viewRequest.hidden = false;
-      message('Request saved. Follow it under My Requests.');
+      message(saved.reason === 'already_monitored'
+        ? 'Future episodes are already monitored. View the existing request under My Requests.'
+        : 'Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
       action.dataset.saving = 'false';
