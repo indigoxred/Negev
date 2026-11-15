@@ -9,8 +9,7 @@ import { createFranchiseExplorer, expandFranchiseBatch,
   groupFranchiseItems } from './franchise-explorer.mjs';
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
-  installmentRequestState, filmEntryRequestState,
-  seasonAvailabilityText } from './season-availability-presentation.mjs';
+  installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { episodeScheduleLabel } from './episode-schedule.mjs';
 import { canOpenSeasonRequest, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
@@ -1786,44 +1785,6 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       refreshAvailabilitySummary();
       panel.append(summary);
-      if (data.kind === 'series') {
-        const checkSeason = element('button', 'Check season availability',
-          'availability-season-check');
-        const seasonResult = element('p', '', 'muted');
-        seasonResult.setAttribute('role', 'status');
-        checkSeason.addEventListener('click', async () => {
-          if (checkSeason.disabled) return;
-          checkSeason.disabled = true;
-          seasonResult.textContent = 'Checking recent public Plex proof for this season…';
-          try {
-            const updated = await api(`/api/catalogue/${item.anidbId}`, {
-              signal: AbortSignal.timeout(8_000) });
-            if (!isCurrentDetail()) return;
-            const season = updated?.regularSeason;
-            if (updated.state !== 'details' ||
-                updated.anidbId !== data.anidbId ||
-                updated.kind !== 'series' ||
-                !Number.isSafeInteger(season?.total) || season.total < 1 ||
-                !Number.isSafeInteger(season.verified) ||
-                season.verified < 0 || season.verified > season.total) {
-              seasonResult.textContent = 'A full-season count could not be confirmed now. Existing verified items remain shown above.';
-              return;
-            }
-            data.regularSeason = season;
-            data.regularSchedule = updated.regularSchedule;
-            refreshAvailabilitySummary();
-            refreshRequestAction();
-            seasonResult.textContent = seasonAvailabilityText(season,
-              data.regularSchedule);
-          } catch {
-            if (isCurrentDetail()) seasonResult.textContent =
-              'The season check is temporarily unavailable. Existing verified items remain shown above.';
-          } finally {
-            checkSeason.disabled = false;
-          }
-        });
-        panel.append(checkSeason, seasonResult);
-      }
       if (data.kind === 'series' && pager.nextPage !== null &&
           !data.regularSeason) {
         const refreshFullSeason = async (attempt) => {
