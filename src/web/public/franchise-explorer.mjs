@@ -145,3 +145,45 @@ export async function expandFranchiseBatch({ explorer, read, maxReads = 8,
     reads, added: explorer.items().length - before, failures,
     hasMore: explorer.next() !== null };
 }
+
+// Share one detail read per related installment while a title page is open.
+// A large franchise can have many cards, but only three reads run at once.
+export function createRelatedDetailCache({ read, maxConcurrent = 3,
+  maxEntries = 50 } = {}) {
+  if (typeof read !== 'function' || !Number.isSafeInteger(maxConcurrent) ||
+      maxConcurrent < 1 || maxConcurrent > 3 ||
+      !Number.isSafeInteger(maxEntries) || maxEntries < 1 ||
+      maxEntries > 50) throw new TypeError('Invalid related detail cache');
+  const results = new Map();
+  const pending = new Map();
+  const queue = [];
+  let active = 0;
+  const drain = () => {
+    while (active < maxConcurrent && queue.length) {
+      const { id, resolve } = queue.shift();
+      active++;
+      Promise.resolve().then(() => read(id)).catch(() =>
+        ({ state: 'detail_unavailable', anidbId: id })).then((detail) => {
+        const safe = detail?.anidbId === id &&
+          ['details', 'detail_pending'].includes(detail.state)
+          ? detail : { state: 'detail_unavailable', anidbId: id };
+        results.set(id, safe);
+        if (safe.state === 'detail_unavailable') pending.delete(id);
+        resolve(safe);
+      }).finally(() => { active--; drain(); });
+    }
+  };
+  return {
+    peek: (id) => results.get(id) ?? null,
+    get(id) {
+      if (!validId(id)) throw new TypeError('Invalid AniDB ID');
+      if (pending.has(id)) return pending.get(id);
+      if (pending.size >= maxEntries) return Promise.resolve(
+        { state: 'detail_unavailable', anidbId: id });
+      const promise = new Promise((resolve) => queue.push({ id, resolve }));
+      pending.set(id, promise);
+      drain();
+      return promise;
+    },
+  };
+}

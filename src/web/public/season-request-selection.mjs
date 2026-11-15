@@ -74,6 +74,24 @@ export function seasonRequestStatus(detail) {
     selectable: true }, detail);
 }
 
+export function relatedAvailabilityText(detail) {
+  if (detail?.state !== 'details') return 'Availability unconfirmed';
+  if (detail.kind === 'series') {
+    const status = seasonRequestStatus({ ...detail, requestsOpen: true });
+    return status?.state === 'unverified' &&
+      !status.text.startsWith('Availability unconfirmed')
+      ? 'Availability unconfirmed' : status?.text ?? 'Availability unconfirmed';
+  }
+  if (detail.kind !== 'movie' || !Array.isArray(detail.episodes) ||
+      detail.nextPage !== null) return 'Availability unconfirmed';
+  const films = detail.episodes.filter((episode) => episode.type === 'Episode');
+  if (!films.length) return 'Availability unconfirmed';
+  const verified = films.filter((episode) => episode.availability === 'available').length;
+  if (verified === films.length) return `Available · ${verified}/${films.length}`;
+  if (verified) return `Partial · ${verified}/${films.length}`;
+  return `Availability unconfirmed · 0/${films.length} verified`;
+}
+
 export function seasonSelectionSummary(rows) {
   return rows.map((row) => `${row.title} · ${row.status.state === 'partial'
     ? 'complete episodes not verified in Plex' : row.status.state === 'watching'
