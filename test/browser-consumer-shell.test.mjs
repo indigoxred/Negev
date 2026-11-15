@@ -1194,7 +1194,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const base = `http://127.0.0.1:${server.address().port}`;
       const discover = await dump(`${base}/#/discover?q=Pale`, join(dir, 'discover'));
       assert.match(discover, /Pale Cocoon/);
-      assert.match(discover, /Availability not checked/);
+      assert.doesNotMatch(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const completedColdSeason = await dump(`${base}/#/title/94`,
         join(dir, 'completed-cold-season'), undefined, '1440,900', 15000);
