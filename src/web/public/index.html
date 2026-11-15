@@ -178,8 +178,12 @@
         </div>
       </section>
       <section id="view-requests" class="page-view" hidden>
-        <header class="page-head"><p class="eyebrow">Your activity</p><h1>My requests</h1>
-          <p>See your anime requests here. TV and regular movie requests remain in Seerr.</p></header>
+        <header class="page-head"><p class="eyebrow">Your activity</p><h1 id="requests-heading">My requests</h1>
+          <p id="requests-description">See your anime requests here. TV and regular movie requests remain in Seerr.</p></header>
+        <div id="request-scope" class="request-scope" aria-label="Request owners" hidden>
+          <button type="button" data-request-scope="all" aria-pressed="true">All requests</button>
+          <button type="button" data-request-scope="mine" aria-pressed="false">Mine</button>
+        </div>
         <div class="request-tabs" role="tablist" aria-label="Request status">
           <button type="button" data-request-tab="history" aria-selected="true">Recent requests</button>
           <button type="button" data-request-tab="watching" aria-selected="false">Watching</button>

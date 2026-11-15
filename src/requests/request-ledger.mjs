@@ -118,6 +118,11 @@ export function openRequestLedger(dbPath) {
     AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id DESC LIMIT ?`);
   const listHistory = db.prepare(`SELECT id FROM requests WHERE requester_id=? AND id<?
     AND (monitor_future=0 OR watch_closed=1 OR cancelled_ms IS NOT NULL) ORDER BY id DESC LIMIT ?`);
+  const listAllRequests = db.prepare(`SELECT id FROM requests WHERE id<? ORDER BY id DESC LIMIT ?`);
+  const listAllWatching = db.prepare(`SELECT id FROM requests WHERE id<?
+    AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id DESC LIMIT ?`);
+  const listAllHistory = db.prepare(`SELECT id FROM requests WHERE id<?
+    AND (monitor_future=0 OR watch_closed=1 OR cancelled_ms IS NOT NULL) ORDER BY id DESC LIMIT ?`);
   const countRequests = db.prepare('SELECT COUNT(*) AS count FROM requests');
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
   const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed,cancelled_ms FROM requests WHERE id=?');
@@ -173,16 +178,21 @@ export function openRequestLedger(dbPath) {
       });
     },
     listRequests({ requesterId, beforeId = Number.MAX_SAFE_INTEGER, limit = 20,
-      view = 'all' }) {
+      view = 'all', scope = 'mine' }) {
       if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
           !Number.isSafeInteger(beforeId) || beforeId < 1 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
-          !['all', 'watching', 'history'].includes(view)) {
+          !['all', 'watching', 'history'].includes(view) ||
+          !['mine', 'all'].includes(scope)) {
         throw new TypeError('Invalid request history page');
       }
-      const statement = view === 'watching' ? listWatching :
-        view === 'history' ? listHistory : listOwn;
-      const rows = statement.all(requesterId, beforeId, limit + 1);
+      const statement = scope === 'all'
+        ? view === 'watching' ? listAllWatching :
+          view === 'history' ? listAllHistory : listAllRequests
+        : view === 'watching' ? listWatching :
+          view === 'history' ? listHistory : listOwn;
+      const rows = scope === 'all' ? statement.all(beforeId, limit + 1)
+        : statement.all(requesterId, beforeId, limit + 1);
       const items = rows.slice(0, limit).map((row) => this.getRequest(row.id));
       return { items, nextBeforeId: rows.length > limit ? items.at(-1).id : null };
     },

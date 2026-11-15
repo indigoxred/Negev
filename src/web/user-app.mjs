@@ -1006,18 +1006,22 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   app.get('/api/requests', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof listRequests !== 'function') return reply.code(503).send({ error: 'Request history unavailable' });
-    const { beforeId: rawBefore, limit: rawLimit, view = 'all' } = request.query;
+    const { beforeId: rawBefore, limit: rawLimit, view = 'all', scope = 'mine' } = request.query;
     const beforeId = rawBefore === undefined ? Number.MAX_SAFE_INTEGER : Number(rawBefore);
     const limit = rawLimit === undefined ? 20 : Number(rawLimit);
-    if (Object.keys(request.query).some((key) => !['beforeId', 'limit', 'view'].includes(key)) ||
+    if (Object.keys(request.query).some((key) => !['beforeId', 'limit', 'view', 'scope'].includes(key)) ||
         !['all', 'watching', 'history'].includes(view) ||
+        !['mine', 'all'].includes(scope) ||
         (rawBefore !== undefined && (typeof rawBefore !== 'string' || !/^[1-9]\d*$/.test(rawBefore))) ||
         (rawLimit !== undefined && (typeof rawLimit !== 'string' || !/^[1-9]\d*$/.test(rawLimit))) ||
         !Number.isSafeInteger(beforeId) || beforeId < 1 ||
         !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
       return reply.code(400).send({ error: 'Invalid history page' });
     }
-    return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view });
+    if (scope === 'all' && request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Owner access required' });
+    }
+    return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view, scope });
   });
   app.get('/api/request-preparations', { preHandler: requireUser },
   async (request, reply) => {

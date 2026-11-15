@@ -31,6 +31,7 @@ const state = { csrf: null, user: null, selected: null,
   airingPreferences: null,
   seasonalRouteKey: null, routePage: null,
   requestHistoryExpanded: false,
+  requestScope: 'mine',
   showAdult: true, usersLoaded: false,
   detailHydrationQueued: new Set() };
 const sessionResponses = createResponseEpoch();
@@ -314,6 +315,23 @@ for (const tab of document.querySelectorAll('[data-request-tab]')) {
     }
   });
 }
+function updateRequestScopeButtons() {
+  for (const button of document.querySelectorAll('[data-request-scope]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.requestScope === state.requestScope));
+  }
+  byId('history-title').textContent = state.requestScope === 'all'
+    ? 'All anime requests' : 'Your requests';
+}
+for (const button of document.querySelectorAll('[data-request-scope]')) {
+  button.addEventListener('click', () => {
+    if (state.user?.role !== 'admin' || state.requestScope === button.dataset.requestScope) return;
+    state.requestScope = button.dataset.requestScope;
+    state.requestHistoryExpanded = false;
+    invalidateRequestResponses();
+    updateRequestScopeButtons();
+    loadRequests();
+  });
+}
 async function api(url, options = {}) {
   const headers = { Accept: 'application/json', ...options.headers };
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -353,6 +371,7 @@ function showSession(data) {
       'Select a result to see its details.', 'muted'));
     state.nextBeforeId = { watching: null, history: null, preparing: null };
     state.requestHistoryExpanded = false;
+    state.requestScope = data.user.role === 'admin' ? 'all' : 'mine';
     state.libraryLoaded = false;
     state.libraryAfter = null;
     state.airingLoaded = false;
@@ -389,6 +408,13 @@ function showSession(data) {
   byId('invite').hidden = data.user.role !== 'admin';
   byId('admin-link').hidden = data.user.role !== 'admin';
   byId('admin-review').hidden = data.user.role !== 'admin';
+  byId('request-scope').hidden = data.user.role !== 'admin';
+  byId('requests-heading').textContent = data.user.role === 'admin'
+    ? 'Requests' : 'My requests';
+  byId('requests-description').textContent = data.user.role === 'admin'
+    ? 'See who requested each anime and follow its status. TV and regular movie requests remain in Seerr.'
+    : 'See your anime requests here. TV and regular movie requests remain in Seerr.';
+  updateRequestScopeButtons();
   renderRoute();
 }
 function clearWorkspace() {
@@ -403,6 +429,7 @@ function clearWorkspace() {
   airingResponses.invalidate();
   seasonalResponses.invalidate();
   state.user = null;
+  state.requestScope = 'mine';
   state.showAdult = true;
   state.usersLoaded = false;
   state.csrf = null;
@@ -475,6 +502,7 @@ async function loadRequestView(view, append = false, silent = false) {
   const responseEpoch = requestResponses[view];
   const listRequest = responseEpoch.invalidate();
   const userId = state.user?.id;
+  const scope = state.requestScope;
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
@@ -486,9 +514,10 @@ async function loadRequestView(view, append = false, silent = false) {
   const suffix = append && state.nextBeforeId[view]
     ? `&beforeId=${state.nextBeforeId[view]}` : '';
   try {
-    const page = await api(`/api/requests?view=${view}${suffix}`);
+    const page = await api(`/api/requests?view=${view}&scope=${scope}${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
-        !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId) return;
+        !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId ||
+        state.requestScope !== scope) return;
     if (!append) {
       list.replaceChildren();
       state.nextBeforeId[view] = null;
@@ -500,7 +529,7 @@ async function loadRequestView(view, append = false, silent = false) {
         'No finished or one-time requests yet. Search for an anime to begin.', 'muted'));
     }
     for (const item of page.items) {
-      const row = element('div', undefined, 'request-row');
+      const row = element('div', undefined, 'request-row request-entry');
       row.dataset.recentPage = String(!append);
       row.append(posterImage(item));
       const heading = element('div');
@@ -512,23 +541,28 @@ async function loadRequestView(view, append = false, silent = false) {
         `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
         element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · ` +
           `${requestedScope} · ` +
-          `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`));
+          `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`),
+        element('small', `Requested by ${item.requesterName || `User #${item.requesterId}`}`,
+          'request-owner'));
       const openTitle = element('a', 'View title →', 'text-link');
       openTitle.href = titleRoute(item.anidbId);
-      heading.append(openTitle);
+      const actions = element('div', undefined, 'request-actions');
+      actions.append(openTitle);
+      const details = element('div', undefined, 'request-details');
       if (state.user?.role === 'admin') {
         const technical = element('details', undefined, 'request-technical');
         technical.append(element('summary', 'Technical details'),
           element('small', `AniDB ${item.anidbId} · Request #${item.id}`));
-        heading.append(technical);
+        details.append(technical);
       }
       const presentation = requestItemPresentation(item);
       const status = element('div', undefined,
         `request-status status-${presentation.group}`);
       status.negevRequest = item;
       renderRequestStatus(status, presentation);
-      row.append(heading, status);
-      if (item.status === 'held' && item.canCancel !== false) {
+      row.append(heading, status, actions);
+      if (item.status === 'held' && item.canCancel !== false &&
+          item.requesterId === state.user?.id) {
         const cancel = element('button', 'Cancel request', 'quiet');
         cancel.type = 'button';
         cancel.addEventListener('click', async () => {
@@ -543,9 +577,9 @@ async function loadRequestView(view, append = false, silent = false) {
             cancel.disabled = false;
           }
         });
-        heading.append(cancel);
+        actions.append(cancel);
       } else if (item.status === 'held' && item.canCancel === false) {
-        heading.append(element('small',
+        details.append(element('small',
           'Cancellation is unavailable once release processing starts, even before a download begins.',
           'muted'));
       }
@@ -607,8 +641,9 @@ async function loadRequestView(view, append = false, silent = false) {
         });
         const advanced = element('details', undefined, 'request-technical');
         advanced.append(element('summary', 'Advanced release tools'), button, candidates);
-        row.append(advanced);
+        details.append(advanced);
       }
+      if (details.childElementCount) row.append(details);
       if (watching) list.append(row);
       else requestGroupRows(list, presentation.group).append(row);
     }
@@ -629,7 +664,8 @@ async function loadRequestView(view, append = false, silent = false) {
     }
   } catch (error) {
     if (sessionResponses.isCurrent(session) &&
-        responseEpoch.isCurrent(listRequest) && state.user?.id === userId) {
+        responseEpoch.isCurrent(listRequest) && state.user?.id === userId &&
+        state.requestScope === scope) {
       if (!append && !silent) list.replaceChildren(element('p',
         'Could not load requests. Select Refresh to try again.', 'error'));
       if (!silent) message(error.message, true);
@@ -682,7 +718,7 @@ async function refreshExpandedHistory() {
   const epoch = requestResponses.history.invalidate();
   const userId = state.user?.id;
   try {
-    const page = await api('/api/requests?view=history&limit=50');
+    const page = await api(`/api/requests?view=history&scope=${state.requestScope}&limit=50`);
     if (!sessionResponses.isCurrent(session) ||
         !requestResponses.history.isCurrent(epoch) ||
         state.user?.id !== userId || !state.requestHistoryExpanded) return;
@@ -744,7 +780,7 @@ async function loadPreparations(silent = false, append = false) {
     if (!section && page.items?.some((item) => item.state !== 'cancelled')) {
       section = element('section', undefined, 'request-group');
       section.dataset.requestGroup = 'preparing';
-      section.append(element('h3', 'Preparing requests'),
+      section.append(element('h3', 'Your preparations'),
         element('div', undefined, 'request-group-rows'));
       list.append(section);
     }

@@ -549,6 +549,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readRequest: (id) => requests.getRequest(id),
       listRequests: (input) => {
         const page = requests.listRequests(input);
+        const ownerNames = input.scope === 'all'
+          ? new Map((accounts.listUsers({ adminUserId: input.requesterId }).items ?? [])
+            .map((user) => [user.id, user.username]))
+          : new Map([[input.requesterId,
+            accounts.getActiveUser({ userId: input.requesterId })?.username]]);
         const checkedMs = now();
         const positivesByTitle = new Map();
         return { ...page, items: page.items.map((item) => {
@@ -568,7 +573,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             coverage = recentPublicCoverage({ episodeIds: item.episodeIds,
               ...positivesByTitle.get(item.anidbId) });
           }
-          return { ...item, progress: coverage?.verifiedTargets > 0
+          return { ...item,
+            requesterName: ownerNames.get(item.requesterId) ?? `User #${item.requesterId}`,
+            progress: coverage?.verifiedTargets > 0
             ? { ...local, publicAvailability: 'verified_recently',
               publicVerifiedTargets: coverage.verifiedTargets }
             : local };

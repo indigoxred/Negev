@@ -140,6 +140,10 @@ test('request history pages only the authenticated owner and survives restart', 
     assert.deepEqual(ledger.listRequests({ requesterId: 7,
       beforeId: firstPage.nextBeforeId, limit: 2 }).items.map((item) => item.id), [1]);
     assert.deepEqual(ledger.listRequests({ requesterId: 8 }).items.map((item) => item.id), [2]);
+    assert.deepEqual(ledger.listRequests({ requesterId: 7, scope: 'all' }).items.map((item) => item.id), [4, 3, 2, 1]);
+    assert.deepEqual(ledger.listRequests({ requesterId: 7, scope: 'all', limit: 2,
+      beforeId: 3 }).items.map((item) => item.id), [2, 1]);
+    assert.throws(() => ledger.listRequests({ requesterId: 7, scope: 'bogus' }), TypeError);
     assert.throws(() => ledger.listRequests({ requesterId: 0 }), TypeError);
     assert.throws(() => ledger.listRequests({ requesterId: 7, limit: 1000 }), TypeError);
   } finally { ledger.close(); }

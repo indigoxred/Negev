@@ -898,6 +898,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         'x-negev-csrf': friendSession.json().csrfToken },
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'ordinary-allowed' } });
     assert.equal(allowedOrdinary.statusCode, 202, allowedOrdinary.body);
+    const allRequests = await app.inject({ method: 'GET',
+      url: '/api/requests?scope=all', headers: { cookie } });
+    assert.equal(allRequests.statusCode, 200, allRequests.body);
+    assert.deepEqual(allRequests.json().items.map((item) => item.id), [2, 1]);
+    assert.equal((await app.inject({ method: 'GET', url: '/api/requests?scope=all',
+      headers: { cookie: friendCookie } })).statusCode, 403);
     assert.deepEqual(friendSession.json().capabilities, {
       releaseSearch: false, detailLoad: false, availabilityChecks: false,
       acquisitionState: 'reconciliation_held' });

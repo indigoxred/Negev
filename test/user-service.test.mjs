@@ -680,6 +680,11 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     const history = await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } });
     assert.equal(history.statusCode, 200, history.body);
+    assert.equal(history.json().items[0].requesterName, owner.username);
+    const allHistory = await service.app.inject({ method: 'GET',
+      url: '/api/requests?scope=all', headers: { cookie } });
+    assert.equal(allHistory.statusCode, 200, allHistory.body);
+    assert.equal(allHistory.json().items[0].requesterName, owner.username);
     assert.deepEqual(history.json().items[0].progress, { state: 'saved',
       targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
       reviewRequired: false, publicAvailability: 'unverified' });
