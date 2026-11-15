@@ -1390,7 +1390,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
       assert.match(seriesDetail, /Choose seasons or installments/);
-      assert.match(seriesDetail, /Check season availability/);
+      assert.doesNotMatch(seriesDetail, /Check season availability/);
       assert.match(seriesDetail, /Check selected episode/);
       assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);
       assert.doesNotMatch(seriesDetail, /Recheck unknown entries in background/);
@@ -1405,6 +1405,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const partialSeason = await dump(`${base}/#/title/96`,
         join(dir, 'partial-season'));
       assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);
+      assert.doesNotMatch(partialSeason, /Check season availability/);
       assert.doesNotMatch(partialSeason,
         /2 of 4 regular episodes verified playable in Plex/);
       const refreshedSeason = await dump(`${base}/#/title/95`,
