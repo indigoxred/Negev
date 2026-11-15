@@ -261,7 +261,11 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         data.title.length <= 300 && typeof data.type === 'string' &&
         data.type.length <= 80
           ? { kind: 'verified', title: data.title.trim(), type: data.type,
-            adult: data.restricted }
+            adult: data.restricted,
+            ...(typeof data.title_english === 'string' &&
+              data.title_english.trim().length <= 500 &&
+              !/[\u0000-\u001f<>]/.test(data.title_english)
+              ? { englishTitle: data.title_english.trim() } : {}) }
           : { kind: 'unknown' };
       detailCache.set(id, { value, checkedMs: time });
       while (detailCache.size > 1_000) detailCache.delete(detailCache.keys().next().value);
@@ -417,6 +421,8 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
           ? scoreCache.get(entry.anidbId, entry.malId) : null;
         return { anidbId: entry.anidbId,
           title: verification.title, type: verification.type,
+          ...(verification.englishTitle
+            ? { englishTitle: verification.englishTitle } : {}),
           releaseStatus: entry.releaseStatus, adult: verification.adult,
           ...(ranked ? { rating: { source: 'anilist', score: ranked.score,
             votes: null, members: ranked.members, checkedMs: resultCheckedMs } } : {}),

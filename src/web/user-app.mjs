@@ -435,6 +435,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
           item.anidbId < 1 || typeof item.title !== 'string' ||
           !item.title.trim() || item.title.length > 300 ||
+          item.englishTitle !== null && item.englishTitle !== undefined &&
+            (typeof item.englishTitle !== 'string' ||
+              item.englishTitle.length > 500) ||
           typeof item.type !== 'string' || item.type.length > 80 ||
           typeof item.adult !== 'boolean' ||
           item.libraryPresence !== undefined &&
@@ -476,6 +479,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       items: page.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({
         anidbId: item.anidbId, title: item.title, type: item.type,
+        ...(item.englishTitle ? { englishTitle: item.englishTitle } : {}),
         releaseStatus: item.releaseStatus, adult: item.adult,
         ...(item.rating === undefined ? {} : { rating: item.rating }),
         ...(item.libraryPresence === undefined ? {} :

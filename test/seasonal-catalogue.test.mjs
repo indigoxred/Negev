@@ -47,6 +47,17 @@ test('season pages keep exact unique AniDB IDs and label adult titles', async ()
   assert.equal(archive.nextAfter, null);
 });
 
+test('season cards retain the English title already returned by AniMap detail', async () => {
+  const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
+    url.endsWith('/api/v1/map')
+      ? reply({ lastUpdate: '2026-11-15', data: [row('Sousou no Frieren', 17)] })
+      : reply({ anidb_id: 17, title: 'Sousou no Frieren',
+        title_english: "Frieren: Beyond Journey's End", type: 'TV Series',
+        restricted: false }), now: () => 1_000 });
+  const page = await reader.read({ year: 2026, season: 'FALL' });
+  assert.equal(page.items[0].englishTitle, "Frieren: Beyond Journey's End");
+});
+
 test('Airing eligibility filters ongoing titles before pagination', async () => {
   const reader = createSeasonalCatalogue({ fetchImpl: async (url) =>
     url.endsWith('/api/v1/map')
