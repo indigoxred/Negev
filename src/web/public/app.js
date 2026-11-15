@@ -70,9 +70,10 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
-function titleLabel(item) {
+function titleLabel(item, { tag = 'strong', className } = {}) {
   const english = item.englishTitle?.trim();
-  const label = element('strong', state.preferEnglish && english || item.title);
+  const label = element(tag, state.preferEnglish && english || item.title,
+    className);
   if (english && english !== item.title) {
     label.dataset.originalTitle = item.title;
     label.dataset.englishTitle = english;
@@ -1805,7 +1806,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     row.append(...controls, trackDetail);
     return row;
   };
-  panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
+  panel.replaceChildren(loadingArt, titleLabel(item,
+    { tag: 'h1', className: 'detail-title' }),
     element('p', 'Loading episode details…', 'muted'), displaySummary);
   // An uncached catalogue read must not make the request path wait for Shoko.
   const earlyRequest = previousAction ?? pendingTitleAction(item);
@@ -1832,6 +1834,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     if (!isCurrentDetail() || display?.state !== 'display') return;
     if (display.restricted !== false &&
         (!state.showAdult || state.user?.adultAllowed !== true)) return;
+    panel.querySelector('.detail-title')?.replaceWith(titleLabel({ title,
+      englishTitle: display.englishTitle ?? item.englishTitle },
+    { tag: 'h1', className: 'detail-title' }));
     setPendingTitleKind(earlyRequest, { title },
       /movie|film/i.test(display.type ?? '') ? 'movie' :
         /series|tv|ova|ona/i.test(display.type ?? '') ? 'series' : null);
@@ -1840,7 +1845,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const facts = [display.type, display.startYear].filter(Boolean).join(' · ');
     if (facts) main.append(element('p', facts, 'detail-facts'));
     if (display.englishTitle && display.englishTitle !== title) {
-      main.append(element('p', `Also known as ${display.englishTitle}`,
+      main.append(element('p', state.preferEnglish
+        ? `Original title: ${title}` : `Also known as ${display.englishTitle}`,
         'detail-alias'));
     }
     if (display.description) {
@@ -1911,7 +1917,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
     detailArt.append(detailPoster);
     panel.replaceChildren(detailArt,
-      element('h1', data.title || item.title, 'detail-title'));
+      titleLabel({ title: data.title || item.title,
+        englishTitle: item.englishTitle },
+      { tag: 'h1', className: 'detail-title' }));
     trackDetail.dataset.trackTitle = data.title || item.title;
     state.searchItems.set(item.anidbId, {
       ...item, ...state.searchItems.get(item.anidbId),
@@ -3060,7 +3068,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? 'Episode details are temporarily unavailable because the server is busy. The title information above is still available; try again shortly.'
       : 'Episode details are temporarily unavailable. Try again to load request options.',
     'muted');
-    panel.replaceChildren(loadingArt, element('h1', item.title, 'detail-title'),
+    panel.replaceChildren(loadingArt, titleLabel(item,
+      { tag: 'h1', className: 'detail-title' }),
       displaySummary, unavailable, retry);
     const pendingAction = requestAccess === false ? null : earlyRequest;
     panel.append(detailActionRow(...(pendingAction ? [pendingAction] : [])));

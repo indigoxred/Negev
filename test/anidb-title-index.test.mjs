@@ -40,6 +40,22 @@ test('accepts live AniDB kana and title-card rows for search without using them 
   assert.deepEqual(index.get(10).releaseQueries, ['Main Title']);
 });
 
+test('uses an English synonym for display when AniDB has no official English title', () => {
+  const index = parseAniDbTitleDump([
+    '18687|1|x-jat|Dungeon Meshi Season 2',
+    '18687|2|en|Delicious in Dungeon Season 2',
+    '19977|1|x-jat|Sousou no Frieren (2027)',
+    '19977|2|en|Frieren 3',
+    '19977|2|en|Frieren: Beyond Journey\'s End (2027)',
+    '20291|1|x-jat|One Piece Film: Baad',
+  ].join('\n'));
+  assert.equal(index.get(18687).englishTitle, 'Delicious in Dungeon Season 2');
+  assert.equal(index.get(19977).englishTitle,
+    'Frieren: Beyond Journey\'s End (2027)');
+  assert.equal(index.get(20291).englishTitle, null);
+  assert.deepEqual(index.get(18687).releaseQueries, ['Dungeon Meshi Season 2']);
+});
+
 test('normalizes an embedded title tab from the live dump to a searchable space', () => {
   const index = parseAniDbTitleDump('10|1|x-jat|Main Title\n10|4|ja|Japanese\tTitle');
   assert.equal(searchAniDbTitleIndex(index, { query: 'Japanese Title' }).items[0].anidbId, 10);
