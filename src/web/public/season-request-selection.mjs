@@ -85,13 +85,16 @@ export function relatedAvailabilityText(detail) {
       !status.text.startsWith('Availability unconfirmed')
       ? 'Availability unconfirmed' : status?.text ?? 'Availability unconfirmed';
   }
-  if (detail.kind !== 'movie' || !Array.isArray(detail.episodes) ||
-      detail.nextPage !== null) return 'Availability unconfirmed';
+  if (detail.kind !== 'movie' || !Array.isArray(detail.episodes))
+    return 'Availability unconfirmed';
   const films = detail.episodes.filter((episode) => episode.type === 'Episode');
-  if (!films.length) return 'Availability unconfirmed';
   const verified = films.filter((episode) => episode.availability === 'available').length;
-  if (verified === films.length) return `Available · ${verified}/${films.length}`;
-  if (verified) return `Partial · ${verified}/${films.length}`;
+  if (verified > 0 && detail.nextPage === null && verified === films.length)
+    return `Available · ${verified}/${films.length}`;
+  // One playable main film closes the title's request gate; the remaining
+  // entries can be alternate editions, so do not label this title partial.
+  if (verified) return `Available · ${verified} main film${verified === 1 ? '' : 's'} verified`;
+  if (detail.nextPage !== null || !films.length) return 'Availability unconfirmed';
   return `Availability unconfirmed · 0/${films.length} verified`;
 }
 

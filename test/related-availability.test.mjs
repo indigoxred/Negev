@@ -15,6 +15,14 @@ test('related installment labels use the full season or film proof', () => {
   assert.equal(label({ state: 'details', kind: 'movie', nextPage: null,
     episodes: [{ type: 'Episode', availability: 'available' }] }),
   'Available · 1/1');
+  assert.equal(label({ state: 'details', kind: 'movie', nextPage: null,
+    episodes: [{ type: 'Episode', availability: 'available' },
+      { type: 'Episode', availability: 'unknown' },
+      { type: 'Episode', availability: 'unknown' }] }),
+  'Available · 1 main film verified');
+  assert.equal(label({ state: 'details', kind: 'movie', nextPage: 2,
+    episodes: [{ type: 'Episode', availability: 'available' }] }),
+  'Available · 1 main film verified');
   assert.equal(label({ state: 'detail_pending' }), 'Availability unconfirmed');
 });
 
