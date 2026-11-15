@@ -126,7 +126,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'season-request-selection.mjs', 'episode-schedule.mjs',
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
-    'adult-search-visibility.mjs'];
+    'adult-search-visibility.mjs', 'title-preference.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));

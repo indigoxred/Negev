@@ -19,7 +19,7 @@ const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'season-availability-presentation.mjs', 'season-request-selection.mjs',
   'episode-schedule.mjs',
   'detail-refresh.mjs',
-  'relation-label.mjs']);
+  'relation-label.mjs', 'title-preference.mjs']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
