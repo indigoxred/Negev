@@ -40,7 +40,7 @@ function addRow(byId, row) {
   let entry = byId.get(id);
   if (!entry) {
     entry = { anidbId: id, title: null, aliases: new Set(),
-      englishOfficial: new Set() };
+      englishOfficial: new Set(), englishSynonyms: new Set() };
     byId.set(id, entry);
   }
   if (type === 'main') {
@@ -49,6 +49,9 @@ function addRow(byId, row) {
   }
   if (type === 'official' && language.toLowerCase() === 'en') {
     entry.englishOfficial.add(title);
+  }
+  if (type === 'synonym' && language.toLowerCase() === 'en') {
+    entry.englishSynonyms.add(title);
   }
   entry.aliases.add(title.toLocaleLowerCase('en'));
 }
@@ -59,8 +62,14 @@ function finishIndex(byId) {
   }
   for (const entry of byId.values()) {
     entry.releaseQueries = [...new Set([entry.title, ...entry.englishOfficial])].slice(0, 3);
-    entry.englishTitle = entry.englishOfficial.values().next().value ?? null;
+    // AniDB often lists the translated name as an English synonym rather
+    // than an official title. Prefer a descriptive synonym over an abbreviated
+    // one for display, without changing release search or anime identity.
+    entry.englishTitle = entry.englishOfficial.values().next().value ??
+      [...entry.englishSynonyms].filter((title) => title !== entry.title)
+        .sort((a, b) => b.length - a.length || a.localeCompare(b))[0] ?? null;
     delete entry.englishOfficial;
+    delete entry.englishSynonyms;
   }
   return byId;
 }

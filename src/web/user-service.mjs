@@ -664,7 +664,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const [display, facts] = await Promise.all([
           displayReader.read({ anidbId }), mapFacts.read({ anidbId }),
         ]);
-        return mergeDisplayFacts(display, facts);
+        const merged = mergeDisplayFacts(display, facts);
+        return merged?.state === 'display' ? { ...merged,
+          englishTitle: merged.englishTitle ??
+            titleSource?.getEnglishTitle(anidbId) ?? null } : merged;
       },
       loadRelatedTitles: async ({ anidbId }) => {
         const related = await cachedDisplayRelations({ anidbId });
