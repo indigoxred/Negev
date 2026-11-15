@@ -60,3 +60,13 @@ test('a failed related read stays unconfirmed and can be retried', async () => {
   assert.equal((await cache.get(42)).state, 'details');
   assert.equal(reads, 2);
 });
+
+test('large franchises can check cards beyond the fifty-result cache', async () => {
+  const cache = franchise.createRelatedDetailCache({ read: async (id) =>
+    ({ state: 'details', anidbId: id }) });
+  for (let id = 1; id <= 60; id++) {
+    assert.equal((await cache.get(id)).state, 'details');
+  }
+  assert.deepEqual(cache.peek(60), { state: 'details', anidbId: 60 });
+  assert.equal(cache.peek(1), null);
+});

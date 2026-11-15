@@ -167,8 +167,10 @@ export function createRelatedDetailCache({ read, maxConcurrent = 3,
         const safe = detail?.anidbId === id &&
           ['details', 'detail_pending'].includes(detail.state)
           ? detail : { state: 'detail_unavailable', anidbId: id };
+        results.delete(id);
         results.set(id, safe);
-        if (safe.state === 'detail_unavailable') pending.delete(id);
+        if (results.size > maxEntries) results.delete(results.keys().next().value);
+        pending.delete(id);
         resolve(safe);
       }).finally(() => { active--; drain(); });
     }
@@ -178,6 +180,12 @@ export function createRelatedDetailCache({ read, maxConcurrent = 3,
     get(id) {
       if (!validId(id)) throw new TypeError('Invalid AniDB ID');
       if (pending.has(id)) return pending.get(id);
+      const cached = results.get(id);
+      if (cached && cached.state !== 'detail_unavailable') {
+        results.delete(id);
+        results.set(id, cached);
+        return Promise.resolve(cached);
+      }
       if (pending.size >= maxEntries) return Promise.resolve(
         { state: 'detail_unavailable', anidbId: id });
       const promise = new Promise((resolve) => queue.push({ id, resolve }));
