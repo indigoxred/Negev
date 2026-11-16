@@ -788,12 +788,20 @@ function renderRequestStatus(status, presentation) {
   status.replaceChildren(element('strong', presentation.stage, 'request-stage'),
     element('span', presentation.detail, 'request-detail'));
   if (Number.isFinite(presentation.progressPercent)) {
-    const meter = element('progress', undefined, 'request-transfer-progress');
-    meter.max = 100;
-    meter.value = presentation.progressPercent;
+    const transfer = element('div', undefined, 'request-transfer-meter');
+    const meter = element('div', undefined, 'request-transfer-progress');
+    meter.setAttribute('role', 'progressbar');
+    meter.setAttribute('aria-valuemin', '0');
+    meter.setAttribute('aria-valuemax', '100');
+    meter.setAttribute('aria-valuenow', String(presentation.progressPercent));
     meter.setAttribute('aria-label',
       `Download progress: ${presentation.progressPercent}%`);
-    status.append(meter);
+    const fill = element('div', undefined, 'request-transfer-fill');
+    fill.style.width = `${presentation.progressPercent}%`;
+    meter.append(fill);
+    transfer.append(meter,
+      element('span', `${presentation.progressPercent}%`, 'request-transfer-percent'));
+    status.append(transfer);
   }
   if (presentation.note) status.append(element('span', presentation.note,
     'request-note'));

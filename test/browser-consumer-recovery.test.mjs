@@ -374,7 +374,9 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('#view-library').hidden");
       await evaluate("location.hash = '#/requests'");
       await until("document.querySelector('#request-list')?.textContent.includes('Downloading')");
-      assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.value"), 37.5);
+      assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
+      assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
+      assert.equal(await evaluate("getComputedStyle(document.querySelector('#request-list .request-transfer-fill')).animationName"), 'request-transfer-stripes');
       await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
         document.dispatchEvent(new Event('visibilitychange'))`);
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
