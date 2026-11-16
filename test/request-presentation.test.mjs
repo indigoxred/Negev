@@ -51,17 +51,29 @@ test('recent measured transfer reports its state and a qualified download ETA on
     transfer }, 'series', { nowMs: 1_000 }), {
     stage: 'Downloading',
     detail: 'One release is 37.5% downloaded. Download estimate: about 2 minutes remaining. Checked just now.',
-    note: '', group: 'active',
+    note: '', group: 'active', progressPercent: 37.5,
   });
   assert.equal(requestPresentation({ ...base, state: 'download_unverified',
     transfer: { ...transfer, transferState: 'stalled', etaSeconds: null } },
   'series', { nowMs: 1_000 }).stage, 'Waiting for peers');
   assert.equal(requestPresentation({ ...base, state: 'download_unverified',
+    transfer: { ...transfer, transferState: 'stalled', etaSeconds: null } },
+  'series', { nowMs: 1_000 }).progressPercent, 37.5);
+  assert.equal(requestPresentation({ ...base, state: 'download_unverified',
     transfer }, 'series', { nowMs: 1_000 + 16 * 60_000 }).stage,
   'Checking download status');
+  assert.equal(requestPresentation({ ...base, state: 'download_unverified',
+    transfer }, 'series', { nowMs: 1_000 + 16 * 60_000 }).progressPercent,
+  undefined);
   assert.equal(requestPresentation({ ...base, state: 'partial_private_copy',
     privateVerifiedTargets: 3, transfer }, 'series',
   { nowMs: 1_000 }).note.includes('37.5% downloaded'), true);
+  assert.equal(requestPresentation({ ...base, state: 'partial_private_copy',
+    privateVerifiedTargets: 3, transfer }, 'series',
+  { nowMs: 1_000 }).progressPercent, 37.5);
+  assert.equal(requestPresentation({ ...base, state: 'download_unverified',
+    publicAvailability: 'verified_recently', publicVerifiedTargets: 3,
+    transfer }, 'series', { nowMs: 1_000 }).progressPercent, 37.5);
 });
 
 test('exact public proof gives clear partial and complete coverage', () => {
