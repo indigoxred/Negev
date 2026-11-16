@@ -570,6 +570,9 @@ async function loadRequestView(view, append = false, silent = false) {
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
+  const expandedGroups = silent && !watching && !append
+    ? new Set([...list.querySelectorAll('details.request-group[open]')]
+      .map((group) => group.dataset.requestGroup)) : new Set();
   if (!append && !silent) {
     state.nextBeforeId[view] = null;
     more.hidden = true;
@@ -730,7 +733,7 @@ async function loadRequestView(view, append = false, silent = false) {
       }
       if (details.childElementCount) row.append(details);
       if (watching) list.append(row);
-      else requestGroupRows(list, presentation.group).append(row);
+      else requestGroupRows(list, presentation.group, expandedGroups).append(row);
     }
     state.nextBeforeId[view] = page.nextBeforeId;
     if (append && !watching) state.requestHistoryExpanded = true;
@@ -757,18 +760,21 @@ async function loadRequestView(view, append = false, silent = false) {
     }
   }
 }
-const historyGroupOrder = ['attention', 'active', 'completed'];
+const historyGroupOrder = ['attention', 'active', 'completed', 'cancelled'];
 const historyGroupTitles = {
   attention: 'Needs attention', active: 'Active', completed: 'Completed',
+  cancelled: 'Cancelled',
 };
-function requestGroupRows(list, group) {
+function requestGroupRows(list, group, expandedGroups = new Set()) {
   const category = historyGroupOrder.includes(group) ? group : 'active';
   let section = [...list.children].find((child) =>
     child.dataset.requestGroup === category);
   if (!section) {
-    section = element('section', undefined, 'request-group');
+    const collapsible = category === 'completed' || category === 'cancelled';
+    section = element(collapsible ? 'details' : 'section', undefined, 'request-group');
     section.dataset.requestGroup = category;
-    section.append(element('h3', historyGroupTitles[category]),
+    if (collapsible && expandedGroups.has(category)) section.open = true;
+    section.append(element(collapsible ? 'summary' : 'h3', historyGroupTitles[category]),
       element('div', undefined, 'request-group-rows'));
     const next = [...list.children].find((child) =>
       historyGroupOrder.indexOf(child.dataset.requestGroup) >
@@ -795,7 +801,7 @@ function renderRequestStatus(status, presentation) {
 function requestItemPresentation(item) {
   return item.status === 'cancelled'
     ? { stage: 'Cancelled', detail: 'No further downloads or episode monitoring.',
-      note: 'Existing files remain in your library.', group: 'completed' }
+      note: 'Existing files remain in your library.', group: 'cancelled' }
     : requestPresentation(item.progress, item.kind,
       { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
 }
