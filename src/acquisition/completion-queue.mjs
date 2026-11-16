@@ -207,7 +207,9 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const delay = ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable', 'torrent_not_stopped']
+          'authentication_unavailable', 'torrent_not_stopped',
+          'torrent_still_present', 'staging_not_empty',
+          'media_retirement_pending', 'media_retirement_unavailable']
           .includes(reason) ? SESSION_RETRY_MS :
           reason === 'incomplete'
             ? (pureMode ? PURE_INCOMPLETE_RETRY_MS : INCOMPLETE_RETRY_MS) :

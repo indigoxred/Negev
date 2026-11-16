@@ -4,6 +4,22 @@ import { searchReleaseCandidates } from '../src/acquisition/prowlarr-search.mjs'
 
 const config = { baseUrl: 'http://prowlarr.internal:9696', apiKey: 'synthetic-key', indexerIds: [7, 9] };
 
+test('trusted-filter indexer is preferred by identity while ordinary Nyaa remains eligible', async () => {
+  const result = await searchReleaseCandidates({ ...config,
+    trustedIndexerIds: [7], query: 'Example Anime',
+    fetchImpl: async () => Response.json([
+      { guid: 'trusted', indexerId: 7, title: 'Example 1080p',
+        size: 1000, protocol: 'torrent', seeders: 8 },
+      { guid: 'ordinary', indexerId: 9, title: 'Example 1080p',
+        size: 1000, protocol: 'torrent', seeders: 20 },
+    ]) });
+  assert.deepEqual(result.items.map((item) => item.trusted), [true, undefined]);
+  assert.deepEqual(await searchReleaseCandidates({ ...config,
+    trustedIndexerIds: [12], query: 'Example Anime',
+    fetchImpl: async () => { throw Error('network call'); } }),
+  { state: 'invalid_query' });
+});
+
 test('uses only read-only search and returns unverified, sanitized candidates', async () => {
   let called;
   const result = await searchReleaseCandidates({ ...config, query: 'Example Anime', fetchImpl: async (url, init) => {

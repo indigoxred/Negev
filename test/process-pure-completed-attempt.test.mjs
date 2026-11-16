@@ -23,6 +23,8 @@ const inputs = {
   qbittorrent: { baseUrl: 'http://qbit.internal:8080', sessionId: 'testSID' },
   verifyStagingRoot: async () => ({ state: 'verified_staging_root' }),
   verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+  inspectTracks: async () => ({ state: 'accepted', files: [{ name: 'Maquia.mkv',
+    audio: 'japanese', resolution: 1080 }] }),
 };
 
 test('a stopped exact manifest becomes one prepared move without a video hash', async () => {
@@ -38,6 +40,44 @@ test('a stopped exact manifest becomes one prepared move without a video hash', 
   assert.equal(calls[0][1].savePath, `/NegevPure/${hash}`);
   assert.deepEqual(calls[1][1], [{ name: 'Maquia.mkv', size: 3,
     episodeIds: [188804] }]);
+});
+
+test('passes selected adjacent subtitles to the media-track gate', async () => {
+  let inspected;
+  const result = await processPureCompletedAttempt({ ...inputs,
+    stop: async () => ({ state: 'complete',
+      files: [{ index: 0, name: 'Maquia.mkv', size: 3 }],
+      subtitles: [{ index: 1, name: 'Maquia.en.srt', size: 20 }] }),
+    inspectTracks: async (input) => { inspected = input;
+      return { state: 'accepted', files: [{ name: 'Maquia.mkv' }] }; },
+    prepare: async () => ({ state: 'prepared' }),
+  });
+  assert.equal(result.state, 'handoff_prepared');
+  assert.deepEqual(inspected.subtitles,
+    [{ index: 1, name: 'Maquia.en.srt', size: 20 }]);
+});
+
+test('a completed release lacking Japanese audio never enters the import move', async () => {
+  let prepared = false;
+  let retired = false;
+  const result = await processPureCompletedAttempt({ ...inputs,
+    acquisitions: { ...inputs.acquisitions,
+      getMediaRetirementIntent: () => null,
+      requestMediaRetirement: ({ reason }) => {
+        assert.equal(reason, 'japanese_audio_missing');
+        return { state: 'retirement_requested' };
+      } },
+    stop: async () => ({ state: 'complete',
+      files: [{ index: 0, name: 'Maquia.mkv', size: 3 }], subtitles: [] }),
+    inspectTracks: async () => ({ state: 'rejected',
+      reason: 'japanese_audio_missing' }),
+    retire: async () => { retired = true;
+      return { state: 'retired_media' }; },
+    prepare: async () => { prepared = true; },
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'media_retired' });
+  assert.equal(retired, true);
+  assert.equal(prepared, false);
 });
 
 test('a mismatched selected manifest cannot prepare or publish', async () => {

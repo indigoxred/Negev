@@ -350,6 +350,13 @@ export function openAcquisitionRequestQueue(dbPath,
       return transact(() => wakeRecovered.run(nowMs, requestId).changes === 1
         ? { state: 'woken' } : held('request_not_wakeable'));
     },
+    wakeAfterMediaRetirement({ requestId, nowMs }) {
+      if (!validId(requestId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid media retirement wake');
+      }
+      return transact(() => wakeRecovered.run(nowMs, requestId).changes === 1
+        ? { state: 'woken' } : held('request_not_wakeable'));
+    },
     resumeObservedAttemptHolds({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid interrupted retry clock');
       if (!hasAttemptLedger.get() || !hasStage.get('acquisition_target_claims')) {

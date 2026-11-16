@@ -153,7 +153,7 @@ test('recent exact public coverage avoids the indexer in the wired request stage
 test('the wired request stage skips a proven active claim before submission', async () => {
   const calls = [];
   const release = { indexerId: 1, guid: 'owned-elsewhere',
-    title: 'Example - 01', evidence: 'unverified' };
+    title: 'Example - 01 1080p', seeders: 5, evidence: 'unverified' };
   const stages = createAcquisitionStageProcessors({ ...options(calls),
     acquisitions: { getAttempt: () => null,
       inspectCandidateTargets: ({ requestId, candidate, episodeIds }) => {
@@ -304,7 +304,7 @@ test('movie request stage uses both public Plex sections before stopped submissi
   const qbCalls = [];
   const searchedQueries = [];
   const release = { indexerId: 3, guid: 'movie-release',
-    title: 'Example 01', size: 1000, evidence: 'unverified' };
+    title: 'Example 01 1080p', size: 1000, seeders: 5, evidence: 'unverified' };
   const proxy = 'http://prowlarr:9696/3/download?apikey=synthetic&link=abc123&file=Example';
   const savePath = `/Downloads/negev/${torrentHash}`;
   const qbFetch = async (url, init) => {

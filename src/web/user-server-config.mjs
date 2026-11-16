@@ -124,7 +124,8 @@ function plexConfig(env, dataDir) {
 
 function prowlarrConfig(env, dataDir) {
   const names = ['NEGEV_PROWLARR_URL', 'NEGEV_PROWLARR_KEY_FILE',
-    'NEGEV_PROWLARR_INDEXERS', 'NEGEV_PROWLARR_API_KEY'];
+    'NEGEV_PROWLARR_INDEXERS', 'NEGEV_PROWLARR_TRUSTED_INDEXERS',
+    'NEGEV_PROWLARR_API_KEY'];
   if (env.NEGEV_PROWLARR_DISCOVERY != null &&
       !['0', '1'].includes(env.NEGEV_PROWLARR_DISCOVERY)) {
     throw new TypeError('Invalid Prowlarr discovery flag');
@@ -151,7 +152,19 @@ function prowlarrConfig(env, dataDir) {
       new Set(indexerIds).size !== indexerIds.length) {
     throw new TypeError('Invalid Prowlarr indexers');
   }
-  return { baseUrl: env.NEGEV_PROWLARR_URL, keyPath, indexerIds };
+  let trustedIndexerIds = [];
+  if (env.NEGEV_PROWLARR_TRUSTED_INDEXERS !== undefined) {
+    try { trustedIndexerIds = JSON.parse(env.NEGEV_PROWLARR_TRUSTED_INDEXERS); }
+    catch { throw new TypeError('Invalid trusted Prowlarr indexers'); }
+    if (!Array.isArray(trustedIndexerIds) ||
+        trustedIndexerIds.length > indexerIds.length ||
+        trustedIndexerIds.some((id) => !validId(id) || !indexerIds.includes(id)) ||
+        new Set(trustedIndexerIds).size !== trustedIndexerIds.length) {
+      throw new TypeError('Invalid trusted Prowlarr indexers');
+    }
+  }
+  return { baseUrl: env.NEGEV_PROWLARR_URL, keyPath, indexerIds,
+    trustedIndexerIds };
 }
 
 function qbitSidecarConfig(env, dataDir, shokoImportFolderId) {

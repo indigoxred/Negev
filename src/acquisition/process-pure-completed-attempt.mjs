@@ -2,6 +2,8 @@ import path from 'node:path';
 import { stagingSavePath } from './staging-save-path.mjs';
 import { stopCompletedTorrent } from './stop-completed-torrent.mjs';
 import { preparePureMove } from './pure-move-handoff.mjs';
+import { inspectStagedMediaTracks } from './inspect-staged-media-tracks.mjs';
+import { runMediaRetirement } from './run-media-retirement.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -13,7 +15,9 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   holdingRoot, importRoot, qbittorrent, fetchImpl = fetch,
   renewQbittorrent,
   verifyStagingRoot, verifyHandoffMounts,
-  stop = stopCompletedTorrent, prepare = preparePureMove } = {}) {
+  stop = stopCompletedTorrent, prepare = preparePureMove,
+  inspectTracks = inspectStagedMediaTracks,
+  retire = runMediaRetirement } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
       typeof requests?.getRequest !== 'function' ||
@@ -27,7 +31,8 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
         .some((value) => typeof value !== 'string' || !path.isAbsolute(value)) ||
       typeof verifyStagingRoot !== 'function' ||
       typeof verifyHandoffMounts !== 'function' ||
-      typeof stop !== 'function' || typeof prepare !== 'function') {
+      typeof stop !== 'function' || typeof prepare !== 'function' ||
+      typeof inspectTracks !== 'function' || typeof retire !== 'function') {
     throw new TypeError('Invalid pure completion configuration');
   }
   if (pureMoves.getIntent(attemptId)) return held('handoff_already_recorded');
@@ -67,6 +72,18 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   } catch { return held('handoff_mount_unavailable'); }
   if (staging?.state !== 'verified_staging_root' ||
       mount?.state !== 'mounted_handoff_roots') return held('handoff_mount_unavailable');
+  const retireNow = async () => {
+    let result;
+    try {
+      result = await retire({ ledger: acquisitions, attemptId,
+        baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
+        stagingRoot: stagingHostPath, saveRoot: qbitStagingRoot,
+        verifyStagingRoot, nowMs, fetchImpl, renewQbittorrent });
+    } catch { return held('media_retirement_unavailable'); }
+    return result?.state === 'retired_media' ? held('media_retired') :
+      result?.state === 'held' ? result : held('media_retirement_pending');
+  };
+  if (acquisitions.getMediaRetirementIntent?.(attemptId)) return retireNow();
   const expected = { hash: attempt.torrentHash, category: 'negev',
     savePath: stagingSavePath(attempt.torrentHash, { saveRoot: qbitStagingRoot }) };
   const completed = await stop({ baseUrl: qbittorrent.baseUrl,
@@ -80,6 +97,27 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
       !Array.isArray(completed.subtitles) || completed.subtitles.length > 50) {
     return held('manifest_or_budget_mismatch');
   }
+  let inspected;
+  try {
+    inspected = await inspectTracks({
+      stagingRoot: path.join(stagingHostPath, attempt.torrentHash),
+      files: completed.files,
+      subtitles: completed.subtitles,
+    });
+  } catch { return held('tracks_unavailable'); }
+  if (inspected?.state === 'rejected') {
+    let requested;
+    try { requested = acquisitions.requestMediaRetirement({ attemptId,
+      hash: attempt.torrentHash, reason: inspected.reason, nowMs }); }
+    catch { return held('media_retirement_unavailable'); }
+    if (!['retirement_requested', 'delete_unknown'].includes(requested?.state)) {
+      return requested?.state === 'held' ? requested :
+        held('media_retirement_unavailable');
+    }
+    return retireNow();
+  }
+  if (inspected?.state !== 'accepted') return held(
+    inspected?.reason ?? 'tracks_unavailable');
   const files = [...completed.files.map((file) => ({ name: file.name,
     size: file.size, episodeIds: [...planned.get(file.name).episodeIds] })),
   ...completed.subtitles.map((file) => ({ name: file.name, size: file.size }))];

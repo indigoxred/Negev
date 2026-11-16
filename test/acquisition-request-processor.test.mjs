@@ -20,6 +20,51 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('strict release policy never preflights zero-seed or dub-only releases', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), title: 'Example - 01 English Dub 1080p', seeders: 50 },
+        { ...candidate(2), title: 'Example - 01 BD 1080p', seeders: 0 },
+        { ...candidate(3), title: 'Example - 01 WEB 1080p', seeders: 12 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.deepEqual(inspected, ['candidate-3']);
+});
+
+test('strict release policy tries BD before WEB and keeps 480p as a fallback', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), title: 'Example WEB 480p', seeders: 50 },
+        { ...candidate(2), title: 'Example BD 1080p', seeders: 10 },
+        { ...candidate(3), title: 'Example WEB 1080p', seeders: 20 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return item.guid === 'candidate-2' ?
+        { state: 'held', reason: 'unsafe_or_unselected_file' } : preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.deepEqual(inspected, ['candidate-2', 'candidate-3']);
+});
+
 test('prefers an exact Shoko filename preview within a bounded candidate page', async () => {
   const inspected = [];
   let submitted;
