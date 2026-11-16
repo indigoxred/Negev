@@ -81,9 +81,10 @@ export async function collectFirstTimeUncertain({ anidbId, episodeIds,
   let finalFeed;
   try { finalFeed = await readFeedState(pendingKeys); }
   catch { return held('import_quiet_window_unverified'); }
-  const scoped = pendingKeys?.length > 0;
-  if (!(scoped ? finalFeed?.state === 'connected_scoped' :
-      ['connected', 'connected_uncertain'].includes(finalFeed?.state)) ||
+  const scoped = finalFeed?.state === 'connected_scoped';
+  if (!['connected', 'connected_uncertain',
+        ...(pendingKeys?.length > 0 ? ['connected_scoped'] : [])]
+      .includes(finalFeed?.state) ||
       finalFeed.generation !== fence.feedGeneration ||
       finalFeed.pendingPaths !== (scoped ? pendingKeys.length : 0) ||
       finalFeed.pendingEvents !== 0 ||

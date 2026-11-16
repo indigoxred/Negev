@@ -204,3 +204,18 @@ test('final scoped feed permits the exact unrelated path without persisting it',
       reconciliationNeeded: true, pendingOnlyDebt: true }),
   })), { state: 'held', reason: 'import_quiet_window_unverified' });
 });
+
+test('final feed accepts bounded full-reconciliation debt with an exact unrelated Import path', async () => {
+  const key = '5:Negev/negev-45-aaaaaaaaaaaaaaaa/episode.mkv';
+  const observed = await collectFirstTimeUncertain(providers({
+    observeImport: async () => ({ ...quiet, unrelatedPendingKeys: [key] }),
+    readFeedState: async (keys) => {
+      assert.deepEqual(keys, [key]);
+      return { state: 'connected_uncertain', generation: 5,
+        pendingPaths: 0, pendingEvents: 0, inFlight: false,
+        reconciliationNeeded: true, fullReconciliationNeeded: true };
+    },
+  }));
+  assert.equal(observed.shoko.state, 'unimported_targets');
+  assert.equal(observed.importFence.unrelatedPendingKeys, undefined);
+});
