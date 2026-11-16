@@ -388,6 +388,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
       }),
     });
+    const hydrateAndWake = async (input) => {
+      const result = await metadata.run(() => hydrator.load(input));
+      if (result?.state === 'detail_ready' &&
+          result.detail?.anidbId === input.anidbId) {
+        try { acquisitionRuntime?.wakeHydratedTitle(input.anidbId); }
+        catch { /* Durable queue retry remains the fallback. */ }
+      }
+      return result;
+    };
     const submitHeldRequest = createHeldRequestSubmitter({
       titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
       ledger: requests, now, today,
@@ -407,6 +416,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const submitRequest = async (input) => {
       const result = await submitHeldRequest(input);
+      if (result.created === true && Number.isSafeInteger(result.requestId) &&
+          result.requestId > 0 && result.targetIds?.length > 0) {
+        acquisitionRuntime?.wakeRequest(result.requestId);
+      }
       // Pending-title intents resolve here too, outside the HTTP request route.
       autoTrackSavedAiringRequest({ result, requesterId: input.requesterId,
         anidbId: input.anidbId,
@@ -421,7 +434,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         titleRegistry.observe({ state: 'results', total: 1,
           items: [{ anidbId, title }] }),
       prepareDetail: shokoHydration ? ({ anidbId }) =>
-        metadata.run(() => hydrator.load({ anidbId })) : async () => {},
+        hydrateAndWake({ anidbId }) : async () => {},
     });
     const releaseQueries = async ({ anidbId }) => {
         const status = await titleSource?.refresh();
@@ -577,6 +590,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         } finally { queue.close(); }
       },
       readRequest: (id) => requests.getRequest(id),
+      findActiveWatch: (input) => requests.findActiveWatch(input),
+      findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
         await titleSource?.refresh();
         const page = requests.listRequests(input);
@@ -806,8 +821,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           readPublicTarget: (target, observedShoko) =>
             observeCurrentPublic(target, observedShoko),
         }) : undefined,
-      hydrateTitle: shokoHydration ?
-        (input) => metadata.run(() => hydrator.load(input)) : undefined,
+      hydrateTitle: shokoHydration ? hydrateAndWake : undefined,
       observePublicTarget: (target) => plexObserver ?
         observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
@@ -926,8 +940,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return refreshFirstTimeMetadata({ anidbId: input.anidbId,
           episodeIds: input.episodeIds, observation,
           pendingClaim: hydration.getActiveClaim(now()),
-          hydrate: ({ anidbId, missingEpisodeId }) => metadata.run(() =>
-            hydrator.load({ anidbId, missingEpisodeId })) });
+          hydrate: ({ anidbId, missingEpisodeId }) =>
+            hydrateAndWake({ anidbId, missingEpisodeId }) });
       })());
     };
     return { app,

@@ -13,6 +13,85 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('missing Shoko metadata retries briefly, then backs off after a sustained miss',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      let claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'shoko_metadata_missing', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+      assert.deepEqual(queue.listMetadataRetries(),
+        [{ requestId: 1, nextDueMs: 60_100 }]);
+      claim = queue.claimNext({ nowMs: 60_100, priorityRequestId: 1 });
+      assert.equal(claim.requestId, 1);
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'shoko_metadata_missing', checkedMs: 60_100 });
+      assert.equal(queue.getResult(1).nextDueMs, 120_100);
+      claim = queue.claimNext({ nowMs: 600_100, priorityRequestId: 1 });
+      assert.equal(claim.requestId, 1);
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'shoko_metadata_missing', checkedMs: 600_100 });
+      assert.equal(queue.getResult(1).nextDueMs, 2_400_100);
+    } finally { queue.close(); }
+  }));
+
+test('exact title metadata readiness wakes its held original request',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'shoko_metadata_missing', checkedMs: 100 });
+      assert.deepEqual(queue.wakeHydratedTitle({ anidbId: 43, nowMs: 1_000 }), []);
+      assert.deepEqual(queue.wakeHydratedTitle({ anidbId: 41, nowMs: 1_000 }), [1]);
+      assert.equal(queue.getResult(1).nextDueMs, 1_000);
+      assert.equal(queue.claimNext({ nowMs: 1_000, priorityRequestId: 1 }).requestId, 1);
+    } finally { queue.close(); }
+  }));
+
+test('startup brings legacy 30-minute metadata holds forward once',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'shoko_metadata_missing', checkedMs: 100 });
+      const db = new DatabaseSync(dbPath);
+      try { db.prepare(`UPDATE acquisition_request_checks
+        SET metadata_since_ms=NULL,next_due_ms=1800100 WHERE request_id=1`).run(); }
+      finally { db.close(); }
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 1, nextDueMs: 61_000 }]);
+      assert.equal(queue.getResult(1).nextDueMs, 61_000);
+    } finally { queue.close(); }
+  }));
+
+test('a newly saved request can be checked first without advancing the ordinary cursor',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.deepEqual(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }),
+        { state: 'claimed', requestId: 3, pass: 1 });
+      assert.deepEqual(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }),
+        { state: 'claimed', requestId: 1, pass: 1 });
+    } finally { queue.close(); }
+  }));
+
+test('priority cannot bypass a suspension or title cohort',
+  async () => fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath,
+      { allowedAnidbIds: [42] });
+    try {
+      assert.deepEqual(queue.suspendUnstarted({ requestId: 2,
+        reason: 'cutover_review', nowMs: 10 }), { state: 'suspended' });
+      assert.equal(queue.claimNext({ nowMs: 10, priorityRequestId: 2 }).state,
+        'pass_complete');
+      assert.equal(queue.claimNext({ nowMs: 10, priorityRequestId: 3 }).state,
+        'pass_complete');
+    } finally { queue.close(); }
+  }));
+
 test('an Airing release miss backs off hourly, then six-hourly and daily', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-rss-fallback-'));
   const dbPath = path.join(dir, 'state.sqlite');

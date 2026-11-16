@@ -77,7 +77,8 @@ test('verified title survives restart and a legacy request remains readable', as
   const first = openRequestLedger(dbPath);
   const named = first.submit({ requesterId: 7, requestKey: 'named',
     intent: { ...intent, title: 'A Film & a Series' }, nowMs: 1_000 });
-  const legacy = first.submit({ requesterId: 7, requestKey: 'legacy', intent, nowMs: 1_001 });
+  const legacy = first.submit({ requesterId: 7, requestKey: 'legacy',
+    intent: { ...intent, monitorFuture: false }, nowMs: 1_001 });
   first.close();
   const second = openRequestLedger(dbPath);
   try {
@@ -110,7 +111,7 @@ test('existing database without a title column migrates without losing requests'
   } finally { ledger.close(); }
 }));
 
-test('same-user retries are idempotent while different users share targets', async () => withPath(async (dbPath) => {
+test('an active watch rejects a second user without exposing the owner request', async () => withPath(async (dbPath) => {
   const ledger = openRequestLedger(dbPath);
   try {
     const first = ledger.submit({ requesterId: 7, requestKey: 'first', intent, nowMs: 1_000 });
@@ -118,19 +119,28 @@ test('same-user retries are idempotent while different users share targets', asy
     assert.equal(repeat.requestId, first.requestId);
     assert.equal(repeat.created, false);
     const other = ledger.submit({ requesterId: 8, requestKey: 'first', intent, nowMs: 3_000 });
-    assert.notEqual(other.requestId, first.requestId);
-    assert.deepEqual(other.targetIds, first.targetIds);
-    assert.equal(ledger.countRequests(), 2);
+    assert.deepEqual(other, { state: 'held', reason: 'already_monitored_elsewhere' });
+    assert.equal(ledger.countRequests(), 1);
     assert.equal(ledger.countTargets(), 2);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 8, anidbId: 1234 }), true);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 7, anidbId: 1234 }), false);
+    const anotherInstallment = ledger.submit({ requesterId: 8,
+      requestKey: 'different-season', intent: { ...intent, anidbId: 1235 },
+      nowMs: 3_001 });
+    assert.equal(anotherInstallment.created, true);
+    assert.equal(anotherInstallment.requestId !== first.requestId, true);
   } finally { ledger.close(); }
 }));
 
 test('request history pages only the authenticated owner and survives restart', async () => withPath(async (dbPath) => {
   const first = openRequestLedger(dbPath);
   first.submit({ requesterId: 7, requestKey: 'one', intent, nowMs: 1_000 });
-  first.submit({ requesterId: 8, requestKey: 'other', intent, nowMs: 1_001 });
-  first.submit({ requesterId: 7, requestKey: 'two', intent, nowMs: 1_002 });
-  first.submit({ requesterId: 7, requestKey: 'three', intent, nowMs: 1_003 });
+  first.submit({ requesterId: 8, requestKey: 'other',
+    intent: { ...intent, anidbId: 1237 }, nowMs: 1_001 });
+  first.submit({ requesterId: 7, requestKey: 'two',
+    intent: { ...intent, anidbId: 1235 }, nowMs: 1_002 });
+  first.submit({ requesterId: 7, requestKey: 'three',
+    intent: { ...intent, anidbId: 1236 }, nowMs: 1_003 });
   first.close();
   const ledger = openRequestLedger(dbPath);
   try {
@@ -156,10 +166,12 @@ test('active Airing watches and other requests page separately', async () => wit
     const first = ledger.submit({ requesterId: 7, requestKey: 'watch-a', intent, nowMs: 1_000 });
     const older = ledger.submit({ requesterId: 7, requestKey: 'one-time',
       intent: oneTime, nowMs: 1_001 });
-    const second = ledger.submit({ requesterId: 7, requestKey: 'watch-b', intent,
+    const second = ledger.submit({ requesterId: 7, requestKey: 'watch-b',
+      intent: { ...intent, anidbId: 1235 },
       nowMs: 1_002 });
     ledger.submit({ requesterId: 8, requestKey: 'other', intent, nowMs: 1_003 });
-    const third = ledger.submit({ requesterId: 7, requestKey: 'watch-c', intent,
+    const third = ledger.submit({ requesterId: 7, requestKey: 'watch-c',
+      intent: { ...intent, anidbId: 1236 },
       nowMs: 1_004 });
     const db = new DatabaseSync(dbPath);
     db.prepare('UPDATE requests SET watch_closed=1 WHERE id=?').run(second.requestId);
@@ -213,18 +225,58 @@ test('two connections cannot create duplicate rows for the same submission key',
   } finally { one.close(); two.close(); }
 }));
 
-test('a new submission key preserves a later request while sharing exact targets', async () => withPath(async (dbPath) => {
+test('two connections cannot create a second active watch with different submission keys', async () => withPath(async (dbPath) => {
+  const one = openRequestLedger(dbPath);
+  const two = openRequestLedger(dbPath);
+  try {
+    const first = one.submit({ requesterId: 7, requestKey: 'first', intent,
+      nowMs: 1_000 });
+    const repeated = two.submit({ requesterId: 7, requestKey: 'second', intent,
+      nowMs: 1_001 });
+    assert.equal(repeated.requestId, first.requestId);
+    assert.equal(repeated.reason, 'already_monitored');
+    assert.equal(two.countRequests(), 1);
+    const otherUser = two.submit({ requesterId: 8, requestKey: 'third', intent,
+      nowMs: 1_002 });
+    assert.deepEqual(otherUser,
+      { state: 'held', reason: 'already_monitored_elsewhere' });
+    assert.equal(two.countRequests(), 1);
+  } finally { one.close(); two.close(); }
+}));
+
+test('a new submission key returns the existing active watch without creating another request', async () => withPath(async (dbPath) => {
   const ledger = openRequestLedger(dbPath);
   try {
     const first = ledger.submit({ requesterId: 7, requestKey: 'first', intent, nowMs: 1_000 });
     const later = ledger.submit({ requesterId: 7, requestKey: 'later', intent, nowMs: 2_000 });
-    assert.notEqual(first.requestId, later.requestId);
+    assert.equal(first.requestId, later.requestId);
+    assert.equal(later.reason, 'already_monitored');
+    assert.equal(later.created, false);
     assert.deepEqual(first.targetIds, later.targetIds);
-    assert.equal(ledger.countRequests(), 2);
+    assert.equal(ledger.countRequests(), 1);
+    assert.equal(ledger.findActiveWatch({ requesterId: 7, anidbId: 1234 }), first.requestId);
+    assert.equal(ledger.findActiveWatch({ requesterId: 8, anidbId: 1234 }), null);
     const conflict = ledger.submit({ requesterId: 7, requestKey: 'first',
       intent: { ...intent, episodeIds: [1001] }, nowMs: 3_000 });
     assert.deepEqual(conflict, { state: 'held', reason: 'idempotency_key_conflict' });
-    assert.equal(ledger.countRequests(), 2);
+    assert.equal(ledger.countRequests(), 1);
+  } finally { ledger.close(); }
+}));
+
+test('a cancelled or closed watch permits a later request for the same user', async () => withPath(async (dbPath) => {
+  const ledger = openRequestLedger(dbPath);
+  try {
+    const first = ledger.submit({ requesterId: 7, requestKey: 'first', intent, nowMs: 1_000 });
+    ledger.cancelRequest({ requesterId: 7, requestId: first.requestId, nowMs: 2_000 });
+    assert.equal(ledger.findActiveWatch({ requesterId: 7, anidbId: 1234 }), null);
+    assert.equal(ledger.findOtherActiveWatch({ requesterId: 8, anidbId: 1234 }), false);
+    const second = ledger.submit({ requesterId: 7, requestKey: 'second', intent, nowMs: 3_000 });
+    assert.notEqual(second.requestId, first.requestId);
+    const db = new DatabaseSync(dbPath);
+    db.prepare('UPDATE requests SET watch_closed=1 WHERE id=?').run(second.requestId);
+    db.close();
+    const third = ledger.submit({ requesterId: 7, requestKey: 'third', intent, nowMs: 4_000 });
+    assert.notEqual(third.requestId, second.requestId);
   } finally { ledger.close(); }
 }));
 

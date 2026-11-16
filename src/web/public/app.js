@@ -10,7 +10,7 @@ import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { episodeScheduleLabel } from './episode-schedule.mjs';
+import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
 import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs';
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
@@ -1850,10 +1850,13 @@ function pendingTitleAction(item) {
       action.dataset.reviewing = 'false';
       review.hidden = true;
       button.disabled = true;
-      button.textContent = 'Requested';
+      button.textContent = saved.reason === 'already_monitored'
+        ? 'Future episodes already monitored' : 'Requested';
       status.textContent = savedRequestMessage(saved);
       viewRequest.hidden = false;
-      message('Request saved. Follow it under My Requests.');
+      message(saved.reason === 'already_monitored'
+        ? 'Future episodes are already monitored. View the existing request under My Requests.'
+        : 'Request saved. Follow it under My Requests.');
       loadRequests();
     } catch (error) {
       action.dataset.saving = 'false';
@@ -2045,11 +2048,24 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     panel.append(displaySummary);
     void displayRead.then((display) => renderDisplay(display, originalTitle));
     if (data.state === 'detail_pending') {
-      panel.append(element('p', requestAccess
-        ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
-        : 'Episode details are not cached yet. Anime requests for this title are temporarily unavailable in Negev. Please try again later.', 'muted'));
-      const pendingAction = requestAccess ? earlyRequest : null;
-      panel.append(detailActionRow(...(pendingAction ? [pendingAction] : [])));
+      if (data.futureEpisodesMonitored) {
+        const monitored = element('button', 'Future episodes already monitored', 'primary');
+        monitored.type = 'button';
+        monitored.disabled = true;
+        panel.append(detailActionRow(monitored));
+        if (data.activeWatchRequestId) {
+          const existingRequest = element('a', 'View in My Requests →',
+            'text-link request-receipt-link');
+          existingRequest.href = '#/requests';
+          panel.append(existingRequest);
+        }
+      } else {
+        panel.append(element('p', requestAccess
+          ? 'Episode details are not cached yet. You can request this title now; Negev will verify the exact entries before any download.'
+          : 'Episode details are not cached yet. Anime requests for this title are temporarily unavailable in Negev. Please try again later.', 'muted'));
+        const pendingAction = requestAccess ? earlyRequest : null;
+        panel.append(detailActionRow(...(pendingAction ? [pendingAction] : [])));
+      }
       if (state.detailLoad) {
         const preparationStatus = element('p', '', 'muted');
         const begin = async () => {
@@ -2099,6 +2115,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     const notReleased = data.releaseState === 'upcoming';
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'}${data.regularSchedule?.upcoming ? ` · ${data.regularSchedule.aired} aired, ${data.regularSchedule.upcoming} upcoming` : ''} · AniDB ${item.anidbId}`, 'detail-meta'));
+    const nextAir = nextAirDateLabel({ kind: data.kind,
+      releaseState: data.releaseState, schedule: data.regularSchedule });
+    if (nextAir) panel.append(element('p', nextAir,
+      `detail-next-air${data.regularSchedule?.nextAirDate ? '' : ' unknown'}`));
     let refreshAvailabilitySummary = () => {};
     if (notReleased) panel.append(element('p',
       'Not yet released. You can request this title now; Negev will watch for its release.',
@@ -2594,6 +2614,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       availableButton.hidden = true;
       const trigger = element('button', 'Request series', 'primary season-request-trigger');
       trigger.type = 'button';
+      const monitoredButton = element('button', 'Future episodes already monitored',
+        'primary season-already-monitored');
+      monitoredButton.type = 'button';
+      monitoredButton.disabled = true;
+      monitoredButton.hidden = true;
+      const monitoredLink = element('a', 'View in My Requests →',
+        'text-link request-receipt-link');
+      monitoredLink.href = '#/requests';
+      monitoredLink.hidden = true;
       if (data.requestsOpen === false) panel.append(element('p',
         'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
         'muted request-preview-gate'));
@@ -2676,9 +2705,17 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           row.status?.selectable && !row.requested);
         const presentation = seasonTriggerPresentation([...rows.values()],
           item.anidbId, family.next() !== null);
-        availableButton.hidden = !presentation.showAvailable;
-        trigger.hidden = !presentation.showTrigger;
-        trigger.textContent = presentation.triggerText;
+        const currentMonitored = rows.get(item.anidbId)?.futureEpisodesMonitored === true;
+        const otherRequestable = [...rows.values()].some((row) =>
+          row.anidbId !== item.anidbId && row.status?.selectable &&
+          !row.futureEpisodesMonitored && !row.requested);
+        monitoredButton.hidden = !currentMonitored;
+        monitoredLink.hidden = !rows.get(item.anidbId)?.activeWatchRequestId;
+        availableButton.hidden = currentMonitored || !presentation.showAvailable;
+        trigger.hidden = currentMonitored ? !otherRequestable && family.next() === null
+          : !presentation.showTrigger;
+        trigger.textContent = currentMonitored ? 'Request another installment' :
+          presentation.triggerText;
         trigger.classList.toggle('primary', !presentation.showAvailable);
         trigger.classList.toggle('quiet', presentation.showAvailable);
         trigger.disabled = data.requestsOpen === false || saving || (rows.size > 0 &&
@@ -2703,8 +2740,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           ? { state: 'unverified', text: 'Checking complete season…', selectable: false }
           : seasonRequestStatus(detail);
         if (status === null) { row.element.remove(); rows.delete(row.anidbId); refresh(); return; }
-        row.status = status;
-        row.statusText.textContent = row.requested ? 'Requested' : status.text;
+        row.activeWatchRequestId = detail?.activeWatchRequestId ?? null;
+        row.futureEpisodesMonitored = detail?.futureEpisodesMonitored === true ||
+          row.activeWatchRequestId > 0;
+        row.status = row.futureEpisodesMonitored
+          ? { state: 'watching', text: 'Future episodes already monitored',
+            selectable: false } : status;
+        row.statusText.textContent = row.futureEpisodesMonitored
+          ? 'Future episodes already monitored' : row.requested ? 'Requested' : status.text;
         row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total) &&
           detail.regularSeason.total > 0
           ? `${detail.regularSeason.total} episodes` : '';
@@ -2838,6 +2881,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         refresh();
         const saved = [];
         const failed = [];
+        let alreadyMonitored = 0;
         let closedByPilot = 0;
         try {
           const result = await api('/api/requests/seasons', { method: 'POST',
@@ -2853,13 +2897,27 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             if (itemResult.status >= 200 && itemResult.status < 300) {
               requestKeys.saved({ userId: state.user.id, anidbId: row.anidbId });
               row.requested = true;
-              row.statusText.textContent = payload.state === 'pending'
-                ? 'Queued for details' : 'Requested';
-              saved.push(Number.isSafeInteger(payload.requestId)
-                ? `#${payload.requestId}` : row.title);
+              if (payload.reason === 'already_monitored') {
+                alreadyMonitored++;
+                row.activeWatchRequestId = payload.requestId;
+                row.status = { state: 'watching',
+                  text: 'Future episodes already monitored', selectable: false };
+                row.statusText.textContent = 'Future episodes already monitored';
+              } else {
+                row.statusText.textContent = payload.state === 'pending'
+                  ? 'Queued for details' : 'Requested';
+                saved.push(Number.isSafeInteger(payload.requestId)
+                  ? `#${payload.requestId}` : row.title);
+              }
             } else if (payload.reason === 'already_available') {
               row.status = { state: 'available', text: 'Already available', selectable: false };
               row.statusText.textContent = 'Already available';
+            } else if (payload.reason === 'already_monitored_elsewhere') {
+              row.futureEpisodesMonitored = true;
+              row.status = { state: 'watching',
+                text: 'Future episodes already monitored', selectable: false };
+              row.statusText.textContent = 'Future episodes already monitored';
+              alreadyMonitored++;
             } else if (payload.reason === 'title_not_in_cutover') {
               row.status = { state: 'closed', text: 'Requests not open yet', selectable: false };
               row.statusText.textContent = requestFailureMessage(payload);
@@ -2882,11 +2940,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         review.hidden = true;
         feedback.textContent = saved.length
           ? `${saved.length} season${saved.length === 1 ? '' : 's'} requested · ${saved.join(', ')}${failed.length ? ` · ${failed.length} could not be saved; retry those seasons` : ''}`
+          : alreadyMonitored && !failed.length
+            ? 'Future episodes are already monitored. View the existing request under My Requests.'
           : failed.length && closedByPilot === failed.length
             ? 'Anime requests for these titles are temporarily unavailable in Negev. Please try again later.'
             : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
             : 'Selected seasons are already available.';
-        view.hidden = saved.length === 0;
+        view.hidden = saved.length === 0 && alreadyMonitored === 0;
         refresh();
         if (saved.length) loadRequests();
       });
@@ -2921,7 +2981,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         continueCheck.addEventListener('click', () => { void checkPages(); });
         void checkPages();
       }
-      panel.insertBefore(detailActionRow(availableButton, trigger), relatedHeading);
+      panel.insertBefore(detailActionRow(availableButton, trigger,
+        monitoredButton, monitoredLink), relatedHeading);
       panel.append(action);
       return;
     }

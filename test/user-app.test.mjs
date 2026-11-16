@@ -105,6 +105,14 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
     acquisitionAllowedAnidbIds: [1234],
     loadDetail: async ({ anidbId }) => ({ state: 'details', anidbId,
       kind: 'series', restricted: false, episodes: [], nextPage: null }),
+    findActiveWatch: ({ requesterId, anidbId }) => {
+      assert.equal(requesterId, 7);
+      return anidbId === 1234 ? 17 : null;
+    },
+    findOtherActiveWatch: ({ requesterId, anidbId }) => {
+      assert.equal(requesterId, 7);
+      return anidbId === 1235;
+    },
     submitRequest: async (input) => { submitted.push(input); return {
       state: 'held', requestId: 1, reason: 'test_request' }; },
     readRequest: () => null });
@@ -120,7 +128,11 @@ test('a limited acquisition cohort rejects other new titles before saving a requ
     const closedDetail = await app.inject({ method: 'GET', url: '/api/catalogue/1235',
       headers: { cookie } });
     assert.equal(openDetail.json().requestsOpen, true);
+    assert.equal(openDetail.json().activeWatchRequestId, 17);
+    assert.equal(openDetail.json().futureEpisodesMonitored, true);
     assert.equal(closedDetail.json().requestsOpen, false);
+    assert.equal(closedDetail.json().activeWatchRequestId, null);
+    assert.equal(closedDetail.json().futureEpisodesMonitored, true);
     const blocked = await app.inject({ method: 'POST', url: '/api/requests',
       headers, payload: { anidbId: 1235, scope: 'installment', requestKey: 'outside' } });
     assert.equal(blocked.statusCode, 409);
@@ -510,7 +522,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
   const seasonalInputs = [];
   let seasonalTags = ['action', 'fantasy'];
   let acquisitionState = 'disabled';
-  const knownTitles = new Set([1234, 1235]);
+  const knownTitles = new Set([1234, 1235, 1236]);
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin,
     secureCookies: false, now: () => 1_000,
     getAcquisitionStatus: () => ({ state: acquisitionState }),
@@ -518,7 +530,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       reason: 'unrecognized_import_video' }),
     submitRequest: async (command) => requestLedger.submit({
       requesterId: command.requesterId, requestKey: command.requestKey, nowMs: 1_000,
-      intent: { state: 'ready', anidbId: 1234, kind: 'series',
+      intent: { state: 'ready', anidbId: command.anidbId, kind: 'series',
         episodeIds: [1001], monitorFuture: true },
     }),
     readRequest: (id) => requestLedger.getRequest(id),
@@ -942,10 +954,17 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       headers: { cookie: friendCookie } })).statusCode, 403);
     assert.equal((await app.inject({ method: 'GET', url: '/api/catalogue/1235/display',
       headers: { cookie: friendCookie } })).statusCode, 403);
+    const redundantWatch = await app.inject({ method: 'POST', url: '/api/requests',
+      headers: { cookie: friendCookie, origin,
+        'x-negev-csrf': friendSession.json().csrfToken },
+      payload: { anidbId: 1234, scope: 'installment', requestKey: 'already-watched' } });
+    assert.equal(redundantWatch.statusCode, 409, redundantWatch.body);
+    assert.equal(redundantWatch.json().reason, 'already_monitored_elsewhere');
+    assert.equal('requestId' in redundantWatch.json(), false);
     const allowedOrdinary = await app.inject({ method: 'POST', url: '/api/requests',
       headers: { cookie: friendCookie, origin,
         'x-negev-csrf': friendSession.json().csrfToken },
-      payload: { anidbId: 1234, scope: 'installment', requestKey: 'ordinary-allowed' } });
+      payload: { anidbId: 1236, scope: 'installment', requestKey: 'ordinary-allowed' } });
     assert.equal(allowedOrdinary.statusCode, 202, allowedOrdinary.body);
     const allRequests = await app.inject({ method: 'GET',
       url: '/api/requests?scope=all', headers: { cookie } });

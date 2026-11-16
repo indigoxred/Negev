@@ -36,7 +36,8 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
         if (detail.anidbId !== anidbId) return { state: 'held', reason: 'invalid_detail_evidence' };
         if (detail.complete !== true) return { state: 'pending', reason: 'detail_pagination_required' };
         if (!isCompleteAniDbDetail(detail, anidbId)) return { state: 'held', reason: 'invalid_detail_evidence' };
-        if (missingEpisodeId === undefined) {
+        if (missingEpisodeId === undefined ||
+            detail.episodes.some((episode) => episode.id === missingEpisodeId)) {
           const finished = ledger.finishLatestFromDetail(anidbId, detail, now());
           if (finished.state === 'held') return finished;
           return { state: 'detail_ready', detail, requestable: false };

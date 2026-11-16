@@ -5,6 +5,8 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
+const METADATA_SHORT_RETRY_MS = 60_000;
+const METADATA_SHORT_WINDOW_MS = 10 * 60_000;
 const validCandidateFingerprint = (value) => {
   if (typeof value !== 'string' || value.length > 3_400) return false;
   const parts = value.split(':');
@@ -59,6 +61,7 @@ export function openAcquisitionRequestQueue(dbPath,
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0),
       empty_since_ms INTEGER CHECK(empty_since_ms>=0),
+      metadata_since_ms INTEGER CHECK(metadata_since_ms>=0),
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
       candidate_fingerprint TEXT
     ) STRICT`);
@@ -83,13 +86,17 @@ export function openAcquisitionRequestQueue(dbPath,
       .some((column) => column.name === 'empty_since_ms')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN empty_since_ms INTEGER CHECK(empty_since_ms>=0)');
     }
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'metadata_since_ms')) {
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN metadata_since_ms INTEGER CHECK(metadata_since_ms>=0)');
+    }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
   // An unfinished claim remains excluded after a crash. A one-time request
   // stops acquiring after exact public proof; its saved history remains.
   // Active Airing watches continue so later episodes can be added.
-  const next = db.prepare(`SELECT r.id,r.anidb_id AS anidbId,
+  const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
       COALESCE(c.candidate_offset,0) AS candidateOffset,
       c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
@@ -101,7 +108,13 @@ export function openAcquisitionRequestQueue(dbPath,
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
-    ORDER BY r.id LIMIT 1`);
+    ORDER BY r.id LIMIT 1`;
+  const next = db.prepare(nextSql);
+  // A freshly saved request can take its first turn ahead of older due rows.
+  // The same eligibility guards apply, and the ordinary cursor stays put.
+  const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
+    .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
+      (c.state='held' AND c.reason='shoko_metadata_missing')) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms)
@@ -109,6 +122,7 @@ export function openAcquisitionRequestQueue(dbPath,
     pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
+    metadata_since_ms=?,
     candidate_offset=COALESCE(?,candidate_offset),
     candidate_fingerprint=COALESCE(?,candidate_fingerprint)
     WHERE request_id=? AND pass=? AND state IS NULL`);
@@ -116,8 +130,33 @@ export function openAcquisitionRequestQueue(dbPath,
     attempt_id AS attemptId,candidate_offset AS candidateOffset,
     candidate_fingerprint AS candidateFingerprint,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs,
-    empty_since_ms AS emptySinceMs
+    empty_since_ms AS emptySinceMs,metadata_since_ms AS metadataSinceMs
     FROM acquisition_request_checks WHERE request_id=?`);
+  const waitingForMetadata = db.prepare(`SELECT r.id FROM requests r
+    JOIN acquisition_request_checks c ON c.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
+    WHERE r.anidb_id=? AND r.status='held' AND r.cancelled_ms IS NULL
+      AND s.request_id IS NULL AND c.state='held'
+      AND c.reason='shoko_metadata_missing' AND c.next_due_ms>?`);
+  const wakeMetadata = db.prepare(`UPDATE acquisition_request_checks
+    SET next_due_ms=? WHERE request_id=? AND state='held'
+      AND reason='shoko_metadata_missing' AND next_due_ms>?`);
+  const pendingMetadata = db.prepare(`SELECT r.id AS requestId,
+      c.next_due_ms AS nextDueMs FROM requests r
+    JOIN acquisition_request_checks c ON c.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
+    WHERE r.status='held' AND r.cancelled_ms IS NULL
+      AND s.request_id IS NULL AND ${cohortFilter}
+      c.state='held' AND c.reason='shoko_metadata_missing'
+      AND c.next_due_ms IS NOT NULL
+    ORDER BY c.next_due_ms,r.id LIMIT ?`);
+  const advanceLegacyMetadata = db.prepare(`UPDATE acquisition_request_checks
+    SET metadata_since_ms=COALESCE(checked_ms,?),
+      next_due_ms=MIN(next_due_ms,?)
+    WHERE state='held' AND reason='shoko_metadata_missing'
+      AND metadata_since_ms IS NULL AND next_due_ms>?
+      AND EXISTS (SELECT 1 FROM requests r WHERE r.id=request_id
+        AND r.status='held' AND r.cancelled_ms IS NULL)`);
   const watch = db.prepare('SELECT monitor_future,watch_closed FROM requests WHERE id=?');
   const unresolved = db.prepare(`SELECT request_id AS requestId,pass
     FROM acquisition_request_checks WHERE request_id>? AND state IS NULL
@@ -245,10 +284,54 @@ export function openAcquisitionRequestQueue(dbPath,
       const row = suspended.get(requestId);
       return row ? { ...row } : null;
     },
-    claimNext({ nowMs = Date.now() } = {}) {
-      if (!validTime(nowMs)) throw new TypeError('Invalid acquisition queue clock');
+    wakeHydratedTitle({ anidbId, nowMs = Date.now() } = {}) {
+      if (!validId(anidbId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid hydrated title wake');
+      }
+      if (allowedAnidbIds !== null && !allowedAnidbIds.includes(anidbId)) {
+        return [];
+      }
+      return transact(() => {
+        const ids = waitingForMetadata.all(anidbId, nowMs)
+          .map((row) => row.id);
+        return ids.filter((id) => wakeMetadata.run(nowMs, id, nowMs).changes === 1);
+      });
+    },
+    listMetadataRetries({ limit = 32, nowMs = Date.now() } = {}) {
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32 ||
+          !validTime(nowMs) || !validTime(nowMs + METADATA_SHORT_RETRY_MS)) {
+        throw new TypeError('Invalid metadata retry page');
+      }
+      return transact(() => {
+        // Older releases saved this reason with the generic 30-minute delay.
+        // Bring those rows forward once while retaining their original age.
+        advanceLegacyMetadata.run(nowMs, nowMs + METADATA_SHORT_RETRY_MS,
+          nowMs + METADATA_SHORT_RETRY_MS);
+        return pendingMetadata.all(...(allowedAnidbIds ?? []), limit)
+          .map((row) => ({ ...row }));
+      });
+    },
+    claimNext({ nowMs = Date.now(), priorityRequestId = null } = {}) {
+      if (!validTime(nowMs) ||
+          (priorityRequestId !== null && !validId(priorityRequestId))) {
+        throw new TypeError('Invalid acquisition queue claim');
+      }
       return transact(() => {
         const position = cursor.get();
+        if (priorityRequestId !== null) {
+          const row = fresh.get(priorityRequestId,
+            ...(allowedAnidbIds ?? []), nowMs);
+          if (row) {
+            const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
+            if (ownership === 'eligible') {
+              claim.run(row.id, position.pass);
+              return { state: 'claimed', requestId: row.id, pass: position.pass };
+            }
+            if (!['owned', 'unmapped'].includes(ownership)) {
+              return held('sonarr_ownership_unavailable');
+            }
+          }
+        }
         let afterId = position.afterId;
         for (let scanned = 0; scanned < 1_000; scanned++) {
           const row = next.get(afterId, ...(allowedAnidbIds ?? []), nowMs);
@@ -303,6 +386,16 @@ export function openAcquisitionRequestQueue(dbPath,
       const empty = state === 'held' &&
         ['no_release_candidates', 'no_safe_release'].includes(reason);
       const emptySinceMs = empty ? previous?.emptySinceMs ?? checkedMs : null;
+      const metadataMissing = state === 'held' &&
+        reason === 'shoko_metadata_missing';
+      const metadataSinceMs = metadataMissing &&
+        validTime(previous?.metadataSinceMs) &&
+        previous.metadataSinceMs !== null &&
+        previous.metadataSinceMs <= checkedMs
+        ? previous.metadataSinceMs : metadataMissing ? checkedMs : null;
+      const metadataDelayMs = metadataMissing &&
+        checkedMs - metadataSinceMs < METADATA_SHORT_WINDOW_MS
+        ? METADATA_SHORT_RETRY_MS : RETRY_DELAY_MS;
       const watched = watch.get(requestId);
       const elapsed = checkedMs - (emptySinceMs ?? checkedMs);
       const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
@@ -311,10 +404,11 @@ export function openAcquisitionRequestQueue(dbPath,
         ? null : advanced ? checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable'].includes(reason)
-            ? SESSION_RETRY_MS : empty && watched?.monitor_future === 1 &&
+            ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
+              empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
-        emptySinceMs,
+        emptySinceMs, metadataSinceMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
@@ -323,7 +417,8 @@ export function openAcquisitionRequestQueue(dbPath,
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       const row = result.get(requestId);
       if (!row) return null;
-      const { candidateOffset, candidateFingerprint, emptySinceMs, ...other } = row;
+      const { candidateOffset, candidateFingerprint, emptySinceMs,
+        metadataSinceMs, ...other } = row;
       return { ...other,
         ...(candidateOffset > 0 ? { candidateOffset } : {}),
         ...(candidateFingerprint ? { candidateFingerprint } : {}) };
@@ -351,14 +446,15 @@ export function createAcquisitionPageWorker({ queue, processRequest,
   }
   let busy = false;
   return {
-    async runOnce() {
+    async runOnce({ priorityRequestId = null } = {}) {
       if (busy) return held('page_in_progress');
       busy = true;
       const results = [];
       try {
         for (let i = 0; i < limit; i++) {
           let next;
-          try { next = queue.claimNext({ nowMs: now() }); }
+          try { next = queue.claimNext({ nowMs: now(),
+            priorityRequestId: i === 0 ? priorityRequestId : null }); }
           catch { return { state: 'held', reason: 'queue_unavailable', results }; }
           if (next.state === 'pass_complete') {
             return { state: 'pass_complete', pass: next.pass, results };
@@ -396,7 +492,9 @@ export function createAcquisitionPageWorker({ queue, processRequest,
           } catch { return { state: 'held', reason: 'queue_unavailable', results }; }
           results.push({ requestId: next.requestId, state,
             ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId } : {}),
-            ...(reason === null ? {} : { reason }) });
+            ...(reason === null ? {} : { reason }),
+            ...(reason === 'shoko_metadata_missing' ?
+              { nextDueMs: queue.getResult(next.requestId)?.nextDueMs } : {}) });
         }
         return { state: 'page', results };
       } finally { busy = false; }

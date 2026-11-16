@@ -3,6 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { pollAiringWatches } from '../src/requests/airing-watch-poll.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 
@@ -144,23 +145,35 @@ test('two users watching one installment share one catalogue read per page', asy
   assert.deepEqual(result.results.map((item) => item.state), ['advanced', 'advanced']);
 });
 
-test('one catalogue poll advances two durable requests without duplicate targets', async () => {
+test('one catalogue poll still advances historical duplicate watches without duplicate targets', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-airing-poll-'));
-  const ledger = openRequestLedger(path.join(root, 'requests.sqlite'));
+  const dbPath = path.join(root, 'requests.sqlite');
+  const ledger = openRequestLedger(dbPath);
   try {
     const intent = { state: 'ready', anidbId: 42, kind: 'series',
       monitorFuture: true, episodeIds: [1001] };
     const first = ledger.submit({ requesterId: 1, requestKey: 'first',
       intent, nowMs: 1 });
-    const second = ledger.submit({ requesterId: 2, requestKey: 'second',
-      intent, nowMs: 2 });
+    // Older releases allowed two accounts to save the same watch. Their
+    // existing rows still need polling after new submissions are guarded.
+    const db = new DatabaseSync(dbPath);
+    const secondId = Number(db.prepare(`INSERT INTO requests
+      (requester_id,request_key,anidb_id,kind,episode_key,monitor_future,
+        created_ms,status,reason) VALUES
+      (2,'second',42,'series','1001',1,2,'held','awaiting_availability_evidence')`)
+      .run().lastInsertRowid);
+    const targetId = db.prepare('SELECT id FROM targets WHERE anidb_id=42 AND episode_id=1001')
+      .get().id;
+    db.prepare('INSERT INTO request_targets(request_id,target_id) VALUES (?,?)')
+      .run(secondId, targetId);
+    db.close();
     let reads = 0;
     const result = await pollAiringWatches({ ledger, today: '2026-02-20',
       intervalMs: 0, loadDetail: async () => { reads++; return details(42); } });
     assert.equal(result.state, 'page');
     assert.equal(reads, 1);
     assert.deepEqual(ledger.getRequest(first.requestId).episodeIds, [1001, 1002]);
-    assert.deepEqual(ledger.getRequest(second.requestId).episodeIds, [1001, 1002]);
+    assert.deepEqual(ledger.getRequest(secondId).episodeIds, [1001, 1002]);
     assert.equal(ledger.countTargets(), 2);
   } finally {
     ledger.close();

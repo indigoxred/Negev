@@ -44,6 +44,14 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     const previous = ledger.findSubmission({ requesterId, requestKey, commandKey });
     if (previous) return previous;
     if (!(await confirmKnownTitle({ anidbId }))) return held('unknown_title');
+    if (scope === 'installment') {
+      const activeWatchRequestId = ledger.findActiveWatch?.({ requesterId, anidbId });
+      if (activeWatchRequestId) return { state: 'held', reason: 'already_monitored',
+        requestId: activeWatchRequestId, created: false };
+      if (ledger.findOtherActiveWatch?.({ requesterId, anidbId })) {
+        return held('already_monitored_elsewhere');
+      }
+    }
     const detail = await collectAniDbDetail({ anidbId, loadPage: loadDetail });
     if (detail.state !== 'details') {
       return held(detail.state === 'detail_pending' ? 'detail_pending' : 'detail_unavailable');

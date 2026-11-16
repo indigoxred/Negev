@@ -68,6 +68,26 @@ test('an exact missing first-time episode refreshes even when series detail exis
   assert.equal(ledger.getClaim(first.claimId).status, 'completed');
 }));
 
+test('an exact newly hydrated episode finishes its claim without another POST',
+  async () => withLedger(async (ledger) => {
+    let current = detail;
+    let posts = 0;
+    const hydrator = createCatalogueHydrator({
+      isKnownTitle: async () => true, loadDetail: async () => current,
+      ledger, requestHydration: async () => { posts++; return { state: 'queued' }; },
+      now: () => nowMs,
+    });
+    const first = await hydrator.load({ anidbId: 1234,
+      missingEpisodeId: 1002 });
+    current = { ...detail, total: 2, episodes: [...detail.episodes,
+      { id: 1002, number: 2, type: 'Episode', title: 'Second' }] };
+    const second = await hydrator.load({ anidbId: 1234,
+      missingEpisodeId: 1002 });
+    assert.equal(second.state, 'detail_ready');
+    assert.equal(ledger.getClaim(first.claimId).status, 'completed');
+    assert.equal(posts, 1);
+  }));
+
 test('unknown title, Shoko outage and partial detail never submit refreshes', async () => withLedger(async (ledger) => {
   let known = false;
   let currentDetail = { state: 'detail_pending', anidbId: 1234 };
