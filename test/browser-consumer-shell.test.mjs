@@ -673,6 +673,13 @@ test('signed-in consumer routes render real shell with search, library and reque
           status: 'held',
           progress: { state: 'review_needed', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
+        }, {
+          id: 4, requesterId: 1, requesterName: 'Owner', anidbId: 8,
+          title: 'A cancelled request', kind: 'movie', status: 'cancelled',
+          episodeIds: [13], monitorFuture: false, watchClosed: false,
+          canCancel: false,
+          progress: { state: 'saved', targetCount: 1,
+            publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }], nextBeforeId: null }));
         return;
       }
@@ -1567,7 +1574,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(requests, /No download is confirmed in progress/);
       assert.match(requests, /data-request-group="attention">(?:(?!<\/section>)[\s\S])*A title needing help/);
       assert.match(requests, /data-request-group="active">(?:(?!<\/section>)[\s\S])*Pale Cocoon/);
-      assert.match(requests, /data-request-group="completed">(?:(?!<\/section>)[\s\S])*The Garden of Words/);
+      assert.match(requests, /<details[^>]*data-request-group="completed"[^>]*><summary[^>]*>Completed<\/summary>/);
+      assert.match(requests, /<details[^>]*data-request-group="cancelled"[^>]*><summary[^>]*>Cancelled<\/summary>/);
+      assert.match(requests, /data-request-group="completed"(?:(?!<\/details>)[\s\S])*The Garden of Words/);
+      assert.match(requests, /data-request-group="cancelled"(?:(?!<\/details>)[\s\S])*A cancelled request/);
+      assert.doesNotMatch(requests, /data-request-group="completed"(?:(?!<\/details>)[\s\S])*A cancelled request/);
       allowAdult = false;
       const ordinaryDescription = await dump(`${base}/#/title/19847`,
         join(dir, 'ordinary-description-adult-blocked'));
