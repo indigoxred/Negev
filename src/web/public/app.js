@@ -773,6 +773,14 @@ function renderRequestStatus(status, presentation) {
   status.className = `request-status status-${presentation.group}`;
   status.replaceChildren(element('strong', presentation.stage, 'request-stage'),
     element('span', presentation.detail, 'request-detail'));
+  if (Number.isFinite(presentation.progressPercent)) {
+    const meter = element('progress', undefined, 'request-transfer-progress');
+    meter.max = 100;
+    meter.value = presentation.progressPercent;
+    meter.setAttribute('aria-label',
+      `Download progress: ${presentation.progressPercent}%`);
+    status.append(meter);
+  }
   if (presentation.note) status.append(element('span', presentation.note,
     'request-note'));
 }

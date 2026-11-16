@@ -36,6 +36,10 @@ export function requestPresentation(progress, kind,
     rawTransfer.progressBasisPoints >= 0 && rawTransfer.progressBasisPoints < 10_000 &&
     ['active', 'stalled', 'queued', 'paused'].includes(rawTransfer.transferState)
     ? rawTransfer : null;
+  const progressPercent = transfer &&
+    ['download_unverified', 'partial_private_copy'].includes(progress.state)
+    ? Number((transfer.progressBasisPoints / 100).toFixed(1)) : null;
+  const measuredProgress = progressPercent === null ? {} : { progressPercent };
   const measuredDownload = () => {
     if (!transfer) return null;
     const percent = Number((transfer.progressBasisPoints / 100).toFixed(1));
@@ -125,12 +129,13 @@ export function requestPresentation(progress, kind,
       : progress.state === 'saved' ? '' :
         acquisition.stage === 'Downloading' ? acquisition.detail : acquisition.stage),
     group: attention ? 'attention' : watching ? 'watching' :
-      progress.oneTimeAcquisitionComplete === true ? 'completed' : 'active' };
+      progress.oneTimeAcquisitionComplete === true ? 'completed' : 'active',
+    ...(progress.oneTimeAcquisitionComplete === true ? {} : measuredProgress) };
   if (progress.oneTimeAcquisitionComplete === true) return {
     stage: 'Completed earlier',
     detail: 'This request was fulfilled, but playback has not been checked recently.',
     note: attentionNote, group: attention ? 'attention' : 'completed',
   };
   return { ...acquisition, group: attention ? 'attention' :
-    watching ? 'watching' : 'active' };
+    watching ? 'watching' : 'active', ...measuredProgress };
 }
