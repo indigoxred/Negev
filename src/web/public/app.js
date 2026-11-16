@@ -593,8 +593,8 @@ async function loadRequestView(view, append = false, silent = false) {
       const requestedScope = item.kind === 'movie'
         ? targetCount === 1 ? 'Film requested' : `${targetCount} film parts requested`
         : `${targetCount} episode${targetCount === 1 ? '' : 's'} requested`;
-      heading.append(element('strong', item.title ||
-        `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}`),
+      heading.append(titleLabel({ ...item, title: item.title ||
+        `${item.kind === 'movie' ? 'Film' : 'Series'} · AniDB ${item.anidbId}` }),
         element('small', `${item.kind === 'movie' ? 'Film' : 'Series'} · ` +
           `${requestedScope} · ` +
           `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`),
@@ -881,7 +881,7 @@ async function loadPreparations(silent = false, append = false) {
       const row = element('div', undefined, 'request-row');
       row.append(posterImage(item));
       const heading = element('div');
-      heading.append(element('strong', item.title),
+      heading.append(titleLabel(item),
         element('small', item.reason === 'release_state_unknown'
           ? 'Checking catalogue release dates' : 'Preparing episode details'),
         element('small', `Requested by ${item.requesterName || 'your account'}`));

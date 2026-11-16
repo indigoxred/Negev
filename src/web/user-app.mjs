@@ -294,6 +294,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           item.anidbId <= (index ? page.items[index - 1].anidbId : afterAnidbId) ||
           typeof item.title !== 'string' || !item.title.trim() ||
           item.title.length > 500 ||
+          item.englishTitle != null &&
+            (typeof item.englishTitle !== 'string' ||
+              item.englishTitle.length > 500) ||
           !Number.isSafeInteger(item.verifiedEpisodeCount) ||
           item.verifiedEpisodeCount < 1 || item.verifiedEpisodeCount > 10_000 ||
           !Number.isSafeInteger(item.lastVerifiedMs) ||
@@ -305,6 +308,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     return { state: 'current_proofs', items: page.items.map((item) => ({
       anidbId: item.anidbId, title: item.title,
+      englishTitle: item.englishTitle ?? null,
       verifiedEpisodeCount: item.verifiedEpisodeCount,
       lastVerifiedMs: item.lastVerifiedMs,
     })), nextAfterAnidbId: page.nextAfterAnidbId };
@@ -1053,10 +1057,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         !Number.isSafeInteger(beforeId) || beforeId < 1) {
       return reply.code(400).send({ error: 'Invalid preparation page' });
     }
-    const page = listPendingTitles({ requesterId: request.negevUser.id,
+    const page = await listPendingTitles({ requesterId: request.negevUser.id,
       beforeId, limit: 20 });
     return { items: page.items.map((item) => ({ id: item.id,
-      anidbId: item.anidbId, title: item.title, state: item.state,
+      anidbId: item.anidbId, title: item.title,
+      englishTitle: item.englishTitle ?? null, state: item.state,
       reason: item.reason, createdMs: item.nowMs,
       requesterName: request.negevUser.username })),
       nextBeforeId: page.nextBeforeId };

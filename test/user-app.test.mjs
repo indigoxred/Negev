@@ -524,7 +524,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     readRequest: (id) => requestLedger.getRequest(id),
     listRequests: (input) => requestLedger.listRequests(input),
     listLibraryTitles: () => ({ state: 'current_proofs', items: [
-      { anidbId: 1234, title: 'Example series',
+      { anidbId: 1234, title: 'Example series', englishTitle: null,
         verifiedEpisodeCount: 2, lastVerifiedMs: 950 }],
     nextAfterAnidbId: null }),
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
@@ -701,7 +701,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const library = await app.inject({ method: 'GET', url: '/api/library', headers: { cookie } });
     assert.equal(library.statusCode, 200);
     assert.deepEqual(library.json(), { state: 'current_proofs', items: [
-      { anidbId: 1234, title: 'Example series',
+      { anidbId: 1234, title: 'Example series', englishTitle: null,
         verifiedEpisodeCount: 2, lastVerifiedMs: 950 }], nextAfterAnidbId: null });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/library?afterAnidbId=-1', headers: { cookie } })).statusCode, 400);

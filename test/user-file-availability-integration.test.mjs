@@ -29,6 +29,12 @@ test('review service reads recent saved public proofs without starting backfill'
       secureCookies: false, now: () => 1_000,
       anidbTitleDump: true,
       fetchImpl: async (url) => {
+        if (String(url) === 'https://animap.id/api/anidb/42') {
+          return new Response(JSON.stringify({ anidb_id: 42,
+            title: 'Japanese Example', title_english: 'English Example',
+            restricted: false, tags: [] }), { status: 200,
+            headers: { 'Content-Type': 'application/json' } });
+        }
         assert.equal(String(url), 'https://anidb.net/api/anime-titles.dat.gz');
         return new Response(null, { status: 503 });
       },
@@ -52,6 +58,7 @@ test('review service reads recent saved public proofs without starting backfill'
     assert.equal(library.json().items[0].anidbId, 42);
     assert.equal(library.json().items[0].title,
       'Anime title unavailable (42)');
+    assert.equal(library.json().items[0].englishTitle, 'English Example');
     assert.equal((await service.tickFileBackfill()).state, 'held');
   } finally {
     await service?.close();

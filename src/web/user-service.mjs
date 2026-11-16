@@ -241,6 +241,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
       ...(dataDir === null ? {} : {
         cachePath: path.join(dataDir, 'anime-titles.dat.gz') }) }) : null;
+    const englishTitleFor = async (anidbId) => {
+      const fromDump = titleSource?.getEnglishTitle(anidbId);
+      if (fromDump) return fromDump;
+      const display = await displayReader.read({ anidbId });
+      return display.state === 'display' ? display.englishTitle : null;
+    };
     if (plex) {
       plexObserver = createPlexAvailabilityService({ dbPath,
         shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
@@ -544,7 +550,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return pendingTitles.enqueue({ requesterId, anidbId,
           title, requestKey, nowMs: now(), initialReason });
       },
-      listPendingTitles: (input) => pendingTitles.listForUser(input),
+      listPendingTitles: async (input) => {
+        await titleSource?.refresh();
+        const page = pendingTitles.listForUser(input);
+        const items = await Promise.all(page.items.map(async (item) => ({ ...item,
+          englishTitle: await englishTitleFor(item.anidbId) })));
+        return { ...page, items };
+      },
       readPendingTitle: (id) => pendingTitles.get(id),
       readPendingTitleByKey: (input) => pendingTitles.getByKey(input),
       readActivePendingTitle: (input) => pendingTitles.getActiveForTitle(input),
@@ -565,8 +577,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         } finally { queue.close(); }
       },
       readRequest: (id) => requests.getRequest(id),
-      listRequests: (input) => {
+      listRequests: async (input) => {
+        await titleSource?.refresh();
         const page = requests.listRequests(input);
+        const englishTitles = await Promise.all(page.items.map((item) =>
+          englishTitleFor(item.anidbId)));
         const ownerNames = input.scope === 'all'
           ? new Map((accounts.listUsers({ adminUserId: input.requesterId }).items ?? [])
             .map((user) => [user.id, user.username]))
@@ -574,7 +589,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             accounts.getActiveUser({ userId: input.requesterId })?.username]]);
         const checkedMs = now();
         const positivesByTitle = new Map();
-        return { ...page, items: page.items.map((item) => {
+        return { ...page, items: page.items.map((item, index) => {
           const local = progress.read(item.id);
           let coverage = null;
           if (plexObserver) {
@@ -592,6 +607,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               ...positivesByTitle.get(item.anidbId) });
           }
           return { ...item,
+            englishTitle: englishTitles[index],
             requesterName: ownerNames.get(item.requesterId) ?? `User #${item.requesterId}`,
             progress: coverage?.verifiedTargets > 0
             ? { ...local, publicAvailability: 'verified_recently',
@@ -635,9 +651,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           // AniDB outage must not hide already verified public Plex files.
           await titleSource?.refresh();
           const page = fileProofs.listCurrentTitles({ afterAnidbId, limit });
+          const englishTitles = await Promise.all(page.items.map((item) =>
+            englishTitleFor(item.anidbId)));
           return { state: 'current_proofs',
-            items: page.items.map((item) => ({ ...item,
-              englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
+            items: page.items.map((item, index) => ({ ...item,
+              englishTitle: englishTitles[index],
               chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
               title: titleSource?.getTitle(item.anidbId) ??
                 titleRegistry.getTitle({ anidbId: item.anidbId }) ??

@@ -1329,7 +1329,8 @@ test('request history reflects recent title-check proof and loses it on expiry',
       }
       if (endpoint.pathname === '/api/anidb/42') {
         return Response.json({ anidb_id: 42, title: 'Example',
-          title_english: 'English Example', type: 'TV Series', restricted: false });
+          title_english: 'English Example', type: 'TV Series',
+          restricted: false, tags: [] });
       }
       if (endpoint.pathname === '/api/anidb/schedule') {
         return Response.json({ period: { week: '2026-W45',
@@ -1353,6 +1354,9 @@ test('request history reflects recent title-check proof and loses it on expiry',
     const cookie = login.headers['set-cookie'].split(';')[0];
     const read = async () => (await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } })).json().items[0].progress;
+    const requestWithTitle = (await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } })).json().items[0];
+    assert.equal(requestWithTitle.englishTitle, 'English Example');
     const search = async () => (await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
     const season = async () => (await service.app.inject({ method: 'GET',
