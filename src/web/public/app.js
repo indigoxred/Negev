@@ -449,6 +449,7 @@ function showSession(data) {
     ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
     : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
   byId('auth').hidden = true;
+  byId('session-loading').hidden = true;
   byId('workspace').hidden = false;
   byId('main-nav').hidden = false;
   byId('mobile-nav').hidden = false;
@@ -534,6 +535,7 @@ function clearWorkspace() {
   byId('chinese-toggle').hidden = true;
   byId('identity').open = false;
   byId('workspace').hidden = true;
+  byId('session-loading').hidden = true;
   byId('auth').hidden = false;
 }
 async function refreshSession() {
@@ -548,7 +550,13 @@ async function refreshSession() {
   } catch (error) {
     if (!sessionResponses.isCurrent(started)) return false;
     if ([401, 403].includes(error?.status)) clearWorkspace();
-    else message('Could not check your session. Reload to try again.', true);
+    else {
+      byId('session-loading-text').textContent =
+        'Could not check your session.';
+      byId('session-retry').hidden = false;
+      byId('session-loading').hidden = false;
+      message('Could not check your session. Retry the session check.', true);
+    }
     return false;
   }
 }
@@ -1526,6 +1534,12 @@ function authTab(register) {
 }
 byId('login-tab').addEventListener('click', () => authTab(false));
 byId('register-tab').addEventListener('click', () => authTab(true));
+byId('session-retry').addEventListener('click', () => {
+  byId('session-retry').hidden = true;
+  byId('session-loading-text').textContent = 'Checking your session…';
+  message('');
+  void refreshSession();
+});
 byId('login-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const form = event.currentTarget;

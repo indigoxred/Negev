@@ -39,7 +39,11 @@
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <p id="invite-code" class="invite-code" hidden></p>
   <main>
-    <section id="auth" class="auth-view">
+    <section id="session-loading" class="session-loading" role="status" aria-live="polite">
+      <p id="session-loading-text">Checking your session…</p>
+      <button id="session-retry" type="button" hidden>Retry session check</button>
+    </section>
+    <section id="auth" class="auth-view" hidden>
       <div class="auth-heading"><p class="eyebrow">Welcome to Negev</p><h1>Discover anime together.</h1>
         <p>Browse and request anime here. Use Seerr for TV and regular movies.</p></div>
       <div class="panel auth-panel">
