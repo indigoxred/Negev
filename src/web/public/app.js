@@ -2714,10 +2714,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         availableButton.hidden = currentMonitored || !presentation.showAvailable;
         trigger.hidden = currentMonitored ? !otherRequestable && family.next() === null
           : !presentation.showTrigger;
-        trigger.textContent = currentMonitored ? 'Request another installment' :
-          presentation.triggerText;
-        trigger.classList.toggle('primary', !presentation.showAvailable);
-        trigger.classList.toggle('quiet', presentation.showAvailable);
+        trigger.textContent = currentMonitored
+          ? otherRequestable ? 'Request another installment' : 'Find other installments'
+          : presentation.triggerText;
+        trigger.classList.toggle('primary', !currentMonitored && !presentation.showAvailable);
+        trigger.classList.toggle('quiet', currentMonitored || presentation.showAvailable);
         trigger.disabled = data.requestsOpen === false || saving || (rows.size > 0 &&
           !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
