@@ -58,6 +58,44 @@ test('an explicitly uncertain first attempt can observe stable full debt without
   'quiet_window_observed');
 });
 
+test('an unrelated published Import path does not turn stable full debt into an unknown path', async () => {
+  const key = '5:Negev/negev-45-aaaaaaaaaaaaaaaa/episode.mkv';
+  const connection = { state: 'connected' };
+  const snapshot = { state: 'snapshot', generation: 9, pending: 0,
+    inFlight: null, reconciliationNeeded: true,
+    fullReconciliationNeeded: true, pendingOnlyDebt: false,
+    pendingKeys: [] };
+  const read = (keys) => scopedImportFeedState({ connection, snapshot,
+    allowedPendingKeys: keys, allowUnreconciledFirstAttempt: true });
+  assert.equal(read([key]).state, 'connected_uncertain');
+  const clean = { ...snapshot, reconciliationNeeded: false,
+    fullReconciliationNeeded: false };
+  assert.equal(scopedImportFeedState({ connection, snapshot: clean,
+    allowedPendingKeys: [key] }).state, 'connected');
+  assert.equal(scopedImportFeedState({ connection, snapshot,
+    allowedPendingKeys: [key] }).state, 'unverified');
+  assert.equal(scopedImportFeedState({ connection, snapshot: {
+    ...snapshot, pendingKeys: ['5:unknown.mkv'] },
+    allowedPendingKeys: [key], allowUnreconciledFirstAttempt: true }).state,
+  'unverified');
+  let clock = 1_000_000;
+  const run = () => observeImportQuietWindow({ anidbId: 42,
+    episodeIds: [1001], readActivity: async () => ({ state: 'quiet_observed',
+      fingerprint: 'a'.repeat(64), unrelatedPendingKeys: [key] }),
+    readFeedState: read, readScopedFeedState: read,
+    wait: async () => { clock += 120_000; }, now: () => clock,
+    requireFingerprint: true });
+  assert.equal((await run()).state, 'quiet_window_observed');
+  snapshot.generation++;
+  assert.notEqual((await observeImportQuietWindow({ anidbId: 42,
+    episodeIds: [1001], readActivity: async () => ({ state: 'quiet_observed',
+      fingerprint: 'a'.repeat(64), unrelatedPendingKeys: [key] }),
+    readFeedState: read, readScopedFeedState: read,
+    wait: async () => { snapshot.generation++; clock += 120_000; },
+    now: () => clock, requireFingerprint: true })).state,
+  'quiet_window_observed');
+});
+
 test('live feed state is healthy only for a connected, reconciled event consumer', () => {
   const event = { generation: 7, pending: 0, inFlight: null,
     reconciliationNeeded: false, fullReconciliationNeeded: false };

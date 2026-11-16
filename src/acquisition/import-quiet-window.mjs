@@ -4,17 +4,17 @@ const healthyFeed = (value) => value?.state === 'connected' &&
   Number.isSafeInteger(value.generation) && value.generation >= 0 &&
   value.pendingPaths === 0 && value.pendingEvents === 0 &&
   value.inFlight === false && value.reconciliationNeeded === false;
-const healthyScopedFeed = (value, keys) => keys.length === 0 ?
-  (healthyFeed(value) || (value?.state === 'connected_uncertain' &&
+const healthyScopedFeed = (value, keys) => healthyFeed(value) ||
+  (value?.state === 'connected_uncertain' &&
     Number.isSafeInteger(value.generation) && value.generation >= 0 &&
     value.pendingPaths === 0 && value.pendingEvents === 0 &&
     value.inFlight === false && value.reconciliationNeeded === true &&
-    value.fullReconciliationNeeded === true)) :
-  value?.state === 'connected_scoped' &&
+    value.fullReconciliationNeeded === true) ||
+  (keys.length > 0 && value?.state === 'connected_scoped' &&
   Number.isSafeInteger(value.generation) && value.generation >= 0 &&
   value.pendingPaths === keys.length && value.pendingEvents === 0 &&
   value.inFlight === false && value.reconciliationNeeded === true &&
-  value.pendingOnlyDebt === true;
+  value.pendingOnlyDebt === true);
 const validActivityKeys = (value) => Array.isArray(value) &&
   value.length <= 128 && value.every(validPendingKey) &&
   new Set(value).size === value.length;
@@ -75,11 +75,14 @@ export function scopedImportFeedState({ connection, snapshot,
   }
   const count = snapshot.pendingKeys.length;
   if (count === 0) {
+    // A separately verified, published file may remain in Import after its
+    // detection event is gone (including after restart). Its allowed key is
+    // checked by the caller's two exact disk/Shoko observations; it does not
+    // create a pending event in this feed snapshot.
     if (allowUnreconciledFirstAttempt === true &&
         snapshot.fullReconciliationNeeded === true &&
         snapshot.reconciliationNeeded === true &&
-        snapshot.pendingOnlyDebt === false &&
-        !allowedPendingKeys?.length) {
+        snapshot.pendingOnlyDebt === false) {
       // The accepted one-attempt policy can use two exact, fingerprinted
       // Import/queue observations across a stable feed generation. This
       // never clears full-inventory debt or attests that media is absent.
@@ -88,8 +91,7 @@ export function scopedImportFeedState({ connection, snapshot,
         reconciliationNeeded: true, fullReconciliationNeeded: true };
     }
     if (snapshot.reconciliationNeeded !== false ||
-        snapshot.pendingOnlyDebt !== false ||
-        allowedPendingKeys?.length) return { state: 'unverified' };
+        snapshot.pendingOnlyDebt !== false) return { state: 'unverified' };
     return { state: 'connected', generation: snapshot.generation,
       pendingPaths: 0, pendingEvents: 0, inFlight: false,
       reconciliationNeeded: false };
