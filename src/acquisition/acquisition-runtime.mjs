@@ -17,12 +17,15 @@ export function openAcquisitionRuntime(options = {}) {
     wakeHydratedTitle: () => [],
     getStatus: () => ({ state: 'disabled' }),
   };
-  const { dbPath, acquisitions, qbBaseUrl, sessionGate, allowedAnidbIds,
+  const { dbPath, acquisitions, recognitionRecoveries, qbBaseUrl,
+    sessionGate, allowedAnidbIds,
     ownershipGate = null,
     fetchImpl = fetch, now = Date.now, ...providers } = options;
   const stages = createAcquisitionStageProcessors({
-    ...providers, acquisitions, ownershipGate, providerFetchImpl: fetchImpl, now });
+    ...providers, acquisitions, recognitionRecoveries, ownershipGate,
+    providerFetchImpl: fetchImpl, now });
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    recognitionRecoveries,
     holdingRoot: providers.holdingRoot,
     qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate,
     fetchImpl, now, pureMode: providers.pureMode === true,

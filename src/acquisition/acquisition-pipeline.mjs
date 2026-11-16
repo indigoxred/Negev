@@ -15,7 +15,9 @@ const held = (reason) => ({ state: 'held', reason });
 // to bound concurrent media reads. A caller must supply guarded processors
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
+  recognitionRecoveries = null,
   processRequest, processStart, processCompletion, processPublish,
+  processRecovery,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now, pureMode = false,
   requestPageLimit = 3 } = {}) {
@@ -24,12 +26,15 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       !Number.isSafeInteger(requestPageLimit) || requestPageLimit < 1 ||
       requestPageLimit > 3 ||
       [processRequest, processStart, processCompletion, processPublish, now]
-        .some((fn) => typeof fn !== 'function')) {
+        .some((fn) => typeof fn !== 'function') ||
+      (recognitionRecoveries &&
+        (typeof recognitionRecoveries.listPending !== 'function' ||
+         typeof processRecovery !== 'function'))) {
     throw new TypeError('Invalid acquisition pipeline');
   }
   const sessionRunners = createAcquisitionSessionRunners({ qbBaseUrl,
     sessionGate, fetchImpl, processRequest, processStart,
-    processCompletion, processPublish });
+    processCompletion, processPublish, processRecovery });
   const queues = [];
   try {
     queues.push(openAcquisitionRequestQueue(dbPath, {
@@ -58,6 +63,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let closing;
   let running = false;
   let holdingRecovered = false;
+  let recoveryAfterId = 0;
   const run = (worker) => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
@@ -116,6 +122,26 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     listMetadataRetries: () => closed ? [] :
       requestQueue.listMetadataRetries({ nowMs: now() }),
     tickStarts: () => run(startWorker),
+    ...(recognitionRecoveries ? { tickRecovery: () => run({
+      runOnce: async () => {
+        let page = recognitionRecoveries.listPending({
+          afterAttemptId: recoveryAfterId, limit: 20 });
+        if (page.length === 0 && recoveryAfterId !== 0) {
+          recoveryAfterId = 0;
+          page = recognitionRecoveries.listPending({ limit: 20 });
+        }
+        const item = page[0];
+        if (!item) return { state: 'idle' };
+        recoveryAfterId = item.attemptId;
+        const result = await sessionRunners.processRecovery({
+          attemptId: item.attemptId });
+        if (result?.state === 'recovered') {
+          requestQueue.wakeRecognitionRecovery({
+            requestId: result.requestId, nowMs: now() });
+        }
+        return result;
+      },
+    }) } : {}),
     tickCompletions: () => run(completionWorker),
     tickPublish: () => run(publishWorker),
     close() {

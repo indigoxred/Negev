@@ -72,6 +72,23 @@ test('a temporary session backoff remains retryable after the second start check
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
   }));
 
+test('temporary related-title failure retries after several checks without starting twice', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId, version: first.version,
+      state: 'held', reason: 'related_title_unavailable', checkedMs: 1_001 });
+    const second = ctx.queue.claimNext({ nowMs: 61_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    ctx.queue.recordResult({ attemptId: second.attemptId, version: second.version,
+      state: 'held', reason: 'related_title_unavailable', checkedMs: 61_002 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 181_002);
+    const third = ctx.queue.claimNext({ nowMs: 181_002 });
+    assert.equal(third.attemptId, first.attemptId);
+    ctx.queue.recordResult({ attemptId: third.attemptId, version: third.version,
+      state: 'held', reason: 'related_title_unavailable', checkedMs: 181_003 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 481_003);
+  }));
+
 test('an unavailable Import quiet window retries without adding another torrent', async () =>
   fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });

@@ -5,6 +5,9 @@ import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
+import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
+import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
+import { basename } from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -15,12 +18,16 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 export async function previewRequestCandidate({ requestId, candidate,
   readRequest, loadDetail, releaseQueries = async () => [],
   readRelatedTitles,
+  readVideoExtensions, offlineLookup, offlineCache,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   prepare = prepareStoppedCandidate } = {}) {
   if (!validId(requestId) || typeof readRequest !== 'function' ||
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
       typeof releaseQueries !== 'function' || typeof pause !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (readVideoExtensions !== undefined && typeof readVideoExtensions !== 'function') ||
+      (offlineLookup !== undefined && typeof offlineLookup !== 'function') ||
+      (offlineCache !== undefined && !(offlineCache instanceof Map)) ||
       typeof candidate?.guid !== 'string' || !candidate.guid ||
       candidate.guid.length > MAX_RELEASE_GUID_LENGTH || !validId(candidate.indexerId) ||
       typeof candidate.title !== 'string' || !candidate.title.trim() ||
@@ -86,6 +93,42 @@ export async function previewRequestCandidate({ requestId, candidate,
   const plan = planTorrentTargets({ request, detail, prepared,
     releaseTitle: candidate.title, trustedTitle: searchQuery });
   if (plan.state !== 'planned_targets') return plan;
+  if (readVideoExtensions) {
+    let extensions;
+    try { extensions = await readVideoExtensions(); }
+    catch { return held('shoko_settings_unavailable'); }
+    if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
+    if (plan.plannedFiles.some((file) =>
+      !acceptsShokoVideo(file.name, extensions))) {
+      return held('shoko_video_format_unsupported');
+    }
+  }
+  let shokoPreview;
+  if (offlineLookup) {
+    const verdicts = [];
+    for (const file of plan.plannedFiles) {
+      const filename = basename(file.name);
+      if (!Array.isArray(file.episodeIds) || file.episodeIds.length !== 1 ||
+          filename.length > 255) {
+        verdicts.push('uncertain');
+        continue;
+      }
+      let result = offlineCache?.get(filename);
+      if (!result) {
+        try { result = await offlineLookup({ filename }); }
+        catch { result = { status: 0 }; }
+        offlineCache?.set(filename, result);
+      }
+      const verdict = evaluateOfflinePreview(result, {
+        animeId: request.anidbId, episodeIds: file.episodeIds, filename });
+      if (verdict.state === 'rejected') {
+        return held('shoko_preview_wrong_identity');
+      }
+      verdicts.push(verdict.state === 'accepted' ? 'exact' : 'uncertain');
+    }
+    shokoPreview = verdicts.every((value) => value === 'exact')
+      ? 'exact' : 'uncertain';
+  }
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(prepared.expected?.hash) ||
       !Number.isSafeInteger(prepared.totalBytes) || prepared.totalBytes < 1 ||
       !['v1', 'v2', 'hybrid'].includes(prepared.version)) {
@@ -94,6 +137,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   return { state: 'preflight', requestId, anidbId: request.anidbId,
     ...(searchQuery === canonicalQuery ? {} : { searchQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
+    ...(shokoPreview ? { shokoPreview } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
     subtitles: prepared.files.filter((file) =>

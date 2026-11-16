@@ -335,6 +335,7 @@ test('movie request stage uses both public Plex sections before stopped submissi
   try {
     const processors = createAcquisitionStageProcessors({ ...options([]),
       requests, acquisitions, handoffs,
+      readVideoExtensions: async () => ({ state: 'extensions', values: ['.mkv'] }),
       prowlarr: { ...options([]).prowlarr, indexerIds: [3] },
       discoverCandidates: async ({ requestId }) => ({ state: 'candidates',
         requestId, anidbId: 42, items: [release] }),

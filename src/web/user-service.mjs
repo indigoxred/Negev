@@ -9,6 +9,8 @@ import { openRequestProgress } from '../requests/request-progress.mjs';
 import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
 import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
 import { openPureMoveLedger } from '../acquisition/pure-move-ledger.mjs';
+import { openRecognitionRecoveryLedger } from
+  '../acquisition/recognition-recovery-ledger.mjs';
 import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mjs';
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
@@ -80,6 +82,8 @@ import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
+import { readShokoVideoExtensions } from '../acquisition/shoko-video-extensions.mjs';
+import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { readRelatedEvidence } from '../acquisition/read-related-evidence.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
@@ -190,6 +194,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let acquisitions;
   let handoffs;
   let pureMoves;
+  let recognitionRecoveries;
   let publishReview;
   let startReview;
   let completionReview;
@@ -212,6 +217,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     acquisitions = openAcquisitionLedger(dbPath);
     handoffs = openHandoffLedger(dbPath);
     if (acquisition?.pureMode === true) pureMoves = openPureMoveLedger(dbPath);
+    if (pureMoves) recognitionRecoveries = openRecognitionRecoveryLedger(dbPath);
     publishReview = openHandoffPublishQueue(dbPath,
       { pureMode: acquisition?.pureMode === true });
     startReview = openStartQueue(dbPath);
@@ -462,8 +468,15 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           titleForId: (id) => titleSource.getTitle(id), fetchImpl }));
       },
     });
-    const previewCandidate = prowlarr ? ({ requestId, candidate }) =>
+    const previewCandidate = prowlarr ? ({ requestId, candidate,
+      offlineCache }) =>
       previewRequestCandidate({ requestId, candidate,
+        offlineCache,
+        offlineLookup: ({ filename }) => metadata.run(() => previewOfflineRelease({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
+          filename, fetchImpl })),
+        readVideoExtensions: () => metadata.run(() => readShokoVideoExtensions({
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fetchImpl })),
         readRequest: (id) => requests.getRequest(id),
         loadDetail: (input) => loadCurrentDetail(input),
         readRelatedTitles,
@@ -1079,7 +1092,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           throw new TypeError('Acquisition provider evidence unconfigured');
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
-          dbPath, requests, acquisitions, handoffs, pureMoves, pureMode,
+          dbPath, requests, acquisitions, handoffs, pureMoves,
+          recognitionRecoveries, pureMode,
           qbBaseUrl, sessionGate,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
@@ -1130,7 +1144,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               recent?.close();
               inventory.close(); hydration.close(); progress.close();
               completionReview.close(); startReview.close(); publishReview.close();
-              pureMoves?.close(); handoffs.close(); acquisitions.close();
+              recognitionRecoveries?.close(); pureMoves?.close();
+              handoffs.close(); acquisitions.close();
               pendingTitles.close(); requests.close(); accounts.close();
             }
           })();
@@ -1144,7 +1159,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     inventory?.close(); hydration?.close();
     progress?.close(); completionReview?.close(); startReview?.close();
     publishReview?.close();
-    pureMoves?.close(); handoffs?.close(); acquisitions?.close();
+    recognitionRecoveries?.close(); pureMoves?.close();
+    handoffs?.close(); acquisitions?.close();
     pendingTitles?.close(); requests?.close(); accounts?.close();
     throw error;
   }

@@ -20,6 +20,86 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('prefers an exact Shoko filename preview within a bounded candidate page', async () => {
+  const inspected = [];
+  let submitted;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return { ...preflight, shokoPreview: item.guid === 'candidate-2'
+        ? 'exact' : 'uncertain' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-2']);
+  assert.equal(submitted, 'candidate-2');
+});
+
+test('retains one uncertain candidate when Shoko has no exact filename preview', async () => {
+  let submitted;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => ({ ...preflight, shokoPreview: 'uncertain' }),
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(submitted, 'candidate-1');
+});
+
+test('a recovered target allows only an exact Shoko-previewed replacement', async () => {
+  let submitted;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readRecoveredTargets: async () => [1001],
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => ({ ...preflight,
+      shokoPreview: item.guid === 'candidate-2' ? 'exact' : 'uncertain' }),
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      submitted = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(submitted, 'candidate-2');
+});
+
+test('a recovered target cannot make a second speculative download', async () => {
+  let submits = 0;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readRecoveredTargets: async () => [1001],
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1)] }),
+    previewCandidate: async () => ({ ...preflight,
+      shokoPreview: 'uncertain' }),
+    loadDetail: async () => detail,
+    submitCandidate: async () => { submits++; return {
+      state: 'stopped_observed', attemptId: 11 }; },
+  });
+  assert.equal((await process({ requestId: 4 })).reason, 'no_safe_release');
+  assert.equal(submits, 0);
+});
+
 test('rotates missing regular episode search by queue pass', async () => {
   const targeted = [];
   const process = createAcquisitionRequestProcessor({

@@ -98,6 +98,14 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS active_acquisition_target
       ON acquisition_target_claims(anidb_id,episode_id) WHERE active=1`);
+    db.exec(`CREATE TABLE IF NOT EXISTS recognition_recoveries (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      file_id INTEGER NOT NULL CHECK(file_id>0),
+      status TEXT NOT NULL CHECK(status IN
+        ('observed','preserve_unknown','preserved','released')),
+      first_seen_ms INTEGER NOT NULL CHECK(first_seen_ms>=0),
+      updated_ms INTEGER NOT NULL CHECK(updated_ms>=first_seen_ms)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_file_plans (
       attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
       file_name TEXT NOT NULL,
@@ -158,8 +166,21 @@ export function openAcquisitionLedger(dbPath) {
     FROM acquisition_target_claims claim
     LEFT JOIN acquisition_releases released ON released.attempt_id=claim.attempt_id
     LEFT JOIN acquisition_retirements retired ON retired.attempt_id=claim.attempt_id
+    LEFT JOIN recognition_recoveries recovery ON recovery.attempt_id=claim.attempt_id
     WHERE claim.anidb_id=? AND claim.episode_id=?
-      AND released.attempt_id IS NULL AND retired.attempt_id IS NULL LIMIT 1`);
+      AND released.attempt_id IS NULL AND retired.attempt_id IS NULL
+      AND (recovery.attempt_id IS NULL OR recovery.status<>'released') LIMIT 1`);
+  const replacementAlreadyUsed = db.prepare(`SELECT 1
+    FROM recognition_recoveries recovery
+    JOIN acquisition_target_claims original ON
+      original.attempt_id=recovery.attempt_id
+    JOIN acquisition_target_claims later ON
+      later.anidb_id=original.anidb_id AND
+      later.episode_id=original.episode_id AND
+      later.attempt_id<>original.attempt_id
+    JOIN acquisition_attempts attempt ON attempt.id=later.attempt_id
+    WHERE recovery.status='released' AND attempt.request_id=? AND
+      original.anidb_id=? AND original.episode_id=? LIMIT 1`);
   const busyHash = db.prepare(`SELECT a.id FROM acquisition_attempts a
     LEFT JOIN acquisition_retirements r ON r.attempt_id=a.id
     WHERE a.expected_hash=? AND a.id<>? AND
@@ -191,6 +212,8 @@ export function openAcquisitionLedger(dbPath) {
   const insertRejection = db.prepare(`INSERT INTO acquisition_rejections
     (attempt_id,torrent_hash,reason,rejected_ms) VALUES (?,?,?,?)`);
   const findRetirement = db.prepare('SELECT torrent_hash,reason,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
+  const findRecovery = db.prepare(`SELECT status FROM recognition_recoveries
+    WHERE attempt_id=?`);
   const digestForCandidate = (candidate, anidbId) => {
     const legacyDigest = createHash('sha256').update(candidate.guid).digest('hex');
     const legacy = candidateRow.get(candidate.indexerId, legacyDigest);
@@ -258,6 +281,9 @@ export function openAcquisitionLedger(dbPath) {
       if (!request) return { state: 'unavailable' };
       const digest = digestForCandidate(candidate, request.anidb_id);
       const own = candidateRow.get(candidate.indexerId, digest);
+      if (own && findRecovery.get(own.id)?.status === 'released') {
+        return { state: 'skip_active' };
+      }
       for (const id of episodeIds) {
         const active = busyTarget.get(request.anidb_id, id);
         if (active && (active.attempt_id !== own?.id ||
@@ -327,12 +353,17 @@ export function openAcquisitionLedger(dbPath) {
         if (existing && findRelease.get(existing.id)) return held('candidate_released');
         if (existing && findRejection.get(existing.id)) return held('candidate_rejected');
         if (existing && findRetirement.get(existing.id)) return held('candidate_retired');
+        if (existing && findRecovery.get(existing.id)?.status === 'released') {
+          return held('candidate_recovered');
+        }
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           existing.evidence_policy === evidencePolicy &&
           JSON.stringify(attemptEpisodes.all(existing.id).map((row) => row.episode_id)) ===
           JSON.stringify([...episodeIds].sort((a, b) => a - b))
           ? { state: 'existing', attemptId: existing.id, status: existing.status }
           : held('candidate_claimed');
+        if (episodeIds.some((id) => replacementAlreadyUsed.get(requestId,
+          request.anidb_id, id))) return held('replacement_attempt_exhausted');
         if (evidencePolicy === 'first_time_permissive' &&
             episodeIds.some((id) => historicalTarget.get(request.anidb_id, id))) {
           return held('uncertain_attempt_exhausted');

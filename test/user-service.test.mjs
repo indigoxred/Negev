@@ -651,6 +651,9 @@ test('signed-in user searches AniDB and saves an exact held request across resta
         ? movieTorrent : torrent, { headers: {
         'content-type': 'application/x-bittorrent' } });
     }
+    if (parsed.pathname === '/api/v3/Settings') {
+      return json({ Import: { VideoExtensions: ['.mkv'] } });
+    }
     if (parsed.pathname.endsWith('/Search')) {
       return parsed.searchParams.get('query') === 'Movie'
         ? json({ Total: 1, List: [{ ID: 2345, Title: 'Example Movie' }] })

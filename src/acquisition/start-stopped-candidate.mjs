@@ -5,6 +5,7 @@ import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
+import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -16,7 +17,7 @@ export async function startStoppedCandidate({
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
-  readRelatedTitles,
+  readRelatedTitles, readVideoExtensions,
   now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 }) {
   let base;
@@ -29,6 +30,7 @@ export async function startStoppedCandidate({
       typeof now !== 'function' || typeof readRequest !== 'function' ||
       typeof readEvidence !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (readVideoExtensions !== undefined && typeof readVideoExtensions !== 'function') ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       (typeof verifyStagingRoot !== 'function' &&
@@ -57,6 +59,15 @@ export async function startStoppedCandidate({
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
+  if (readVideoExtensions) {
+    let extensions;
+    try { extensions = await readVideoExtensions(); }
+    catch { return held('shoko_settings_unavailable'); }
+    if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
+    if (plannedFiles.some((file) => !acceptsShokoVideo(file.name, extensions))) {
+      return held('shoko_video_format_unsupported');
+    }
+  }
   if (readRelatedTitles) {
     let related;
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }

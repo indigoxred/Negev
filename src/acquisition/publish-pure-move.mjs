@@ -17,7 +17,7 @@ async function syncDirectory(directory) {
   finally { await handle.close(); }
 }
 
-async function inspectTree(root, files) {
+export async function inspectPureMoveTree(root, files) {
   const expected = new Map(files.map((file) => [file.name, file]));
   const expectedDirs = new Set();
   for (const name of expected.keys()) {
@@ -104,7 +104,7 @@ export async function publishPureMove({ attemptId, ledger, holdingRoot,
   if (to && from) return held('destination_exists');
   if (to && row.status === 'publish_unknown') {
     if (!to.isDirectory() || to.isSymbolicLink() ||
-        !await inspectTree(destination, manifest.files)) return held('publish_outcome_unknown');
+        !await inspectPureMoveTree(destination, manifest.files)) return held('publish_outcome_unknown');
     return ledger.markPublished({ attemptId, nowMs });
   }
   // Shoko may consume the watched directory before a failed journal write is
@@ -114,7 +114,7 @@ export async function publishPureMove({ attemptId, ledger, holdingRoot,
   }
   if (!from || to || !from.isDirectory() || from.isSymbolicLink() ||
       from.dev !== (await lstat(roots[0], { bigint: true })).dev ||
-      !await inspectTree(manifest.holdingPath, manifest.files)) {
+      !await inspectPureMoveTree(manifest.holdingPath, manifest.files)) {
     return held('manifest_changed');
   }
   const begin = ledger.beginPublish({ attemptId, nowMs });
