@@ -44,6 +44,8 @@ test('title and library controls recover from pending and failed reads without d
     let transferObservedMs = null;
     let newHistoryRequest = false;
     let holdWatchingRequests = true;
+    let holdFirstSession = true;
+    let heldSessionResponse = null;
     const heldWatchingResponses = [];
     const json = (response, data, status = 200) => {
       response.writeHead(status, { 'Content-Type': 'application/json' });
@@ -55,6 +57,11 @@ test('title and library controls recover from pending and failed reads without d
       response.setHeader('Content-Security-Policy',
         "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'");
       if (path === '/api/session') {
+        if (holdFirstSession) {
+          holdFirstSession = false;
+          heldSessionResponse = response;
+          return;
+        }
         json(response, { user: { id: 1, username: 'Owner', role: 'admin',
           adultAllowed: true }, csrfToken: 'test', capabilities: {
           detailLoad: true, acquisitionState: 'disabled' } });
@@ -207,7 +214,22 @@ test('title and library controls recover from pending and failed reads without d
       };
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
+      for (let attempt = 0; attempt < 80 && !heldSessionResponse; attempt++) {
+        await wait(100);
+      }
+      assert.ok(heldSessionResponse, 'initial session check is pending');
+      assert.deepEqual(await evaluate(`({authHidden: document.querySelector('#auth').hidden,
+        authDisplay: getComputedStyle(document.querySelector('#auth')).display,
+        loaderVisible: !document.querySelector('#session-loading').hidden,
+        workspaceHidden: document.querySelector('#workspace').hidden})`),
+      { authHidden: true, authDisplay: 'none', loaderVisible: true,
+        workspaceHidden: true }, 'a slow signed-in session must not flash sign-in');
+      json(heldSessionResponse, { user: { id: 1, username: 'Owner', role: 'admin',
+        adultAllowed: true }, csrfToken: 'test', capabilities: {
+          detailLoad: true, acquisitionState: 'disabled' } });
+      heldSessionResponse = null;
       await until("document.querySelector('#detail')?.textContent.includes('The catalogue summary is already ready.')");
+      assert.equal(await evaluate("document.querySelector('#session-loading').hidden"), true);
       json(firstTitleResponse, { state: 'detail_pending', anidbId: 1,
         title: 'Pending title' });
       firstTitleResponse = null;
@@ -368,6 +390,8 @@ test('title and library controls recover from pending and failed reads without d
       assert.ok(heldWatchingResponses.length >= 1);
       await evaluate("document.querySelector('#signout').click()");
       await until("document.querySelector('#workspace').hidden");
+      assert.equal(await evaluate("document.querySelector('#auth').hidden"), false);
+      assert.equal(await evaluate("document.querySelector('#session-loading').hidden"), true);
       const staleWatchingBody = JSON.stringify({ items: [{
         id: 9, anidbId: 1, title: 'Prior account watch', kind: 'series',
         episodeIds: [11], monitorFuture: true, watchClosed: false,

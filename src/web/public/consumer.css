@@ -23,6 +23,7 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 .message{max-width:1344px;margin:0 auto;min-height:0}.message:empty{display:none}.message:not(:empty){padding:11px 16px;border-bottom:1px solid var(--line);font-size:13px}
 .page-view[hidden],.mobile-nav[hidden],.desktop-nav[hidden],.global-search[hidden]{display:none!important}
 .page-head{display:block}.page-head h1{margin:5px 0 8px}.page-head .eyebrow{margin:0}.page-head>p:last-child{color:var(--muted);font-size:14px}
+.session-loading{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;min-height:260px;color:var(--muted)}.session-loading p{margin:0}.session-loading[hidden],.auth-view[hidden]{display:none!important}
 .auth-view{display:grid;grid-template-columns:1fr minmax(300px,420px);gap:40px;align-items:center;min-height:470px}.auth-heading h1{font-size:clamp(32px,4vw,52px);line-height:1.1;margin:8px 0 14px}.auth-heading>p:last-child{color:var(--muted)}
 .global-search:before{pointer-events:none}.global-search input{margin:0}
 .poster-copy,.result-copy{display:grid;grid-template-rows:36px 18px auto;align-content:start;min-width:0}
