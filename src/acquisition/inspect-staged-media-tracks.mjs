@@ -6,7 +6,7 @@ import { evaluateMediaTracks } from './media-track-policy.mjs';
 
 const MAX_CHUNK = 1024 * 1024;
 const FAST_READ_PER_FILE = 4 * 1024 * 1024;
-const MAX_READ_PER_FILE = 16 * 1024 * 1024;
+const MAX_READ_PER_FILE = 32 * 1024 * 1024;
 const MAX_SUBTITLE_BYTES = 4 * 1024 * 1024;
 const within = (root, file) => {
   const relative = path.relative(root, file);

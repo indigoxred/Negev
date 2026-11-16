@@ -6,6 +6,16 @@ const height = (value) => {
   const number = Number(value);
   return Number.isSafeInteger(number) ? number : 0;
 };
+const measuredFullSubtitle = (track, video) => {
+  const videoSeconds = Number(video.Duration);
+  const subtitleSeconds = Number(track.Duration);
+  const lines = Number(track.ElementCount);
+  return Number.isFinite(videoSeconds) && videoSeconds >= 120 &&
+    Number.isFinite(subtitleSeconds) &&
+    subtitleSeconds >= videoSeconds * 0.8 &&
+    Number.isSafeInteger(lines) &&
+    lines >= Math.max(12, Math.ceil(videoSeconds * 0.07));
+};
 
 // Only embedded, language-tagged full subtitles count here. A release name,
 // fansub group, untagged stream, or English signs track is not proof.
@@ -36,6 +46,7 @@ export function evaluateMediaTracks(tracks, { externalEnglishSubtitle = false } 
     if (/\b(?:commentary|forced|dubtitle)\b/i.test(title)) return false;
     if (/\b(?:dialogue|full|complete|subtitles?)\b/i.test(title)) return true;
     if (/\b(?:signs?|songs?)\b/i.test(title)) return false;
+    if (measuredFullSubtitle(track, videos[0])) return true;
     // A default, unforced stream with the original Japanese audio is the
     // normal complete subtitle track; unlabeled nondefault streams are not.
     return track.Default === 'Yes' && track.Forced !== 'Yes' &&
