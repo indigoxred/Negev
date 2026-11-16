@@ -28,6 +28,40 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('an audited policy reset preserves history and permits a new inspection of the same release', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const hash = 'e'.repeat(40);
+    const first = openAcquisitionLedger(dbPath);
+    let oldId;
+    try {
+      oldId = first.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 }).attemptId;
+      first.bindPreparedTorrent({ attemptId: oldId, candidate, hash, nowMs: 201 });
+      first.recordFilePlan({ attemptId: oldId, hash,
+        plannedFiles: [{ name: 'show.mkv', size: 1000, episodeIds: [1001] }], nowMs: 202 });
+      first.beginDispatch({ attemptId: oldId, nowMs: 203 });
+      first.recordTorrent({ attemptId: oldId, hash, nowMs: 204 });
+    } finally { first.close(); }
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`BEGIN IMMEDIATE;
+        INSERT INTO acquisition_retirements(attempt_id,torrent_hash,reason,retired_ms)
+          VALUES (${oldId},'${hash}','policy_reset',300);
+        UPDATE acquisition_target_claims SET active=0 WHERE attempt_id=${oldId};
+        COMMIT;`);
+    } finally { db.close(); }
+    const second = openAcquisitionLedger(dbPath);
+    try {
+      const next = second.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 301 });
+      assert.equal(next.state, 'reserved');
+      assert.notEqual(next.attemptId, oldId);
+      assert.equal(second.bindPreparedTorrent({ attemptId: next.attemptId,
+        candidate, hash, nowMs: 302 }).state, 'prepared');
+      assert.equal(second.getAttempt(oldId).status, 'retired_rejected');
+    } finally { second.close(); }
+  }));
+
 test('unsuitable completed media keeps claims until exact absent retirement', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

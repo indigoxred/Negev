@@ -135,7 +135,7 @@ export function openAcquisitionLedger(dbPath) {
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       torrent_hash TEXT NOT NULL,
       reason TEXT NOT NULL DEFAULT 'file_wrong_identity'
-        CHECK(reason IN ('file_wrong_identity','stalled_download','media_tracks_unsuitable')),
+        CHECK(reason IN ('file_wrong_identity','stalled_download','media_tracks_unsuitable','policy_reset')),
       retired_ms INTEGER NOT NULL CHECK(retired_ms >= 0)
     ) STRICT`);
     if (!db.prepare('PRAGMA table_info(acquisition_retirements)').all()
@@ -143,13 +143,13 @@ export function openAcquisitionLedger(dbPath) {
       db.exec("ALTER TABLE acquisition_retirements ADD COLUMN reason TEXT NOT NULL DEFAULT 'file_wrong_identity' CHECK(reason IN ('file_wrong_identity','stalled_download'))");
     }
     if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='acquisition_retirements'")
-      .get().sql.includes('media_tracks_unsuitable')) {
+      .get().sql.includes('policy_reset')) {
       db.exec(`BEGIN IMMEDIATE;
         CREATE TABLE acquisition_retirements_new (
           attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
           torrent_hash TEXT NOT NULL,
           reason TEXT NOT NULL DEFAULT 'file_wrong_identity'
-            CHECK(reason IN ('file_wrong_identity','stalled_download','media_tracks_unsuitable')),
+            CHECK(reason IN ('file_wrong_identity','stalled_download','media_tracks_unsuitable','policy_reset')),
           retired_ms INTEGER NOT NULL CHECK(retired_ms >= 0)
         ) STRICT;
         INSERT INTO acquisition_retirements_new
@@ -211,7 +211,8 @@ export function openAcquisitionLedger(dbPath) {
   const busyHash = db.prepare(`SELECT a.id FROM acquisition_attempts a
     LEFT JOIN acquisition_retirements r ON r.attempt_id=a.id
     WHERE a.expected_hash=? AND a.id<>? AND
-      (r.reason IS NULL OR r.reason<>'file_wrong_identity' OR a.anidb_id=?)
+      (r.reason IS NULL OR r.reason NOT IN ('file_wrong_identity','policy_reset')
+        OR (r.reason='file_wrong_identity' AND a.anidb_id=?))
     LIMIT 1`);
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
     (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
@@ -244,6 +245,10 @@ export function openAcquisitionLedger(dbPath) {
   const digestForCandidate = (candidate, anidbId) => {
     const legacyDigest = createHash('sha256').update(candidate.guid).digest('hex');
     const legacy = candidateRow.get(candidate.indexerId, legacyDigest);
+    if (legacy && findRetirement.get(legacy.id)?.reason === 'policy_reset') {
+      return createHash('sha256').update(JSON.stringify(
+        ['release-policy-reset-v1', anidbId, candidate.guid])).digest('hex');
+    }
     if (legacy && legacy.anidb_id !== anidbId &&
         findRetirement.get(legacy.id)?.reason === 'file_wrong_identity') {
       return createHash('sha256').update(JSON.stringify(
