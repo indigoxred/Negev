@@ -628,7 +628,9 @@ test('signed-in consumer routes render real shell with search, library and reque
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
-        "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'");
+        `default-src 'none'; script-src 'self'${new URL(request.url, 'http://localhost')
+          .searchParams.has('english') ? " 'unsafe-inline'" : ''}; ` +
+        "style-src 'self'; connect-src 'self'; img-src 'self'");
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
@@ -655,7 +657,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{
-          id: 1, requesterId: 1, requesterName: 'Owner', anidbId: 4158, title: 'Pale Cocoon', kind: 'movie', status: 'held',
+          id: 1, requesterId: 1, requesterName: 'Owner', anidbId: 4158, title: 'Pale Cocoon',
+          englishTitle: 'The Pale Cocoon', kind: 'movie', status: 'held',
           episodeIds: [10], monitorFuture: false, watchClosed: false, canCancel: true,
           progress: { state: 'saved', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
@@ -689,7 +692,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/request-preparations') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ items: [{ id: 12, anidbId: 19847,
-          title: 'FX Senshi Kurumi-chan', state: 'pending',
+          title: 'FX Senshi Kurumi-chan', englishTitle: 'FX Magical Girl Kurumi',
+          state: 'pending',
           reason: 'release_state_unknown', createdMs: 1_000,
           requesterName: 'Owner' }], nextBeforeId: 12 }));
         return;
@@ -735,7 +739,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/library') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'current_proofs', items: [{
-          anidbId: 9589, title: 'The Garden of Words',
+          anidbId: 9589, title: 'The Garden of Words', englishTitle: 'Garden of Words',
           verifiedEpisodeCount: 1, lastVerifiedMs: 1_000,
         }], nextAfterAnidbId: null }));
         return;
@@ -1217,7 +1221,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (!asset) { response.writeHead(404); response.end(); return; }
       try {
         response.setHeader('Content-Type', asset[1]);
-        response.end(await readFile(new URL(asset[0], staticRoot)));
+        const body = await readFile(new URL(asset[0], staticRoot));
+        response.end(path === '/' && new URL(request.url, 'http://localhost')
+          .searchParams.has('english')
+          ? body.toString().replace('</head>',
+            '<script>localStorage.setItem("negev:english-titles:1", "on")</script></head>')
+          : body);
       } catch { response.writeHead(500); response.end(); }
     });
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -1396,6 +1405,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       const library = await dump(`${base}/#/library`, join(dir, 'library'), 'library');
       assert.match(library, /Negev’s Library/);
       assert.match(library, /The Garden of Words/);
+      const englishLibrary = await dump(`${base}/?english=1#/library`,
+        join(dir, 'english-library'));
+      assert.match(englishLibrary, /<strong[^>]*>Garden of Words<\/strong>/);
       assert.match(library, /<div id="library-list" class="poster-grid"><div class="tracked-title"[^>]*><a class="poster-card"/);
       assert.match(library, /1 verified item/);
       const librarySearch = await dump(`${base}/#/library?q=Garden`,
@@ -1539,6 +1551,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(filmExtrasOnly, /1 film entry verified playable/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
+      const englishRequests = await dump(`${base}/?english=1#/requests`,
+        join(dir, 'english-requests'));
+      assert.match(englishRequests, /<strong[^>]*>The Pale Cocoon<\/strong>/);
+      assert.match(englishRequests, /<strong[^>]*>FX Magical Girl Kurumi<\/strong>/);
       assert.match(requests, /FX Senshi Kurumi-chan/);
       assert.match(requests, /Checking catalogue release dates/);
       assert.match(requests, /Requested by Owner/);
