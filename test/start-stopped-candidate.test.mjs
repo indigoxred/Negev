@@ -49,6 +49,16 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
     plex: { state: 'ok', complete: true, sourceVerified: true,
       libraryIds: [102], parts: [] } }) };
 
+test('start rechecks Shoko video support before starting a saved torrent', async () =>
+  withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
+    const result = await startStoppedCandidate({ ...options, ledger, attemptId,
+      readRequest, readVideoExtensions: async () =>
+        ({ state: 'extensions', values: ['.mp4'] }),
+      fetchImpl: async () => { throw new Error('qBittorrent must not be called'); } });
+    assert.deepEqual(result, { state: 'held', reason: 'shoko_video_format_unsupported' });
+    assert.equal(ledger.getStart(attemptId), null);
+  }));
+
 test('a stopped torrent for a separately listed sequel cannot start for the original', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {
     let providerCalls = 0;

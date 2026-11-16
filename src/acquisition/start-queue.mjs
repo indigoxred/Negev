@@ -109,8 +109,13 @@ export function openStartQueue(dbPath) {
       }
       const sessionRetry = ['provider_http_403', 'authentication_backoff',
         'authentication_unavailable'].includes(reason);
+      const metadataRetry = ['related_title_unavailable',
+        'shoko_settings_unavailable'].includes(reason);
       const due = state === 'held' && sessionRetry
         ? checkedMs + SESSION_RETRY_MS :
+        state === 'held' && metadataRetry
+          ? checkedMs + (version === 1 ? 60_000 :
+            version === 2 ? 120_000 : 300_000) :
         state === 'held' && reason === 'import_quiet_window_unverified'
           ? checkedMs + IMPORT_RETRY_MS :
         state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;

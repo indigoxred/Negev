@@ -16,6 +16,41 @@ const authorizedSession = { get: async () => ({ state: 'authenticated',
   sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
 const qbBaseUrl = 'http://qb:8080/';
 
+test('a preserved recovery wakes its request for an immediate guarded replacement pass', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-recovery-pipeline-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const submitted = requests.submit({ requesterId: 1,
+    requestKey: 'recovery', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      episodeIds: [1001], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  let pending = true;
+  const visited = [];
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    recognitionRecoveries: { listPending: () => pending
+      ? [{ attemptId: 7 }] : [] },
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async ({ requestId }) => { visited.push(requestId);
+      return { state: 'held', reason: 'no_safe_release' }; },
+    processRecovery: async () => { pending = false;
+      return { state: 'recovered', requestId: submitted.requestId,
+        attemptId: 7 }; },
+    processStart: async () => {}, processCompletion: async () => {},
+    processPublish: async () => {}, now: () => 100 });
+  try {
+    await pipeline.initialize();
+    await pipeline.tickRequests();
+    assert.equal((await pipeline.tickRecovery()).state, 'recovered');
+    await pipeline.tickRequests();
+    assert.deepEqual(visited, [submitted.requestId, submitted.requestId]);
+  } finally {
+    await pipeline.close(); handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('restart resumes a scoped observed attempt and checks the unclaimed watch target', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-observed-retry-'));
   const dbPath = path.join(dir, 'state.sqlite');

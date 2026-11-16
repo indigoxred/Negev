@@ -39,6 +39,36 @@ test('preflight returns only provisional file and target evidence', async () => 
   assert.equal(JSON.stringify(result).includes('form'), false);
 });
 
+test('preflight refuses a video excluded by Shoko and waits if settings cannot be read', async () => {
+  const run = (extensions) => previewRequestCandidate({ requestId: 4, candidate,
+    readRequest: () => request, loadDetail: async () => detail,
+    readVideoExtensions: async () => extensions,
+    prepare: async () => ({ ...prepared,
+      files: [{ name: 'Example - 01.webm', size: 1_000 }] }) });
+  assert.deepEqual(await run({ state: 'extensions', values: ['.mkv'] }),
+    { state: 'held', reason: 'shoko_video_format_unsupported' });
+  assert.deepEqual(await run({ state: 'unavailable' }),
+    { state: 'held', reason: 'shoko_settings_unavailable' });
+});
+
+test('Shoko filename preview marks exact identity and refuses a different episode', async () => {
+  const release = (episodeId) => ({ status: 200, release: {
+    ProviderName: 'Offline Importer', IsCorrupted: false,
+    ID: `offline://42-${episodeId}`,
+    OriginalFilename: 'Example - 01.mkv',
+    CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: episodeId,
+      PercentageStart: 0, PercentageEnd: 100 }],
+  } });
+  const run = (episodeId) => previewRequestCandidate({ requestId: 4, candidate,
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => prepared,
+    offlineLookup: async () => release(episodeId),
+  });
+  assert.equal((await run(1001)).shokoPreview, 'exact');
+  assert.deepEqual(await run(1002),
+    { state: 'held', reason: 'shoko_preview_wrong_identity' });
+});
+
 test('a numbered release for an unrelated title cannot become a preflight', async () => {
   const result = await previewRequestCandidate({ requestId: 4,
     candidate: { ...candidate, title: 'Different Anime - 01' },

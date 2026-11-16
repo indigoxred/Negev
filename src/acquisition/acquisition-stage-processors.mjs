@@ -14,6 +14,12 @@ import { ensureImportChild } from './ensure-import-child.mjs';
 import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
+import { readShokoVideoExtensions } from './shoko-video-extensions.mjs';
+import { readShokoPathFile } from './shoko-path-file.mjs';
+import { readShokoUnrecognizedFile } from './shoko-unrecognized-file.mjs';
+import { readStoppedRecoveryTorrent } from './read-stopped-recovery-torrent.mjs';
+import { processRecognitionRecovery } from './process-recognition-recovery.mjs';
+import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
@@ -22,7 +28,7 @@ const held = (reason) => ({ state: 'held', reason });
 // does not create a timer or perform I/O. The caller must still prove installed
 // availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
-  handoffs, pureMoves = null, pureMode = false,
+  handoffs, pureMoves = null, recognitionRecoveries = null, pureMode = false,
   discoverCandidates, previewCandidate, loadDetail,
   releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
@@ -34,6 +40,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
+  readVideoExtensions = () => readShokoVideoExtensions({
+    baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
+    fetchImpl: providerFetchImpl }),
   firstTimePolicy = 'strict' } = {}) {
   const episode = publicSections?.episode;
   const movie = publicSections?.movie;
@@ -47,6 +56,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       [discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         readEvidence, readPublicCoverage, realpathImpl, providerFetchImpl, now,
         verifyHandoffMounts, ensureImportRoot, readEd2kMode,
+        readVideoExtensions,
         verifyShokoSource]
         .some((fn) => typeof fn !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
@@ -129,6 +139,30 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     } catch { return null; }
   };
   return {
+    async processRecovery({ attemptId, qbittorrent, fetchImpl } = {}) {
+      if (!pureMode || !recognitionRecoveries || !await handoffMountReady()) {
+        return held('recovery_unavailable');
+      }
+      return processRecognitionRecovery({ attemptId,
+        recovery: recognitionRecoveries, pureMoves,
+        importRoot, holdingRoot, shokoMount,
+        nowMs: now(),
+        readQueue: () => readShokoImportActivity({ baseUrl: shoko.baseUrl,
+          apiKey: shoko.apiKey, fetchImpl: providerFetchImpl }),
+        readFile: async ({ sourcePath }) => {
+          const result = await readShokoPathFile({ baseUrl: shoko.baseUrl,
+            apiKey: shoko.apiKey, sourcePath, fetchImpl: providerFetchImpl });
+          if (result.state !== 'files') throw new Error('Shoko file unavailable');
+          return result.items;
+        },
+        readUnrecognized: ({ fileId }) => readShokoUnrecognizedFile({
+          baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId,
+          fetchImpl: providerFetchImpl }),
+        checkTorrent: ({ hash }) => readStoppedRecoveryTorrent({
+          baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
+          hash, saveRoot: qbitStagingRoot, fetchImpl }),
+      });
+    },
     async processRequest({ qbittorrent, fetchImpl, providerFetchImpl: searchFetch,
       renewQbittorrent,
       ...claim } = {}) {
@@ -149,7 +183,12 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readRequest: (id) => requests.getRequest(id),
         readPublicCoverage,
         inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
+        ...(recognitionRecoveries ? {
+          readRecoveredTargets: (requestId) =>
+            recognitionRecoveries.getReleasedTargets(requestId),
+        } : {}),
         discoverCandidates, previewCandidate, loadDetail,
+        preferShokoPreview: true,
         ...(readRelatedTitles ? { readRelatedTitles: relatedTitleReader } : {}),
         submitCandidate: async ({ request, ...selected }) => {
           const ownership = await checkOwnership(request.anidbId);
@@ -186,6 +225,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         readRelatedTitles: relatedTitleReader,
+        readVideoExtensions,
         fetchImpl, renewQbittorrent, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,

@@ -1,4 +1,4 @@
-const stages = ['tickCompletions', 'tickPublish', 'tickStarts', 'tickRequests'];
+const baseStages = ['tickCompletions', 'tickPublish', 'tickStarts', 'tickRequests'];
 const hasReviewHolds = (result) => [result?.requests, result?.starts,
   result?.completions, result?.publishes]
   .some((queue) => Array.isArray(queue?.held) && queue.held.length > 0);
@@ -14,7 +14,7 @@ export function createPipelineScheduler({ pipeline,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof pipeline?.initialize !== 'function' ||
       typeof pipeline.close !== 'function' ||
-      stages.some((name) => typeof pipeline[name] !== 'function') ||
+      baseStages.some((name) => typeof pipeline[name] !== 'function') ||
       typeof now !== 'function' || typeof setTimer !== 'function' ||
       typeof clearTimer !== 'function' ||
       [initialDelayMs, stepDelayMs, failureDelayMs].some((value) =>
@@ -22,6 +22,9 @@ export function createPipelineScheduler({ pipeline,
     throw new TypeError('Invalid pipeline scheduler');
   }
   let timer;
+  const stages = pipeline.tickRecovery
+    ? ['tickCompletions', 'tickPublish', 'tickRecovery',
+      'tickStarts', 'tickRequests'] : baseStages;
   let running;
   let initialization;
   let stopping;

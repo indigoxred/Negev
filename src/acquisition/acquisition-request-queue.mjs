@@ -133,6 +133,12 @@ export function openAcquisitionRequestQueue(dbPath,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs,
     empty_since_ms AS emptySinceMs,metadata_since_ms AS metadataSinceMs
     FROM acquisition_request_checks WHERE request_id=?`);
+  const wakeRecovered = db.prepare(`UPDATE acquisition_request_checks
+    SET state='held',reason='reconciled_observed_attempts',attempt_id=NULL,
+      next_due_ms=?,candidate_offset=0,candidate_fingerprint=NULL
+    WHERE request_id=? AND state IS NOT NULL AND
+      EXISTS (SELECT 1 FROM requests r WHERE r.id=request_id AND
+        r.status='held' AND r.cancelled_ms IS NULL)`);
   const waitingForMetadata = db.prepare(`SELECT r.id FROM requests r
     JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
@@ -336,6 +342,13 @@ export function openAcquisitionRequestQueue(dbPath,
         return pendingMetadata.all(...(allowedAnidbIds ?? []), limit)
           .map((row) => ({ ...row }));
       });
+    },
+    wakeRecognitionRecovery({ requestId, nowMs }) {
+      if (!validId(requestId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid recovered request wake');
+      }
+      return transact(() => wakeRecovered.run(nowMs, requestId).changes === 1
+        ? { state: 'woken' } : held('request_not_wakeable'));
     },
     resumeObservedAttemptHolds({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid interrupted retry clock');

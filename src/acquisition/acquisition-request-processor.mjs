@@ -14,16 +14,20 @@ const validReason = (value) => typeof value === 'string' &&
 // this processor cannot authorize absence or start the resulting torrent.
 export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
-  readPublicCoverage, inspectCandidateTargets,
+  readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles,
+  preferShokoPreview = false,
   maxPreflights = 3 } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       (readPublicCoverage !== undefined && typeof readPublicCoverage !== 'function') ||
       (inspectCandidateTargets !== undefined &&
         typeof inspectCandidateTargets !== 'function') ||
+      (readRecoveredTargets !== undefined &&
+        typeof readRecoveredTargets !== 'function') ||
       (readRelatedTitles !== undefined &&
         typeof readRelatedTitles !== 'function') ||
+      typeof preferShokoPreview !== 'boolean' ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, pass = 1, candidateOffset = 0,
@@ -42,6 +46,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
         request.episodeIds.some((id) => !validId(id)) ||
         new Set(request.episodeIds).size !== request.episodeIds.length) {
       return held('request_unavailable');
+    }
+    let recoveredTargets = new Set();
+    if (readRecoveredTargets) {
+      let ids;
+      try { ids = await readRecoveredTargets(requestId); }
+      catch { return held('recovery_unavailable'); }
+      if (!Array.isArray(ids) || ids.some((id) => !validId(id))) {
+        return held('recovery_unavailable');
+      }
+      recoveredTargets = new Set(ids);
     }
     let exactAvailable = new Set();
     if (readPublicCoverage) {
@@ -173,7 +187,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const tailIds = sameTarget ? order.filter((id) => !originalIds.has(id)) : [];
     const cursor = `${fingerprint}:${primaryIds.join(',')}|${tailIds.join(',')}`;
     const seen = new Set();
+    const offlineCache = new Map();
     let selected;
+    let uncertainSelection;
     const start = consumed.length < ordered.length ? consumed.length : 0;
     let nextIndex = start;
     for (let index = start; index < ordered.length; index++) {
@@ -184,7 +200,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
       if (seen.has(key)) continue;
       seen.add(key);
       let preview;
-      try { preview = await previewCandidate({ requestId, candidate }); }
+      try { preview = await previewCandidate({ requestId, candidate,
+        offlineCache }); }
       catch { continue; }
       if (preview?.state !== 'preflight' ||
           preview.requestId !== requestId ||
@@ -205,6 +222,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.
       if (preview.episodeIds.every((id) => exactAvailable.has(id))) continue;
+      if (preview.episodeIds.some((id) => recoveredTargets.has(id)) &&
+          preview.shokoPreview !== 'exact') continue;
       if (inspectCandidateTargets) {
         let claim;
         try { claim = await inspectCandidateTargets({ requestId, candidate,
@@ -213,8 +232,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
         if (claim?.state === 'skip_active') continue;
         if (claim?.state !== 'eligible') return held('claim_probe_unavailable');
       }
+      if (preferShokoPreview && preview.shokoPreview !== 'exact') {
+        uncertainSelection ??= { candidate, preview, index };
+        continue;
+      }
       selected = { candidate, preview };
       break;
+    }
+    if (!selected && uncertainSelection) {
+      selected = uncertainSelection;
+      nextIndex = uncertainSelection.index + 1;
     }
     if (!selected) return { ...held('no_safe_release'),
       nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,

@@ -9,7 +9,7 @@ const validReason = (reason) => typeof reason === 'string' &&
 // of qBittorrent and can continue when its session is unavailable.
 export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
   fetchImpl = fetch, processRequest, processStart, processCompletion,
-  processPublish } = {}) {
+  processPublish, processRecovery } = {}) {
   let base;
   try { base = new URL(qbBaseUrl); }
   catch { throw new TypeError('Invalid qBittorrent runtime URL'); }
@@ -58,5 +58,7 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
     processCompletion: withSession(processCompletion,
       { shokoFetchImpl: fetchImpl }, true),
     processPublish,
+    ...(processRecovery ? { processRecovery: withSession(processRecovery,
+      {}, true) } : {}),
   };
 }

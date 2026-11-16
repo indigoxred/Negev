@@ -18,6 +18,27 @@ function clock() {
   };
 }
 
+test('enabled recovery receives a paced turn between publish and start', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => { calls.push('publish'); return { state: 'idle' }; },
+    tickRecovery: async () => { calls.push('recovery'); return { state: 'idle' }; },
+    tickStarts: async () => { calls.push('start'); return { state: 'idle' }; },
+    tickRequests: async () => { calls.push('request'); return { state: 'idle' }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  for (let i = 0; i < 5; i++) await timer.advance();
+  assert.deepEqual(calls,
+    ['completion', 'publish', 'recovery', 'start', 'request']);
+  await scheduler.stop();
+});
+
 test('a new request gets a prompt first turn before older queued work without starving stages', async () => {
   const timer = clock();
   const calls = [];
