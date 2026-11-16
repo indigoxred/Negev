@@ -88,12 +88,14 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
             inspectRequest: (requestId) =>
               acquisitions.inspectRequestAttempts(requestId),
           });
+          const resumedRequests = requestQueue.resumeObservedAttemptHolds({
+            nowMs: now() });
           const starts = startQueue.reconcileUnresolved({ nowMs: now() });
           const completions = completionQueue.reconcileUnresolved({ nowMs: now() });
           const publishes = publishQueue.reconcileUnresolved({ nowMs: now() });
           // Each queue excludes its own unresolved claims. Keep those claims
           // for review while independent items continue through the workers.
-          recovery = { state: 'reconciled', requests, starts,
+          recovery = { state: 'reconciled', requests, resumedRequests, starts,
             completions, publishes };
           return recovery;
         })().finally(() => { initialization = undefined; });
@@ -105,7 +107,9 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
         const result = await ownershipGate.refresh();
         if (result?.state !== 'ready') return held('sonarr_ownership_unavailable');
       }
-      return requestWorker.runOnce({ priorityRequestId });
+      const resumed = requestQueue.resumeObservedAttemptHolds({ nowMs: now() });
+      return requestWorker.runOnce({ priorityRequestId:
+        priorityRequestId ?? resumed[0] ?? null });
     } }),
     wakeHydratedTitle: (input) => closed ? [] :
       requestQueue.wakeHydratedTitle(input),

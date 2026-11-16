@@ -17,7 +17,7 @@ const folderRelative = (value) => typeof value === 'string' &&
 // Manual, partially published or ambiguous files stay in the baseline and
 // continue to hold. This is attribution, not proof of Shoko import or Plex.
 export function partitionOwnedPendingImports({ diskFiles, shokoPage,
-  managedFolderId, getHandoff, target, ownedSubtree = '',
+  managedFolderId, getHandoff, getPureMove, target, ownedSubtree = '',
   maxEntries = 256 } = {}) {
   if (!Number.isSafeInteger(maxEntries) || maxEntries < 1 ||
       maxEntries > 1_000 || !Array.isArray(diskFiles) ||
@@ -25,6 +25,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
       !Array.isArray(shokoPage?.List) || shokoPage.List.length > maxEntries ||
       shokoPage.Total !== shokoPage.List.length ||
       !validId(managedFolderId) || typeof getHandoff !== 'function' ||
+      (getPureMove !== undefined && typeof getPureMove !== 'function') ||
       (ownedSubtree !== '' && (!relative(ownedSubtree) ||
         ownedSubtree.includes('/'))) ||
       !validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||
@@ -55,23 +56,54 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
     let handoff;
     try { handoff = getHandoff(attemptId); }
     catch { return held('pending_handoff_unverified'); }
-    const manifest = handoff?.manifest;
-    const evidence = evaluateHandoffEvidence({ anidbId: manifest?.anidbId,
-      torrentHash: manifest?.torrentHash, files: manifest?.videos,
-      subtitles: manifest?.subtitles });
-    if (handoff?.status !== 'published_observed' ||
-        handoff.publishName !== prefix ||
-        handoff.evidenceDigest !== evidence.digest ||
-        shortDigest !== evidence.digest?.slice(0, 16) ||
-        evidence.state !== 'valid') return held('pending_handoff_unverified');
-    const expected = [...evidence.manifest.videos,
-      ...evidence.manifest.subtitles];
+    let expected;
+    let videos;
+    if (handoff) {
+      const manifest = handoff.manifest;
+      const evidence = evaluateHandoffEvidence({ anidbId: manifest?.anidbId,
+        torrentHash: manifest?.torrentHash, files: manifest?.videos,
+        subtitles: manifest?.subtitles });
+      if (handoff.status !== 'published_observed' ||
+          handoff.publishName !== prefix ||
+          handoff.evidenceDigest !== evidence.digest ||
+          shortDigest !== evidence.digest?.slice(0, 16) ||
+          evidence.state !== 'valid') return held('pending_handoff_unverified');
+      expected = [...evidence.manifest.videos, ...evidence.manifest.subtitles];
+      videos = evidence.manifest.videos;
+    } else {
+      // Pure moves have a separate validated ledger and use the torrent hash
+      // in their published directory name. Never infer ownership from a path
+      // alone: only a durable published intent can make it unrelated.
+      let move;
+      try { move = getPureMove?.(attemptId); }
+      catch { return held('pending_handoff_unverified'); }
+      const manifest = move?.manifest;
+      if (move?.status !== 'published_observed' ||
+          manifest?.attemptId !== attemptId ||
+          !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(manifest.torrentHash) ||
+          manifest.torrentHash.slice(0, 16) !== shortDigest ||
+          typeof manifest.holdingPath !== 'string' ||
+          manifest.holdingPath.split('/').at(-1) !== prefix ||
+          !Array.isArray(manifest.files) || manifest.files.length < 1 ||
+          manifest.files.length > 100 ||
+          manifest.files.some((file) => !relative(file?.name) ||
+            !validId(file.size)) ||
+          new Set(manifest.files.map((file) => file.name)).size !==
+            manifest.files.length) return held('pending_handoff_unverified');
+      expected = manifest.files;
+      videos = expected.filter((file) => Array.isArray(file.episodeIds));
+      if (videos.length === 0 || videos.some((video) =>
+        video.episodeIds.length === 0 ||
+        video.episodeIds.some((id) => !validId(id)))) {
+        return held('pending_handoff_unverified');
+      }
+    }
     const actual = new Map(files.map((file) => [file.relativePath, file]));
     if (actual.size !== expected.length || files.length !== expected.length ||
         expected.some((file) => actual.get(`${subtreePrefix}${prefix}/${file.name}`)?.size !==
           file.size)) return held('pending_handoff_tree_changed');
     const rows = new Map();
-    for (const file of evidence.manifest.videos) {
+    for (const file of videos) {
       const expectedPath = `${subtreePrefix}${prefix}/${file.name}`;
       const matches = shokoPage.List.filter((row) =>
         row?.Locations?.some((location) =>
@@ -85,7 +117,8 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
           !row.Hashes.some((hash) => hash?.Type === 'ED2K' &&
             typeof hash.Value === 'string' &&
             /^[0-9a-f]{32}$/i.test(hash.Value) &&
-            hash.Value.toUpperCase() === file.ed2k) ||
+            (file.ed2k === undefined ||
+              hash.Value.toUpperCase() === file.ed2k)) ||
           !Array.isArray(row.Locations) || row.Locations.length !== 1 ||
           row.Locations[0].IsAccessible !== true) {
         return held('pending_shoko_identity_unverified');
@@ -97,15 +130,14 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
       typeof location.RelativePath === 'string' &&
       folderRelative(location.RelativePath).startsWith(`${subtreePrefix}${prefix}/`) &&
       !rows.has(row.ID)))) return held('pending_shoko_identity_unverified');
-    if (manifest.anidbId === target.anidbId &&
-        manifest.videos.some((file) => file.episodeIds.some((id) =>
-          target.episodeIds.includes(id)))) return held('target_pending_import');
+    if (videos.some((file) => file.episodeIds.some((id) =>
+      target.episodeIds.includes(id)))) return held('target_pending_import');
     for (const file of files) excludedPaths.add(file.relativePath);
     for (const id of rows.keys()) excludedIds.add(id);
     for (const path of rows.values()) {
       unrelatedPendingKeys.push(`${managedFolderId}:${path}`);
     }
-    unrelatedPending += evidence.manifest.videos.length;
+    unrelatedPending += videos.length;
   }
   const List = shokoPage.List.filter((row) => !excludedIds.has(row.ID));
   return { state: 'partitioned',

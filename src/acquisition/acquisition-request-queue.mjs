@@ -114,7 +114,8 @@ export function openAcquisitionRequestQueue(dbPath,
   // The same eligibility guards apply, and the ordinary cursor stays put.
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
-      (c.state='held' AND c.reason='shoko_metadata_missing')) LIMIT 1`));
+      (c.state='held' AND c.reason IN
+        ('shoko_metadata_missing','reconciled_observed_attempts'))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms)
@@ -157,6 +158,31 @@ export function openAcquisitionRequestQueue(dbPath,
       AND metadata_since_ms IS NULL AND next_due_ms>?
       AND EXISTS (SELECT 1 FROM requests r WHERE r.id=request_id
         AND r.status='held' AND r.cancelled_ms IS NULL)`);
+  const observedInterruptedSql = `SELECT c.request_id AS requestId
+    FROM acquisition_request_checks c
+    WHERE c.state='held' AND ((c.reason='interrupted_attempt_present'
+      AND c.next_due_ms IS NULL) OR
+      (c.reason='reconciled_observed_attempts' AND c.next_due_ms<=?))
+      AND EXISTS (SELECT 1 FROM requests r
+        WHERE r.id=c.request_id
+          AND r.status='held' AND r.cancelled_ms IS NULL AND
+          ${cohortFilter} 1=1)
+      AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s
+        WHERE s.request_id=c.request_id)
+      AND EXISTS (SELECT 1 FROM acquisition_attempts a
+        WHERE a.request_id=c.request_id)
+      AND NOT EXISTS (SELECT 1 FROM acquisition_attempts a
+        WHERE a.request_id=c.request_id
+          AND (a.status<>'torrent_observed' OR a.torrent_hash IS NULL OR
+            NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
+              WHERE t.attempt_id=a.id AND t.active=1)))`;
+  const resumeObservedSql = `UPDATE acquisition_request_checks
+    SET reason='reconciled_observed_attempts',next_due_ms=?
+    WHERE request_id=? AND state='held'
+      AND ((reason='interrupted_attempt_present' AND next_due_ms IS NULL)
+        OR (reason='reconciled_observed_attempts' AND next_due_ms<=?))`;
+  let observedInterrupted;
+  let resumeObserved;
   const watch = db.prepare('SELECT monitor_future,watch_closed FROM requests WHERE id=?');
   const unresolved = db.prepare(`SELECT request_id AS requestId,pass
     FROM acquisition_request_checks WHERE request_id>? AND state IS NULL
@@ -310,6 +336,17 @@ export function openAcquisitionRequestQueue(dbPath,
         return pendingMetadata.all(...(allowedAnidbIds ?? []), limit)
           .map((row) => ({ ...row }));
       });
+    },
+    resumeObservedAttemptHolds({ nowMs = Date.now() } = {}) {
+      if (!validTime(nowMs)) throw new TypeError('Invalid interrupted retry clock');
+      if (!hasAttemptLedger.get() || !hasStage.get('acquisition_target_claims')) {
+        return [];
+      }
+      observedInterrupted ??= db.prepare(observedInterruptedSql);
+      resumeObserved ??= db.prepare(resumeObservedSql);
+      return transact(() => observedInterrupted.all(nowMs, ...(allowedAnidbIds ?? []))
+        .map((row) => row.requestId)
+        .filter((id) => resumeObserved.run(nowMs, id, nowMs).changes === 1));
     },
     claimNext({ nowMs = Date.now(), priorityRequestId = null } = {}) {
       if (!validTime(nowMs) ||

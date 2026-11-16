@@ -115,6 +115,14 @@ export function createPipelineScheduler({ pipeline,
         recoveryState = result?.state === 'reconciled'
           ? reviewHeld ? 'waiting_with_review' : 'waiting' : 'reconciliation_held';
         if (result?.state === 'reconciled') {
+          if (Array.isArray(result.resumedRequests)) {
+            for (const id of result.resumedRequests) {
+              if (Number.isSafeInteger(id) && id > 0 &&
+                  !freshRequests.includes(id) && freshRequests.length < 32) {
+                freshRequests.push(id);
+              }
+            }
+          }
           if (typeof pipeline.listMetadataRetries === 'function') {
             for (const row of pipeline.listMetadataRetries()) {
               if (Number.isSafeInteger(row.requestId) && row.requestId > 0 &&

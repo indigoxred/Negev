@@ -13,6 +13,33 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('an interrupted watch resumes only when every saved attempt is observed and scoped',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+        reason: 'interrupted_attempt_present', checkedMs: 100 });
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), []);
+      db.prepare(`INSERT INTO acquisition_attempts
+        (request_id,anidb_id,indexer_id,candidate_digest,status,created_ms,updated_ms)
+        VALUES (1,41,5,'first','reserved',1,1)`).run();
+      db.prepare(`INSERT INTO acquisition_target_claims
+        (attempt_id,anidb_id,episode_id) VALUES (1,41,1001)`).run();
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), []);
+      db.prepare(`UPDATE acquisition_attempts SET status='torrent_observed',
+        torrent_hash=? WHERE id=1`).run('a'.repeat(40));
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
+      assert.equal(queue.getResult(1).nextDueMs, 200);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 199 }), []);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
+      assert.equal(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }).requestId, 1);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 201 }), []);
+    } finally { db.close(); queue.close(); acquisitions.close(); }
+  }));
+
 test('missing Shoko metadata retries briefly, then backs off after a sustained miss',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
