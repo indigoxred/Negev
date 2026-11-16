@@ -1149,10 +1149,12 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'details', anidbId: 19742,
           title: 'Scheduled Precure', kind: 'series', restricted: false,
           activeWatchRequestId: null, futureEpisodesMonitored: true,
+          releaseState: 'airing',
           monitorFuture: true, episodeCount: 44, scheduleAsOf: '2026-11-13',
           regularSeason: { verified: 40, total: 44 },
           regularSchedule: { aired: 40, upcoming: 4, undated: 0,
-            verifiedAired: 40, total: 44, asOf: '2026-11-13' },
+            verifiedAired: 40, total: 44, asOf: '2026-11-13',
+            nextAirDate: '2026-11-20', nextEpisodeNumber: 41 },
           page: 1, total: 44, nextPage: null,
           episodes: Array.from({ length: 44 }, (_, index) => ({
             id: 1974200 + index, number: index + 1, type: 'Episode',
@@ -1493,6 +1495,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(seriesDetail, /Watch future episodes/);
       const upcomingDetail = await dump(`${base}/#/title/19742`,
         join(dir, 'upcoming-detail'));
+      assert.match(upcomingDetail, /Next scheduled episode: 41 · 2026-11-20/);
       assert.match(upcomingDetail, /40 of 40 aired regular episodes verified playable in Plex/);
       assert.match(upcomingDetail, /4 upcoming episodes are scheduled; they are not missing downloads/);
       assert.match(upcomingDetail, /Episode 44 · Upcoming · scheduled 2026-11-20 · title not published yet/);

@@ -108,7 +108,8 @@ test('a first title view counts a complete multi-page regular season from curren
     assert.deepEqual(response.json().regularSeason, { verified: 2, total: 101 });
     assert.deepEqual(response.json().regularSchedule,
       { aired: 98, upcoming: 3, undated: 0, verifiedAired: 1,
-        total: 101, asOf: '2026-11-13' });
+        total: 101, asOf: '2026-11-13',
+        nextAirDate: '2026-11-14', nextEpisodeNumber: 99 });
     assert.deepEqual(pageReads, [1, 2]);
     expireDuringPageRead = true;
     const expired = await service.app.inject({ method: 'GET',

@@ -10,7 +10,7 @@ import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { episodeScheduleLabel } from './episode-schedule.mjs';
+import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
 import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs';
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
@@ -2115,6 +2115,10 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
     const notReleased = data.releaseState === 'upcoming';
     if (pager) panel.append(element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'}${data.regularSchedule?.upcoming ? ` · ${data.regularSchedule.aired} aired, ${data.regularSchedule.upcoming} upcoming` : ''} · AniDB ${item.anidbId}`, 'detail-meta'));
+    const nextAir = nextAirDateLabel({ kind: data.kind,
+      releaseState: data.releaseState, schedule: data.regularSchedule });
+    if (nextAir) panel.append(element('p', nextAir,
+      `detail-next-air${data.regularSchedule?.nextAirDate ? '' : ' unknown'}`));
     let refreshAvailabilitySummary = () => {};
     if (notReleased) panel.append(element('p',
       'Not yet released. You can request this title now; Negev will watch for its release.',

@@ -13,9 +13,16 @@ export function regularEpisodeSchedule({ episodes, asOf, verifiedIds = new Set()
   const verifiedAired = regular.filter((episode) =>
     fullDate(episode.airDate) && episode.airDate <= asOf &&
     verifiedIds.has(episode.id)).length;
+  const next = regular.filter((episode) =>
+    fullDate(episode.airDate) && episode.airDate >= asOf &&
+    (episode.airDate > asOf || !verifiedIds.has(episode.id)))
+    .sort((a, b) => a.airDate.localeCompare(b.airDate) ||
+      a.number - b.number)[0];
   return { aired, upcoming, undated: regular.length - aired - upcoming,
     verifiedAired,
-    total: regular.length, asOf };
+    total: regular.length, asOf,
+    nextAirDate: next?.airDate ?? null,
+    nextEpisodeNumber: next?.number ?? null };
 }
 
 export function episodeScheduleLabel(episode, asOf) {
@@ -26,4 +33,12 @@ export function episodeScheduleLabel(episode, asOf) {
   if (!fullDate(episode.airDate)) return untitled
     ? 'Air date and title not published yet' : 'Air date not published yet';
   return untitled ? 'Aired · title not published yet' : 'Aired';
+}
+
+export function nextAirDateLabel({ kind, releaseState, schedule } = {}) {
+  if (kind !== 'series' || releaseState !== 'airing') return null;
+  if (!fullDate(schedule?.nextAirDate)) return 'Next air date unknown';
+  const number = Number.isSafeInteger(schedule.nextEpisodeNumber) &&
+    schedule.nextEpisodeNumber > 0 ? `${schedule.nextEpisodeNumber} · ` : '';
+  return `Next scheduled episode: ${number}${schedule.nextAirDate}`;
 }
