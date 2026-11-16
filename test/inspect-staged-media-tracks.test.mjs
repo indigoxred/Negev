@@ -70,15 +70,42 @@ test('parses a larger header within a bounded second pass', async () => {
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('uses a bounded larger pass for measured subtitle coverage', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-tracks-'));
+  try {
+    await writeFile(path.join(root, 'episode.mkv'), Buffer.alloc(24 * 1024 * 1024));
+    const result = await inspectStagedMediaTracks({ stagingRoot: root,
+      files: [{ name: 'episode.mkv', size: 24 * 1024 * 1024 }],
+      createAnalyzer: async () => ({
+        analyzeData: async (_size, readChunk) => {
+          let read = 0;
+          while (read < 24 * 1024 * 1024) {
+            const chunk = await readChunk(1024 * 1024, read);
+            if (chunk.length === 0) break;
+            read += chunk.length;
+          }
+          return { media: { track: read >= 24 * 1024 * 1024 ? [
+            { ...tracks[0], Duration: 1442 }, tracks[1],
+            { '@type': 'Audio', Language: 'en' },
+            { '@type': 'Text', Language: 'en', Title: 'English',
+              Default: 'Yes', Forced: 'No', Duration: 1436,
+              ElementCount: 352 },
+          ] : [tracks[0], tracks[1]] } };
+        }, close: () => {},
+      }) });
+    assert.equal(result.state, 'accepted');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('does not discard a file when the read budget leaves tracks uncertain', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-tracks-'));
   try {
-    await writeFile(path.join(root, 'episode.mkv'), Buffer.alloc(20 * 1024 * 1024));
+    await writeFile(path.join(root, 'episode.mkv'), Buffer.alloc(40 * 1024 * 1024));
     const result = await inspectStagedMediaTracks({ stagingRoot: root,
-      files: [{ name: 'episode.mkv', size: 20 * 1024 * 1024 }],
+      files: [{ name: 'episode.mkv', size: 40 * 1024 * 1024 }],
       createAnalyzer: async () => ({
         analyzeData: async (_size, readChunk) => {
-          for (let i = 0; i < 20; i++) {
+          for (let i = 0; i < 40; i++) {
             if ((await readChunk(1024 * 1024, i * 1024 * 1024)).length === 0) break;
           }
           return { media: { track: [tracks[0], tracks[1]] } };

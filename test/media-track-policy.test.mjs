@@ -58,6 +58,30 @@ test('an unlabeled English stream without full-dialogue evidence is uncertain', 
   ]), { state: 'unverified', reason: 'subtitle_coverage_unverified' });
 });
 
+test('accepts a plain English track when measured dialogue spans the episode', () => {
+  assert.deepEqual(evaluateMediaTracks([
+    { ...video, Duration: 1442 }, japanese, englishAudio,
+    { '@type': 'Text', Language: 'en', Title: 'English',
+      Default: 'Yes', Forced: 'No', Duration: 1436,
+      ElementCount: 352 },
+  ]), { state: 'accepted', audio: 'dual', resolution: 1080 });
+});
+
+test('does not mistake long-lived sparse signs for full English dialogue', () => {
+  assert.equal(evaluateMediaTracks([
+    { ...video, Duration: 1442 }, japanese, englishAudio,
+    { '@type': 'Text', Language: 'en', Title: 'English',
+      Default: 'Yes', Forced: 'No', Duration: 1436,
+      ElementCount: 18 },
+  ]).reason, 'subtitle_coverage_unverified');
+  assert.equal(evaluateMediaTracks([
+    { ...video, Duration: 1442 }, japanese, englishAudio,
+    { '@type': 'Text', Language: 'en', Title: 'English',
+      Default: 'Yes', Forced: 'No', Duration: 120,
+      ElementCount: 352 },
+  ]).reason, 'subtitle_coverage_unverified');
+});
+
 test('a verified adjacent English subtitle can satisfy an otherwise suitable file', () => {
   assert.equal(evaluateMediaTracks([
     { '@type': 'Video', Height: '720' },
