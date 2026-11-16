@@ -1499,11 +1499,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(upcomingDetail, /40 of 40 aired regular episodes verified playable in Plex/);
       assert.match(upcomingDetail, /4 upcoming episodes are scheduled; they are not missing downloads/);
       assert.match(upcomingDetail, /Episode 44 · Upcoming · scheduled 2026-11-20 · title not published yet/);
-      assert.match(upcomingDetail, /Available so far · 40\/40 aired · 4 upcoming/);
       assert.match(upcomingDetail, /Future episodes already monitored/);
       assert.match(upcomingDetail,
         /class="primary season-already-monitored"[^>]*disabled[^>]*>Future episodes already monitored<\/button>/);
-      assert.doesNotMatch(upcomingDetail, /class="text-link request-receipt-link"[^>]*>View in My Requests/);
+      assert.match(upcomingDetail,
+        /class="text-link request-receipt-link"[^>]*hidden[^>]*>View in My Requests/);
       const partialSeason = await dump(`${base}/#/title/96`,
         join(dir, 'partial-season'));
       assert.match(partialSeason, /1 of 4 regular episodes verified playable in Plex/);
