@@ -453,7 +453,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       releaseQueries,
       searchReleases: ({ query }) => metadata.run(() => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
-        indexerIds: prowlarr.indexerIds, query, fetchImpl })),
+        indexerIds: prowlarr.indexerIds,
+        trustedIndexerIds: prowlarr.trustedIndexerIds ?? [],
+        query, fetchImpl })),
     }) : undefined;
     // Preview, submission, and start must use identical relation evidence.
     // Shoko may not know an unowned season yet, while the AniDB archive does.

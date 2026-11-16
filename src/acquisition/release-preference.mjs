@@ -1,0 +1,59 @@
+// Search titles and tracker counts are hints only. A completed file still
+// needs its actual audio, subtitle and video tracks checked before import.
+const has = (title, expression) => expression.test(title);
+
+export function assessRelease(candidate) {
+  const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  const seeders = Number.isSafeInteger(candidate?.seeders) ?
+    candidate.seeders : -1;
+  const dualAudio = has(title, /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i);
+  const dubOnly = has(title, /\b(?:english|eng)[ ._-]*dub(?:bed)?\b|\bdub[ ._-]*only\b/i) &&
+    !dualAudio;
+  const noEnglishSubtitles = has(title,
+    /\b(?:no[ ._-]*subtitles?|unsubbed|raw[ ._-]*only|sub[ ._-]*french)\b/i);
+  const fourK = has(title, /\b(?:2160p?|4k|uhd)\b/i);
+  const bluray = has(title, /\b(?:bd(?:rip|remux)?|blu[ ._-]*ray|bluray)\b/i);
+  const resolution = has(title, /\b1080p?\b|1920x1080/i) ? 1080 :
+    has(title, /\b720p?\b|1280x720/i) ? 720 :
+      has(title, /\b(?:480|576)p?\b/i) ? 480 : 0;
+  const quality = bluray && resolution >= 1080 ? 5 :
+    bluray && resolution >= 720 ? 4 :
+      resolution >= 1080 ? 3 :
+        resolution >= 720 ? 2 :
+          resolution >= 480 ? 1 : 0;
+  const subtitleHint = has(title,
+    /\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?|subbed|subsplease|erai[ ._-]*raws)\b/i);
+  return {
+    eligible: seeders > 0 && !dubOnly && !noEnglishSubtitles && !fourK,
+    reason: seeders <= 0 ? 'no_reported_seeders' :
+      dubOnly ? 'english_dub_only' :
+        noEnglishSubtitles ? 'no_english_subtitles' :
+          fourK ? 'outside_quality_profile' : null,
+    quality, seeders, healthyPeers: seeders >= 3,
+    trusted: candidate?.trusted === true,
+    subtitleHint, dualAudio, trackVerified: false,
+  };
+}
+
+export function compareReleases(left, right) {
+  const a = assessRelease(left);
+  const b = assessRelease(right);
+  if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
+  if (a.healthyPeers !== b.healthyPeers) {
+    return Number(b.healthyPeers) - Number(a.healthyPeers);
+  }
+  if (a.quality !== b.quality) return b.quality - a.quality;
+  if (a.trusted !== b.trusted) return Number(b.trusted) - Number(a.trusted);
+  if (a.subtitleHint !== b.subtitleHint) {
+    return Number(b.subtitleHint) - Number(a.subtitleHint);
+  }
+  if (a.dualAudio !== b.dualAudio) {
+    return Number(a.dualAudio) - Number(b.dualAudio);
+  }
+  if (a.seeders !== b.seeders) return b.seeders - a.seeders;
+  if (left.targetedEpisode !== right.targetedEpisode) {
+    return Number(right.targetedEpisode === true) -
+      Number(left.targetedEpisode === true);
+  }
+  return (left.size ?? 0) - (right.size ?? 0);
+}

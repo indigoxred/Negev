@@ -188,7 +188,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
             recognitionRecoveries.getReleasedTargets(requestId),
         } : {}),
         discoverCandidates, previewCandidate, loadDetail,
-        preferShokoPreview: true,
+        preferShokoPreview: true, requireReleasePolicy: true,
         ...(readRelatedTitles ? { readRelatedTitles: relatedTitleReader } : {}),
         submitCandidate: async ({ request, ...selected }) => {
           const ownership = await checkOwnership(request.anidbId);

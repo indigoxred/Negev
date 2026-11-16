@@ -63,7 +63,10 @@ test('read-only Prowlarr discovery is opt-in and uses a private key file', () =>
   assert.deepEqual(parseUserServerConfig(configured).prowlarr, {
     baseUrl: configured.NEGEV_PROWLARR_URL,
     keyPath: configured.NEGEV_PROWLARR_KEY_FILE,
-    indexerIds: [7, 9] });
+    indexerIds: [7, 9], trustedIndexerIds: [] });
+  assert.deepEqual(parseUserServerConfig({ ...configured,
+    NEGEV_PROWLARR_TRUSTED_INDEXERS: '[7]' }).prowlarr.trustedIndexerIds,
+  [7]);
   for (const change of [
     { NEGEV_PROWLARR_DISCOVERY: '0' },
     { NEGEV_PROWLARR_KEY_FILE: path.join(dataDir, 'secrets', 'plex.token') },
@@ -71,6 +74,8 @@ test('read-only Prowlarr discovery is opt-in and uses a private key file', () =>
     { NEGEV_PROWLARR_INDEXERS: '[7,7]' },
     { NEGEV_PROWLARR_INDEXERS: '[]' },
     { NEGEV_PROWLARR_INDEXERS: '[0]' },
+    { NEGEV_PROWLARR_TRUSTED_INDEXERS: '[12]' },
+    { NEGEV_PROWLARR_TRUSTED_INDEXERS: '[7,7]' },
     { NEGEV_PROWLARR_URL: 'http://user:pass@prowlarr.internal:9696' },
   ]) assert.throws(() => parseUserServerConfig({ ...configured, ...change }), TypeError);
 });

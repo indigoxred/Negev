@@ -142,7 +142,18 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
         return result;
       },
     }) } : {}),
-    tickCompletions: () => run(completionWorker),
+    tickCompletions: () => run({ runOnce: async () => {
+      const result = await completionWorker.runOnce();
+      if (result?.result?.reason === 'media_retired' &&
+          Number.isSafeInteger(result.attemptId)) {
+        const attempt = acquisitions.getAttempt(result.attemptId);
+        if (Number.isSafeInteger(attempt?.requestId)) {
+          requestQueue.wakeAfterMediaRetirement({
+            requestId: attempt.requestId, nowMs: now() });
+        }
+      }
+      return result;
+    } }),
     tickPublish: () => run(publishWorker),
     close() {
       if (!closing) {

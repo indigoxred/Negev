@@ -28,6 +28,49 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('unsuitable completed media keeps claims until exact absent retirement', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    try {
+      const hash = 'c'.repeat(40);
+      const claim = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 200 });
+      ledger.bindPreparedTorrent({ attemptId: claim.attemptId,
+        candidate, hash, nowMs: 201 });
+      ledger.recordFilePlan({ attemptId: claim.attemptId, hash,
+        plannedFiles: [{ name: 'show.mkv', size: 1000,
+          episodeIds: [1001] }], nowMs: 202 });
+      ledger.beginDispatch({ attemptId: claim.attemptId, nowMs: 203 });
+      ledger.recordTorrent({ attemptId: claim.attemptId, hash, nowMs: 204 });
+      ledger.beginStart({ attemptId: claim.attemptId, hash,
+        manifestDigest: 'd'.repeat(64), nowMs: 205 });
+      assert.deepEqual(ledger.requestMediaRetirement({
+        attemptId: claim.attemptId, hash,
+        reason: 'japanese_audio_missing', nowMs: 207 }),
+      { state: 'retirement_requested' });
+      assert.deepEqual(ledger.retireMedia({ attemptId: claim.attemptId,
+        hash, nowMs: 208 }), { state: 'held', reason: 'delete_intent_missing' });
+      assert.deepEqual(ledger.beginMediaDelete({ attemptId: claim.attemptId,
+        hash, nowMs: 208 }), { state: 'delete_unknown', sendNow: true });
+      assert.deepEqual(ledger.beginMediaDelete({ attemptId: claim.attemptId,
+        hash, nowMs: 209 }), { state: 'delete_unknown', sendNow: false });
+      assert.deepEqual(ledger.resetMediaDeleteAfterRejection({
+        attemptId: claim.attemptId, hash, nowMs: 209 }),
+      { state: 'retirement_requested' });
+      assert.deepEqual(ledger.beginMediaDelete({ attemptId: claim.attemptId,
+        hash, nowMs: 209 }), { state: 'delete_unknown', sendNow: true });
+      assert.deepEqual(ledger.retireMedia({ attemptId: claim.attemptId,
+        hash, nowMs: 210 }), { state: 'retired_media' });
+      assert.equal(ledger.getAttempt(claim.attemptId).status, 'retired_media');
+      assert.deepEqual(ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: [1001], nowMs: 211 }),
+      { state: 'held', reason: 'candidate_retired' });
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { indexerId: 7, guid: 'replacement' },
+        episodeIds: [1001], nowMs: 212 }).state, 'reserved');
+    } finally { ledger.close(); }
+  }));
+
 test('a proven absent pre-start related-installment mismatch releases only its claims', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);
@@ -242,23 +285,28 @@ test('only an exact owned observed candidate is peeked without changing its clai
   }));
 
 test('an existing reasonless retirement table gains the legacy reason', async () =>
-  withLedger(async ({ dbPath }) => {
+  withLedger(async ({ dbPath, firstId }) => {
+    const prior = openAcquisitionLedger(dbPath);
+    const attemptId = prior.reserve({ requestId: firstId, candidate,
+      episodeIds: [1001], nowMs: 150 }).attemptId;
+    prior.close();
     const old = new DatabaseSync(dbPath);
     try {
+      old.exec('DROP TABLE acquisition_retirements');
       old.exec(`CREATE TABLE acquisition_retirements (
         attempt_id INTEGER PRIMARY KEY,
         torrent_hash TEXT NOT NULL,
         retired_ms INTEGER NOT NULL
       ) STRICT`);
       old.exec(`INSERT INTO acquisition_retirements VALUES
-        (99, '${'a'.repeat(40)}', 200)`);
+        (${attemptId}, '${'a'.repeat(40)}', 200)`);
     } finally { old.close(); }
     const ledger = openAcquisitionLedger(dbPath);
     try {
       const migrated = new DatabaseSync(dbPath);
       try {
-        assert.equal(migrated.prepare('SELECT reason FROM acquisition_retirements WHERE attempt_id=99')
-          .get().reason, 'file_wrong_identity');
+        assert.equal(migrated.prepare('SELECT reason FROM acquisition_retirements WHERE attempt_id=?')
+          .get(attemptId).reason, 'file_wrong_identity');
       } finally { migrated.close(); }
     } finally { ledger.close(); }
   }));

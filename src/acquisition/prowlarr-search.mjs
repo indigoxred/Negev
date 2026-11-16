@@ -4,14 +4,17 @@ import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 // Prowlarr GET /api/v1/search only. A release is a search candidate, not
 // evidence that its video is registered in AniDB or safe to import.
 export async function searchReleaseCandidates({
-  baseUrl, apiKey, query, indexerIds, categories = [], limit = 25,
+  baseUrl, apiKey, query, indexerIds, trustedIndexerIds = [],
+  categories = [], limit = 25,
   fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   const term = typeof query === 'string' ? query.trim() : '';
   const validIds = (ids, max) => Array.isArray(ids) && ids.length <= max &&
     ids.every((id) => Number.isSafeInteger(id) && id > 0) && new Set(ids).size === ids.length;
   if (term.length < 2 || term.length > 120 || !validIds(indexerIds, 20) ||
-      indexerIds.length === 0 || !validIds(categories, 20) ||
+      indexerIds.length === 0 || !validIds(trustedIndexerIds, 20) ||
+      trustedIndexerIds.some((id) => !indexerIds.includes(id)) ||
+      !validIds(categories, 20) ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     return { state: 'invalid_query' };
   }
@@ -75,6 +78,7 @@ export async function searchReleaseCandidates({
         guid: item.guid, indexerId: item.indexerId, title: item.title,
         size: item.size, protocol: item.protocol,
         seeders: item.seeders ?? null, evidence: 'unverified',
+        ...(trustedIndexerIds.includes(item.indexerId) ? { trusted: true } : {}),
       })),
       ...(data.length === 0 ? { exhaustive: false } : {}),
     };

@@ -1,6 +1,6 @@
 {
   "name": "negev",
-  "version": "0.0.232",
+  "version": "0.0.233",
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "type": "module",
@@ -14,6 +14,7 @@
     "@fastify/rate-limit": "11.2.1",
     "@fastify/secure-session": "8.4.1",
     "@microsoft/signalr": "10.0.11",
-    "fastify": "5.12.7"
+    "fastify": "5.12.7",
+    "mediainfo.js": "0.3.9"
   }
 }

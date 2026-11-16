@@ -1,6 +1,7 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
+import { assessRelease, compareReleases } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
@@ -16,7 +17,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles,
-  preferShokoPreview = false,
+  preferShokoPreview = false, requireReleasePolicy = false,
   maxPreflights = 3 } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
@@ -28,6 +29,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       (readRelatedTitles !== undefined &&
         typeof readRelatedTitles !== 'function') ||
       typeof preferShokoPreview !== 'boolean' ||
+      typeof requireReleasePolicy !== 'boolean' ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, pass = 1, candidateOffset = 0,
@@ -120,6 +122,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
         if (checked.state === 'related_title_clear') safeTitles.push(item);
       }
     }
+    if (requireReleasePolicy) {
+      safeTitles = safeTitles.filter((item) => assessRelease(item).eligible);
+    }
     if (safeTitles.length === 0) return { ...held('no_safe_release'),
       nextCandidateOffset: 0 };
     // Prefer a release with reported peers before a zero-seeder result.
@@ -127,6 +132,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Metainfo, ownership and exact file checks still decide safety.
     const candidates = [...new Map(safeTitles.map((item) =>
       [`${item.indexerId}:${item.guid}`, item])).values()].sort((a, b) => {
+      if (requireReleasePolicy) return compareReleases(a, b);
       const peers = (item) => Number.isSafeInteger(item.seeders) &&
         item.seeders >= 0 ? item.seeders : -1;
       if ((peers(a) > 0) !== (peers(b) > 0)) {
@@ -148,7 +154,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // A rotated episode search may promote an unvisited release. Promote it
     // within the unvisited suffix without repeating already inspected items.
     const fingerprint = createHash('sha256').update(JSON.stringify(
-      [readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
+      [requireReleasePolicy ? 'quality-policy-v1' :
+        readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const saved = typeof candidateFingerprint === 'string' &&
@@ -171,7 +178,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const newcomers = sameTarget ? [...currentById.keys()]
       .filter((id) => !previous.has(id)) : [];
     const originalIds = new Set(originalOrder);
-    const priorityRemaining = [
+    const priorityRemaining = requireReleasePolicy ? remaining : [
       ...remaining.filter((id) => originalIds.has(id) &&
         currentById.get(id).targetedEpisode === true),
       ...remaining.filter((id) => originalIds.has(id) &&
