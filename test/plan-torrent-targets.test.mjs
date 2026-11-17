@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { planTorrentTargets } from '../src/acquisition/plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, planTorrentTargets } from
+  '../src/acquisition/plan-torrent-targets.mjs';
+
+test('a release group alone cannot match the requested anime title', () => {
+  assert.equal(matchesTrustedReleaseTitle(
+    '[Cerberus] Fate Extra Last Encore [BD 1080p]', 'Cerberus'), false);
+  assert.equal(matchesTrustedReleaseTitle(
+    '[Cerberus] Seisen Cerberus - 01 [BD 1080p]', 'Cerberus'), true);
+  assert.equal(matchesTrustedReleaseTitle(
+    '[MTBB] Dead Leaves (WEB 720p)', 'Dead Leaves'), true);
+});
 
 const request = { id: 7, status: 'held', anidbId: 42, kind: 'series',
   episodeIds: [1001, 1002, 1003] };

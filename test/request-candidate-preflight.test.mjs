@@ -78,6 +78,16 @@ test('a numbered release for an unrelated title cannot become a preflight', asyn
     { state: 'held', reason: 'release_title_mismatch' });
 });
 
+test('a release group named after the request does not admit another anime', async () => {
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, title: '[Example] Fate Extra Last Encore - 01' },
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => ({ ...prepared,
+      files: [{ name: '[Example] Fate Extra Last Encore - 01.mkv', size: 1_000 }] }),
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+});
+
 test('a second-season request accepts its AniDB alias and S02 files but not S01', async () => {
   const title = 'Itai no wa Iya nano de Bougyoryoku ni Kyokufuri Shitai to Omoimasu. 2';
   const alias = 'Bofuri: I Don`t Want to Get Hurt, So I`ll Max Out My Defense. 2';
