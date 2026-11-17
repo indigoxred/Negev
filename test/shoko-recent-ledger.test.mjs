@@ -111,3 +111,42 @@ test('a batch cannot advance past a newest file ID it failed to journal', async 
     assert.equal(ledger.nextDue(0), null);
   });
 });
+
+test('file-ID catch-up journals null-Imported files independently of import-time cursor', async () => {
+  await withLedger(({ ledger, reopen }) => {
+    ledger.bootstrap(cursor(20063));
+    assert.equal(ledger.getFileIdCursor(), null);
+    assert.deepEqual(ledger.recordFileIdBatch({ state: 'complete',
+      fileIds: [20076, 20087], newestId: 20087 }),
+    { state: 'recorded', added: 2 });
+    ledger = reopen();
+    assert.equal(ledger.getFileIdCursor(), 20087);
+    assert.deepEqual(ledger.getCursor(), cursor(20063));
+    assert.deepEqual(ledger.nextDue(0), { fileId: 20076 });
+    ledger.recordResult({ fileId: 20076, success: true, nowMs: 0 });
+    assert.deepEqual(ledger.nextDue(0), { fileId: 20087 });
+    assert.deepEqual(ledger.recordFileIdBatch({ state: 'complete',
+      fileIds: [20088], newestId: 20088 }),
+    { state: 'recorded', added: 1 });
+  });
+});
+
+test('file-ID cursor does not advance if pending queue is full', async () => {
+  await withLedger(({ ledger }) => {
+    assert.deepEqual(ledger.recordFileIdBatch({ state: 'complete',
+      fileIds: [20076, 20087], newestId: 20087 }),
+    { state: 'held', reason: 'recent_backlog_full' });
+    assert.equal(ledger.getFileIdCursor(), null);
+    assert.equal(ledger.nextDue(0), null);
+  }, { maxPending: 1 });
+});
+
+test('file-ID cursor can advance past already inventoried IDs while journaling missing IDs', async () => {
+  await withLedger(async ({ ledger }) => {
+    const result = ledger.recordFileIdBatch({ state: 'complete',
+      fileIds: [11, 12], pendingFileIds: [11], newestId: 12 });
+    assert.deepEqual(result, { state: 'recorded', added: 1 });
+    assert.equal(ledger.getFileIdCursor(), 12);
+    assert.deepEqual(ledger.nextDue(0), { fileId: 11 });
+  });
+});

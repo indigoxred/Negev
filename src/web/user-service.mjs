@@ -52,6 +52,7 @@ import { readShokoFilePage } from '../availability/shoko-file-page.mjs';
 import { readShokoOneFile } from '../availability/shoko-one-file.mjs';
 import { currentDisplayAvailability } from '../availability/current-display-availability.mjs';
 import { readShokoRecentPage } from '../availability/shoko-recent-catchup.mjs';
+import { readShokoFileIdPage } from '../availability/shoko-fileid-catchup.mjs';
 import { openShokoRecentLedger } from '../availability/shoko-recent-ledger.mjs';
 import { createShokoRecentWorker } from '../availability/shoko-recent-worker.mjs';
 import { createShokoEventConsumer } from '../availability/shoko-event-consumer.mjs';
@@ -894,6 +895,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readPage: (input) => metadata.run(() => readShokoRecentPage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
+      readFileIdPage: (input) => metadata.run(() => readShokoFileIdPage({
+        baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
+      })),
+      isKnownFileId: (fileId) => inventory.getFile(fileId)?.state === 'linked',
       refreshFile: refreshRecognizedShokoFile,
     }) : null;
     eventConsumer = createShokoEventConsumer({

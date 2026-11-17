@@ -34,6 +34,27 @@ test('one bounded scan journals new IDs before moving the cursor', async () => {
   });
 });
 
+test('file-ID scan recovers a linked Shoko file absent from inventory despite null Imported', async () => {
+  await withLedger(async (ledger) => {
+    ledger.bootstrap(cursor(10));
+    const refreshed = [];
+    const worker = createShokoRecentWorker({ ledger, now: () => 100,
+      readPage: async () => ({ state: 'page', page: 1, total: 1,
+        items: [cursor(10)] }),
+      readFileIdPage: async () => ({ state: 'page', page: 1, total: 2,
+        fileIds: [12, 11] }),
+      isKnownFileId: (id) => id === 12,
+      refreshFile: async (id) => { refreshed.push(id);
+        return { state: 'recorded_file', recognition: 'linked' }; },
+    });
+    assert.deepEqual(await worker.scan(), { state: 'caught_up', added: 1 });
+    assert.equal(ledger.getFileIdCursor(), 12);
+    assert.deepEqual(ledger.nextDue(100), { fileId: 11 });
+    assert.deepEqual(await worker.drainOne(), { state: 'acknowledged', fileId: 11 });
+    assert.deepEqual(refreshed, [11]);
+  });
+});
+
 test('first file after an empty baseline reaches the same durable refresh queue', async () => {
   await withLedger(async (ledger) => {
     ledger.bootstrap({ fileId: 1, importedNs: '0' });
