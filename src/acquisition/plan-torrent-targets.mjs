@@ -15,7 +15,11 @@ const titleTokens = (value) => typeof value === 'string'
 // A search hit may be unrelated despite matching episode numbers. This is
 // provisional title evidence; completed bytes still need exact AniDB proof.
 export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
-  const release = titleTokens(releaseTitle);
+  // The first bracket in a torrent name normally identifies its release
+  // group. It must not establish the anime identity by itself.
+  const withoutGroup = typeof releaseTitle === 'string' ?
+    releaseTitle.replace(/^\s*\[[^\]\r\n]{1,120}\]\s*(?=\S)/u, '') : releaseTitle;
+  const release = titleTokens(withoutGroup);
   return titles.some((title) => {
     const key = titleTokens(title);
     const compact = key.join('');
