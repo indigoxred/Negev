@@ -47,11 +47,16 @@ export function evaluateMediaTracks(tracks, { externalEnglishSubtitle = false } 
     if (/\b(?:dialogue|full|complete|subtitles?)\b/i.test(title)) return true;
     if (/\b(?:signs?|songs?)\b/i.test(title)) return false;
     if (measuredFullSubtitle(track, videos[0])) return true;
-    // A default, unforced stream with the original Japanese audio is the
-    // normal complete subtitle track; unlabeled nondefault streams are not.
-    return track.Default === 'Yes' && track.Forced !== 'Yes' &&
-      (audios.every(isJapanese) || subtitles.some((other) =>
-        other !== track && isEnglish(other) && other.Forced === 'Yes'));
+    // A Japanese-only release can default to another language while its
+    // identified, unforced English translation remains a valid selection.
+    // Keep anonymous secondary tracks and dual-audio signs uncertain.
+    return track.Forced !== 'Yes' && (
+      (track.Default === 'Yes' && audios.every(isJapanese)) ||
+      (audios.every(isJapanese) && title.trim().length > 0 &&
+        subtitles.some((other) => other !== track &&
+          !isEnglish(other) && other.Default === 'Yes')) ||
+      (track.Default === 'Yes' && subtitles.some((other) =>
+        other !== track && isEnglish(other) && other.Forced === 'Yes')));
   });
   if (!fullEnglish) {
     return subtitles.some((track) => isEnglish(track) &&
