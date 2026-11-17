@@ -178,7 +178,8 @@ export function openAcquisitionRequestQueue(dbPath,
       AND EXISTS (SELECT 1 FROM acquisition_attempts a
         WHERE a.request_id=c.request_id)
       AND NOT EXISTS (SELECT 1 FROM acquisition_attempts a
-        WHERE a.request_id=c.request_id
+        LEFT JOIN acquisition_retirements retired ON retired.attempt_id=a.id
+        WHERE a.request_id=c.request_id AND retired.attempt_id IS NULL
           AND (a.status<>'torrent_observed' OR a.torrent_hash IS NULL OR
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;

@@ -40,6 +40,38 @@ test('an interrupted watch resumes only when every saved attempt is observed and
     } finally { db.close(); queue.close(); acquisitions.close(); }
   }));
 
+test('an interrupted watch ignores retired attempts while guarding current attempts',
+  async () => fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+        reason: 'interrupted_attempt_present', checkedMs: 100 });
+      const insert = db.prepare(`INSERT INTO acquisition_attempts
+        (request_id,anidb_id,indexer_id,candidate_digest,status,
+          torrent_hash,created_ms,updated_ms)
+        VALUES (1,41,5,?,'torrent_observed',?,1,1)`);
+      const oldHash = 'a'.repeat(40);
+      const currentHash = 'b'.repeat(40);
+      const oldId = Number(insert.run('old', oldHash).lastInsertRowid);
+      const currentId = Number(insert.run('current', currentHash).lastInsertRowid);
+      db.prepare(`INSERT INTO acquisition_target_claims
+        (attempt_id,anidb_id,episode_id,active)
+        VALUES (?,41,1001,0)`).run(oldId);
+      db.prepare(`INSERT INTO acquisition_target_claims
+        (attempt_id,anidb_id,episode_id,active)
+        VALUES (?,41,1001,1)`).run(currentId);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), []);
+      db.prepare(`INSERT INTO acquisition_retirements
+        (attempt_id,torrent_hash,reason,retired_ms)
+        VALUES (?,?,'policy_reset',150)`).run(oldId, oldHash);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
+      assert.equal(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }).requestId, 1);
+    } finally { db.close(); queue.close(); acquisitions.close(); }
+  }));
+
 test('missing Shoko metadata retries briefly, then backs off after a sustained miss',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
