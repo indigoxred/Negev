@@ -35,7 +35,7 @@ test('disabled start makes no Shoko call and a gap schedules one delayed scan', 
   assert.equal(clock.timers.size, 0);
   assert.deepEqual(calls, []);
   scheduler.start();
-  assert.equal(clock.delay(), 30 * 60_000);
+  assert.equal(clock.delay(), 60_000);
   scheduler.requestSoon();
   assert.equal(clock.timers.size, 1);
   assert.equal(clock.delay(), 60_000);
@@ -47,7 +47,7 @@ test('disabled start makes no Shoko call and a gap schedules one delayed scan', 
   assert.equal(clock.delay(), 10_000);
   await clock.fire();
   assert.deepEqual(calls, ['scan', 'drain']);
-  assert.equal(clock.delay(), 30 * 60_000);
+  assert.equal(clock.delay(), 5 * 60_000);
   await scheduler.close();
 });
 

@@ -1,4 +1,5 @@
 import { scanShokoRecentSince } from './shoko-recent-catchup.mjs';
+import { scanShokoFileIdsSince } from './shoko-fileid-catchup.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -6,7 +7,8 @@ const held = (reason) => ({ state: 'held', reason });
 // while an unavailable file waits for its own retry. The refresh callback must
 // report recognition='linked' before a file leaves the queue: Shoko can first
 // list an import as provisional and link it after hashing. No server timer uses it.
-export function createShokoRecentWorker({ ledger, readPage, refreshFile,
+export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
+  isKnownFileId = () => false, refreshFile,
   now = Date.now, pageSize = 100, maxPages = 5 } = {}) {
   if (typeof ledger?.getCursor !== 'function' ||
       typeof ledger?.getCapacity !== 'function' ||
@@ -14,6 +16,10 @@ export function createShokoRecentWorker({ ledger, readPage, refreshFile,
       typeof ledger?.nextDue !== 'function' ||
       typeof ledger?.recordResult !== 'function' ||
       typeof readPage !== 'function' || typeof refreshFile !== 'function' ||
+      (readFileIdPage !== undefined && (typeof readFileIdPage !== 'function' ||
+        typeof ledger?.getFileIdCursor !== 'function' ||
+        typeof ledger?.recordFileIdBatch !== 'function')) ||
+      typeof isKnownFileId !== 'function' ||
       typeof now !== 'function' || !Number.isSafeInteger(pageSize) ||
       pageSize < 1 || pageSize > 100 || !Number.isSafeInteger(maxPages) ||
       maxPages < 1 || maxPages > 5) {
@@ -35,10 +41,23 @@ export function createShokoRecentWorker({ ledger, readPage, refreshFile,
         }
         const batch = await scanShokoRecentSince({ readPage, since,
           pageSize, maxPages });
-        if (batch.state !== 'complete') return batch;
-        const saved = ledger.recordBatch(batch);
-        return saved.state === 'recorded' ? { state: 'caught_up',
-          added: saved.added } : saved;
+        const saved = batch.state === 'complete' ? ledger.recordBatch(batch) : batch;
+        let fileIdSaved = { state: 'recorded', added: 0 };
+        if (readFileIdPage) {
+          const fileIdBatch = await scanShokoFileIdsSince({
+            readPage: readFileIdPage, sinceId: ledger.getFileIdCursor(),
+            pageSize, maxPages });
+          if (fileIdBatch.state !== 'complete') fileIdSaved = fileIdBatch;
+          else {
+            const pendingFileIds = fileIdBatch.fileIds.filter((id) =>
+              !isKnownFileId(id));
+            fileIdSaved = ledger.recordFileIdBatch({ ...fileIdBatch,
+              pendingFileIds });
+          }
+        }
+        if (fileIdSaved.state !== 'recorded') return fileIdSaved;
+        if (saved.state !== 'recorded') return saved;
+        return { state: 'caught_up', added: saved.added + fileIdSaved.added };
       } catch { return held('recent_scan_unavailable'); }
       finally { busy = false; }
     },

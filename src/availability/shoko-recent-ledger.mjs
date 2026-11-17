@@ -37,6 +37,10 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_recent_due
       ON shoko_recent_pending(retry_after_ms,seq)`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_fileid_cursor (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      file_id INTEGER NOT NULL CHECK(file_id>0)
+    ) STRICT`);
   } catch (error) { db.close(); throw error; }
   const readCursor = db.prepare(`SELECT imported_ns AS importedNs,file_id AS fileId
     FROM shoko_recent_cursor WHERE id=1`);
@@ -44,6 +48,12 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
     (id,imported_ns,file_id) VALUES (1,?,?)`);
   const updateCursor = db.prepare(`UPDATE shoko_recent_cursor SET imported_ns=?,file_id=?
     WHERE id=1`);
+  const readFileIdCursor = db.prepare(`SELECT file_id AS fileId
+    FROM shoko_recent_fileid_cursor WHERE id=1`);
+  const insertFileIdCursor = db.prepare(`INSERT INTO shoko_recent_fileid_cursor
+    (id,file_id) VALUES (1,?)`);
+  const updateFileIdCursor = db.prepare(`UPDATE shoko_recent_fileid_cursor
+    SET file_id=? WHERE id=1`);
   const countPending = db.prepare('SELECT COUNT(*) AS total FROM shoko_recent_pending');
   const insertPending = db.prepare(`INSERT OR IGNORE INTO shoko_recent_pending(file_id)
     VALUES (?)`);
@@ -61,6 +71,7 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       const saved = readCursor.get();
       return saved ? { ...saved } : null;
     },
+    getFileIdCursor() { return readFileIdCursor.get()?.fileId ?? null; },
     bootstrap(cursor, initialFileIds = []) {
       if (!validCursor(cursor) || !Array.isArray(initialFileIds) ||
           initialFileIds.length > 100 || initialFileIds.some((id) => !validId(id)) ||
@@ -113,6 +124,45 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
         }
         if (relation > 0) updateCursor.run(batch.newest.importedNs,
           batch.newest.fileId);
+        db.exec('COMMIT');
+        return { state: 'recorded', added };
+      } catch (error) { rollback(); throw error; }
+    },
+    recordFileIdBatch(batch) {
+      const pendingFileIds = batch?.pendingFileIds ?? batch?.fileIds;
+      if (batch?.state !== 'complete' || !validId(batch.newestId) ||
+          !Array.isArray(batch.fileIds) || batch.fileIds.length > 500 ||
+          batch.fileIds.some((id, index) => !validId(id) ||
+            (index > 0 && id <= batch.fileIds[index - 1])) ||
+          !Array.isArray(pendingFileIds) ||
+          pendingFileIds.some((id, index) => !batch.fileIds.includes(id) ||
+            (index > 0 && id <= pendingFileIds[index - 1])) ||
+          (batch.fileIds.length > 0 &&
+            batch.fileIds.at(-1) !== batch.newestId)) {
+        return held('invalid_file_id_batch');
+      }
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const current = readFileIdCursor.get()?.fileId ?? null;
+        if (current !== null && (batch.newestId < current ||
+            (batch.newestId === current && batch.fileIds.length > 0))) {
+          rollback(); return held('stale_file_id_batch');
+        }
+        if (current !== null && batch.newestId > current &&
+            batch.fileIds.length === 0) {
+          rollback(); return held('invalid_file_id_batch');
+        }
+        let pending = countPending.get().total;
+        let added = 0;
+        for (const fileId of pendingFileIds) {
+          const result = insertPending.run(fileId);
+          if (result.changes) { pending++; added++; }
+          if (pending > maxPending) {
+            rollback(); return held('recent_backlog_full');
+          }
+        }
+        if (current === null) insertFileIdCursor.run(batch.newestId);
+        else if (batch.newestId > current) updateFileIdCursor.run(batch.newestId);
         db.exec('COMMIT');
         return { state: 'recorded', added };
       } catch (error) { rollback(); throw error; }

@@ -1081,7 +1081,11 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
         reads.push(url.pathname);
         assert.equal(init.method, 'GET');
         if (url.pathname === '/api/v3/File') {
-          assert.equal(url.searchParams.get('sortOrder'), '-ImportedAt,-FileID');
+          assert.ok(['-ImportedAt,-FileID', '-FileID'].includes(
+            url.searchParams.get('sortOrder')));
+          if (url.searchParams.get('sortOrder') === '-FileID') {
+            return json({ Total: 1, List: [{ ID: 11, Imported: null }] });
+          }
           return json({ Total: 2, List: [
             { ID: 11, Imported: '2026-10-31T00:00:11Z' },
             { ID: 10, Imported: '2026-10-31T00:00:10Z' },
@@ -1126,9 +1130,8 @@ test('opt-in recent import resumes a saved cursor and waits for Shoko recognitio
     assert.equal(service.getShokoEventState().reconciliationNeeded, true);
     assert.equal(service.getShokoEventState().fullReconciliationNeeded, true);
     assert.equal(service.getImportFeedState().state, 'unverified');
-    assert.deepEqual(reads, ['/api/v3/File', '/api/v3/File',
-      '/api/v3/File/11', '/api/v3/File/11', '/api/v3/File/11',
-      '/api/v3/File', '/api/v3/File', '/api/v3/File', '/api/v3/File']);
+    assert.equal(reads.filter((path) => path === '/api/v3/File').length, 12);
+    assert.equal(reads.filter((path) => path === '/api/v3/File/11').length, 3);
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
 

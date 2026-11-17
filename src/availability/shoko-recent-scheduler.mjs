@@ -1,13 +1,13 @@
-// Source-only pacing for the durable recent-file worker. The server does not
-// instantiate this yet: Shoko's installed sort contract and sustained cost
-// must be checked before any NAS scheduling is enabled.
+// Bounded pacing for the durable recent-file worker. A file-ID scan uses at
+// most five pages and ordinary idle scans normally read the newest page.
 export function createShokoRecentScheduler({ scan, drainOne,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof scan !== 'function' || typeof drainOne !== 'function' ||
       typeof setTimer !== 'function' || typeof clearTimer !== 'function') {
     throw new TypeError('Invalid Shoko recent scheduler');
   }
-  const scanDelay = 30 * 60_000;
+  const scanDelay = 5 * 60_000;
+  const initialDelay = 60_000;
   const gapDelay = 60_000;
   const drainDelay = 10_000;
   const failureDelay = 5 * 60_000;
@@ -63,7 +63,7 @@ export function createShokoRecentScheduler({ scan, drainOne,
       if (started || stopping) return;
       started = true;
       lastState = 'waiting';
-      schedule('scan', scanDelay);
+      schedule('scan', initialDelay);
     },
     requestSoon() {
       if (!started || stopping) return;
