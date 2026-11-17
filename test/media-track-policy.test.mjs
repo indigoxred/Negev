@@ -58,6 +58,28 @@ test('an unlabeled English stream without full-dialogue evidence is uncertain', 
   ]), { state: 'unverified', reason: 'subtitle_coverage_unverified' });
 });
 
+test('accepts an identified nondefault English track with Japanese-only audio', () => {
+  assert.deepEqual(evaluateMediaTracks([
+    video, japanese,
+    { '@type': 'Text', Language: 'pt', Title: 'World Fansub',
+      Default: 'Yes', Forced: 'No' },
+    { '@type': 'Text', Language: 'en', Title: 'Chihiro',
+      Default: 'No', Forced: 'No' },
+  ]), { state: 'accepted', audio: 'japanese', resolution: 1080 });
+  assert.equal(evaluateMediaTracks([
+    video, japanese, englishAudio,
+    { '@type': 'Text', Language: 'en', Title: 'English',
+      Default: 'No', Forced: 'No' },
+  ]).state, 'unverified');
+  assert.equal(evaluateMediaTracks([
+    video, japanese,
+    { '@type': 'Text', Language: 'pt', Title: 'Full',
+      Default: 'Yes', Forced: 'No' },
+    { '@type': 'Text', Language: 'en', Title: 'English Signs',
+      Default: 'No', Forced: 'No' },
+  ]).state, 'rejected');
+});
+
 test('accepts a plain English track when measured dialogue spans the episode', () => {
   assert.deepEqual(evaluateMediaTracks([
     { ...video, Duration: 1442 }, japanese, englishAudio,
