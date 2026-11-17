@@ -20,6 +20,241 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('a completed series selects a verified full-season plan before an episode', async () => {
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example - 01 BD 1080p', seeders: 12 },
+        { ...candidate(2), title: 'Example Season 1 WEB 720p', seeders: 5 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => item.guid === 'candidate-2'
+      ? { ...preflight, episodeIds: [1001, 1002], files: [
+        { name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] },
+        { name: 'Example - 02.mkv', size: 1000, episodeIds: [1002] },
+      ] }
+      : preflight,
+    loadDetail: async () => ({ ...detail, airDate: '2016-04-05',
+      endDate: '2016-06-28' }),
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(selected, 'candidate-2');
+});
+
+test('a later exact Shoko pack outranks an uncertain pack across bounded pages', async () => {
+  let selected;
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    preferShokoPreview: true, maxPreflights: 2,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [1, 2, 3].map((number) =>
+        ({ ...candidate(number), title: `Example Season 1 BD 1080p v${number}`,
+          seeders: 10 - number })) }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return { ...preflight, episodeIds: [1001, 1002],
+        shokoPreview: item.guid === 'candidate-3' ? 'exact' : 'uncertain',
+        files: [1, 2].map((number) => ({ name: `Example - 0${number}.mkv`,
+          size: 1000, episodeIds: [1000 + number] })) };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 14 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'season_pack_search_pending');
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 14);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-2', 'candidate-3']);
+  assert.equal(selected, 'candidate-3');
+});
+
+test('an uncertain full pack still wins before individual episode fallback', async () => {
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    preferShokoPreview: true, maxPreflights: 2,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example Season 1 WEB 1080p', seeders: 5 },
+        { ...candidate(2), title: 'Example - 01 BD 1080p', seeders: 10 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => item.guid === 'candidate-1'
+      ? { ...preflight, shokoPreview: 'uncertain', episodeIds: [1001, 1002],
+        files: [1, 2].map((number) => ({ name: `Example - 0${number}.mkv`,
+          size: 1000, episodeIds: [1000 + number] })) }
+      : { ...preflight, shokoPreview: 'exact' },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 15 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'season_pack_scan_complete');
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 15);
+  assert.equal(selected, 'candidate-1');
+});
+
+test('a completed series can use an episode only after the season pack fails preflight', async () => {
+  const inspected = [];
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example - 01 BD 1080p', seeders: 12 },
+        { ...candidate(2), title: 'Example Season 1 WEB 720p', seeders: 5 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return item.guid === 'candidate-2'
+        ? { state: 'held', reason: 'ambiguous_or_unrequested_video' }
+        : preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  const scan = await process({ requestId: 4 });
+  assert.equal(scan.reason, 'season_pack_scan_complete');
+  assert.equal(scan.nextCandidateOffset, 2);
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: scan.nextCandidateOffset,
+    candidateFingerprint: scan.nextCandidateFingerprint }), 11);
+  assert.deepEqual(inspected, ['candidate-2', 'candidate-1', 'candidate-1']);
+  assert.equal(selected, 'candidate-1');
+});
+
+test('completed-season coverage requires every missing episode ID, not equal counts', async () => {
+  const fullRequest = { ...request, episodeIds: [1001, 1002, 1003, 1004] };
+  const fullDetail = { ...detail, total: 4, episodes: [
+    ...detail.episodes,
+    { id: 1003, number: 3, type: 'Episode' },
+    { id: 1004, number: 4, type: 'Episode' },
+  ] };
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => fullRequest, requireReleasePolicy: true,
+    readPublicCoverage: async () => ({ targetCount: 4, verifiedTargets: 1,
+      availableEpisodeIds: [1004] }),
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example Season 1 BD 1080p', seeders: 8 },
+        { ...candidate(2), title: 'Example Season 1 WEB 1080p', seeders: 5 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => ({ ...preflight,
+      episodeIds: item.guid === 'candidate-1'
+        ? [1001, 1002, 1004] : [1001, 1002, 1003, 1004],
+      files: (item.guid === 'candidate-1' ? [1, 2, 4] : [1, 2, 3, 4])
+        .map((number) => ({ name: `Example - 0${number}.mkv`, size: 1000,
+          episodeIds: [1000 + number] })),
+    }),
+    loadDetail: async () => fullDetail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(selected, 'candidate-2');
+});
+
+test('an unhinted full pack wins after a bounded sweep beyond an episode', async () => {
+  const inspected = [];
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true, maxPreflights: 2,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example - 01 BD 1080p', seeders: 12 },
+        { ...candidate(2), title: 'Example - 02 BD 1080p', seeders: 10 },
+        { ...candidate(3), title: 'Example Complete BD', seeders: 4 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return item.guid === 'candidate-3'
+        ? { ...preflight, episodeIds: [1001, 1002], files: [
+          { name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] },
+          { name: 'Example - 02.mkv', size: 1000, episodeIds: [1002] },
+        ] } : { ...preflight, episodeIds: [item.guid === 'candidate-1' ?
+          1001 : 1002], files: [{ name: `Example - 0${item.guid === 'candidate-1' ?
+          1 : 2}.mkv`, size: 1000, episodeIds: [item.guid === 'candidate-1' ?
+          1001 : 1002] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'season_pack_search_pending');
+  assert.equal(first.nextCandidateOffset, 2);
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-2', 'candidate-3']);
+  assert.equal(selected, 'candidate-3');
+});
+
+test('episode fallback waits for all bounded pack pages, then resumes promptly', async () => {
+  const inspected = [];
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true, maxPreflights: 2,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: 'Example Season 1 BD 1080p', seeders: 8 },
+        { ...candidate(2), title: 'Example Batch WEB 720p', seeders: 5 },
+        { ...candidate(3), title: 'Example - 01 BD 1080p', seeders: 4 },
+        { ...candidate(4), title: 'Example - 02 WEB 720p', seeders: 3 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return ['candidate-1', 'candidate-2'].includes(item.guid)
+        ? { state: 'held', reason: 'unsafe_or_unselected_file' }
+        : { ...preflight, episodeIds: [item.guid === 'candidate-3' ? 1001 : 1002],
+          files: [{ name: `Example - 0${item.guid === 'candidate-3' ? 1 : 2}.mkv`,
+            size: 1000, episodeIds: [item.guid === 'candidate-3' ? 1001 : 1002] }] };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 13 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'season_pack_search_pending');
+  assert.equal(first.nextCandidateOffset, 2);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.reason, 'season_pack_scan_complete');
+  assert.equal(second.nextCandidateOffset, 4);
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint }), 13);
+  assert.deepEqual(inspected, ['candidate-1', 'candidate-2',
+    'candidate-3', 'candidate-4', 'candidate-3']);
+  assert.equal(selected, 'candidate-3');
+});
+
 test('strict release policy never preflights zero-seed or dub-only releases', async () => {
   const inspected = [];
   const process = createAcquisitionRequestProcessor({

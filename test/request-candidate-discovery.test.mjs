@@ -9,6 +9,16 @@ const detail = { state: 'details', anidbId: 1234, page: 1, total: 1,
   complete: true, nextPage: null,
   episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
 
+test('marks a historically completed series for full-season preference', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, airDate: '2016-04-05',
+      endDate: '2016-06-28' }),
+    searchReleases: async () => ({ state: 'candidates', items: [] }),
+  });
+  assert.equal((await discover({ requestId: 12 })).releaseState, 'completed');
+});
+
 test('discovers candidates for an existing exact request without authorizing them', async () => {
   const queries = [];
   const discover = createRequestCandidateDiscovery({

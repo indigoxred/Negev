@@ -1,6 +1,10 @@
 // Search titles and tracker counts are hints only. A completed file still
 // needs its actual audio, subtitle and video tracks checked before import.
 const has = (title, expression) => expression.test(title);
+export const hasSeasonPackHint = (candidate) => {
+  const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  return /\b(?:complete[ ._-]*season|season[ ._-]*\d{1,2}|batch|s\d{1,2})\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
+};
 
 export function assessRelease(candidate) {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
@@ -35,10 +39,13 @@ export function assessRelease(candidate) {
   };
 }
 
-export function compareReleases(left, right) {
+export function compareReleases(left, right, { preferSeasonPack = false } = {}) {
   const a = assessRelease(left);
   const b = assessRelease(right);
   if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
+  if (preferSeasonPack && hasSeasonPackHint(left) !== hasSeasonPackHint(right)) {
+    return Number(hasSeasonPackHint(right)) - Number(hasSeasonPackHint(left));
+  }
   if (a.healthyPeers !== b.healthyPeers) {
     return Number(b.healthyPeers) - Number(a.healthyPeers);
   }

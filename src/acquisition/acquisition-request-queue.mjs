@@ -436,10 +436,15 @@ export function openAcquisitionRequestQueue(dbPath,
       // the next pass. Keep the normal backoff for outages, stationary cursors
       // and a completed sweep, while allowing a different candidate at the
       // pipeline's existing paced request stage.
+      const completedSeasonPhase =
+        ['season_pack_scan_complete', 'season_pack_uncertain_complete'].includes(reason) &&
+        previous?.candidateFingerprint != null &&
+        previous.candidateFingerprint !== nextCandidateFingerprint &&
+        nextCandidateOffset === previous.candidateOffset;
       const advanced = previous?.pass === pass && previous.state === null &&
         nextCandidateFingerprint !== null &&
         nextCandidateOffset !== null &&
-        nextCandidateOffset > previous.candidateOffset;
+        (nextCandidateOffset > previous.candidateOffset || completedSeasonPhase);
       const empty = state === 'held' &&
         ['no_release_candidates', 'no_safe_release'].includes(reason);
       const emptySinceMs = empty ? previous?.emptySinceMs ?? checkedMs : null;
