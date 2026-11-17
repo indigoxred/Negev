@@ -49,13 +49,13 @@ test('requires a supported real video resolution', () => {
     englishSubs]).state, 'accepted');
 });
 
-test('an unlabeled English stream without full-dialogue evidence is uncertain', () => {
+test('an unforced English subtitle track is enough without scanning every cue', () => {
   assert.deepEqual(evaluateMediaTracks([
     { '@type': 'Video', Height: '1080' },
     { '@type': 'Audio', Language: 'ja' },
     { '@type': 'Audio', Language: 'en' },
     { '@type': 'Text', Language: 'en', Default: 'No', Forced: 'No' },
-  ]), { state: 'unverified', reason: 'subtitle_coverage_unverified' });
+  ]), { state: 'accepted', audio: 'dual', resolution: 1080 });
 });
 
 test('accepts an identified nondefault English track with Japanese-only audio', () => {
@@ -70,7 +70,7 @@ test('accepts an identified nondefault English track with Japanese-only audio', 
     video, japanese, englishAudio,
     { '@type': 'Text', Language: 'en', Title: 'English',
       Default: 'No', Forced: 'No' },
-  ]).state, 'unverified');
+  ]).state, 'accepted');
   assert.equal(evaluateMediaTracks([
     video, japanese,
     { '@type': 'Text', Language: 'pt', Title: 'Full',
@@ -89,19 +89,20 @@ test('accepts a plain English track when measured dialogue spans the episode', (
   ]), { state: 'accepted', audio: 'dual', resolution: 1080 });
 });
 
-test('does not mistake long-lived sparse signs for full English dialogue', () => {
+test('explicit signs, songs and forced English tracks are still insufficient', () => {
+  for (const title of ['English [Signs]', 'English Songs',
+    'English Full Signs', 'Forced English']) {
+    assert.equal(evaluateMediaTracks([
+      video, japanese, englishAudio,
+      { '@type': 'Text', Language: 'en', Title: title,
+        Default: 'No', Forced: 'No' },
+    ]).state, 'rejected');
+  }
   assert.equal(evaluateMediaTracks([
-    { ...video, Duration: 1442 }, japanese, englishAudio,
+    video, japanese, englishAudio,
     { '@type': 'Text', Language: 'en', Title: 'English',
-      Default: 'Yes', Forced: 'No', Duration: 1436,
-      ElementCount: 18 },
-  ]).reason, 'subtitle_coverage_unverified');
-  assert.equal(evaluateMediaTracks([
-    { ...video, Duration: 1442 }, japanese, englishAudio,
-    { '@type': 'Text', Language: 'en', Title: 'English',
-      Default: 'Yes', Forced: 'No', Duration: 120,
-      ElementCount: 352 },
-  ]).reason, 'subtitle_coverage_unverified');
+      Default: 'No', Forced: 'Yes' },
+  ]).state, 'rejected');
 });
 
 test('a verified adjacent English subtitle can satisfy an otherwise suitable file', () => {
@@ -110,3 +111,4 @@ test('a verified adjacent English subtitle can satisfy an otherwise suitable fil
     { '@type': 'Audio', Language: 'ja' },
   ], { externalEnglishSubtitle: true }).state, 'accepted');
 });
+

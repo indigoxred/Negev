@@ -6,19 +6,9 @@ const height = (value) => {
   const number = Number(value);
   return Number.isSafeInteger(number) ? number : 0;
 };
-const measuredFullSubtitle = (track, video) => {
-  const videoSeconds = Number(video.Duration);
-  const subtitleSeconds = Number(track.Duration);
-  const lines = Number(track.ElementCount);
-  return Number.isFinite(videoSeconds) && videoSeconds >= 120 &&
-    Number.isFinite(subtitleSeconds) &&
-    subtitleSeconds >= videoSeconds * 0.8 &&
-    Number.isSafeInteger(lines) &&
-    lines >= Math.max(12, Math.ceil(videoSeconds * 0.07));
-};
-
-// Only embedded, language-tagged full subtitles count here. A release name,
-// fansub group, untagged stream, or English signs track is not proof.
+// Require a real, language-tagged subtitle stream. MediaInfo can identify
+// streams from the container header without scanning an entire video to count
+// cues. Explicit signs, songs, forced and commentary tracks remain excluded.
 export function evaluateMediaTracks(tracks, { externalEnglishSubtitle = false } = {}) {
   if (!Array.isArray(tracks) || tracks.length < 2 ||
       tracks.some((track) => !track || typeof track !== 'object')) {
@@ -41,29 +31,17 @@ export function evaluateMediaTracks(tracks, { externalEnglishSubtitle = false } 
       { state: 'rejected', reason: 'japanese_audio_missing' };
   }
   const fullEnglish = externalEnglishSubtitle || subtitles.some((track) => {
-    if (!isEnglish(track)) return false;
+    if (!isEnglish(track) || track.Forced === 'Yes') return false;
     const title = String(track.Title ?? '');
     if (/\b(?:commentary|forced|dubtitle)\b/i.test(title)) return false;
+    if (/\b(?:signs?|songs?)\b/i.test(title) && !/\bdialogue\b/i.test(title)) return false;
     if (/\b(?:dialogue|full|complete|subtitles?)\b/i.test(title)) return true;
-    if (/\b(?:signs?|songs?)\b/i.test(title)) return false;
-    if (measuredFullSubtitle(track, videos[0])) return true;
-    // A Japanese-only release can default to another language while its
-    // identified, unforced English translation remains a valid selection.
-    // Keep anonymous secondary tracks and dual-audio signs uncertain.
-    return track.Forced !== 'Yes' && (
-      (track.Default === 'Yes' && audios.every(isJapanese)) ||
-      (audios.every(isJapanese) && title.trim().length > 0 &&
-        subtitles.some((other) => other !== track &&
-          !isEnglish(other) && other.Default === 'Yes')) ||
-      (track.Default === 'Yes' && subtitles.some((other) =>
-        other !== track && isEnglish(other) && other.Forced === 'Yes')));
+    return true;
   });
   if (!fullEnglish) {
-    return subtitles.some((track) => isEnglish(track) &&
-      !/\b(?:signs?|songs?|forced|dubtitle)\b/i.test(String(track.Title ?? '')))
-      ? { state: 'unverified', reason: 'subtitle_coverage_unverified' }
-      : { state: 'rejected', reason: 'english_full_subtitles_missing' };
+    return { state: 'rejected', reason: 'english_full_subtitles_missing' };
   }
   return { state: 'accepted',
     audio: audios.some(isEnglish) ? 'dual' : 'japanese', resolution };
 }
+
