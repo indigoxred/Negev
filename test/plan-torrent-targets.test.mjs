@@ -27,6 +27,79 @@ const pack = { state: 'prepared_stopped', files: [
   { name: 'Show/[Group] Show - 02 (1080p).ass', size: 25 },
 ] };
 
+test('maps a full BD season whose files put episode numbers before source tags', () => {
+  const episodeIds = Array.from({ length: 13 }, (_, index) => 2001 + index);
+  const fullDetail = { ...detail, total: 13,
+    episodes: episodeIds.map((id, index) => ({ id,
+      number: index + 1, type: 'Episode' })) };
+  const fullRequest = { ...request, episodeIds };
+  const files = episodeIds.map((_, index) => ({
+    name: `[OxyMux] Seisen Cerberus Ryuukoku no Fatalite ${String(index + 1).padStart(2, '0')} [BD 1080p][Multi Subs].mkv`,
+    size: 1000 + index,
+  }));
+  const plan = planTorrentTargets({ request: fullRequest, detail: fullDetail,
+    prepared: { state: 'prepared_stopped', files },
+    releaseTitle: '[OxyMux] Cerberus Season 1 (BD 1080p)',
+    trustedTitle: 'Cerberus' });
+  assert.equal(plan.state, 'planned_targets');
+  assert.deepEqual(plan.episodeIds, episodeIds);
+});
+
+test('maps a complete season by one file-number sequence across group layouts', () => {
+  for (const nameForEpisode of [
+    (n) => `[Alpha] Show E${String(n).padStart(2, '0')} (WEB 1080p).mkv`,
+    (n) => `${String(n).padStart(2, '0')} - Show [DVD].mkv`,
+    (n) => `[86Fans] Show.${String(n).padStart(2, '0')}.720p.mkv`,
+    (n) => `Show Episode ${String(n).padStart(2, '0')} (2016) 1080p.mkv`,
+    (n) => `Show.${String(n).padStart(2, '0')}.720p.[ABC${n + 6}DEF].mkv`,
+  ]) {
+    const files = [1, 2, 3].map((number) => ({
+      name: nameForEpisode(number), size: 1000 + number,
+    }));
+    const plan = planTorrentTargets({ request, detail,
+      prepared: { state: 'prepared_stopped', files },
+      releaseTitle: '[Group] Show Season 1', trustedTitle: 'Show' });
+    assert.equal(plan.state, 'planned_targets', files[0].name);
+    assert.deepEqual(plan.episodeIds, [1001, 1002, 1003]);
+    assert.deepEqual(plan.plannedFiles.map((file) => file.episodeIds),
+      [[1001], [1002], [1003]]);
+  }
+});
+
+test('season sequence rejects duplicate, ranged, extra and conflicting video files', () => {
+  for (const names of [
+    ['Show E01.mkv', 'Show E01 Alternate.mkv', 'Show E03.mkv'],
+    ['Show 01-02.mkv', 'Show 02-03.mkv', 'Show 03-04.mkv'],
+    ['Show E01.mkv', 'Show E02.mkv', 'Show E03.mkv', 'Show E04.mkv'],
+    ['Show 01 Part 01.mkv', 'Show 02 Part 02.mkv', 'Show 03 Part 03.mkv'],
+    ['Show - 01 E02.mkv', 'Show - 02 E03.mkv', 'Show - 03 E01.mkv'],
+    ['Show S01E01 S01E02.mkv', 'Show S01E02 S01E03.mkv',
+      'Show S01E03 S01E01.mkv'],
+    ['Show 01 + 02.mkv', 'Show 02 + 03.mkv', 'Show 03 + 04.mkv'],
+    ['Show 01 & 02.mkv', 'Show 02 & 03.mkv', 'Show 03 & 04.mkv'],
+    ['Show 01 and 02.mkv', 'Show 02 and 03.mkv', 'Show 03 and 04.mkv'],
+  ]) {
+    const plan = planTorrentTargets({ request, detail,
+      prepared: { state: 'prepared_stopped', files: names.map((name) =>
+        ({ name, size: 1000 })) },
+      releaseTitle: 'Show Season 1', trustedTitle: 'Show' });
+    assert.equal(plan.state, 'held', names.join(', '));
+  }
+  const twoEpisodeRequest = { ...request, episodeIds: [1001, 1002] };
+  const twoFiles = ['Show S01E01 S01E02.mkv',
+    'Show S01E02 S01E03.mkv'];
+  assert.equal(planTorrentTargets({ request: twoEpisodeRequest, detail,
+    prepared: { state: 'prepared_stopped', files: twoFiles.map((name) =>
+      ({ name, size: 1000 })) },
+    releaseTitle: 'Show Season 1', trustedTitle: 'Show' }).state, 'held');
+  for (const name of ['Show 01 + 02.mkv', 'Show 01 & 02.mkv',
+    'Show 01 and 02.mkv']) {
+    assert.equal(planTorrentTargets({ request: twoEpisodeRequest, detail,
+      prepared: { state: 'prepared_stopped', files: [{ name, size: 1000 }] },
+      releaseTitle: 'Show Season 1', trustedTitle: 'Show' }).state, 'held');
+  }
+});
+
 test('selects requested regular episodes while excluding a separate Specials folder', () => {
   const files = [
     { name: '[Group]_Show_01_[DVD][4BD6D6B5].mkv', size: 1200 },
@@ -61,6 +134,7 @@ test('plans an exact subset from unambiguous AniDB regular episode numbers', () 
 
 test('plans standard season-episode filenames provisionally against exact AniDB numbers', () => {
   for (const [name, id] of [
+    ['[Group] Show - 01 [BD 1080p].mkv', 1001],
     ['[Judas] Firefly Wedding - S01E03.mkv', 1003],
     ['Firefly.Wedding.S01E02.Tennyo.Island.1080p.CR.WEB-DL.DUAL.AAC2.0.H.264.MSubs-ToonsHub.mkv', 1002],
     ['Show.S02E01.1080p.mkv', 1001],

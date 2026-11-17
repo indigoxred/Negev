@@ -395,6 +395,31 @@ test('a forward candidate cursor can continue next pass without a 30-minute dela
     } finally { queue.close(); }
   }));
 
+test('a completed pack scan can enter the next bounded phase immediately', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const firstCursor = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    const secondCursor = `${'d'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'season_pack_scan_complete',
+        nextCandidateOffset: 2, nextCandidateFingerprint: firstCursor,
+        checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 100);
+      queue.claimNext({ nowMs: 100 });
+      queue.claimNext({ nowMs: 100 });
+      assert.equal(queue.claimNext({ nowMs: 100 }).state, 'pass_complete');
+      const second = queue.claimNext({ nowMs: 101 });
+      assert.equal(second.requestId, 1);
+      queue.recordResult({ requestId: 1, pass: second.pass,
+        state: 'held', reason: 'season_pack_uncertain_complete',
+        nextCandidateOffset: 2, nextCandidateFingerprint: secondCursor,
+        checkedMs: 101 });
+      assert.equal(queue.getResult(1).nextDueMs, 101);
+    } finally { queue.close(); }
+  }));
+
 test('future-only watch is skipped until its first episode target is added', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-future-queue-'));
   const dbPath = path.join(dir, 'state.sqlite');

@@ -32,6 +32,7 @@ export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
 
 function episodeNumbers(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
+  if (/(?<!\d)\d{1,4}\s*(?:\+|&|\band\b)\s*\d{1,4}(?!\d)/iu.test(stem)) return null;
   const matches = [];
   const plainRegular = /^(0*[1-9]\d*)$/.exec(stem);
   const plainPair = /^(0*[1-9]\d*)-(0*[1-9]\d*)$/.exec(stem);
@@ -49,6 +50,9 @@ function episodeNumbers(name) {
     if (season > 99 || episode < 1) return null;
     matches.push({ type: season === 0 ? 'Special' : 'Episode',
       digits: match[2] });
+  }
+  for (const match of stem.matchAll(/(?:^|[ ._-])[Ee](0*[1-9]\d{0,3})(?=$|[ ._-])/gi)) {
+    matches.push({ type: 'Episode', digits: match[1] });
   }
   if (plainRegular) matches.push({ type: 'Episode', digits: plainRegular[1] });
   if (plainPair) matches.push({ type: 'Episode', digits: plainPair[1], endDigits: plainPair[2] });
@@ -68,19 +72,55 @@ function episodeNumbers(name) {
   for (const match of stem.matchAll(/_(0*[1-9]\d{0,3})_(?=\[(?:DVD|BD|WEB|1080p|720p)\])/gi)) {
     matches.push({ type: 'Episode', digits: match[1] });
   }
+  // Complete season packs also use a space before the source tag, e.g.
+  // Show 01 [BD 1080p]. The source tag keeps a year in a title from becoming
+  // episode evidence.
+  for (const match of stem.matchAll(/(?:^|\s)(0*[1-9]\d{0,2})\s+(?=\[(?:DVD|BD|WEB|1080p|720p)\b)/gi)) {
+    matches.push({ type: 'Episode', digits: match[1] });
+  }
   if (matches.length === 0) {
     // A title-only one-off can be planned provisionally, but an explicit
     // episode coordinate in a format we do not parse must stay ambiguous.
     return /[Ss]\d{1,3}[Ee]\d{1,4}|(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem)
       ? null : { type: 'Unnumbered', numbers: [] };
   }
-  if (matches.length !== 1 || !Number.isSafeInteger(Number(matches[0].digits))) return null;
-  const match = matches[0];
+  const distinct = [...new Map(matches.map((match) => [
+    `${match.type}:${match.digits}:${match.endDigits ?? ''}`, match,
+  ])).values()];
+  if (distinct.length !== 1 || !Number.isSafeInteger(Number(distinct[0].digits))) return null;
+  const match = distinct[0];
   const start = Number(match.digits);
   if (!match.endDigits) return { type: match.type, numbers: [start] };
   const end = Number(match.endDigits);
   if (!Number.isSafeInteger(end) || end !== start + 1) return null;
   return { type: match.type, numbers: [start, end] };
+}
+
+// A complete pack can establish an episode coordinate from its file set.
+// Constant title, season, year, and resolution numbers do not vary across
+// files; the single position covering every requested regular number does.
+// This is never used for one-file guesses or a partly numbered season.
+function completePackNumbers(files, wantedNumbers) {
+  if (files.length < 2 || files.length !== wantedNumbers.size) return null;
+  const tokens = files.map((file) => {
+    // A bracketed hexadecimal checksum varies per file but is not episode
+    // numbering. Keep short [01] coordinates and source tags in the scan.
+    const stem = path.posix.basename(file.name, path.posix.extname(file.name))
+      .replace(/\[[0-9a-f]{7,16}\]/giu, '');
+    if (/(?<!\d)\d{1,4}\s*[-–]\s*\d{1,4}(?!\d)/u.test(stem)) return null;
+    return [...stem.matchAll(/(?<!\d)0*([1-9]\d{0,3})(?!\d)/gu)]
+      .map((match) => Number(match[1]));
+  });
+  if (tokens.some((row) => !row || row.length !== tokens[0].length)) return null;
+  const varying = [];
+  for (let index = 0; index < tokens[0].length; index++) {
+    const numbers = tokens.map((row) => row[index]);
+    if (new Set(numbers).size > 1) varying.push(numbers);
+  }
+  if (varying.length > 1) return { state: 'ambiguous' };
+  if (varying.length !== 1 || new Set(varying[0]).size !== files.length ||
+      !varying[0].every((number) => wantedNumbers.has(number))) return null;
+  return { state: 'mapped', numbers: varying[0] };
 }
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
@@ -145,6 +185,17 @@ export function planTorrentTargets({ request, detail, prepared,
     isOptionalClip(file.name)).map((file) => file.name);
   const targetVideos = videos.filter((file) => !excludedVideoNames.includes(file.name));
 
+  const requestedRegularNumbers = new Set(detail.episodes.filter((episode) =>
+    episode.type === 'Episode' && requested.has(episode.id))
+    .map((episode) => episode.number));
+  const needsSequence = targetVideos.some((file) => {
+    const episode = episodeNumbers(file.name);
+    return episode === null || episode.type === 'Unnumbered';
+  });
+  const packSequence = hasRequestedSpecial || !needsSequence ? null :
+    completePackNumbers(targetVideos, requestedRegularNumbers);
+  if (packSequence?.state === 'ambiguous') return held('ambiguous_pack_numbering');
+
   const byNumber = new Map();
   for (const episode of detail.episodes.filter((item) =>
     item.type === 'Episode' || item.type === 'Special')) {
@@ -163,9 +214,15 @@ export function planTorrentTargets({ request, detail, prepared,
     request.episodeIds.length === 1 && regular.length === 1 &&
     regular[0].id === request.episodeIds[0] && trustedUnnumberedTitle
     ? regular[0].id : null;
-  for (const file of targetVideos) {
+  for (const [index, file] of targetVideos.entries()) {
     const episode = episodeNumbers(file.name);
-    const ids = episode?.type === 'Unnumbered' && soleUnnumberedTarget
+    const inferred = packSequence?.state === 'mapped' ? packSequence.numbers[index] : null;
+    if (inferred !== null && episode === null) return held('ambiguous_pack_numbering');
+    if (inferred !== null && episode?.type !== 'Unnumbered' &&
+        (episode.type !== 'Episode' || episode.numbers.length !== 1 ||
+          episode.numbers[0] !== inferred)) return held('ambiguous_pack_numbering');
+    const ids = inferred !== null ? [byNumber.get(`Episode:${inferred}`)] :
+      episode?.type === 'Unnumbered' && soleUnnumberedTarget
       ? [soleUnnumberedTarget]
       : episode?.type === 'Unnumbered' ? null
         : episode?.numbers.map((number) => byNumber.get(`${episode.type}:${number}`));

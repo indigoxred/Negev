@@ -64,3 +64,17 @@ test('prefers Japanese-only subtitle release over dual audio within a viable tie
     item('Show Japanese Eng Subs WEB 1080p', 12)].sort(compareReleases);
   assert.equal(ordered[0].title, 'Show Japanese Eng Subs WEB 1080p');
 });
+
+test('a completed season prefers a seeded full pack over individual episodes', () => {
+  const releases = [
+    item('Seisen Cerberus - 09 BD 1080p', 12),
+    item('Cerberus Season 1 WEB 720p', 5),
+  ];
+  assert.equal([...releases].sort((a, b) => compareReleases(a, b,
+    { preferSeasonPack: true }))[0].title, 'Cerberus Season 1 WEB 720p');
+  assert.equal([...releases].sort((a, b) => compareReleases(a, b,
+    { preferSeasonPack: false }))[0].title, 'Seisen Cerberus - 09 BD 1080p');
+  const unseededPack = item('Cerberus Season 1 BD 1080p', 0);
+  assert.equal([releases[0], unseededPack].sort((a, b) => compareReleases(a, b,
+    { preferSeasonPack: true }))[0].title, releases[0].title);
+});

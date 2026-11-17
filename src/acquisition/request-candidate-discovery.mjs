@@ -1,4 +1,5 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { trustedReleaseQueries } from './trusted-release-queries.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -90,7 +91,11 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       }
       if (!any) break;
     }
+    const releaseState = inferReleaseState({
+      today: new Date().toISOString().slice(0, 10), ...detail,
+    }).state;
     return { state: 'candidates', requestId, anidbId: request.anidbId,
-      items, exhaustive: false };
+      items, exhaustive: false,
+      ...(releaseState === 'unknown' ? {} : { releaseState }) };
   };
 }
