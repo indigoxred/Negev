@@ -1,6 +1,7 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
-import { trustedReleaseQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
+import { hasTargetEpisodeHint } from './release-preference.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -46,9 +47,9 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
     const titleQueries = trustedReleaseQueries(detail.title, aliases);
-    const targeted = target && titleQueries.length > 0 ?
-      `${titleQueries[0]} ${String(target.number).padStart(2, '0')}` : null;
-    const queries = targeted && targeted.length <= 120 ?
+    const targeted = target ? trustedTargetedQuery(detail.title, aliases,
+      target.number) : null;
+    const queries = targeted ?
       [targeted, ...titleQueries] : titleQueries;
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
@@ -68,9 +69,14 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // Preserve which bucket answered the exact missing-episode query. This
       // is ordering evidence only; stopped metainfo and identity checks still
       // decide whether a candidate can be submitted.
-      buckets.push(targeted && index === 0
-        ? result.items.map((item) => ({ ...item, targetedEpisode: true }))
-        : result.items);
+      buckets.push(result.items.map((item) => ({ ...item,
+        sourceQuery: query,
+        ...(target && hasTargetEpisodeHint(item, target.number) ?
+          { targetedEpisode: true } : {}),
+        ...(targeted && index === 0 ? {
+          ...(!hasTargetEpisodeHint(item, target.number) ?
+            { targetedEpisode: false } : {}),
+          targetEpisodeId: target.id } : {}) })));
     }
     if (successful === 0) return held('release_search_unavailable');
     const items = [];

@@ -1,7 +1,8 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
-import { assessRelease, compareReleases, hasSeasonPackHint } from './release-preference.mjs';
+import { assessRelease, compareReleases, hasSeasonPackHint,
+  hasSingleEpisodeHint } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
@@ -18,7 +19,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles,
   preferShokoPreview = false, requireReleasePolicy = false,
-  maxPreflights = 3 } = {}) {
+  maxPreflights = 3, now = Date.now } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
       (readPublicCoverage !== undefined && typeof readPublicCoverage !== 'function') ||
@@ -30,11 +31,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
         typeof readRelatedTitles !== 'function') ||
       typeof preferShokoPreview !== 'boolean' ||
       typeof requireReleasePolicy !== 'boolean' ||
+      typeof now !== 'function' ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, pass = 1, candidateOffset = 0,
-    candidateFingerprint = null } = {}) => {
+    candidateFingerprint = null, scanStartedMs = null } = {}) => {
     if (!validId(requestId) || !validId(pass) ||
+        (scanStartedMs !== null &&
+          (!Number.isSafeInteger(scanStartedMs) || scanStartedMs < 0)) ||
         !Number.isSafeInteger(candidateOffset) ||
         candidateOffset < 0 || candidateOffset > 50) return held('invalid_request');
     let request;
@@ -239,8 +243,21 @@ export function createAcquisitionRequestProcessor({ readRequest,
     let nextIndex = start;
     for (let index = start; index < ordered.length; index++) {
       if (seen.size >= maxPreflights) break;
-      nextIndex = index + 1;
       const candidate = ordered[index];
+      if (scanStartedMs !== null && now() - scanStartedMs >= 15 * 60_000) {
+        return { ...held('candidate_scan_time_budget'),
+          nextCandidateOffset: index,
+          nextCandidateFingerprint: cursor };
+      }
+      nextIndex = index + 1;
+      if (preferSeasonPack && !fallbackPhase &&
+          hasSingleEpisodeHint(candidate)) continue;
+      // A fuzzy result from an exact-episode query can explicitly name a
+      // different episode. It should not consume a metainfo read or the
+      // bounded preview budget for the missing target.
+      if (candidate.targetEpisodeId !== undefined &&
+          candidate.targetedEpisode === false &&
+          hasSingleEpisodeHint(candidate)) continue;
       const key = `${candidate.indexerId}:${candidate.guid}`;
       if (seen.has(key)) continue;
       seen.add(key);

@@ -38,7 +38,7 @@ function episodeNumbers(name) {
   const plainPair = /^(0*[1-9]\d*)-(0*[1-9]\d*)$/.exec(stem);
   const plainSpecial = /^[Ss](0*[1-9]\d*)$/.exec(stem);
   const seasonEpisodes = [...stem.matchAll(
-    /(?:^|[ ._-])[Ss](\d{1,3})[Ee](\d{1,4})(?=$|[ ._-])/gi)];
+    /(?:^|[ ._-])[Ss](\d{1,3})[Ee](\d{1,4})(?:v\d{1,2})?(?=$|[ ._-])/gi)];
   // A second coordinate or a range must never be treated as one episode.
   if (seasonEpisodes.length > 1 ||
       (seasonEpisodes.length > 0 &&
@@ -51,13 +51,13 @@ function episodeNumbers(name) {
     matches.push({ type: season === 0 ? 'Special' : 'Episode',
       digits: match[2] });
   }
-  for (const match of stem.matchAll(/(?:^|[ ._-])[Ee](0*[1-9]\d{0,3})(?=$|[ ._-])/gi)) {
+  for (const match of stem.matchAll(/(?:^|[ ._-])[Ee](0*[1-9]\d{0,3})(?:v\d{1,2})?(?=$|[ ._-])/gi)) {
     matches.push({ type: 'Episode', digits: match[1] });
   }
   if (plainRegular) matches.push({ type: 'Episode', digits: plainRegular[1] });
   if (plainPair) matches.push({ type: 'Episode', digits: plainPair[1], endDigits: plainPair[2] });
   if (plainSpecial) matches.push({ type: 'Special', digits: plainSpecial[1] });
-  for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?=\s|$)/g)) {
+  for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)(?:v\d{1,2})?(?=\s|$)/gi)) {
     matches.push({ type: 'Episode', digits: match[1] });
   }
   for (const match of stem.matchAll(/(?:^|\s)-\s+(0*[1-9]\d*)-(0*[1-9]\d*)(?=\s|$)/g)) {

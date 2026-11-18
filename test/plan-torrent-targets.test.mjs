@@ -27,6 +27,19 @@ const pack = { state: 'prepared_stopped', files: [
   { name: 'Show/[Group] Show - 02 (1080p).ass', size: 25 },
 ] };
 
+test('maps a revised episode number without treating its version as an episode', () => {
+  for (const name of ['[Group] Show - 03v2 [1080p].mkv',
+    '[Group] Show S01E03v2 [1080p].mkv',
+    '[Group] Show E03v2 [1080p].mkv']) {
+    const plan = planTorrentTargets({ request: { ...request,
+      episodeIds: [1003] }, detail,
+    prepared: { state: 'prepared_stopped', files: [{ name, size: 1000 }] },
+    releaseTitle: '[Group] Show - 03v2 [1080p]', trustedTitle: 'Show' });
+    assert.equal(plan.state, 'planned_targets', name);
+    assert.deepEqual(plan.episodeIds, [1003]);
+  }
+});
+
 test('maps a full BD season whose files put episode numbers before source tags', () => {
   const episodeIds = Array.from({ length: 13 }, (_, index) => 2001 + index);
   const fullDetail = { ...detail, total: 13,

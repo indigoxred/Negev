@@ -47,6 +47,75 @@ test('a completed series selects a verified full-season plan before an episode',
   assert.equal(selected, 'candidate-2');
 });
 
+test('a completed-season pack check does not preview known single episodes', async () => {
+  const inspected = [];
+  const releases = Array.from({ length: 25 }, (_, index) => ({
+    ...candidate(index + 1), title: `Example - S01E${String(index + 1).padStart(2, '0')} WEB 1080p`,
+    seeders: 100 - index }));
+  releases.push({ ...candidate(26), title: 'Example Season 1 WEB 1080p',
+    seeders: 5 });
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    preferShokoPreview: true, maxPreflights: 3,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: releases }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw Error('must not submit'); },
+  });
+  assert.equal((await process({ requestId: 4 })).reason,
+    'season_pack_scan_complete');
+  assert.deepEqual(inspected, ['candidate-26']);
+});
+
+test('a slow candidate sweep stops at 15 minutes without losing its cursor', async () => {
+  let clock = 100;
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    now: () => clock,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      clock = 900_101;
+      return { state: 'held', reason: 'candidate_changed' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw new Error('Unexpected submission'); },
+  });
+  const result = await process({ requestId: 4, scanStartedMs: 100 });
+  assert.equal(result.reason, 'candidate_scan_time_budget');
+  assert.equal(result.nextCandidateOffset, 1);
+  assert.equal(seen.length, 1);
+});
+
+test('fuzzy other-episode hits do not consume a target preview', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    maxPreflights: 1,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [
+        { ...candidate(1), title: 'Example - 02 WEB 1080p',
+          targetEpisodeId: 1001, targetedEpisode: false, seeders: 500 },
+        { ...candidate(2), title: 'Example - 01 WEB 1080p',
+          seeders: 20 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 99 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 99);
+  assert.deepEqual(inspected, ['candidate-2']);
+});
+
 test('a later exact Shoko pack outranks an uncertain pack across bounded pages', async () => {
   let selected;
   const inspected = [];
@@ -137,7 +206,7 @@ test('a completed series can use an episode only after the season pack fails pre
   assertAttempt(await process({ requestId: 4,
     candidateOffset: scan.nextCandidateOffset,
     candidateFingerprint: scan.nextCandidateFingerprint }), 11);
-  assert.deepEqual(inspected, ['candidate-2', 'candidate-1', 'candidate-1']);
+  assert.deepEqual(inspected, ['candidate-2', 'candidate-1']);
   assert.equal(selected, 'candidate-1');
 });
 
@@ -203,13 +272,8 @@ test('an unhinted full pack wins after a bounded sweep beyond an episode', async
       return { state: 'stopped_observed', attemptId: 12 };
     },
   });
-  const first = await process({ requestId: 4 });
-  assert.equal(first.reason, 'season_pack_search_pending');
-  assert.equal(first.nextCandidateOffset, 2);
-  assertAttempt(await process({ requestId: 4,
-    candidateOffset: first.nextCandidateOffset,
-    candidateFingerprint: first.nextCandidateFingerprint }), 12);
-  assert.deepEqual(inspected, ['candidate-1', 'candidate-2', 'candidate-3']);
+  assertAttempt(await process({ requestId: 4 }), 12);
+  assert.deepEqual(inspected, ['candidate-3']);
   assert.equal(selected, 'candidate-3');
 });
 
@@ -251,7 +315,7 @@ test('episode fallback waits for all bounded pack pages, then resumes promptly',
     candidateOffset: second.nextCandidateOffset,
     candidateFingerprint: second.nextCandidateFingerprint }), 13);
   assert.deepEqual(inspected, ['candidate-1', 'candidate-2',
-    'candidate-3', 'candidate-4', 'candidate-3']);
+    'candidate-3']);
   assert.equal(selected, 'candidate-3');
 });
 
@@ -277,7 +341,7 @@ test('strict release policy never preflights zero-seed or dub-only releases', as
   assert.deepEqual(inspected, ['candidate-3']);
 });
 
-test('strict release policy tries BD before WEB and keeps 480p as a fallback', async () => {
+test('strict release policy tries BD before WEB and keeps 480p as a last fallback', async () => {
   const inspected = [];
   const process = createAcquisitionRequestProcessor({
     readRequest: () => request,

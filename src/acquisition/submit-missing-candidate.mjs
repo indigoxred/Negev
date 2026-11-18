@@ -4,7 +4,7 @@ import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { trustedReleaseQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -70,18 +70,26 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   // query from its response. Reconstruct that same trusted query here rather
   // than relying on a global Prowlarr query that the runtime does not set.
   let selectedQuery = trustedReleaseQueries(detail.title)[0];
+  let aliases = [];
   if (searchQuery !== undefined) {
-    let aliases;
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { return held('trusted_query_unavailable'); }
-    if (!trustedReleaseQueries(detail.title, aliases).includes(searchQuery)) {
+    const trusted = trustedReleaseQueries(detail.title, aliases);
+    const targeted = Array.isArray(episodeIds) && episodeIds.some((id) => {
+      const episode = detail.episodes.find((entry) => entry.id === id &&
+        entry.type === 'Episode');
+      return episode && searchQuery === trustedTargetedQuery(detail.title,
+        aliases, episode.number);
+    });
+    if (!trusted.includes(searchQuery) && !targeted) {
       return held('untrusted_release_query');
     }
     selectedQuery = searchQuery;
   }
   if (!selectedQuery) return held('untrusted_release_query');
-  if (!matchesTrustedReleaseTitle(candidate?.title, selectedQuery,
-    detail.title)) return held('release_title_mismatch');
+  const identityQuery = trustedReleaseQueries(detail.title, aliases)
+    .find((query) => matchesTrustedReleaseTitle(candidate?.title, query));
+  if (!identityQuery) return held('release_title_mismatch');
   if (typeof qbittorrent.verifyStagingRoot === 'function') {
     let staging;
     try { staging = await qbittorrent.verifyStagingRoot(); }
@@ -116,7 +124,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   // Re-derive the episode map even when a caller supplies a reviewed plan.
   // The final server boundary cannot trust stale or forged preflight fields.
   const mapped = planTorrentTargets({ request, detail, prepared,
-    releaseTitle: candidate.title, trustedTitle: selectedQuery });
+    releaseTitle: candidate.title, trustedTitle: identityQuery });
   if (mapped.state !== 'planned_targets') return mapped;
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;

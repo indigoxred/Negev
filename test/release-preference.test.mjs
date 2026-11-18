@@ -15,13 +15,21 @@ test('rejects zero peers, explicit English dub only, unsubbed, and 4K', () => {
   assert.equal(assessRelease(item('[Group] Show Dual Audio Eng Sub 1080p')).eligible, true);
 });
 
-test('prefers BD, 1080p, 720p, and finally 480p for old releases', () => {
+test('prefers BD and 1080p with 720p and 480p as ordered fallbacks', () => {
   const names = [
-    'Show WEB 480p', 'Show WEB 720p', 'Show WEB 1080p',
+    'Show WEB 720p', 'Show WEB 1080p',
     'Show BD 720p', 'Show BD 1080p',
   ];
   assert.deepEqual(names.map((title) => item(title)).sort(compareReleases)
     .map((release) => release.title), names.reverse());
+  assert.equal(assessRelease(item('Show WEB 480p', 500)).eligible, true);
+});
+
+test('an exact missing-episode 1080p release precedes other episodes', () => {
+  const targeted = item('Show - 05 WEB 1080p', 80, { targetedEpisode: true });
+  const unrelated = item('Show - 08 WEB 1080p', 900,
+    { targetedEpisode: false });
+  assert.equal([unrelated, targeted].sort(compareReleases)[0], targeted);
 });
 
 test('prefers healthy seeded and trusted Nyaa results within a quality tier', () => {
@@ -39,7 +47,17 @@ test('prefers healthy seeded and trusted Nyaa results within a quality tier', ()
 test('a healthy 720p release outranks a barely seeded BD 1080p release', () => {
   const ordered = [item('Show BD 1080p', 1),
     item('Show WEB 720p', 18)].sort(compareReleases);
-  assert.equal(ordered[0].seeders, 18);
+  assert.equal(ordered[0].title, 'Show WEB 720p');
+});
+
+test('a strong 1080p or 720p release outranks a more seeded 480p fallback', () => {
+  const releases = [item('Show - 05 WEB 480p', 500,
+    { targetedEpisode: true }),
+  item('Show - 05 WEB 720p', 18, { targetedEpisode: true }),
+  item('Show - 05 WEB 1080p', 15, { targetedEpisode: true })];
+  assert.deepEqual(releases.sort(compareReleases).map((entry) => entry.title),
+    ['Show - 05 WEB 1080p', 'Show - 05 WEB 720p',
+      'Show - 05 WEB 480p']);
 });
 
 test('quality wins when both releases have several reported seeders', () => {

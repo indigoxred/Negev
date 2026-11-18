@@ -2,7 +2,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { trustedReleaseQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
@@ -60,12 +60,29 @@ export async function previewRequestCandidate({ requestId, candidate,
   const firstQuery = queries.find((query) =>
     matchesTrustedReleaseTitle(candidate.title, query)) ?? canonicalQuery;
   if (!firstQuery) return held('detail_unavailable');
+  let sourceQuery = firstQuery;
+  if (candidate.sourceQuery !== undefined) {
+    if (typeof candidate.sourceQuery !== 'string' ||
+        /[\x00-\x1f\x7f]/.test(candidate.sourceQuery)) {
+      return held('untrusted_release_query');
+    }
+    if (candidate.targetEpisodeId !== undefined) {
+      const target = detail.episodes.find((episode) =>
+        episode.id === candidate.targetEpisodeId && episode.type === 'Episode');
+      if (!target || !request.episodeIds.includes(target.id) ||
+          candidate.sourceQuery !== trustedTargetedQuery(detail.title,
+            aliases, target.number)) return held('untrusted_release_query');
+    } else if (!queries.includes(candidate.sourceQuery)) {
+      return held('untrusted_release_query');
+    }
+    sourceQuery = candidate.sourceQuery;
+  }
   let prepared;
-  let searchQuery = firstQuery;
-  try { prepared = await prepare({ query: firstQuery, candidate }); }
+  let searchQuery = sourceQuery;
+  try { prepared = await prepare({ query: sourceQuery, candidate }); }
   catch { return held('torrent_preflight_unavailable'); }
   if (prepared?.state === 'held' && prepared.reason === 'candidate_changed') {
-    for (const query of queries.filter((value) => value !== firstQuery)) {
+    for (const query of queries.filter((value) => value !== sourceQuery)) {
       try { await pause(1_000); }
       catch { return held('torrent_preflight_unavailable'); }
       try { prepared = await prepare({ query, candidate }); }
@@ -91,8 +108,12 @@ export async function previewRequestCandidate({ requestId, candidate,
     if (checked.state !== 'related_title_clear') return checked;
   }
   const plan = planTorrentTargets({ request, detail, prepared,
-    releaseTitle: candidate.title, trustedTitle: searchQuery });
+    releaseTitle: candidate.title, trustedTitle: firstQuery });
   if (plan.state !== 'planned_targets') return plan;
+  if (candidate.targetEpisodeId !== undefined &&
+      !plan.episodeIds.includes(candidate.targetEpisodeId)) {
+    return held('targeted_result_wrong_episode');
+  }
   if (readVideoExtensions) {
     let extensions;
     try { extensions = await readVideoExtensions(); }
