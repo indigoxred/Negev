@@ -29,7 +29,8 @@ test('discovers candidates for an existing exact request without authorizing the
   });
   assert.deepEqual(await discover({ requestId: 12 }), {
     state: 'candidates', requestId: 12, anidbId: 1234,
-    items: [{ guid: 'candidate-1', title: 'Canonical Anime 01', evidence: 'unverified' }],
+    items: [{ guid: 'candidate-1', title: 'Canonical Anime 01',
+      evidence: 'unverified', sourceQuery: 'Canonical Anime' }],
     exhaustive: false,
   });
   assert.deepEqual(queries, [{ query: 'Canonical Anime' }]);
@@ -62,7 +63,10 @@ test('a missing episode search reaches older releases without losing title alias
     searchReleases: async ({ query }) => {
       queries.push(query);
       return { state: 'candidates', items: Array.from({ length: 25 }, (_, i) => ({
-        indexerId: 7, guid: `${query}-${i}`, title: `${query} release ${i}`,
+        indexerId: 7, guid: `${query}-${i}`,
+        title: query === 'Canonical Anime 01'
+          ? `Canonical Anime - ${i === 1 ? '08' : '01'} WEB 1080p release ${i}`
+          : `${query} release ${i}`,
         evidence: 'unverified' })) };
     },
   });
@@ -70,12 +74,19 @@ test('a missing episode search reaches older releases without losing title alias
   assert.deepEqual(queries, ['Canonical Anime 01', 'Canonical Anime', 'Official English']);
   assert.equal(found.items.length, 50);
   for (const query of queries) {
-    assert.ok(found.items.some((item) => item.title.startsWith(`${query} release`)));
+    assert.ok(found.items.some((item) => item.sourceQuery === query));
   }
-  assert.ok(found.items[0].title.startsWith('Canonical Anime 01 release'));
+  assert.ok(found.items[0].title.startsWith('Canonical Anime - 01'));
   assert.equal(found.items[0].targetedEpisode, true);
+  assert.equal(found.items.find((item) => item.guid === 'Canonical Anime 01-1')
+    .targetedEpisode, false);
+  assert.equal(found.items[0].sourceQuery, 'Canonical Anime 01');
+  assert.equal(found.items[0].targetEpisodeId, 1001);
   assert.equal(found.items.find((item) =>
     item.title.startsWith('Canonical Anime release')).targetedEpisode, undefined);
+  assert.equal(found.items.find((item) =>
+    item.title.startsWith('Official English release')).sourceQuery,
+  'Official English');
 });
 
 test('an episode search cannot use a target outside the saved request', async () => {

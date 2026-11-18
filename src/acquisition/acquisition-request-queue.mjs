@@ -62,6 +62,7 @@ export function openAcquisitionRequestQueue(dbPath,
       next_due_ms INTEGER CHECK(next_due_ms>=0),
       empty_since_ms INTEGER CHECK(empty_since_ms>=0),
       metadata_since_ms INTEGER CHECK(metadata_since_ms>=0),
+      scan_started_ms INTEGER CHECK(scan_started_ms>=0),
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
       candidate_fingerprint TEXT
     ) STRICT`);
@@ -90,6 +91,10 @@ export function openAcquisitionRequestQueue(dbPath,
       .some((column) => column.name === 'metadata_since_ms')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN metadata_since_ms INTEGER CHECK(metadata_since_ms>=0)');
     }
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'scan_started_ms')) {
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN scan_started_ms INTEGER CHECK(scan_started_ms>=0)');
+    }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -98,7 +103,8 @@ export function openAcquisitionRequestQueue(dbPath,
   // Active Airing watches continue so later episodes can be added.
   const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
       COALESCE(c.candidate_offset,0) AS candidateOffset,
-      c.candidate_fingerprint AS candidateFingerprint FROM requests r
+      c.candidate_fingerprint AS candidateFingerprint,
+      c.scan_started_ms AS scanStartedMs FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
@@ -118,12 +124,14 @@ export function openAcquisitionRequestQueue(dbPath,
         ('shoko_metadata_missing','reconciled_observed_attempts'))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL`);
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?) ON CONFLICT(request_id) DO UPDATE SET
+    pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
+    scan_started_ms=COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms)`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
     metadata_since_ms=?,
+    scan_started_ms=?,
     candidate_offset=COALESCE(?,candidate_offset),
     candidate_fingerprint=COALESCE(?,candidate_fingerprint)
     WHERE request_id=? AND pass=? AND state IS NULL`);
@@ -131,11 +139,13 @@ export function openAcquisitionRequestQueue(dbPath,
     attempt_id AS attemptId,candidate_offset AS candidateOffset,
     candidate_fingerprint AS candidateFingerprint,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs,
-    empty_since_ms AS emptySinceMs,metadata_since_ms AS metadataSinceMs
+    empty_since_ms AS emptySinceMs,metadata_since_ms AS metadataSinceMs,
+    scan_started_ms AS scanStartedMs
     FROM acquisition_request_checks WHERE request_id=?`);
   const wakeRecovered = db.prepare(`UPDATE acquisition_request_checks
     SET state='held',reason='reconciled_observed_attempts',attempt_id=NULL,
-      next_due_ms=?,candidate_offset=0,candidate_fingerprint=NULL
+      next_due_ms=?,candidate_offset=0,candidate_fingerprint=NULL,
+      scan_started_ms=NULL
     WHERE request_id=? AND state IS NOT NULL AND
       EXISTS (SELECT 1 FROM requests r WHERE r.id=request_id AND
         r.status='held' AND r.cancelled_ms IS NULL)`);
@@ -382,7 +392,7 @@ export function openAcquisitionRequestQueue(dbPath,
           if (row) {
             const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
             if (ownership === 'eligible') {
-              claim.run(row.id, position.pass);
+              claim.run(row.id, position.pass, nowMs);
               return { state: 'claimed', requestId: row.id, pass: position.pass };
             }
             if (!['owned', 'unmapped'].includes(ownership)) {
@@ -408,7 +418,7 @@ export function openAcquisitionRequestQueue(dbPath,
           }
           afterId = row.id;
           if (ownership !== 'eligible') continue;
-          claim.run(row.id, position.pass);
+          claim.run(row.id, position.pass, nowMs);
           return { state: 'claimed', requestId: row.id, pass: position.pass,
             ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
             ...(row.candidateFingerprint ?
@@ -464,14 +474,19 @@ export function openAcquisitionRequestQueue(dbPath,
       const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
       const nextDueMs = reason === 'interrupted_attempt_present'
-        ? null : advanced ? checkedMs : checkedMs +
+        ? null : reason === 'candidate_scan_time_budget'
+          ? checkedMs + 15 * 60_000 : advanced ? checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
+      const scanStartedMs = reason === 'candidate_scan_time_budget' ||
+        nextCandidateOffset === 0 &&
+          !['season_pack_scan_complete', 'season_pack_uncertain_complete'].includes(reason)
+        ? null : previous?.scanStartedMs ?? checkedMs;
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
-        emptySinceMs, metadataSinceMs,
+        emptySinceMs, metadataSinceMs, scanStartedMs,
         nextCandidateOffset, nextCandidateFingerprint,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
@@ -481,10 +496,14 @@ export function openAcquisitionRequestQueue(dbPath,
       const row = result.get(requestId);
       if (!row) return null;
       const { candidateOffset, candidateFingerprint, emptySinceMs,
-        metadataSinceMs, ...other } = row;
+        metadataSinceMs, scanStartedMs, ...other } = row;
       return { ...other,
         ...(candidateOffset > 0 ? { candidateOffset } : {}),
         ...(candidateFingerprint ? { candidateFingerprint } : {}) };
+    },
+    getScanStartedMs(requestId) {
+      if (!validId(requestId)) throw new TypeError('Invalid request ID');
+      return result.get(requestId)?.scanStartedMs ?? null;
     },
     listUnresolved({ afterId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
@@ -526,6 +545,8 @@ export function createAcquisitionPageWorker({ queue, processRequest,
           let outcome;
           try { outcome = await processRequest({ requestId: next.requestId,
             pass: next.pass,
+            scanStartedMs: typeof queue.getScanStartedMs === 'function'
+              ? queue.getScanStartedMs(next.requestId) : undefined,
             candidateOffset: next.candidateOffset ?? 0,
             candidateFingerprint: next.candidateFingerprint ?? null }); }
           catch { outcome = held('worker_unavailable'); }

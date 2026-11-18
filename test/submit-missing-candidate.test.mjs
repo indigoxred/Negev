@@ -189,6 +189,25 @@ test('an alias-only stopped submission revalidates its server-approved title', a
     assert.deepEqual(queries, ['Official English']);
   }));
 
+test('an exact-episode stopped submission reuses and revalidates its search query', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const queries = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async (url) => {
+        if (new URL(url).pathname.endsWith('/search')) {
+          queries.push(new URL(url).searchParams.get('query'));
+          return Response.json([{ ...candidate, protocol: 'torrent',
+            downloadUrl: proxy }]);
+        }
+        return new Response(bytes, { headers: {
+          'content-type': 'application/x-bittorrent' } });
+      }, qbittorrentFetch: qbittorrentFetch([]) });
+    const result = await submitMissingCandidate({ ...input,
+      searchQuery: 'Example 01' });
+    assert.equal(result.state, 'stopped_observed');
+    assert.deepEqual(queries, ['Example 01']);
+  }));
+
 test('a caller-supplied release query outside the trusted AniDB titles cannot reach an indexer', async () =>
   withLedgers(async ({ request, ledger }) => {
     let providerCalls = 0;
@@ -378,6 +397,7 @@ test('one saved request advances through the bounded processor to one stopped to
         prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
       const processRequest = createAcquisitionRequestProcessor({
         readRequest: () => request,
+        now: () => 201,
         discoverCandidates: async () => ({ state: 'candidates',
           requestId: request.id, anidbId: 42, items: [{ ...candidate,
             evidence: 'unverified' }] }),

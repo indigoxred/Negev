@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { previewRequestCandidate } from '../src/acquisition/request-candidate-preflight.mjs';
+import { createRequestCandidateDiscovery } from '../src/acquisition/request-candidate-discovery.mjs';
 import { prepareStoppedCandidate } from '../src/acquisition/prepare-stopped-candidate.mjs';
 
 const candidate = { guid: 'release-1', indexerId: 7,
@@ -37,6 +38,61 @@ test('preflight returns only provisional file and target evidence', async () => 
     registeredInAniDb: false,
     downloadStarted: false });
   assert.equal(JSON.stringify(result).includes('form'), false);
+});
+
+test('an exact-episode result is rechecked with its original trusted query', async () => {
+  const queried = [];
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, sourceQuery: 'Example 01',
+      targetEpisodeId: 1001, targetedEpisode: true },
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async ({ query }) => { queried.push(query); return prepared; } });
+  assert.equal(result.state, 'preflight');
+  assert.deepEqual(queried, ['Example 01']);
+  assert.equal(result.searchQuery, 'Example 01');
+});
+
+test('a release absent from broad top 50 survives discovery and preflight', async () => {
+  const exact = { ...candidate, title: 'Example - 01 WEB 1080p',
+    seeders: 100, evidence: 'unverified' };
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    pause: async () => {},
+    searchReleases: async ({ query }) => ({ state: 'candidates',
+      items: query === 'Example 01' ? [exact] :
+        Array.from({ length: 50 }, (_, index) => ({ ...exact,
+          guid: `decoy-${index}`, title: `Example - ${index + 2} WEB 1080p` })) }),
+  });
+  const found = await discover({ requestId: 4,
+    searchTargetEpisodeId: 1001 });
+  const selected = found.items.find((item) => item.guid === exact.guid);
+  assert.equal(selected.sourceQuery, 'Example 01');
+  const queried = [];
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: selected, readRequest: () => request,
+    loadDetail: async () => detail,
+    prepare: async ({ query }) => {
+      queried.push(query);
+      return query === 'Example 01' ? prepared :
+        { state: 'held', reason: 'candidate_changed' };
+    } });
+  assert.equal(result.state, 'preflight');
+  assert.deepEqual(queried, ['Example 01']);
+});
+
+test('an untrusted query or fuzzy other-episode result cannot pass preflight', async () => {
+  let preparedCalls = 0;
+  const run = (selected, files) => previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, sourceQuery: selected,
+      targetEpisodeId: 1001, targetedEpisode: true },
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => { preparedCalls++; return { ...prepared, files }; } });
+  assert.deepEqual(await run('Other Anime 01', prepared.files),
+    { state: 'held', reason: 'untrusted_release_query' });
+  assert.equal(preparedCalls, 0);
+  assert.deepEqual(await run('Example 01',
+    [{ name: 'Example - 02.mkv', size: 1_000 }]),
+    { state: 'held', reason: 'targeted_result_wrong_episode' });
 });
 
 test('preflight refuses a video excluded by Shoko and waits if settings cannot be read', async () => {

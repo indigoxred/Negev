@@ -6,6 +6,28 @@ export const hasSeasonPackHint = (candidate) => {
   return /\b(?:complete[ ._-]*season|season[ ._-]*\d{1,2}|batch|s\d{1,2})\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
 };
 
+// An explicit single-episode coordinate cannot cover a completed season.
+// Keep title-only and range-labelled releases eligible for metainfo review:
+// some older packs do not advertise "batch" or "season" in their title.
+export const hasSingleEpisodeHint = (candidate) => {
+  const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  if (/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E)?\d{1,3}\b/i.test(title)) return false;
+  return /(?:^|[ ._-])S\d{1,2}E\d{1,3}(?:v\d+)?(?=$|[ ._\-[\(])/i.test(title) ||
+    /\s[-–]\s0*[1-9]\d{0,2}(?:v\d+)?(?=\s|$|[.\[(])/i.test(title);
+};
+
+export const hasTargetEpisodeHint = (candidate, number) => {
+  if (!Number.isSafeInteger(number) || number < 1 || number > 9999) return false;
+  const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  const patterns = [
+    /(?:^|[ ._-])S\d{1,2}E(0*[1-9]\d{0,3})(?:v\d+)?(?=$|[ ._\-[\(])/gi,
+    /(?:^|[ ._-])E(0*[1-9]\d{0,3})(?:v\d+)?(?=$|[ ._\-[\(])/gi,
+    /\s[-–]\s(0*[1-9]\d{0,3})(?:v\d+)?(?=\s|$|[.\[(])/gi,
+  ];
+  return patterns.some((pattern) => [...title.matchAll(pattern)]
+    .some((match) => Number(match[1]) === number));
+};
+
 export function assessRelease(candidate) {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
   const seeders = Number.isSafeInteger(candidate?.seeders) ?
@@ -45,6 +67,10 @@ export function compareReleases(left, right, { preferSeasonPack = false } = {}) 
   if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
   if (preferSeasonPack && hasSeasonPackHint(left) !== hasSeasonPackHint(right)) {
     return Number(hasSeasonPackHint(right)) - Number(hasSeasonPackHint(left));
+  }
+  if (left.targetedEpisode !== right.targetedEpisode && !preferSeasonPack) {
+    return Number(right.targetedEpisode === true) -
+      Number(left.targetedEpisode === true);
   }
   if (a.healthyPeers !== b.healthyPeers) {
     return Number(b.healthyPeers) - Number(a.healthyPeers);

@@ -427,6 +427,56 @@ test('a forward candidate cursor can continue next pass without a 30-minute dela
     } finally { queue.close(); }
   }));
 
+test('a candidate scan keeps its original start across pages and resets after exhaustion', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      assert.equal(queue.getScanStartedMs(first.requestId), 100);
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'no_safe_release', nextCandidateOffset: 1,
+        nextCandidateFingerprint: fingerprint, checkedMs: 200 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      const second = queue.claimNext({ nowMs: 300 });
+      assert.equal(second.requestId, 1);
+      assert.equal(queue.getScanStartedMs(1), 100);
+      queue.recordResult({ requestId: 1, pass: second.pass,
+        state: 'held', reason: 'no_safe_release', nextCandidateOffset: 0,
+        checkedMs: 301 });
+      queue.claimNext({ nowMs: 302 });
+      queue.claimNext({ nowMs: 302 });
+      queue.claimNext({ nowMs: 302 });
+      const third = queue.claimNext({ nowMs: 1_800_302 });
+      assert.equal(third.requestId, 1);
+      assert.equal(queue.getScanStartedMs(1), 1_800_302);
+    } finally { queue.close(); }
+  }));
+
+test('a timed-out candidate scan pauses for 15 minutes and then continues', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'candidate_scan_time_budget',
+        nextCandidateOffset: 1, nextCandidateFingerprint: fingerprint,
+        checkedMs: 900_101 });
+      assert.equal(queue.getResult(1).nextDueMs, 1_800_101);
+      assert.equal(queue.getScanStartedMs(1), null);
+      queue.claimNext({ nowMs: 900_102 });
+      queue.claimNext({ nowMs: 900_102 });
+      queue.claimNext({ nowMs: 900_102 });
+      const next = queue.claimNext({ nowMs: 1_800_101 });
+      assert.equal(next.requestId, 1);
+      assert.equal(next.candidateOffset, 1);
+      assert.equal(queue.getScanStartedMs(1), 1_800_101);
+    } finally { queue.close(); }
+  }));
+
 test('a completed pack scan can enter the next bounded phase immediately', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

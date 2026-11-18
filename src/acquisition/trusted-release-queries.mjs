@@ -18,3 +18,15 @@ export function trustedReleaseQueries(title, aliases = []) {
   }
   return queries;
 }
+
+// A missing-episode search is derived only from the current same-ID title
+// source and an AniDB episode number. Preserve it through preflight and
+// submission so a broad title page cannot make an older hit disappear.
+export function trustedTargetedQuery(title, aliases, episodeNumber) {
+  if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1 ||
+      episodeNumber > 9_999) return null;
+  const first = trustedReleaseQueries(title, aliases)[0];
+  if (!first) return null;
+  const query = `${first} ${String(episodeNumber).padStart(2, '0')}`;
+  return query.length <= 120 ? query : null;
+}
