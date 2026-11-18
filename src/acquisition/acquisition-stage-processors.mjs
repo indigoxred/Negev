@@ -194,7 +194,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           const ownership = await checkOwnership(request.anidbId);
           if (ownership) return ownership;
           return submitMissingCandidate({ request, ...selected,
-            releaseQueries, readEvidence, readRelatedTitles: relatedTitleReader,
+            releaseQueries, readEvidence, offlineLookup,
+            readRelatedTitles: relatedTitleReader,
             ledger: acquisitions, firstTimePolicy,
             renewQbittorrent,
             publicLibraryIds: publicLibraryIds(request.kind), now,

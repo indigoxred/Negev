@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createPipelineScheduler } from
   '../src/acquisition/acquisition-pipeline-scheduler.mjs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from
+  '../src/acquisition/acquisition-request-queue.mjs';
 
 function clock() {
   const jobs = new Map();
@@ -97,6 +103,47 @@ test('a due saved candidate sweep gets prompt continuation turns while other sta
   await timer.advance();
   assert.deepEqual(calls, [74, 'completion', 74, 'publish', 74]);
   await scheduler.stop();
+});
+
+test('the real queue accepts scheduler continuations and keeps their cursor', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-scheduler-queue-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const ledger = openRequestLedger(dbPath);
+  const saved = ledger.submit({ requesterId: 1, requestKey: 'scan',
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      episodeIds: [1001], monitorFuture: false }, nowMs: 1 });
+  const queue = openAcquisitionRequestQueue(dbPath);
+  const timer = clock();
+  const seen = [];
+  const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+  const worker = createAcquisitionPageWorker({ queue, limit: 1,
+    now: () => 1_000,
+    processRequest: async ({ candidateOffset }) => {
+      seen.push(candidateOffset);
+      return { state: 'held', reason: 'season_pack_search_pending',
+        nextCandidateOffset: candidateOffset + 1,
+        nextCandidateFingerprint: fingerprint };
+    } });
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: (options) => worker.runOnce(options),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 1_000,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  try {
+    await scheduler.start();
+    scheduler.wakeRequest(saved.requestId);
+    for (let i = 0; i < 5; i++) await timer.advance();
+    assert.deepEqual(seen, [0, 1, 2]);
+  } finally {
+    await scheduler.stop();
+    queue.close(); ledger.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('missing metadata gets a due retry without waiting for a full stage cycle', async () => {

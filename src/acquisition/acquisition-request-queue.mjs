@@ -135,12 +135,20 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
       (c.state='held' AND c.reason IN
-        ('shoko_metadata_missing','reconciled_observed_attempts'))) LIMIT 1`));
+        ('shoko_metadata_missing','reconciled_observed_attempts',
+         'season_pack_search_pending','season_pack_scan_complete',
+         'season_pack_uncertain_complete') AND
+       (c.reason NOT LIKE 'season_pack_%' OR
+         (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL)))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms)
     VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,reason=NULL,attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
+    pass=excluded.pass,state=NULL,
+    reason=CASE WHEN acquisition_request_checks.reason IN
+      ('season_pack_scan_complete','season_pack_uncertain_complete')
+      THEN acquisition_request_checks.reason ELSE NULL END,
+    attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
     scan_started_ms=COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms)`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
@@ -409,7 +417,10 @@ export function openAcquisitionRequestQueue(dbPath,
             const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
             if (ownership === 'eligible') {
               claim.run(row.id, position.pass, nowMs);
-              return { state: 'claimed', requestId: row.id, pass: position.pass };
+              return { state: 'claimed', requestId: row.id, pass: position.pass,
+                ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
+                ...(row.candidateFingerprint ?
+                  { candidateFingerprint: row.candidateFingerprint } : {}) };
             }
             if (!['owned', 'unmapped'].includes(ownership)) {
               return held('sonarr_ownership_unavailable');
@@ -468,10 +479,20 @@ export function openAcquisitionRequestQueue(dbPath,
         previous?.candidateFingerprint != null &&
         previous.candidateFingerprint !== nextCandidateFingerprint &&
         nextCandidateOffset === previous.candidateOffset;
+      // Completion saves the next phase's fingerprint before its first page.
+      // Its offset starts again at zero, so a lower positive offset is still
+      // progress within that new phase rather than a stalled sweep.
+      const enteredSeasonPhase = reason === 'season_pack_search_pending' &&
+        ['season_pack_scan_complete', 'season_pack_uncertain_complete']
+          .includes(previous?.reason) &&
+        previous.candidateFingerprint === nextCandidateFingerprint &&
+        nextCandidateOffset > 0 &&
+        nextCandidateOffset < previous.candidateOffset;
       const advanced = previous?.pass === pass && previous.state === null &&
         nextCandidateFingerprint !== null &&
         nextCandidateOffset !== null &&
-        (nextCandidateOffset > previous.candidateOffset || completedSeasonPhase);
+        (nextCandidateOffset > previous.candidateOffset ||
+          completedSeasonPhase || enteredSeasonPhase);
       const newScanPolicy = previous?.candidateFingerprint &&
         nextCandidateFingerprint && !completedSeasonPhase &&
         previous.candidateFingerprint.split(':')[0] !==

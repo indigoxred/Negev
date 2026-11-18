@@ -77,6 +77,52 @@ test('a long same-ID main title keeps its exact search query through preflight',
   assert.deepEqual(queried, [`${japanese} 01`]);
 });
 
+test('a broad long-title search prefix cannot establish a different title identity', async () => {
+  const longTitle = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu: ' +
+    'Long subtitle '.repeat(12);
+  let preparedCalls = 0;
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate,
+      title: '[Group] Kashita Maryoku wa A Completely Different Tale - 01',
+      sourceQuery: 'Kashita Maryoku wa 01', targetEpisodeId: 1001,
+      targetedEpisode: true },
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: longTitle }),
+    releaseQueries: async () => ['Magic Repo Man'],
+    prepare: async () => { preparedCalls++; return prepared; },
+  });
+  assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+  assert.equal(preparedCalls, 0);
+});
+
+test('a broad search hit needs an independent exact Shoko episode prediction', async () => {
+  const longTitle = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu: ' +
+    'Long subtitle '.repeat(12);
+  const filename = 'Kashita Maryoku wa A Completely Different Tale - 01.mkv';
+  const input = { requestId: 4,
+    candidate: { ...candidate,
+      title: '[Group] Kashita Maryoku wa A Completely Different Tale - 01',
+      sourceQuery: 'Kashita Maryoku wa 01', targetEpisodeId: 1001,
+      targetedEpisode: true },
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: longTitle }),
+    releaseQueries: async () => ['Magic Repo Man'],
+    prepare: async () => ({ ...prepared, files: [{ name: filename, size: 1_000 }] }),
+  };
+  assert.deepEqual(await previewRequestCandidate({ ...input,
+    offlineLookup: async () => ({ status: 204 }) }),
+  { state: 'held', reason: 'release_title_mismatch' });
+  const result = await previewRequestCandidate({ ...input,
+    offlineLookup: async () => ({ status: 200, release: {
+      ProviderName: 'Offline Importer', IsCorrupted: false,
+      ID: 'offline://42-1001', OriginalFilename: filename,
+      CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+        PercentageStart: 0, PercentageEnd: 100 }],
+    } }) });
+  assert.equal(result.state, 'preflight');
+  assert.equal(result.shokoPreview, 'exact');
+});
+
 test('a short same-ID query keeps a seeded 1080p title eligible for exact file checks', async () => {
   const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
   const selected = { ...candidate,
@@ -340,7 +386,7 @@ test('a long canonical title without a verified short alias cannot fetch a torre
     releaseQueries: async () => ['X', 'Y'.repeat(121)],
     prepare: async () => { providerCalls++; return prepared; },
   });
-  assert.deepEqual(result, { state: 'held', reason: 'detail_unavailable' });
+  assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
   assert.equal(providerCalls, 0);
 });
 

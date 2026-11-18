@@ -4,8 +4,10 @@ import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
+import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
+import { basename } from 'node:path';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -44,13 +46,14 @@ function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
-  readRelatedTitles,
+  readRelatedTitles, offlineLookup,
   readEvidence, publicLibraryIds, ledger,
   renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
       typeof releaseQueries !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (offlineLookup !== undefined && typeof offlineLookup !== 'function') ||
       (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function') ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       (expectedHash !== undefined &&
@@ -87,9 +90,13 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     selectedQuery = searchQuery;
   }
   if (!selectedQuery) return held('untrusted_release_query');
-  const identityQuery = trustedReleaseQueries(detail.title, aliases)
+  const verifiedIdentity = trustedIdentityTitles(detail.title, aliases)
     .find((query) => matchesTrustedReleaseTitle(candidate?.title, query));
+  const identityQuery = verifiedIdentity ??
+    trustedReleaseQueries(detail.title, aliases)
+      .find((query) => matchesTrustedReleaseTitle(candidate?.title, query));
   if (!identityQuery) return held('release_title_mismatch');
+  if (!verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
   if (typeof qbittorrent.verifyStagingRoot === 'function') {
     let staging;
     try { staging = await qbittorrent.verifyStagingRoot(); }
@@ -135,6 +142,19 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (selectedFiles.some((file) => JSON.stringify([...file.episodeIds]
     .sort((a, b) => a - b)) !== JSON.stringify(mappedByName.get(file.name)))) {
     return held('file_plan_mismatch');
+  }
+  if (!verifiedIdentity) {
+    for (const file of selectedFiles) {
+      if (file.episodeIds.length !== 1) return held('release_title_mismatch');
+      const filename = basename(file.name);
+      let preview;
+      try { preview = await offlineLookup({ filename }); }
+      catch { return held('release_title_mismatch'); }
+      if (evaluateOfflinePreview(preview, { animeId: request.anidbId,
+        episodeIds: file.episodeIds, filename }).state !== 'accepted') {
+        return held('release_title_mismatch');
+      }
+    }
   }
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });

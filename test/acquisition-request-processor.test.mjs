@@ -203,6 +203,40 @@ test('an inconclusive 1080p preview outranks an exact 480p preview', async () =>
   assert.equal(selected, 'candidate-1');
 });
 
+test('completed-season quality is independent of the three-preview page boundary', async () => {
+  const picked = [];
+  for (const pageSize of [3, 4]) {
+    const releases = [1, 2, 3, 4].map((number) => ({ ...candidate(number),
+      title: `Example Season 1 WEB ${number === 4 ? '480p' : '1080p'} v${number}`,
+      seeders: 10 }));
+    const process = createAcquisitionRequestProcessor({
+      readRequest: () => request, requireReleasePolicy: true,
+      preferShokoPreview: true, maxPreflights: pageSize,
+      discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+        anidbId: 42, releaseState: 'completed', items: releases }),
+      previewCandidate: async ({ candidate: item }) => ({ ...preflight,
+        shokoPreview: item.guid === 'candidate-4' ? 'exact' : 'uncertain',
+        episodeIds: [1001, 1002], files: [1, 2].map((number) => ({
+          name: `Example - 0${number}.mkv`, size: 1000,
+          episodeIds: [1000 + number] })) }),
+      loadDetail: async () => detail,
+      submitCandidate: async ({ candidate: item }) => {
+        picked.push({ pageSize, guid: item.guid });
+        return { state: 'stopped_observed', attemptId: 99 };
+      },
+    });
+    let result = await process({ requestId: 4 });
+    for (let turn = 0; result.state === 'held' && turn < 6; turn++) {
+      result = await process({ requestId: 4,
+        candidateOffset: result.nextCandidateOffset,
+        candidateFingerprint: result.nextCandidateFingerprint });
+    }
+    assertAttempt(result, 99);
+  }
+  assert.deepEqual(picked, [{ pageSize: 3, guid: 'candidate-1' },
+    { pageSize: 4, guid: 'candidate-1' }]);
+});
+
 test('a slow candidate sweep keeps advancing through its finite candidate list', async () => {
   let clock = 100;
   const seen = [];

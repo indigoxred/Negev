@@ -321,6 +321,20 @@ export function createAcquisitionRequestProcessor({ readRequest,
           break;
         }
       }
+      // Earlier preview pages may contain a stronger pack whose Shoko match
+      // was uncertain. Do not let an exact but weaker pack win solely because
+      // the stronger preview fell on the previous worker turn. The next
+      // bounded uncertain-pack phase revisits those candidates and validates
+      // them again before any submission.
+      if (preferSeasonPack && preferShokoPreview && !uncertainPackPhase &&
+          preview.shokoPreview === 'exact' && consumed.some((id) => {
+            const prior = currentById.get(id);
+            if (!prior) return false;
+            const priorQuality = assessRelease(prior);
+            const currentQuality = assessRelease(candidate);
+            return priorQuality.healthyPeers === currentQuality.healthyPeers &&
+              priorQuality.quality > currentQuality.quality;
+          })) continue;
       selected = { candidate, preview };
       break;
     }
