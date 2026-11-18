@@ -40,7 +40,8 @@ function addRow(byId, row) {
   let entry = byId.get(id);
   if (!entry) {
     entry = { anidbId: id, title: null, aliases: new Set(),
-      englishOfficial: new Set(), englishSynonyms: new Set() };
+      englishOfficial: new Set(), englishSynonyms: new Set(),
+      romanizedSynonyms: new Set() };
     byId.set(id, entry);
   }
   if (type === 'main') {
@@ -53,6 +54,9 @@ function addRow(byId, row) {
   if (type === 'synonym' && language.toLowerCase() === 'en') {
     entry.englishSynonyms.add(title);
   }
+  if (type === 'synonym' && language.toLowerCase() === 'x-jat') {
+    entry.romanizedSynonyms.add(title);
+  }
   entry.aliases.add(title.toLocaleLowerCase('en'));
 }
 
@@ -61,7 +65,14 @@ function finishIndex(byId) {
     throw new TypeError('Incomplete AniDB title dump');
   }
   for (const entry of byId.values()) {
-    entry.releaseQueries = [...new Set([entry.title, ...entry.englishOfficial])].slice(0, 3);
+    const romanized = [...entry.romanizedSynonyms]
+      .filter((title) => title.length >= 16 && title.length <= 120 &&
+        title.length < entry.title.length &&
+        (title.match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3)
+      .sort((left, right) => left.length - right.length ||
+        left.localeCompare(right));
+    entry.releaseQueries = [...new Set([entry.title,
+      ...romanized.slice(0, 2), ...entry.englishOfficial])].slice(0, 4);
     // AniDB often lists the translated name as an English synonym rather
     // than an official title. Prefer a descriptive synonym over an abbreviated
     // one for display, without changing release search or anime identity.
@@ -70,6 +81,7 @@ function finishIndex(byId) {
         .sort((a, b) => b.length - a.length || a.localeCompare(b))[0] ?? null;
     delete entry.englishOfficial;
     delete entry.englishSynonyms;
+    delete entry.romanizedSynonyms;
   }
   return byId;
 }

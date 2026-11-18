@@ -41,3 +41,16 @@ test('the extra long-title query does not displace existing same-ID aliases', ()
     'Kashita Maryoku wa', 'Alternative Japanese', 'Magic Repo Man',
   ]);
 });
+
+test('keeps a same-ID romanized synonym and English official title in bounded queries', () => {
+  const title = 'The Strongest Dull Prince`s Secret Battle for the Throne';
+  const main = 'Saikyou Degarashi Ouji no An`yaku Teii Arasoi: Munou o Enjiru SS Rank Ouji wa Koui Keishou-sen o Kage kara Shihai Suru';
+  const synonym = 'Saikyou Degarashi Ouji no Anyaku Teii Arasoi';
+  const english = 'The Insipid Prince`s Furtive Grab for the Throne';
+  assert.deepEqual(trustedReleaseQueries(title, [main, synonym, english]),
+    [title, main, synonym, english]);
+  assert.deepEqual(trustedIdentityTitles(title, [main, synonym, english]),
+    [title, main, synonym, english]);
+  assert.deepEqual(trustedTargetedQueries(title, [main, synonym, english], 1),
+    [`${title} 01`, `${synonym} 01`, `${english} 01`]);
+});
