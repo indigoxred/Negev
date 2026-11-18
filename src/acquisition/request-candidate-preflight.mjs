@@ -2,7 +2,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
@@ -57,9 +57,12 @@ export async function previewRequestCandidate({ requestId, candidate,
   catch { /* The canonical title can still be used. */ }
   const queries = trustedReleaseQueries(detail.title, aliases);
   const canonicalQuery = trustedReleaseQueries(detail.title)[0];
-  const firstQuery = queries.find((query) =>
-    matchesTrustedReleaseTitle(candidate.title, query)) ?? canonicalQuery;
-  if (!firstQuery) return held('detail_unavailable');
+  const verifiedIdentity = trustedIdentityTitles(detail.title, aliases).find((query) =>
+    matchesTrustedReleaseTitle(candidate.title, query));
+  const firstQuery = verifiedIdentity ?? queries.find((query) =>
+    matchesTrustedReleaseTitle(candidate.title, query));
+  if (!firstQuery) return held('release_title_mismatch');
+  if (!verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
   let sourceQuery = firstQuery;
   if (candidate.sourceQuery !== undefined) {
     if (typeof candidate.sourceQuery !== 'string' ||
@@ -151,6 +154,9 @@ export async function previewRequestCandidate({ requestId, candidate,
     }
     shokoPreview = verdicts.every((value) => value === 'exact')
       ? 'exact' : 'uncertain';
+  }
+  if (!verifiedIdentity && shokoPreview !== 'exact') {
+    return held('release_title_mismatch');
   }
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(prepared.expected?.hash) ||
       !Number.isSafeInteger(prepared.totalBytes) || prepared.totalBytes < 1 ||

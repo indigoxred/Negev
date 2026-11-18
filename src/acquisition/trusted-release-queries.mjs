@@ -14,18 +14,20 @@ export function trustedReleaseQueries(title, aliases = []) {
     // AniDB can give a unique main title followed by a long subtitle. Use
     // that named main title when the full title cannot fit Prowlarr's query
     // limit. Independent title, episode, and file checks still gate a grab.
-    const query = full.length > 120 ? full.split(/[:：]/u, 1)[0].trim() : full;
-    if (query.length < 2 || query.length > 120 ||
-        (full.length > 120 && (query === full || query.length < 16 ||
-          query.split(/\s+/u).length < 3)) ||
-        /[\x00-\x1f\x7f]/.test(query)) continue;
+    const long = full.length > 120;
+    const main = long ? full.split(/[:：]/u, 1)[0].trim() : full;
+    const query = !long || (main !== full && main.length >= 16 &&
+      main.split(/\s+/u).length >= 3) ? main : null;
+    if (query !== null && (query.length < 2 || query.length > 120 ||
+        /[\x00-\x1f\x7f]/.test(query))) continue;
     // Prowlarr treats punctuation in a long AniDB main title literally for
     // some indexers. Search its distinctive leading words as a second same-ID
     // retrieval hint; torrent files still need exact identity validation.
-    const words = full.length > 120 ? query.match(/[\p{L}\p{N}]+/gu) ?? [] : [];
+    const words = long ? (query ?? full).match(/[\p{L}\p{N}]+/gu) ?? [] : [];
     const plainPrefix = words.slice(0, 3).join(' ');
-    for (const candidate of [query, ...(words.length >= 4 &&
-      plainPrefix.length >= 16 ? [plainPrefix] : [])]) {
+    for (const candidate of [...(query ? [query] : []),
+      ...(words.length >= 4 && plainPrefix.length >= 16 &&
+        plainPrefix.length <= 120 ? [plainPrefix] : [])]) {
       const key = candidate.toLocaleLowerCase('en');
       if (seen.has(key)) continue;
       seen.add(key);
@@ -34,6 +36,24 @@ export function trustedReleaseQueries(title, aliases = []) {
     }
   }
   return queries;
+}
+
+// Search prefixes retrieve candidates; they are not evidence that a release
+// belongs to the AniDB title. Only the main title or same-ID official names
+// may establish the provisional file-planning identity.
+export function trustedIdentityTitles(title, aliases = []) {
+  const source = [title, typeof title === 'string' ?
+    title.replace(/\s+\((?:19|20)\d{2}\)$/, '') : null,
+  ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])];
+  const names = new Set();
+  for (const value of source) {
+    if (typeof value !== 'string') continue;
+    const full = value.trim();
+    const name = full.length > 120 ? full.split(/[:：]/u, 1)[0].trim() : full;
+    if (name.length >= 2 && name.length <= 120 &&
+        !/[\x00-\x1f\x7f]/.test(name)) names.add(name);
+  }
+  return trustedReleaseQueries(title, aliases).filter((query) => names.has(query));
 }
 
 // A missing-episode search is derived only from the current same-ID title

@@ -234,6 +234,40 @@ test('a shortened same-ID title query survives final stopped submission', async 
     assert.deepEqual(queries, [`${japanese} 01`]);
   }));
 
+test('a short retrieval hint needs a fresh exact Shoko identity at submission', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const selected = { ...candidate,
+      title: '[Group] Kashita Maryoku wa A Different Tale - 01' };
+    const detail = { ...baseDetail,
+      title: 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu: ' +
+        'Long subtitle '.repeat(12) };
+    let providerCalls = 0;
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async () => { providerCalls++; return Response.json([]); },
+      qbittorrentFetch: qbittorrentFetch([]) });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      candidate: selected, detail, searchQuery: 'Kashita Maryoku wa 01',
+      releaseQueries: async () => ['Magic Repo Man'] }),
+    { state: 'held', reason: 'release_title_mismatch' });
+    assert.equal(providerCalls, 0);
+    const result = await submitMissingCandidate({ ...input,
+      candidate: selected, detail, searchQuery: 'Kashita Maryoku wa 01',
+      releaseQueries: async () => ['Magic Repo Man'],
+      prowlarr: { ...input.prowlarr, fetchImpl: async (url) =>
+        new URL(url).pathname.endsWith('/search')
+          ? Response.json([{ ...selected, protocol: 'torrent', downloadUrl: proxy }])
+          : new Response(bytes, { headers: {
+            'content-type': 'application/x-bittorrent' } }) },
+      offlineLookup: async ({ filename }) => ({ status: 200, release: {
+        ProviderName: 'Offline Importer', IsCorrupted: false,
+        ID: 'offline://42-1001', OriginalFilename: filename,
+        CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+          PercentageStart: 0, PercentageEnd: 100 }],
+      } }),
+    });
+    assert.equal(result.state, 'stopped_observed');
+  }));
+
 test('a caller-supplied release query outside the trusted AniDB titles cannot reach an indexer', async () =>
   withLedgers(async ({ request, ledger }) => {
     let providerCalls = 0;

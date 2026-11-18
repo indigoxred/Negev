@@ -550,6 +550,50 @@ test('a later pack phase with a lower offset stays promptly eligible', async () 
     } finally { queue.close(); }
   }));
 
+test('a due pack continuation is priority eligible and keeps its saved cursor', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'season_pack_search_pending',
+        nextCandidateOffset: 1, nextCandidateFingerprint: fingerprint,
+        checkedMs: 200 });
+      assert.equal(queue.getResult(1).nextDueMs, 200);
+      assert.deepEqual(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }),
+        { state: 'claimed', requestId: 1, pass: first.pass,
+          candidateOffset: 1, candidateFingerprint: fingerprint });
+    } finally { queue.close(); }
+  }));
+
+test('the first page after a pack-phase transition remains due', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const pack = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)},${'d'.repeat(64)},${'e'.repeat(64)}`;
+    const next = `${'f'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)},${'d'.repeat(64)},${'e'.repeat(64)}`;
+    try {
+      let claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'season_pack_search_pending',
+        nextCandidateOffset: 3, nextCandidateFingerprint: pack,
+        checkedMs: 150 });
+      claim = queue.claimNext({ nowMs: 151, priorityRequestId: 1 });
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'season_pack_scan_complete',
+        nextCandidateOffset: 4, nextCandidateFingerprint: next,
+        checkedMs: 200 });
+      claim = queue.claimNext({ nowMs: 201, priorityRequestId: 1 });
+      assert.equal(claim.requestId, 1);
+      assert.equal(claim.candidateOffset, 4);
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'season_pack_search_pending',
+        nextCandidateOffset: 3, nextCandidateFingerprint: next,
+        checkedMs: 300 });
+      assert.equal(queue.getResult(1).nextDueMs, 300);
+    } finally { queue.close(); }
+  }));
+
 test('a completed pack scan can enter the next bounded phase immediately', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
