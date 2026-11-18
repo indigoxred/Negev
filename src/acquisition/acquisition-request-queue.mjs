@@ -520,7 +520,8 @@ export function openAcquisitionRequestQueue(dbPath,
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
-            'authentication_unavailable'].includes(reason)
+            'authentication_unavailable',
+            'import_quiet_window_unverified'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
