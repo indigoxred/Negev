@@ -5,6 +5,7 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
+const RELATED_RETRY_MS = 5 * 60_000;
 const METADATA_SHORT_RETRY_MS = 60_000;
 const METADATA_SHORT_WINDOW_MS = 10 * 60_000;
 const validCandidateFingerprint = (value) => {
@@ -102,6 +103,13 @@ export function openAcquisitionRequestQueue(dbPath,
       SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
       WHERE state='held' AND reason='candidate_scan_time_budget'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    // A momentary relation-provider miss used to take the generic 30-minute
+    // backoff before any candidate could be inspected. Keep the relation
+    // guard and bound that lookup retry, including rows saved by old builds.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+300000)
+      WHERE state='held' AND reason='related_title_unavailable'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+300000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -488,6 +496,8 @@ export function openAcquisitionRequestQueue(dbPath,
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
+          reason === 'related_title_unavailable'
+            ? checkedMs + RELATED_RETRY_MS :
           state === 'stopped_observed' ? checkedMs + 60_000 :
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +
