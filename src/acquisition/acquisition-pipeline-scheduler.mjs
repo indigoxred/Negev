@@ -75,6 +75,13 @@ export function createPipelineScheduler({ pipeline,
             item.nextDueMs >= 0 && metadataRetries.size < 32) {
           metadataRetries.set(item.requestId, item.nextDueMs);
         } else metadataRetries.delete(item.requestId);
+        // A bounded candidate page has more saved work due now. Give it a
+        // prompt extra turn, but interleave the normal stages between turns.
+        if (Number.isSafeInteger(item.continuationDueMs) &&
+            item.continuationDueMs <= now() &&
+            !freshRequests.includes(item.requestId) && freshRequests.length < 32) {
+          freshRequests.push(item.requestId);
+        }
       }
     }
     lastStage = activeStage;

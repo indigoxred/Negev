@@ -62,6 +62,43 @@ test('a new request gets a prompt first turn before older queued work without st
   await scheduler.stop();
 });
 
+test('a due saved candidate sweep gets prompt continuation turns while other stages still run', async () => {
+  const timer = clock();
+  const calls = [];
+  let requestTurns = 0;
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => { calls.push('publish'); return { state: 'idle' }; },
+    tickStarts: async () => { calls.push('start'); return { state: 'idle' }; },
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId ?? 'normal');
+      requestTurns++;
+      return { state: 'page', results: requestTurns < 3
+        ? [{ requestId: 74, state: 'held', reason: 'season_pack_search_pending',
+          continuationDueMs: 1_000 }] : [] };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 1_000,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(74);
+  await timer.advance();
+  assert.deepEqual(calls, [74]);
+  await timer.advance();
+  assert.deepEqual(calls, [74, 'completion']);
+  assert.deepEqual(timer.delays(), [1_000]);
+  await timer.advance();
+  assert.deepEqual(calls, [74, 'completion', 74]);
+  await timer.advance();
+  assert.deepEqual(calls, [74, 'completion', 74, 'publish']);
+  assert.deepEqual(timer.delays(), [1_000]);
+  await timer.advance();
+  assert.deepEqual(calls, [74, 'completion', 74, 'publish', 74]);
+  await scheduler.stop();
+});
+
 test('missing metadata gets a due retry without waiting for a full stage cycle', async () => {
   const timer = clock();
   const calls = [];

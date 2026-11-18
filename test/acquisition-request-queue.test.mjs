@@ -869,7 +869,9 @@ test('the page worker passes a saved candidate offset to a later attempt', async
             nextCandidateFingerprint: requestId === 1 ?
               `${'b'.repeat(64)}:${'c'.repeat(64)}|${'d'.repeat(64)}` : undefined };
         } });
-      assert.equal((await worker.runOnce()).state, 'page');
+      const page = await worker.runOnce();
+      assert.equal(page.state, 'page');
+      assert.equal(page.results[0].continuationDueMs, 100);
       assert.equal((await worker.runOnce()).state, 'pass_complete');
       const later = createAcquisitionPageWorker({ queue, limit: 1,
         now: () => 1_800_100,
