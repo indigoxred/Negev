@@ -110,6 +110,12 @@ export function openAcquisitionRequestQueue(dbPath,
       SET next_due_ms=MIN(next_due_ms,checked_ms+300000)
       WHERE state='held' AND reason='related_title_unavailable'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+300000`);
+    // Keep the Import safety observation intact, but bring older transient
+    // holds forward when a release first adopts the shorter retry.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='import_quiet_window_unverified'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');

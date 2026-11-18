@@ -147,7 +147,7 @@ test('an unavailable related-title lookup retries within five minutes',
 
 test('an unverified Import quiet window retries after one minute without clearing its hold',
   async () => fixture(async (dbPath) => {
-    const queue = openAcquisitionRequestQueue(dbPath);
+    let queue = openAcquisitionRequestQueue(dbPath);
     try {
       const claim = queue.claimNext({ nowMs: 100 });
       assert.equal(claim.requestId, 1);
@@ -156,6 +156,13 @@ test('an unverified Import quiet window retries after one minute without clearin
       assert.equal(queue.getResult(1).reason, 'import_quiet_window_unverified');
       assert.equal(queue.getResult(1).nextDueMs, 60_100);
     } finally { queue.close(); }
+    const legacy = new DatabaseSync(dbPath);
+    try { legacy.prepare(`UPDATE acquisition_request_checks
+      SET next_due_ms=1800100 WHERE request_id=1`).run(); }
+    finally { legacy.close(); }
+    queue = openAcquisitionRequestQueue(dbPath);
+    try { assert.equal(queue.getResult(1).nextDueMs, 60_100); }
+    finally { queue.close(); }
   }));
 
 test('a newly saved request can be checked first without advancing the ordinary cursor',
