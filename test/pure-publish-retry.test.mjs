@@ -7,6 +7,57 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
 import { openHandoffPublishQueue } from '../src/acquisition/handoff-publish-queue.mjs';
+import { DatabaseSync } from 'node:sqlite';
+
+test('a moving pure file retries a reversible move after its staging permission is corrected', async () => {
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-moving-retry-'));
+  const dbPath = path.join(root, 'state.sqlite');
+  const hash = 'b'.repeat(40);
+  const connections = [];
+  let queue;
+  try {
+    const requests = openRequestLedger(dbPath); connections.push(requests);
+    const request = requests.submit({ requesterId: 1, requestKey: 'moving-retry',
+      nowMs: 100, intent: { state: 'ready', anidbId: 42, kind: 'movie',
+        monitorFuture: false, episodeIds: [1001] } });
+    const acquisitions = openAcquisitionLedger(dbPath); connections.push(acquisitions);
+    const candidate = { indexerId: 7, guid: 'moving-retry' };
+    const attemptId = acquisitions.reserve({ requestId: request.requestId,
+      candidate, episodeIds: [1001], nowMs: 200 }).attemptId;
+    acquisitions.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    acquisitions.beginDispatch({ attemptId, nowMs: 202 });
+    acquisitions.recordTorrent({ attemptId, hash, nowMs: 203 });
+    acquisitions.beginStart({ attemptId, hash,
+      manifestDigest: 'c'.repeat(64), nowMs: 204 });
+    const moves = openPureMoveLedger(dbPath); connections.push(moves);
+    assert.equal(moves.recordIntent({ attemptId, torrentHash: hash,
+      stagingRoot: path.join(root, 'staging', hash),
+      holdingPath: path.join(root, 'holding', `negev-${attemptId}-${hash.slice(0, 16)}`),
+      files: [{ name: 'Movie.mkv', size: 3, episodeIds: [1001],
+        dev: '1', ino: '2', mtimeNs: '3' }], nowMs: 205 }).state, 'recorded');
+    queue = openHandoffPublishQueue(dbPath, { pureMode: true });
+    const first = queue.claimNext({ nowMs: 1_000 });
+    assert.equal(first.attemptId, attemptId);
+    assert.equal(queue.recordResult({ attemptId, version: first.version,
+      state: 'held', reason: 'move_outcome_unknown', checkedMs: 1_001 }).state,
+    'recorded');
+    assert.equal(queue.getResult(attemptId).nextDueMs, 61_001);
+    queue.close();
+    const db = new DatabaseSync(dbPath);
+    db.prepare('UPDATE pure_move_publish_checks SET next_due_ms=NULL WHERE attempt_id=?')
+      .run(attemptId);
+    db.close();
+    queue = openHandoffPublishQueue(dbPath, { pureMode: true });
+    assert.equal(queue.getResult(attemptId).nextDueMs, 61_001,
+      'a saved old hold is migrated to the same bounded retry');
+    assert.equal(queue.claimNext({ nowMs: 61_000 }).state, 'idle');
+    assert.equal(queue.claimNext({ nowMs: 61_001 }).attemptId, attemptId);
+  } finally {
+    queue?.close();
+    for (const connection of connections.reverse()) connection.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('an uncertain consumed pure move retries Shoko briefly, then advances the queue', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-retry-'));

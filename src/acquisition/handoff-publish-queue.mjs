@@ -40,6 +40,17 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0)
     ) STRICT`);
+    if (pureMode) {
+      // A same-filesystem move can fail after its durable intent, for example
+      // when qBittorrent's staging directory is not writable by Negev. The
+      // move is inode-checked and resumable, so retry old and new moving
+      // intents briefly after the filesystem setting is corrected.
+      db.exec(`UPDATE pure_move_publish_checks SET next_due_ms=checked_ms+60000
+        WHERE state='held' AND reason='move_outcome_unknown' AND
+          next_due_ms IS NULL AND checked_ms IS NOT NULL AND version<=12 AND
+          attempt_id IN (SELECT attempt_id FROM pure_move_intents
+            WHERE status='moving')`);
+    }
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT h.attempt_id AS attemptId
@@ -100,6 +111,8 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
         throw new TypeError('Invalid publish result');
       }
       const due = state === 'publish_unknown' ? checkedMs + 60_000 :
+        pureMode && state === 'held' && reason === 'move_outcome_unknown' &&
+          version <= 12 ? checkedMs + 60_000 :
         state === 'held' && reason === 'handoff_mount_unavailable'
           ? checkedMs + MOUNT_RETRY_MS :
         pureMode && state === 'held' && reason === 'publish_outcome_unknown' &&
