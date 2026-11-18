@@ -1,11 +1,13 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
+import { isTrustedProxy } from './prowlarr-torrent-bytes.mjs';
 
 // Prowlarr GET /api/v1/search only. A release is a search candidate, not
 // evidence that its video is registered in AniDB or safe to import.
 export async function searchReleaseCandidates({
   baseUrl, apiKey, query, indexerIds, trustedIndexerIds = [],
   categories = [], limit = 25,
+  includeProxyUrl = false,
   fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   const term = typeof query === 'string' ? query.trim() : '';
@@ -22,6 +24,7 @@ export async function searchReleaseCandidates({
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Prowlarr URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
       base.search || base.hash || typeof apiKey !== 'string' || !apiKey ||
+      typeof includeProxyUrl !== 'boolean' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
     throw new TypeError('Invalid Prowlarr search configuration');
   }
@@ -79,6 +82,9 @@ export async function searchReleaseCandidates({
         size: item.size, protocol: item.protocol,
         seeders: item.seeders ?? null, evidence: 'unverified',
         ...(trustedIndexerIds.includes(item.indexerId) ? { trusted: true } : {}),
+        ...(includeProxyUrl && isTrustedProxy(item.downloadUrl ?? item.magnetUrl,
+          base, apiKey, item.indexerId) ?
+          { proxyUrl: item.downloadUrl ?? item.magnetUrl } : {}),
       })),
       ...(data.length === 0 ? { exhaustive: false } : {}),
     };

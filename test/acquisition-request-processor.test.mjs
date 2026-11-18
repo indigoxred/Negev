@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { createAcquisitionRequestProcessor } from
   '../src/acquisition/acquisition-request-processor.mjs';
 
@@ -902,6 +903,32 @@ test('a saved cursor from the previous fingerprint format resets safely once', a
     candidateFingerprint: first.nextCandidateFingerprint });
   assert.equal(second.nextCandidateOffset, 0);
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
+
+test('a v1 quality cursor revisits candidates skipped by transient provider failure', async () => {
+  const seen = [];
+  const items = [candidate(1), candidate(2)].map((item) => ({
+    ...item, title: `${item.title} 1080p`, seeders: 20 }));
+  const hash = (value) => createHash('sha256').update(JSON.stringify(value))
+    .digest('hex');
+  const oldFingerprint = hash(['quality-policy-v1', 1001, 1002]);
+  const oldOrder = items.map((item) => hash([item.indexerId, item.guid])).join(',');
+  const process = createAcquisitionRequestProcessor({
+    requireReleasePolicy: true, maxPreflights: 1,
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items, releaseState: 'airing' }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return { state: 'held', reason: 'provider_unavailable' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw Error('must not submit'); },
+  });
+  const result = await process({ requestId: 4, candidateOffset: 1,
+    candidateFingerprint: `${oldFingerprint}:${oldOrder}|` });
+  assert.equal(result.nextCandidateOffset, 1);
+  assert.deepEqual(seen, ['candidate-1']);
 });
 
 test('seeder ranking churn cannot starve a later candidate', async () => {

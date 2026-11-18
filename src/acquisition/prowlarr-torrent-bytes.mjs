@@ -4,7 +4,7 @@ import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 const held = (reason) => ({ state: 'held', reason });
 const MAX_TORRENT_BYTES = 2_000_000;
 
-function isTrustedProxy(value, base, apiKey, indexerId) {
+export function isTrustedProxy(value, base, apiKey, indexerId) {
   let url;
   try { url = new URL(value); } catch { return false; }
   const params = [...url.searchParams.keys()];
@@ -50,19 +50,24 @@ export async function fetchProwlarrTorrentBytes({
   search.searchParams.append('indexerIds', String(candidate.indexerId));
 
   try {
-    const found = await fetchImpl(search, { method: 'GET', headers, redirect: 'manual',
-      signal: AbortSignal.timeout(timeoutMs) });
-    if (found.status !== 200) return held('provider_unavailable');
-    const releases = await readBoundedJson(found, 2_000_000);
-    if (!Array.isArray(releases) || releases.length > 1_000) return held('provider_unavailable');
-    const matches = releases.filter((item) => item?.guid === candidate.guid &&
-      item.indexerId === candidate.indexerId && item.protocol === 'torrent' &&
-      item.title === candidate.title && item.size === candidate.size);
-    if (matches.length !== 1) return held('candidate_changed');
-    // Prowlarr may place a torrent descriptor proxy in magnetUrl while
-    // leaving downloadUrl null (observed with the installed Nyaa indexer).
-    // The same strict proxy-origin and query checks apply to either field.
-    const proxyUrl = matches[0].downloadUrl ?? matches[0].magnetUrl;
+    let proxyUrl = candidate.proxyUrl;
+    if (proxyUrl === undefined) {
+      const found = await fetchImpl(search, { method: 'GET', headers, redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs) });
+      if (found.status !== 200) return held('provider_unavailable');
+      const releases = await readBoundedJson(found, 2_000_000);
+      if (!Array.isArray(releases) || releases.length > 1_000) return held('provider_unavailable');
+      const matches = releases.filter((item) => item?.guid === candidate.guid &&
+        item.indexerId === candidate.indexerId && item.protocol === 'torrent' &&
+        item.title === candidate.title && item.size === candidate.size);
+      if (matches.length !== 1) return held('candidate_changed');
+      // Prowlarr may place a torrent descriptor proxy in magnetUrl while
+      // leaving downloadUrl null (observed with the installed Nyaa indexer).
+      proxyUrl = matches[0].downloadUrl ?? matches[0].magnetUrl;
+    }
+    // A discovery result stays in this server process. Reusing its validated
+    // proxy avoids a second, rate-limited indexer search that can drop an
+    // otherwise viable release between discovery and metainfo inspection.
     if (typeof proxyUrl !== 'string' ||
         !isTrustedProxy(proxyUrl, base, apiKey, candidate.indexerId)) return held('untrusted_proxy');
 
