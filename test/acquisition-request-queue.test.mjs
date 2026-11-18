@@ -126,6 +126,25 @@ test('startup brings legacy 30-minute metadata holds forward once',
     } finally { queue.close(); }
   }));
 
+test('an unavailable related-title lookup retries within five minutes',
+  async () => fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'related_title_unavailable', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 300_100);
+    } finally { queue.close(); }
+    const legacy = new DatabaseSync(dbPath);
+    legacy.prepare(`UPDATE acquisition_request_checks SET next_due_ms=1800100
+      WHERE request_id=1`).run();
+    legacy.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 300_100);
+    } finally { queue.close(); }
+  }));
+
 test('a newly saved request can be checked first without advancing the ordinary cursor',
   async () => fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
