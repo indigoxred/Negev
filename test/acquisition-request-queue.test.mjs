@@ -477,6 +477,52 @@ test('a timed-out candidate scan pauses for 15 minutes and then continues', asyn
     } finally { queue.close(); }
   }));
 
+test('a changed policy fingerprint starts a fresh scan clock', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const oldCursor = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    const newCursor = `${'d'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'no_safe_release', nextCandidateOffset: 1,
+        nextCandidateFingerprint: oldCursor, checkedMs: 200 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      const second = queue.claimNext({ nowMs: 201 });
+      assert.equal(second.state, 'claimed');
+      queue.recordResult({ requestId: 1, pass: second.pass,
+        state: 'held', reason: 'no_safe_release', nextCandidateOffset: 1,
+        nextCandidateFingerprint: newCursor, checkedMs: 900_001 });
+      assert.equal(queue.getScanStartedMs(1), 900_001);
+    } finally { queue.close(); }
+  }));
+
+test('a later pack phase with a lower offset stays promptly eligible', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const packCursor = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    const nextCursor = `${'d'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'season_pack_scan_complete',
+        nextCandidateOffset: 2, nextCandidateFingerprint: packCursor,
+        checkedMs: 200 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      queue.claimNext({ nowMs: 201 });
+      const second = queue.claimNext({ nowMs: 201 });
+      assert.equal(second.state, 'claimed');
+      queue.recordResult({ requestId: 1, pass: second.pass,
+        state: 'held', reason: 'season_pack_search_pending',
+        nextCandidateOffset: 1, nextCandidateFingerprint: nextCursor,
+        checkedMs: 300 });
+      assert.equal(queue.getResult(1).nextDueMs, 300);
+    } finally { queue.close(); }
+  }));
+
 test('a completed pack scan can enter the next bounded phase immediately', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
@@ -703,6 +749,26 @@ test('restart recovery releases only claims with no saved acquisition attempt', 
         inspectRequest: () => ({ state: 'no_attempt' }), now: () => 201,
         limit: 2 }), { state: 'reviewed', resolved: [3], held: [] });
     } finally { queue.close(); }
+  }));
+
+test('an interrupted request with only a released unsent reservation can retry', async () =>
+  fixture(async (dbPath) => {
+    const acquisitions = openAcquisitionLedger(dbPath);
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const reserved = acquisitions.reserve({ requestId: 1,
+        candidate: { indexerId: 7, guid: 'released-only' },
+        episodeIds: [1001], nowMs: 100 });
+      assert.equal(reserved.state, 'reserved');
+      assert.equal(acquisitions.releaseReserved({ attemptId: reserved.attemptId,
+        nowMs: 101 }).state, 'released_pre_dispatch');
+      queue.claimNext({ nowMs: 200 });
+      await reconcileUnresolvedAcquisitionClaims({ queue,
+        inspectRequest: (id) => acquisitions.inspectRequestAttempts(id),
+        now: () => 300 });
+      assert.equal(queue.getResult(1).reason, 'reconciled_no_dispatch');
+      assert.notEqual(queue.getResult(1).nextDueMs, null);
+    } finally { queue.close(); acquisitions.close(); }
   }));
 
 test('restart recovery reviews every page of interrupted requests', async () =>

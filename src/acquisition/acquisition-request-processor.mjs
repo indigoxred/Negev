@@ -195,18 +195,18 @@ export function createAcquisitionRequestProcessor({ readRequest,
       savedOrder.every((id) => /^[0-9a-f]{64}$/.test(id));
     const fallbackPhase = preferSeasonPack &&
       saved[0] === fallbackFingerprint &&
-      validSavedOrder &&
-      savedOrder.length === currentById.size &&
-      savedOrder.every((id) => currentById.has(id));
+      validSavedOrder;
     const uncertainPackPhase = preferSeasonPack && preferShokoPreview &&
       saved[0] === uncertainPackFingerprint &&
-      validSavedOrder &&
-      savedOrder.length === currentById.size &&
-      savedOrder.every((id) => currentById.has(id));
+      validSavedOrder;
     const fingerprint = fallbackPhase ? fallbackFingerprint :
       uncertainPackPhase ? uncertainPackFingerprint : packFingerprint;
     const sameTarget = validSavedOrder &&
       (saved[0] === packFingerprint || fallbackPhase || uncertainPackPhase);
+    // The saved clock belongs to the saved candidate policy. A new target or
+    // policy starts a fresh bounded scan even when the old clock is expired.
+    const activeScanStartedMs = candidateFingerprint !== null && !sameTarget ?
+      null : scanStartedMs;
     const consumed = sameTarget ? savedOrder.slice(0, candidateOffset)
       .filter((id) => currentById.has(id)) : [];
     const remaining = sameTarget ? savedOrder.slice(candidateOffset)
@@ -215,7 +215,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const newcomers = sameTarget ? [...currentById.keys()]
       .filter((id) => !previous.has(id)) : [];
     const originalIds = new Set(originalOrder);
-    const priorityRemaining = requireReleasePolicy ? remaining : [
+    const priorityRemaining = requireReleasePolicy ?
+      [...remaining, ...newcomers].sort((left, right) =>
+        compareReleases(currentById.get(left), currentById.get(right),
+          { preferSeasonPack })) : [
       ...remaining.filter((id) => originalIds.has(id) &&
         currentById.get(id).targetedEpisode === true),
       ...remaining.filter((id) => originalIds.has(id) &&
@@ -224,7 +227,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     ];
     // New discoveries join after the saved sweep. A fresh targeted result on
     // every pass must not starve older unvisited candidates indefinitely.
-    const savedSweep = sameTarget ? [...consumed, ...priorityRemaining, ...newcomers] :
+    const savedSweep = sameTarget ? [...consumed, ...priorityRemaining,
+      ...(requireReleasePolicy ? [] : newcomers)] :
       [...currentById.keys()];
     // The completed-season scan has already inspected every candidate.
     // On its fallback pass, lead with non-pack releases instead of spending
@@ -234,8 +238,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
       ...savedSweep.filter((id) => hasSeasonPackHint(currentById.get(id))),
     ] : savedSweep;
     const ordered = order.map((id) => currentById.get(id));
-    const primaryIds = sameTarget ? order.filter((id) => originalIds.has(id)) : order;
-    const tailIds = sameTarget ? order.filter((id) => !originalIds.has(id)) : [];
+    // A policy newcomer can be promoted ahead of an old low-quality fallback.
+    // Save the actual inspected order or the offset would point at a different
+    // candidate on the next pass.
+    const primaryIds = sameTarget && !requireReleasePolicy ?
+      order.filter((id) => originalIds.has(id)) : order;
+    const tailIds = sameTarget && !requireReleasePolicy ?
+      order.filter((id) => !originalIds.has(id)) : [];
     const cursor = `${fingerprint}:${primaryIds.join(',')}|${tailIds.join(',')}`;
     const seen = new Set();
     const offlineCache = new Map();
@@ -246,7 +255,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     for (let index = start; index < ordered.length; index++) {
       if (seen.size >= maxPreflights) break;
       const candidate = ordered[index];
-      if (scanStartedMs !== null && now() - scanStartedMs >= 15 * 60_000) {
+      if (activeScanStartedMs !== null &&
+          now() - activeScanStartedMs >= 15 * 60_000) {
         return { ...held('candidate_scan_time_budget'),
           nextCandidateOffset: index,
           nextCandidateFingerprint: cursor };
@@ -304,6 +314,17 @@ export function createAcquisitionRequestProcessor({ readRequest,
           preview.shokoPreview !== 'exact') {
         uncertainSelection ??= { candidate, preview, index };
         continue;
+      }
+      if (uncertainSelection && requireReleasePolicy &&
+          !uncertainPackPhase) {
+        const uncertainQuality = assessRelease(uncertainSelection.candidate);
+        const exactQuality = assessRelease(candidate);
+        if (uncertainQuality.healthyPeers === exactQuality.healthyPeers &&
+            uncertainQuality.quality > exactQuality.quality) {
+          selected = uncertainSelection;
+          nextIndex = uncertainSelection.index + 1;
+          break;
+        }
       }
       selected = { candidate, preview };
       break;
