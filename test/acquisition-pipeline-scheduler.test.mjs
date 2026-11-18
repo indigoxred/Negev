@@ -120,7 +120,7 @@ test('the real queue accepts scheduler continuations and keeps their cursor', as
     now: () => 1_000,
     processRequest: async ({ candidateOffset }) => {
       seen.push(candidateOffset);
-      return { state: 'held', reason: 'season_pack_search_pending',
+      return { state: 'held', reason: 'no_safe_release',
         nextCandidateOffset: candidateOffset + 1,
         nextCandidateFingerprint: fingerprint };
     } });
