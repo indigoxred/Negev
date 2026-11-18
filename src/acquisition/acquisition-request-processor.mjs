@@ -1,5 +1,5 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { planTorrentTargets } from './plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
 import { assessRelease, compareReleases, hasSeasonPackHint,
   hasSingleEpisodeHint } from './release-preference.mjs';
@@ -286,6 +286,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
             (typeof preview.searchQuery !== 'string' ||
               preview.searchQuery.length < 2 || preview.searchQuery.length > 120 ||
               /[\x00-\x1f\x7f]/.test(preview.searchQuery))) ||
+          (preview.identityTitle !== undefined &&
+            (typeof preview.identityTitle !== 'string' ||
+              preview.identityTitle.length < 2 || preview.identityTitle.length > 120 ||
+              /[\x00-\x1f\x7f]/.test(preview.identityTitle) ||
+              !matchesTrustedReleaseTitle(candidate.title, preview.identityTitle))) ||
           !Array.isArray(preview.episodeIds) ||
           preview.episodeIds.length < 1 || preview.episodeIds.length > 50 ||
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
@@ -361,7 +366,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const freshPlan = planTorrentTargets({ request, detail,
       prepared: { state: 'prepared_stopped', files: selected.preview.files },
       releaseTitle: selected.candidate.title,
-      trustedTitle: selected.preview.searchQuery ?? detail.title });
+      trustedTitle: selected.preview.identityTitle ?? detail.title });
     if (freshPlan.state !== 'planned_targets' ||
         JSON.stringify(freshPlan.episodeIds) !==
           JSON.stringify(selected.preview.episodeIds) ||

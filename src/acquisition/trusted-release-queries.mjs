@@ -8,9 +8,16 @@ export function trustedReleaseQueries(title, aliases = []) {
   for (const value of [title, withoutCatalogueYear,
     ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
     if (typeof value !== 'string') continue;
-    const query = value.trim();
+    const full = value.trim();
+    // AniDB can give a unique main title followed by a long subtitle. Use
+    // that named main title when the full title cannot fit Prowlarr's query
+    // limit. Independent title, episode, and file checks still gate a grab.
+    const query = full.length > 120 ? full.split(/[:：]/u, 1)[0].trim() : full;
     const key = query.toLocaleLowerCase('en');
-    if (query.length < 2 || query.length > 120 || /[\x00-\x1f\x7f]/.test(query) ||
+    if (query.length < 2 || query.length > 120 ||
+        (full.length > 120 && (query === full || query.length < 16 ||
+          query.split(/\s+/u).length < 3)) ||
+        /[\x00-\x1f\x7f]/.test(query) ||
         seen.has(key)) continue;
     seen.add(key);
     queries.push(query);
@@ -23,10 +30,13 @@ export function trustedReleaseQueries(title, aliases = []) {
 // source and an AniDB episode number. Preserve it through preflight and
 // submission so a broad title page cannot make an older hit disappear.
 export function trustedTargetedQuery(title, aliases, episodeNumber) {
+  return trustedTargetedQueries(title, aliases, episodeNumber)[0] ?? null;
+}
+
+export function trustedTargetedQueries(title, aliases, episodeNumber) {
   if (!Number.isSafeInteger(episodeNumber) || episodeNumber < 1 ||
-      episodeNumber > 9_999) return null;
-  const first = trustedReleaseQueries(title, aliases)[0];
-  if (!first) return null;
-  const query = `${first} ${String(episodeNumber).padStart(2, '0')}`;
-  return query.length <= 120 ? query : null;
+      episodeNumber > 9_999) return [];
+  const suffix = ` ${String(episodeNumber).padStart(2, '0')}`;
+  return trustedReleaseQueries(title, aliases).map((query) => `${query}${suffix}`)
+    .filter((query) => query.length <= 120).slice(0, 2);
 }

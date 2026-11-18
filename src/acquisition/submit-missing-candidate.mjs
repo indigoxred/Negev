@@ -4,7 +4,7 @@ import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -78,8 +78,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     const targeted = Array.isArray(episodeIds) && episodeIds.some((id) => {
       const episode = detail.episodes.find((entry) => entry.id === id &&
         entry.type === 'Episode');
-      return episode && searchQuery === trustedTargetedQuery(detail.title,
-        aliases, episode.number);
+      return episode && trustedTargetedQueries(detail.title,
+        aliases, episode.number).includes(searchQuery);
     });
     if (!trusted.includes(searchQuery) && !targeted) {
       return held('untrusted_release_query');

@@ -52,6 +52,31 @@ test('an exact-episode result is rechecked with its original trusted query', asy
   assert.equal(result.searchQuery, 'Example 01');
 });
 
+test('a long same-ID main title keeps its exact search query through preflight', async () => {
+  const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
+  const selected = { ...candidate,
+    title: '[Group] Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01 1080p',
+    sourceQuery: `${japanese} 01`, targetEpisodeId: 1001,
+    targetedEpisode: true };
+  const queried = [];
+  const result = await previewRequestCandidate({ requestId: 4,
+    candidate: selected, readRequest: () => request,
+    loadDetail: async () => ({ ...detail,
+      title: `${japanese}: ${'Long subtitle '.repeat(12)}` }),
+    releaseQueries: async () => ['Magic Repo Man'],
+    prepare: async ({ query }) => {
+      queried.push(query);
+      return { ...prepared, files: [{
+        name: 'Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01.mkv',
+        size: 1_000 }] };
+    },
+  });
+  assert.equal(result.state, 'preflight');
+  assert.equal(result.searchQuery, `${japanese} 01`);
+  assert.equal(result.identityTitle, japanese);
+  assert.deepEqual(queried, [`${japanese} 01`]);
+});
+
 test('a release absent from broad top 50 survives discovery and preflight', async () => {
   const exact = { ...candidate, title: 'Example - 01 WEB 1080p',
     seeders: 100, evidence: 'unverified' };
@@ -257,6 +282,7 @@ test('an alias-only hit is revalidated through a trusted same-anime title', asyn
   assert.deepEqual(queries, ['Example', 'English Alias']);
   assert.equal(result.state, 'preflight');
   assert.equal(result.searchQuery, 'English Alias');
+  assert.equal(result.identityTitle, undefined);
 });
 
 test('a long canonical title preflights only its verified short alias', async () => {
