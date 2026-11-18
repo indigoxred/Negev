@@ -95,6 +95,13 @@ export function openAcquisitionRequestQueue(dbPath,
       .some((column) => column.name === 'scan_started_ms')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN scan_started_ms INTEGER CHECK(scan_started_ms>=0)');
     }
+    // Older releases imposed a 15-minute idle delay after a candidate scan
+    // timed out. Keep its saved cursor and make the unfinished sweep eligible
+    // on the normal short retry instead of waiting for that artificial pause.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='candidate_scan_time_budget'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -480,7 +487,7 @@ export function openAcquisitionRequestQueue(dbPath,
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
-          ? checkedMs + 15 * 60_000 :
+          ? checkedMs + SESSION_RETRY_MS :
           state === 'stopped_observed' ? checkedMs + 60_000 :
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +

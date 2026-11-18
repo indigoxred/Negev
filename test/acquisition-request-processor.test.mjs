@@ -203,7 +203,7 @@ test('an inconclusive 1080p preview outranks an exact 480p preview', async () =>
   assert.equal(selected, 'candidate-1');
 });
 
-test('a slow candidate sweep stops at 15 minutes without losing its cursor', async () => {
+test('a slow candidate sweep keeps advancing through its finite candidate list', async () => {
   let clock = 100;
   const seen = [];
   const process = createAcquisitionRequestProcessor({
@@ -220,9 +220,9 @@ test('a slow candidate sweep stops at 15 minutes without losing its cursor', asy
     submitCandidate: async () => { throw new Error('Unexpected submission'); },
   });
   const result = await process({ requestId: 4, scanStartedMs: 100 });
-  assert.equal(result.reason, 'candidate_scan_time_budget');
-  assert.equal(result.nextCandidateOffset, 1);
-  assert.equal(seen.length, 1);
+  assert.equal(result.reason, 'no_safe_release');
+  assert.equal(result.nextCandidateOffset, 0);
+  assert.equal(seen.length, 2);
 });
 
 test('fuzzy other-episode hits do not consume a target preview', async () => {
