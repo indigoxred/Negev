@@ -567,6 +567,23 @@ test('a due pack continuation is priority eligible and keeps its saved cursor', 
     } finally { queue.close(); }
   }));
 
+test('a due no-safe-release page with more candidates is priority eligible', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
+    try {
+      const first = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: first.pass,
+        state: 'held', reason: 'no_safe_release',
+        nextCandidateOffset: 1, nextCandidateFingerprint: fingerprint,
+        checkedMs: 200 });
+      assert.equal(queue.getResult(1).nextDueMs, 200);
+      assert.deepEqual(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }),
+        { state: 'claimed', requestId: 1, pass: first.pass,
+          candidateOffset: 1, candidateFingerprint: fingerprint });
+    } finally { queue.close(); }
+  }));
+
 test('the first page after a pack-phase transition remains due', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);

@@ -134,12 +134,9 @@ export function openAcquisitionRequestQueue(dbPath,
   // The same eligibility guards apply, and the ordinary cursor stays put.
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
-      (c.state='held' AND c.reason IN
-        ('shoko_metadata_missing','reconciled_observed_attempts',
-         'season_pack_search_pending','season_pack_scan_complete',
-         'season_pack_uncertain_complete') AND
-       (c.reason NOT LIKE 'season_pack_%' OR
-         (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL)))) LIMIT 1`));
+      (c.state='held' AND (c.reason IN
+        ('shoko_metadata_missing','reconciled_observed_attempts') OR
+       (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL)))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms)
