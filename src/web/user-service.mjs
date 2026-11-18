@@ -86,6 +86,7 @@ import { previewRequestCandidate } from '../acquisition/request-candidate-prefli
 import { readShokoVideoExtensions } from '../acquisition/shoko-video-extensions.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { readRelatedEvidence } from '../acquisition/read-related-evidence.mjs';
+import { createArchiveRelationReader } from '../acquisition/independent-archive-relations.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
 import { collectFirstTimeUncertain } from
@@ -460,16 +461,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     }) : undefined;
     // Preview, submission, and start must use identical relation evidence.
     // Shoko may not know an unowned season yet, while the AniDB archive does.
+    const readArchiveRelations = createArchiveRelationReader({ titleSource,
+      fetchImpl, readArchive: readArchiveRelatedTitles });
     const readRelatedTitles = ({ anidbId }) => readRelatedEvidence({ anidbId,
       aliasesForId: (relatedId) => titleSource?.releaseQueries(relatedId) ?? [],
       readLocal: () => metadata.run(() => readAniDbRelatedTitles({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
-      readArchive: async () => {
-        const status = await titleSource?.refresh();
-        if (!['ready', 'stale'].includes(status?.state)) return { state: 'unavailable' };
-        return metadata.run(() => readArchiveRelatedTitles({ anidbId,
-          titleForId: (id) => titleSource.getTitle(id), fetchImpl }));
-      },
+      readArchive: () => readArchiveRelations({ anidbId }),
     });
     const previewCandidate = prowlarr ? ({ requestId, candidate,
       offlineCache }) =>
