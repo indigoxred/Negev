@@ -188,7 +188,9 @@ export function openAcquisitionRequestQueue(dbPath,
         WHERE a.request_id=c.request_id)
       AND NOT EXISTS (SELECT 1 FROM acquisition_attempts a
         LEFT JOIN acquisition_retirements retired ON retired.attempt_id=a.id
+        LEFT JOIN acquisition_releases released ON released.attempt_id=a.id
         WHERE a.request_id=c.request_id AND retired.attempt_id IS NULL
+          AND released.attempt_id IS NULL
           AND (a.status<>'torrent_observed' OR a.torrent_hash IS NULL OR
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;
@@ -455,6 +457,10 @@ export function openAcquisitionRequestQueue(dbPath,
         nextCandidateFingerprint !== null &&
         nextCandidateOffset !== null &&
         (nextCandidateOffset > previous.candidateOffset || completedSeasonPhase);
+      const newScanPolicy = previous?.candidateFingerprint &&
+        nextCandidateFingerprint && !completedSeasonPhase &&
+        previous.candidateFingerprint.split(':')[0] !==
+          nextCandidateFingerprint.split(':')[0];
       const empty = state === 'held' &&
         ['no_release_candidates', 'no_safe_release'].includes(reason);
       const emptySinceMs = empty ? previous?.emptySinceMs ?? checkedMs : null;
@@ -474,7 +480,10 @@ export function openAcquisitionRequestQueue(dbPath,
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
-          ? checkedMs + 15 * 60_000 : advanced ? checkedMs : checkedMs +
+          ? checkedMs + 15 * 60_000 :
+          state === 'stopped_observed' ? checkedMs + 60_000 :
+          (advanced || newScanPolicy) ?
+            checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
@@ -483,7 +492,7 @@ export function openAcquisitionRequestQueue(dbPath,
       const scanStartedMs = reason === 'candidate_scan_time_budget' ||
         nextCandidateOffset === 0 &&
           !['season_pack_scan_complete', 'season_pack_uncertain_complete'].includes(reason)
-        ? null : previous?.scanStartedMs ?? checkedMs;
+        ? null : newScanPolicy ? checkedMs : previous?.scanStartedMs ?? checkedMs;
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         emptySinceMs, metadataSinceMs, scanStartedMs,
         nextCandidateOffset, nextCandidateFingerprint,

@@ -491,6 +491,8 @@ test('only an unsent, unbound candidate can release its claim for another releas
         episodeIds: [1001], nowMs: 200 });
       assert.deepEqual(ledger.releaseReserved({ attemptId: first.attemptId, nowMs: 201 }),
         { state: 'released_pre_dispatch' });
+      assert.deepEqual(ledger.inspectRequestAttempts(firstId),
+        { state: 'no_attempt' });
       assert.deepEqual(ledger.releaseReserved({ attemptId: first.attemptId, nowMs: 202 }),
         { state: 'released_pre_dispatch' });
       const reopened = openAcquisitionLedger(dbPath);

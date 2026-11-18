@@ -183,7 +183,12 @@ export function openAcquisitionLedger(dbPath) {
   } catch (error) { db.close(); throw error; }
 
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
-  const attemptForRequest = db.prepare('SELECT 1 AS present FROM acquisition_attempts WHERE request_id=? LIMIT 1');
+  const attemptForRequest = db.prepare(`SELECT 1 AS present
+    FROM acquisition_attempts attempt
+    LEFT JOIN acquisition_releases released ON released.attempt_id=attempt.id
+    LEFT JOIN acquisition_retirements retired ON retired.attempt_id=attempt.id
+    WHERE attempt.request_id=? AND released.attempt_id IS NULL AND
+      retired.attempt_id IS NULL LIMIT 1`);
   const requestedEpisode = db.prepare(`SELECT 1 AS present FROM request_targets rt
     JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);

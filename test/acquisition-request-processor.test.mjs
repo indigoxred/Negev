@@ -72,6 +72,111 @@ test('a completed-season pack check does not preview known single episodes', asy
   assert.deepEqual(inspected, ['candidate-26']);
 });
 
+test('a changing result set cannot restart completed-season pack phases', async () => {
+  let items = [{ ...candidate(1), title: 'Example - 01 WEB 1080p', seeders: 10 }];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items }),
+    previewCandidate: async () => ({ state: 'held', reason: 'unsafe_or_unselected_file' }),
+    loadDetail: async () => detail,
+    submitCandidate: async () => { throw Error('must not submit'); },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'season_pack_scan_complete');
+  items = [{ ...candidate(2), title: 'Example - 02 WEB 1080p', seeders: 10 }];
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.reason, 'season_pack_uncertain_complete');
+  const third = await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint });
+  assert.equal(third.reason, 'no_safe_release');
+});
+
+test('a new strong 1080p candidate precedes an older unvisited 480p fallback', async () => {
+  let items = [
+    { ...candidate(1), title: 'Example - 01 WEB 1080p', seeders: 10 },
+    { ...candidate(2), title: 'Example - 01 WEB 480p', seeders: 10 },
+  ];
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true, maxPreflights: 1,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'airing', items }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-3' ? preflight :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 99 }),
+  });
+  const first = await process({ requestId: 4 });
+  items = [...items, { ...candidate(3), title: 'Example - 01 WEB 1080p',
+    seeders: 12 }];
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 99);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-3']);
+});
+
+test('promoting a new 1080p candidate preserves the cursor and 480p fallback', async () => {
+  let items = [
+    { ...candidate(1), title: 'Example - 01 WEB 1080p', seeders: 10 },
+    { ...candidate(2), title: 'Example - 01 WEB 480p', seeders: 10 },
+  ];
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true, maxPreflights: 1,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'airing', items }),
+    previewCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-2' ? preflight :
+        { state: 'held', reason: 'unsafe_or_unselected_file' };
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 99 }),
+  });
+  const first = await process({ requestId: 4 });
+  items = [...items, { ...candidate(3), title: 'Example - 01 WEB 1080p',
+    seeders: 12 }];
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assert.equal(second.reason, 'no_safe_release');
+  assert.equal(second.nextCandidateOffset, 2);
+  assertAttempt(await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint }), 99);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-3', 'candidate-2']);
+});
+
+test('an inconclusive 1080p preview outranks an exact 480p preview', async () => {
+  let selected;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    preferShokoPreview: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'airing', items: [
+        { ...candidate(1), title: 'Example - 01 WEB 1080p', seeders: 10 },
+        { ...candidate(2), title: 'Example - 01 WEB 480p', seeders: 10 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => ({ ...preflight,
+      shokoPreview: item.guid === 'candidate-1' ? 'uncertain' : 'exact' }),
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      selected = item.guid;
+      return { state: 'stopped_observed', attemptId: 99 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 99);
+  assert.equal(selected, 'candidate-1');
+});
+
 test('a slow candidate sweep stops at 15 minutes without losing its cursor', async () => {
   let clock = 100;
   const seen = [];
@@ -914,7 +1019,7 @@ test('a v1 quality cursor revisits candidates skipped by transient provider fail
   const oldFingerprint = hash(['quality-policy-v1', 1001, 1002]);
   const oldOrder = items.map((item) => hash([item.indexerId, item.guid])).join(',');
   const process = createAcquisitionRequestProcessor({
-    requireReleasePolicy: true, maxPreflights: 1,
+    requireReleasePolicy: true, maxPreflights: 1, now: () => 900_101,
     readRequest: () => request,
     discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
       anidbId: 42, items, releaseState: 'airing' }),
@@ -926,6 +1031,7 @@ test('a v1 quality cursor revisits candidates skipped by transient provider fail
     submitCandidate: async () => { throw Error('must not submit'); },
   });
   const result = await process({ requestId: 4, candidateOffset: 1,
+    scanStartedMs: 100,
     candidateFingerprint: `${oldFingerprint}:${oldOrder}|` });
   assert.equal(result.nextCandidateOffset, 1);
   assert.deepEqual(seen, ['candidate-1']);
