@@ -30,6 +30,22 @@ test('indexes aliases under one exact AniDB ID and prefers the main title', () =
   assert.equal(searchAniDbTitleIndex(index, { query: 'The Movie', page: 1 }).items[0].anidbId, 10);
 });
 
+test('includes a shorter romanized same-ID synonym in release queries', () => {
+  const index = parseAniDbTitleDump([
+    '20|1|x-jat|Saikyou Degarashi Ouji no An`yaku Teii Arasoi: Munou o Enjiru SS Rank Ouji wa Koui Keishou-sen o Kage kara Shihai Suru',
+    '20|2|x-jat|Saikyou Degarashi Ouji no Anyaku Teii Arasoi',
+    '20|4|en|The Insipid Prince`s Furtive Grab for the Throne',
+    '20|2|x-jat|Ouji',
+    '21|1|x-jat|A Different Prince',
+  ].join('\n'));
+  assert.deepEqual(index.get(20).releaseQueries, [
+    'Saikyou Degarashi Ouji no An`yaku Teii Arasoi: Munou o Enjiru SS Rank Ouji wa Koui Keishou-sen o Kage kara Shihai Suru',
+    'Saikyou Degarashi Ouji no Anyaku Teii Arasoi',
+    'The Insipid Prince`s Furtive Grab for the Throne',
+  ]);
+  assert.deepEqual(index.get(21).releaseQueries, ['A Different Prince']);
+});
+
 test('accepts live AniDB kana and title-card rows for search without using them as release queries', () => {
   const index = parseAniDbTitleDump([
     '10|1|x-jat|Main Title',

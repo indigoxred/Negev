@@ -5,8 +5,7 @@ export function trustedReleaseQueries(title, aliases = []) {
   const seen = new Set();
   const withoutCatalogueYear = typeof title === 'string'
     ? title.replace(/\s+\((?:19|20)\d{2}\)$/, '') : null;
-  const maxQueries = typeof title === 'string' && title.trim().length > 120
-    ? 4 : 3;
+  const maxQueries = 4;
   for (const value of [title, withoutCatalogueYear,
     ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
     if (typeof value !== 'string') continue;
@@ -68,5 +67,5 @@ export function trustedTargetedQueries(title, aliases, episodeNumber) {
       episodeNumber > 9_999) return [];
   const suffix = ` ${String(episodeNumber).padStart(2, '0')}`;
   return trustedReleaseQueries(title, aliases).map((query) => `${query}${suffix}`)
-    .filter((query) => query.length <= 120).slice(0, 3);
+    .filter((query) => query.length <= 120).slice(0, 4);
 }
