@@ -114,6 +114,35 @@ test('a long official title searches its short main title for the exact episode'
   assert.equal(found.items[0].targetedEpisode, true);
 });
 
+test('a punctuation-tolerant same-title query finds seeded 1080p when the exact prefix misses it', async () => {
+  const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
+  const longTitle = `${japanese}: ${'Long subtitle '.repeat(12)}`;
+  const searches = [];
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: longTitle }),
+    releaseQueries: async () => ['Magic Repo Man'],
+    pause: async () => {},
+    searchReleases: async ({ query }) => {
+      searches.push(query);
+      return { state: 'candidates', items:
+        query === 'Kashita Maryoku wa 01'
+          ? [{ indexerId: 7, guid: 'seeded-1080',
+            title: '[SubsPlease] Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01 (1080p)',
+            seeders: 239, evidence: 'unverified' }]
+          : query === `${japanese} 01`
+            ? [{ indexerId: 7, guid: 'weak-480',
+              title: '[SubsPlease] Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01 (480p)',
+              seeders: 1, evidence: 'unverified' }]
+            : [] };
+    },
+  });
+  const found = await discover({ requestId: 12, searchTargetEpisodeId: 1001 });
+  assert.ok(searches.includes('Kashita Maryoku wa 01'));
+  assert.ok(found.items.some((item) => item.guid === 'seeded-1080' &&
+    item.targetEpisodeId === 1001 && item.targetedEpisode === true));
+});
+
 test('a broad result naming the exact episode gets the same target priority', async () => {
   const discover = createRequestCandidateDiscovery({
     readRequest: () => request, loadDetail: async () => detail,
