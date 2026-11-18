@@ -159,6 +159,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   }
   return { state: 'preflight', requestId, anidbId: request.anidbId,
     ...(searchQuery === canonicalQuery ? {} : { searchQuery }),
+    ...(firstQuery === detail.title ? {} : { identityTitle: firstQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
     ...(shokoPreview ? { shokoPreview } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,

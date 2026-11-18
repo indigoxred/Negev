@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { assessRelease, compareReleases } from
+import { assessRelease, compareReleases, hasSeasonPackHint,
+  hasSingleEpisodeHint } from
   '../src/acquisition/release-preference.mjs';
 
 const item = (title, seeders = 12, extra = {}) => ({
@@ -95,4 +96,11 @@ test('a completed season prefers a seeded full pack over individual episodes', (
   const unseededPack = item('Cerberus Season 1 BD 1080p', 0);
   assert.equal([releases[0], unseededPack].sort((a, b) => compareReleases(a, b,
     { preferSeasonPack: true }))[0].title, releases[0].title);
+});
+
+test('a spaced episode range remains a pack hint, not a single episode', () => {
+  const pack = item('[Group] Example - 01 - 12 (1080p)');
+  assert.equal(hasSeasonPackHint(pack), true);
+  assert.equal(hasSingleEpisodeHint(pack), false);
+  assert.equal(hasSingleEpisodeHint(item('[Group] Example - 01 (1080p)')), true);
 });

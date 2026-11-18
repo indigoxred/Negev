@@ -11,6 +11,7 @@ export const hasSeasonPackHint = (candidate) => {
 // some older packs do not advertise "batch" or "season" in their title.
 export const hasSingleEpisodeHint = (candidate) => {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  if (hasSeasonPackHint(candidate)) return false;
   if (/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E)?\d{1,3}\b/i.test(title)) return false;
   return /(?:^|[ ._-])S\d{1,2}E\d{1,3}(?:v\d+)?(?=$|[ ._\-[\(])/i.test(title) ||
     /\s[-–]\s0*[1-9]\d{0,2}(?:v\d+)?(?=\s|$|[.\[(])/i.test(title);

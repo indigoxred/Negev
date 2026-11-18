@@ -73,6 +73,7 @@ test('a long same-ID main title keeps its exact search query through preflight',
   });
   assert.equal(result.state, 'preflight');
   assert.equal(result.searchQuery, `${japanese} 01`);
+  assert.equal(result.identityTitle, japanese);
   assert.deepEqual(queried, [`${japanese} 01`]);
 });
 
@@ -281,6 +282,7 @@ test('an alias-only hit is revalidated through a trusted same-anime title', asyn
   assert.deepEqual(queries, ['Example', 'English Alias']);
   assert.equal(result.state, 'preflight');
   assert.equal(result.searchQuery, 'English Alias');
+  assert.equal(result.identityTitle, undefined);
 });
 
 test('a long canonical title preflights only its verified short alias', async () => {

@@ -48,6 +48,32 @@ test('a completed series selects a verified full-season plan before an episode',
   assert.equal(selected, 'candidate-2');
 });
 
+test('a spaced-range 1080p pack is inspected before 480p episode fallback', async () => {
+  const inspected = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, releaseState: 'completed', items: [
+        { ...candidate(1), title: '[Group] Example - 01 - 12 (1080p)',
+          seeders: 12 },
+        { ...candidate(2), title: '[Group] Example - 01 (480p)',
+          seeders: 12 },
+      ] }),
+    previewCandidate: async ({ candidate: item }) => {
+      inspected.push(item.guid);
+      return item.guid === 'candidate-1' ? { ...preflight,
+        episodeIds: [1001, 1002], files: [
+          { name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] },
+          { name: 'Example - 02.mkv', size: 1000, episodeIds: [1002] },
+        ] } : preflight;
+    },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.deepEqual(inspected, ['candidate-1']);
+});
+
 test('a completed-season pack check does not preview known single episodes', async () => {
   const inspected = [];
   const releases = Array.from({ length: 25 }, (_, index) => ({
@@ -818,6 +844,29 @@ test('an alias preflight passes its query to the guarded stopped submission', as
   });
   assert.equal((await process({ requestId: 4 })).state, 'stopped_observed');
   assert.equal(selected.searchQuery, 'Official English');
+});
+
+test('an alias episode query is retrieval evidence, not the identity title', async () => {
+  let submitted = false;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, items: [{ ...candidate(1),
+        title: 'Official English S01E01 WEB 1080p' }] }),
+    previewCandidate: async () => ({ ...preflight,
+      searchQuery: 'Official English 01',
+      identityTitle: 'Official English',
+      files: [{ name: 'Official English S01E01.mkv', size: 1000,
+        episodeIds: [1001] }] }),
+    loadDetail: async () => detail,
+    submitCandidate: async ({ searchQuery }) => {
+      submitted = true;
+      assert.equal(searchQuery, 'Official English 01');
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+  assert.equal(submitted, true);
 });
 
 test('unsafe or malformed release observations never reach stopped submission', async () => {
