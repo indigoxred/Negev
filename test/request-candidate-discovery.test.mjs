@@ -89,6 +89,27 @@ test('a missing episode search reaches older releases without losing title alias
   'Official English');
 });
 
+test('a broad result naming the exact episode gets the same target priority', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    pause: async () => {},
+    searchReleases: async ({ query }) => ({ state: 'candidates', items:
+      query === 'Canonical Anime 01'
+        ? [{ indexerId: 7, guid: 'weak',
+          title: 'Canonical Anime - 01 WEB 720p', seeders: 1,
+          evidence: 'unverified' }]
+        : [{ indexerId: 7, guid: 'strong',
+          title: 'Canonical Anime - 01 WEB 1080p', seeders: 100,
+          evidence: 'unverified' }] }),
+  });
+  const found = await discover({ requestId: 12,
+    searchTargetEpisodeId: 1001 });
+  assert.equal(found.items.find((item) => item.guid === 'strong')
+    .targetedEpisode, true);
+  assert.equal(found.items.find((item) => item.guid === 'strong')
+    .sourceQuery, 'Canonical Anime');
+});
+
 test('an episode search cannot use a target outside the saved request', async () => {
   let searches = 0;
   const discover = createRequestCandidateDiscovery({ readRequest: () => request,

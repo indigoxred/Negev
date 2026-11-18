@@ -71,8 +71,11 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // decide whether a candidate can be submitted.
       buckets.push(result.items.map((item) => ({ ...item,
         sourceQuery: query,
+        ...(target && hasTargetEpisodeHint(item, target.number) ?
+          { targetedEpisode: true } : {}),
         ...(targeted && index === 0 ? {
-          targetedEpisode: hasTargetEpisodeHint(item, target.number),
+          ...(!hasTargetEpisodeHint(item, target.number) ?
+            { targetedEpisode: false } : {}),
           targetEpisodeId: target.id } : {}) })));
     }
     if (successful === 0) return held('release_search_unavailable');
