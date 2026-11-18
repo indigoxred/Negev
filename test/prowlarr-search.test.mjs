@@ -47,6 +47,20 @@ test('uses only read-only search and returns unverified, sanitized candidates', 
   assert.equal(JSON.stringify(result).includes('secret'), false);
 });
 
+test('private acquisition search retains only a Prowlarr proxy from its own result', async () => {
+  const proxy = 'http://prowlarr.internal:9696/7/download?apikey=synthetic-key&link=abc123&file=Example';
+  const result = await searchReleaseCandidates({ ...config, query: 'Example Anime',
+    includeProxyUrl: true,
+    fetchImpl: async () => Response.json([
+      { guid: 'good', indexerId: 7, title: 'Example 01', size: 12345,
+        protocol: 'torrent', seeders: 8, downloadUrl: proxy },
+      { guid: 'bad', indexerId: 9, title: 'Example 02', size: 12345,
+        protocol: 'torrent', seeders: 8, downloadUrl: 'https://evil.invalid/download' },
+    ]) });
+  assert.equal(result.items[0].proxyUrl, proxy);
+  assert.equal(result.items[1].proxyUrl, undefined);
+});
+
 test('rejects unscoped indexer search and invalid input without a network call', async () => {
   const fetchImpl = async () => { throw Error('must not call'); };
   assert.deepEqual(await searchReleaseCandidates({ ...config, indexerIds: [], query: 'Example', fetchImpl }), { state: 'invalid_query' });

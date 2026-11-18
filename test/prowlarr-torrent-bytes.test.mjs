@@ -27,6 +27,22 @@ test('fetches only the matching Prowlarr-proxied torrent bytes without redirecti
   assert.deepEqual(result.bytes, bytes);
 });
 
+test('private discovery proxy avoids a second indexer search and remains bounded to Prowlarr', async () => {
+  const calls = [];
+  const result = await fetchProwlarrTorrentBytes({ ...config,
+    candidate: { ...candidate, proxyUrl: proxy },
+    fetchImpl: async (url) => {
+      calls.push(new URL(url).pathname);
+      return new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } });
+    } });
+  assert.equal(result.state, 'torrent_bytes');
+  assert.deepEqual(calls, ['/3/download']);
+  const denied = await fetchProwlarrTorrentBytes({ ...config,
+    candidate: { ...candidate, proxyUrl: 'https://evil.invalid/download' },
+    fetchImpl: async () => { throw Error('must not request'); } });
+  assert.deepEqual(denied, { state: 'held', reason: 'untrusted_proxy' });
+});
+
 test('accepts a Prowlarr-proxied magnetUrl when downloadUrl is absent', async () => {
   const calls = [];
   const result = await fetchProwlarrTorrentBytes({ ...config,
