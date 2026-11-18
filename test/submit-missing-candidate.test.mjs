@@ -208,6 +208,32 @@ test('an exact-episode stopped submission reuses and revalidates its search quer
     assert.deepEqual(queries, ['Example 01']);
   }));
 
+test('a shortened same-ID title query survives final stopped submission', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
+    const selected = { ...candidate,
+      title: '[SubsPlease] Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01 1080p' };
+    const queries = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async (url) => {
+        if (new URL(url).pathname.endsWith('/search')) {
+          queries.push(new URL(url).searchParams.get('query'));
+          return Response.json([{ ...selected, protocol: 'torrent',
+            downloadUrl: proxy }]);
+        }
+        return new Response(bytes, { headers: {
+          'content-type': 'application/x-bittorrent' } });
+      }, qbittorrentFetch: qbittorrentFetch([]) });
+    const result = await submitMissingCandidate({ ...input,
+      candidate: selected,
+      detail: { ...baseDetail,
+        title: `${japanese}: ${'Long subtitle '.repeat(12)}` },
+      searchQuery: `${japanese} 01`,
+      releaseQueries: async () => ['Magic Repo Man'] });
+    assert.equal(result.state, 'stopped_observed');
+    assert.deepEqual(queries, [`${japanese} 01`]);
+  }));
+
 test('a caller-supplied release query outside the trusted AniDB titles cannot reach an indexer', async () =>
   withLedgers(async ({ request, ledger }) => {
     let providerCalls = 0;

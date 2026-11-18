@@ -1,6 +1,6 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
-import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { hasTargetEpisodeHint } from './release-preference.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -47,10 +47,9 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
     const titleQueries = trustedReleaseQueries(detail.title, aliases);
-    const targeted = target ? trustedTargetedQuery(detail.title, aliases,
-      target.number) : null;
-    const queries = targeted ?
-      [targeted, ...titleQueries] : titleQueries;
+    const targeted = target ? trustedTargetedQueries(detail.title, aliases,
+      target.number) : [];
+    const queries = [...targeted, ...titleQueries];
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
@@ -73,7 +72,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         sourceQuery: query,
         ...(target && hasTargetEpisodeHint(item, target.number) ?
           { targetedEpisode: true } : {}),
-        ...(targeted && index === 0 ? {
+        ...(targeted.includes(query) ? {
           ...(!hasTargetEpisodeHint(item, target.number) ?
             { targetedEpisode: false } : {}),
           targetEpisodeId: target.id } : {}) })));

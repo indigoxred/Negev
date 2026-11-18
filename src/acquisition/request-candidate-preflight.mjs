@@ -2,7 +2,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { trustedReleaseQueries, trustedTargetedQuery } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
@@ -70,8 +70,10 @@ export async function previewRequestCandidate({ requestId, candidate,
       const target = detail.episodes.find((episode) =>
         episode.id === candidate.targetEpisodeId && episode.type === 'Episode');
       if (!target || !request.episodeIds.includes(target.id) ||
-          candidate.sourceQuery !== trustedTargetedQuery(detail.title,
-            aliases, target.number)) return held('untrusted_release_query');
+          !trustedTargetedQueries(detail.title, aliases,
+            target.number).includes(candidate.sourceQuery)) {
+        return held('untrusted_release_query');
+      }
     } else if (!queries.includes(candidate.sourceQuery)) {
       return held('untrusted_release_query');
     }

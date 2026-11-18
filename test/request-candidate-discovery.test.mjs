@@ -71,7 +71,8 @@ test('a missing episode search reaches older releases without losing title alias
     },
   });
   const found = await discover({ requestId: 12, searchTargetEpisodeId: 1001 });
-  assert.deepEqual(queries, ['Canonical Anime 01', 'Canonical Anime', 'Official English']);
+  assert.deepEqual(queries, ['Canonical Anime 01', 'Official English 01',
+    'Canonical Anime', 'Official English']);
   assert.equal(found.items.length, 50);
   for (const query of queries) {
     assert.ok(found.items.some((item) => item.sourceQuery === query));
@@ -87,6 +88,30 @@ test('a missing episode search reaches older releases without losing title alias
   assert.equal(found.items.find((item) =>
     item.title.startsWith('Official English release')).sourceQuery,
   'Official English');
+});
+
+test('a long official title searches its short main title for the exact episode', async () => {
+  const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
+  const longTitle = `${japanese}: ${'Long subtitle '.repeat(12)}`;
+  const queries = [];
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request,
+    loadDetail: async () => ({ ...detail, title: longTitle }),
+    releaseQueries: async () => ['Magic Repo Man'],
+    pause: async () => {},
+    searchReleases: async ({ query }) => {
+      queries.push(query);
+      return { state: 'candidates', items: query === `${japanese} 01` ?
+        [{ indexerId: 7, guid: 'strong-1080',
+          title: '[Group] Kashita Maryoku wa Revo Barai de Kyousei Choushuu - 01 1080p',
+          seeders: 239, evidence: 'unverified' }] : [] };
+    },
+  });
+  const found = await discover({ requestId: 12, searchTargetEpisodeId: 1001 });
+  assert.equal(queries[0], `${japanese} 01`);
+  assert.equal(found.items[0].guid, 'strong-1080');
+  assert.equal(found.items[0].targetEpisodeId, 1001);
+  assert.equal(found.items[0].targetedEpisode, true);
 });
 
 test('a broad result naming the exact episode gets the same target priority', async () => {
