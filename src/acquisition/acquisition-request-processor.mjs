@@ -203,10 +203,6 @@ export function createAcquisitionRequestProcessor({ readRequest,
       uncertainPackPhase ? uncertainPackFingerprint : packFingerprint;
     const sameTarget = validSavedOrder &&
       (saved[0] === packFingerprint || fallbackPhase || uncertainPackPhase);
-    // The saved clock belongs to the saved candidate policy. A new target or
-    // policy starts a fresh bounded scan even when the old clock is expired.
-    const activeScanStartedMs = candidateFingerprint !== null && !sameTarget ?
-      null : scanStartedMs;
     const consumed = sameTarget ? savedOrder.slice(0, candidateOffset)
       .filter((id) => currentById.has(id)) : [];
     const remaining = sameTarget ? savedOrder.slice(candidateOffset)
@@ -255,12 +251,6 @@ export function createAcquisitionRequestProcessor({ readRequest,
     for (let index = start; index < ordered.length; index++) {
       if (seen.size >= maxPreflights) break;
       const candidate = ordered[index];
-      if (activeScanStartedMs !== null &&
-          now() - activeScanStartedMs >= 15 * 60_000) {
-        return { ...held('candidate_scan_time_budget'),
-          nextCandidateOffset: index,
-          nextCandidateFingerprint: cursor };
-      }
       nextIndex = index + 1;
       if (preferSeasonPack && !fallbackPhase &&
           hasSingleEpisodeHint(candidate)) continue;

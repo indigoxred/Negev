@@ -455,9 +455,9 @@ test('a candidate scan keeps its original start across pages and resets after ex
     } finally { queue.close(); }
   }));
 
-test('a timed-out candidate scan pauses for 15 minutes and then continues', async () =>
+test('a legacy timed-out candidate scan resumes promptly after reopening', async () =>
   fixture(async (dbPath) => {
-    const queue = openAcquisitionRequestQueue(dbPath);
+    let queue = openAcquisitionRequestQueue(dbPath);
     const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
     try {
       const first = queue.claimNext({ nowMs: 100 });
@@ -465,15 +465,23 @@ test('a timed-out candidate scan pauses for 15 minutes and then continues', asyn
         state: 'held', reason: 'candidate_scan_time_budget',
         nextCandidateOffset: 1, nextCandidateFingerprint: fingerprint,
         checkedMs: 900_101 });
-      assert.equal(queue.getResult(1).nextDueMs, 1_800_101);
+      assert.equal(queue.getResult(1).nextDueMs, 960_101);
       assert.equal(queue.getScanStartedMs(1), null);
-      queue.claimNext({ nowMs: 900_102 });
-      queue.claimNext({ nowMs: 900_102 });
-      queue.claimNext({ nowMs: 900_102 });
-      const next = queue.claimNext({ nowMs: 1_800_101 });
+    } finally { queue.close(); }
+    const legacy = new DatabaseSync(dbPath);
+    legacy.prepare(`UPDATE acquisition_request_checks SET next_due_ms=?
+      WHERE request_id=1`).run(1_800_101);
+    legacy.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 960_101);
+      queue.claimNext({ nowMs: 960_101 });
+      queue.claimNext({ nowMs: 960_101 });
+      queue.claimNext({ nowMs: 960_101 });
+      const next = queue.claimNext({ nowMs: 960_101 });
       assert.equal(next.requestId, 1);
       assert.equal(next.candidateOffset, 1);
-      assert.equal(queue.getScanStartedMs(1), 1_800_101);
+      assert.equal(queue.getScanStartedMs(1), 960_101);
     } finally { queue.close(); }
   }));
 
