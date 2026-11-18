@@ -50,6 +50,16 @@ test('a healthy 720p release outranks a barely seeded BD 1080p release', () => {
   assert.equal(ordered[0].title, 'Show WEB 720p');
 });
 
+test('a strong 1080p or 720p release outranks a more seeded 480p fallback', () => {
+  const releases = [item('Show - 05 WEB 480p', 500,
+    { targetedEpisode: true }),
+  item('Show - 05 WEB 720p', 18, { targetedEpisode: true }),
+  item('Show - 05 WEB 1080p', 15, { targetedEpisode: true })];
+  assert.deepEqual(releases.sort(compareReleases).map((entry) => entry.title),
+    ['Show - 05 WEB 1080p', 'Show - 05 WEB 720p',
+      'Show - 05 WEB 480p']);
+});
+
 test('quality wins when both releases have several reported seeders', () => {
   const ordered = [item('Show WEB 480p', 5),
     item('Show BD 1080p', 4)].sort(compareReleases);

@@ -103,8 +103,7 @@ export function openAcquisitionRequestQueue(dbPath,
   // Active Airing watches continue so later episodes can be added.
   const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
       COALESCE(c.candidate_offset,0) AS candidateOffset,
-      c.candidate_fingerprint AS candidateFingerprint,
-      c.scan_started_ms AS scanStartedMs FROM requests r
+      c.candidate_fingerprint AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
