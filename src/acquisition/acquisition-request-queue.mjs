@@ -140,6 +140,10 @@ export function openAcquisitionRequestQueue(dbPath,
       SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
       WHERE state='held' AND reason='torrent_hash_in_use'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='service_stopping'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -166,7 +170,7 @@ export function openAcquisitionRequestQueue(dbPath,
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
       (c.state='stopped_observed' OR (c.state='held' AND (c.reason IN
         ('shoko_metadata_missing','reconciled_observed_attempts',
-         'torrent_hash_in_use') OR
+         'torrent_hash_in_use','service_stopping') OR
        (c.reason='no_safe_release' AND c.search_policy_rechecked=1) OR
        (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL))))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
@@ -219,7 +223,7 @@ export function openAcquisitionRequestQueue(dbPath,
       AND s.request_id IS NULL AND ${cohortFilter}
       ((c.state='held' AND c.reason IN
         ('shoko_metadata_missing','torrent_hash_in_use',
-         'reconciled_observed_attempts')) OR
+         'reconciled_observed_attempts','service_stopping')) OR
         (c.state='held' AND c.reason='no_safe_release' AND
           c.search_policy_rechecked=1) OR
         c.state='stopped_observed')
@@ -562,7 +566,8 @@ export function openAcquisitionRequestQueue(dbPath,
             checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable', 'release_search_incomplete',
-            'import_quiet_window_unverified', 'torrent_hash_in_use'].includes(reason)
+            'import_quiet_window_unverified', 'torrent_hash_in_use',
+            'service_stopping'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);

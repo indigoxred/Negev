@@ -186,6 +186,29 @@ test('a transient external torrent collision retries in one minute, including sa
     finally { queue.close(); }
   }));
 
+test('a request interrupted by service shutdown resumes promptly after restart',
+  async () => fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'service_stopping', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+    } finally { queue.close(); }
+    const old = new DatabaseSync(dbPath);
+    old.prepare(`UPDATE acquisition_request_checks SET next_due_ms=1800100
+      WHERE request_id=1`).run();
+    old.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 1, nextDueMs: 60_100 }]);
+      assert.equal(queue.claimNext({ nowMs: 60_100,
+        priorityRequestId: 1 }).requestId, 1);
+    } finally { queue.close(); }
+  }));
+
 test('an unavailable related-title lookup retries within five minutes',
   async () => fixture(async (dbPath) => {
     let queue = openAcquisitionRequestQueue(dbPath);
