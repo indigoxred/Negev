@@ -188,9 +188,13 @@ export function createPipelineScheduler({ pipeline,
       if (!Number.isSafeInteger(requestId) || requestId < 1) {
         throw new TypeError('Invalid fresh request ID');
       }
-      if (closed || freshRequests.includes(requestId) ||
-          freshRequests.length >= 32) return;
-      freshRequests.push(requestId);
+      if (closed) return;
+      const queued = freshRequests.indexOf(requestId);
+      if (queued >= 0) freshRequests.splice(queued, 1);
+      else if (freshRequests.length >= 32) freshRequests.pop();
+      // A submitted request must lead restart-recovered backlog. Any displaced
+      // saved row remains durable and will be found by the ordinary cursor.
+      freshRequests.unshift(requestId);
       metadataRetries.delete(requestId);
       if (timer !== undefined && recoveryState.startsWith('waiting') &&
           !priorityServed) {

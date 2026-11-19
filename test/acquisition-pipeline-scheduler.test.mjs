@@ -68,6 +68,30 @@ test('a new request gets a prompt first turn before older queued work without st
   await scheduler.stop();
 });
 
+test('a newly submitted request precedes restart backlog in the priority queue', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled',
+      resumedRequests: [1, 6, 8, 10] }),
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page' };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(87);
+  await timer.advance();
+  assert.deepEqual(calls, [87]);
+  await scheduler.stop();
+});
+
 test('a due saved candidate sweep gets prompt continuation turns while other stages still run', async () => {
   const timer = clock();
   const calls = [];
