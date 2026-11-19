@@ -1,12 +1,14 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { isTrustedProxy } from './prowlarr-torrent-bytes.mjs';
+import { compareReleases, hasTargetEpisodeHint } from './release-preference.mjs';
 
 // Prowlarr GET /api/v1/search only. A release is a search candidate, not
 // evidence that its video is registered in AniDB or safe to import.
 export async function searchReleaseCandidates({
   baseUrl, apiKey, query, indexerIds, trustedIndexerIds = [],
   categories = [], limit = 25,
+  targetEpisodeNumber = null,
   includeProxyUrl = false,
   fetchImpl = fetch, timeoutMs = 10_000,
 }) {
@@ -17,7 +19,9 @@ export async function searchReleaseCandidates({
       indexerIds.length === 0 || !validIds(trustedIndexerIds, 20) ||
       trustedIndexerIds.some((id) => !indexerIds.includes(id)) ||
       !validIds(categories, 20) ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
+      (targetEpisodeNumber !== null && (!Number.isSafeInteger(targetEpisodeNumber) ||
+        targetEpisodeNumber < 1 || targetEpisodeNumber > 9999))) {
     return { state: 'invalid_query' };
   }
   let base;
@@ -62,6 +66,19 @@ export async function searchReleaseCandidates({
     const byIndexer = new Map(indexerIds.map((id) => [id, []]));
     for (const item of data) {
       if (item.protocol === 'torrent') byIndexer.get(item.indexerId).push(item);
+    }
+    // Prowlarr can return a valid exact episode below its first page of
+    // unrelated hits. Promote exact coordinates before the local page cap;
+    // the later metainfo, Shoko identity and track checks still decide safety.
+    if (targetEpisodeNumber !== null) {
+      for (const bucket of byIndexer.values()) {
+        bucket.sort((left, right) => {
+          const a = hasTargetEpisodeHint(left, targetEpisodeNumber);
+          const b = hasTargetEpisodeHint(right, targetEpisodeNumber);
+          if (a !== b) return Number(b) - Number(a);
+          return a ? compareReleases(left, right) : 0;
+        });
+      }
     }
     const selected = [];
     for (let offset = 0; selected.length < limit; offset++) {

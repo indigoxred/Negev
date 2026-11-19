@@ -33,7 +33,7 @@ test('discovers candidates for an existing exact request without authorizing the
       evidence: 'unverified', sourceQuery: 'Canonical Anime' }],
     exhaustive: false,
   });
-  assert.deepEqual(queries, [{ query: 'Canonical Anime' }]);
+  assert.deepEqual(queries, [{ query: 'Canonical Anime', targetEpisodeNumber: null }]);
 });
 
 test('a catalogue year does not hide same-title Airing releases', async () => {
@@ -56,12 +56,14 @@ test('a catalogue year does not hide same-title Airing releases', async () => {
 
 test('a missing episode search reaches older releases without losing title aliases', async () => {
   const queries = [];
+  const targetNumbers = [];
   const discover = createRequestCandidateDiscovery({
     readRequest: () => request, loadDetail: async () => detail,
     releaseQueries: async () => ['Official English'],
     pause: async () => {},
-    searchReleases: async ({ query }) => {
+    searchReleases: async ({ query, targetEpisodeNumber }) => {
       queries.push(query);
+      targetNumbers.push(targetEpisodeNumber);
       return { state: 'candidates', items: Array.from({ length: 25 }, (_, i) => ({
         indexerId: 7, guid: `${query}-${i}`,
         title: query === 'Canonical Anime 01'
@@ -73,6 +75,7 @@ test('a missing episode search reaches older releases without losing title alias
   const found = await discover({ requestId: 12, searchTargetEpisodeId: 1001 });
   assert.deepEqual(queries, ['Canonical Anime 01', 'Official English 01',
     'Canonical Anime', 'Official English']);
+  assert.deepEqual(targetNumbers, [1, 1, null, null]);
   assert.equal(found.items.length, 50);
   for (const query of queries) {
     assert.ok(found.items.some((item) => item.sourceQuery === query));

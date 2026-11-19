@@ -126,6 +126,62 @@ export async function processShokoRescan({ item, ledger, importRoot,
       file.Locations.some((location) =>
         location?.AbsolutePath === sourcePath &&
         location.IsAccessible === true));
+    // A normal first-pass import can move the file before this delayed check.
+    // The old source path then vanishes. Look up only the same basename and
+    // require a fresh Shoko file, exact identity, size and Plex file ID.
+    if (matches.length === 0 && exact.length === 0) {
+      let moved;
+      try { moved = await readFile({ sourcePath:
+        `/${path.posix.basename(video.name)}` }); }
+      catch { moved = null; }
+      if (Array.isArray(moved) && moved.length <= 100) {
+        const confirmed = [];
+        for (const file of moved) {
+          const createdMs = Date.parse(file?.Created);
+          const inMount = file?.Locations?.some((location) => {
+            const absolute = location?.AbsolutePath;
+            if (typeof absolute !== 'string' ||
+                path.posix.normalize(absolute) !== absolute ||
+                location.IsAccessible !== true || absolute === sourcePath ||
+                path.posix.basename(absolute) !== path.posix.basename(video.name)) {
+              return false;
+            }
+            const relative = path.posix.relative(shokoMount.appRoot, absolute);
+            return relative && relative !== '..' && !relative.startsWith('../') &&
+              !path.posix.isAbsolute(relative);
+          });
+          if (!validId(file?.ID) || file.Size !== video.size || !inMount ||
+              !Number.isFinite(createdMs) || createdMs < publishedMs - 10_000 ||
+              createdMs > nowMs + 10_000 ||
+              !exactLink(file, anidbId, video.episodeIds, true)) continue;
+          let playable = true;
+          for (const episodeId of video.episodeIds) {
+            let result;
+            try { result = await verifyPlex({ requestId, anidbId, episodeId }); }
+            catch { result = null; }
+            if (result?.state !== 'available' || result.fileId !== file.ID) {
+              playable = false;
+              break;
+            }
+          }
+          if (playable) confirmed.push(file);
+        }
+        if (confirmed.length === 1 && (!prior || prior.fileId === confirmed[0].ID)) {
+          const fileId = confirmed[0].ID;
+          if (!prior) {
+            const observed = ledger.observeFile({ attemptId,
+              fileName: video.name, fileId, nowMs });
+            if (observed.state !== 'observed') return observed;
+          }
+          const linked = ledger.markLinked({ attemptId,
+            fileName: video.name, fileId, nowMs });
+          if (linked.state !== 'linked') return linked;
+          recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
+            ({ episodeId, fileId })));
+          continue;
+        }
+      }
+    }
     if (exact.length !== 1 || !Array.isArray(exact[0].SeriesIDs)) {
       if (nowMs - publishedMs >= 1_200_000) {
         return reviewHold('shoko_file_mismatch');

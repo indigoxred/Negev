@@ -66,9 +66,9 @@ export function createCatalogueTestService({
       const request = requestLedger.getRequest(id);
       return request?.requesterId === 1 ? request : null;
     };
-    const searchReleases = prowlarrBaseUrl === undefined ? undefined : ({ query }) => searchReleaseCandidates({
+    const searchReleases = prowlarrBaseUrl === undefined ? undefined : ({ query, targetEpisodeNumber }) => searchReleaseCandidates({
       baseUrl: prowlarrBaseUrl, apiKey: prowlarrApiKey, indexerIds: prowlarrIndexerIds,
-      query, fetchImpl,
+      query, targetEpisodeNumber, fetchImpl,
     });
     const listPlexKeys = !plexConfigured ? undefined : ({ kind, libraryId, offset }) => {
       const allowed = kind === 'episode' ? plexSections.episode :
