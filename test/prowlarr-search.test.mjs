@@ -116,3 +116,22 @@ test('a large first indexer response does not hide candidates from a later index
   assert.deepEqual(result.items.map((item) => item.indexerId), [7, 9, 7, 9, 7]);
   assert.deepEqual(result.items.map((item) => item.guid), ['7-0', '9-0', '7-1', '9-1', '7-2']);
 });
+
+test('an exact episode beyond the raw indexer page is retained and preferred', async () => {
+  const data = Array.from({ length: 60 }, (_, n) => ({
+    guid: `release-${n}`, indexerId: 7,
+    title: n === 53 ? 'Example S01E01 1080p English Subs' :
+      n === 54 ? 'Example S01E01 720p English Subs' :
+        `Example S01E${String(n + 10).padStart(2, '0')} 1080p`,
+    size: 1000 + n, protocol: 'torrent', seeders: n === 53 ? 50 : 5,
+  }));
+  const search = async (input) => searchReleaseCandidates({ ...config,
+    query: 'Example 01', limit: 5, fetchImpl: async () => Response.json(data), ...input });
+  const targeted = await search({ targetEpisodeNumber: 1 });
+  assert.equal(targeted.state, 'candidates');
+  assert.equal(targeted.items[0].guid, 'release-53');
+  assert.equal(targeted.items[1].guid, 'release-54');
+  const untargeted = await search({});
+  assert.equal(untargeted.items[0].guid, 'release-0');
+  assert.deepEqual(await search({ targetEpisodeNumber: 0 }), { state: 'invalid_query' });
+});

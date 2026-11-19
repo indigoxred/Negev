@@ -56,7 +56,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     for (const [index, query] of queries.entries()) {
       if (index > 0) await pause(1_000);
       let result;
-      try { result = await searchReleases({ query }); }
+      try { result = await searchReleases({ query,
+        targetEpisodeNumber: target && targeted.includes(query) ? target.number : null }); }
       catch { continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
           result.items.length > 50 || result.items.some((item) =>

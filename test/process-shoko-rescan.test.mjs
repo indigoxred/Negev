@@ -172,6 +172,46 @@ test('a moved exact file completes only after its own Plex episode is verified',
   assert.equal(saved.completion(), 'done');
 });
 
+test('an already moved first-pass import does not become a false review', async () => {
+  const saved = witness();
+  const video = manifest.files[0];
+  const single = { ...item, manifest: { ...manifest, files: [video] } };
+  let scanned = 0;
+  const result = await processShokoRescan({ item: single,
+    ledger: saved.ledger, importRoot, shokoMount, nowMs: 300_100,
+    readQueue: async () => ({ state: 'queue_idle_unverified' }),
+    readFile: async ({ sourcePath }) => sourcePath === '/01 [BD].mkv'
+      ? [{ ...linked(80, 11, video.size,
+        '/import/Anime/Example/01 [BD].mkv'),
+        Created: new Date(200).toISOString() }] : [],
+    verifyPlex: async () => ({ state: 'available', fileId: 80 }),
+    rescan: async () => { scanned++; return { state: 'accepted' }; },
+  });
+  assert.equal(result.state, 'linked');
+  assert.equal(saved.completion(), 'done');
+  assert.equal(saved.files.get(video.name).fileId, 80);
+  assert.equal(scanned, 0);
+});
+
+test('a stale same-name file cannot prove a new first-pass import', async () => {
+  const saved = witness();
+  const video = manifest.files[0];
+  const single = { ...item, publishedMs: 100_000,
+    manifest: { ...manifest, files: [video] } };
+  const result = await processShokoRescan({ item: single,
+    ledger: saved.ledger, importRoot, shokoMount, nowMs: 400_100,
+    readQueue: async () => ({ state: 'queue_idle_unverified' }),
+    readFile: async ({ sourcePath }) => sourcePath === '/01 [BD].mkv'
+      ? [{ ...linked(80, 11, video.size,
+        '/import/Anime/Example/01 [BD].mkv'),
+        Created: new Date(0).toISOString() }] : [],
+    verifyPlex: async () => ({ state: 'available', fileId: 80 }),
+    rescan: async () => ({ state: 'accepted' }),
+  });
+  assert.notEqual(result.state, 'linked');
+  assert.equal(saved.completion(), null);
+});
+
 test('a busy queue, wrong file, or conflicting identity cannot trigger rescan', async () => {
   for (const state of ['busy', 'wrong_path', 'wrong_size',
     'wrong_identity']) {
