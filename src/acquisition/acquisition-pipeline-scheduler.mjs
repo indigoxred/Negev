@@ -47,8 +47,8 @@ export function createPipelineScheduler({ pipeline,
     if (!Array.isArray(result?.results)) return;
     for (const item of result.results) {
       if (!Number.isSafeInteger(item?.requestId) || item.requestId < 1) continue;
-      if (['shoko_metadata_missing', 'torrent_hash_in_use']
-        .includes(item.reason) &&
+      if ((['shoko_metadata_missing', 'torrent_hash_in_use']
+        .includes(item.reason) || item.state === 'stopped_observed') &&
           Number.isSafeInteger(item.nextDueMs) &&
           item.nextDueMs >= 0 && metadataRetries.size < 32) {
         metadataRetries.set(item.requestId, item.nextDueMs);

@@ -800,8 +800,15 @@ test('held and failed requests are recorded while later requests continue', asyn
       assert.deepEqual(queue.getResult(2), { requestId: 2, pass: 1, attemptId: null,
         state: 'held', reason: 'worker_unavailable', checkedMs: 100,
         nextDueMs: 1_800_100 });
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 3, nextDueMs: 60_100 }]);
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1, results: [] });
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 2, results: [] });
+      const continuation = queue.claimNext({ nowMs: 60_100, priorityRequestId: 3 });
+      assert.equal(continuation.requestId, 3);
+      assert.equal(queue.recordResult({ requestId: 3, pass: continuation.pass,
+        state: 'stopped_observed', attemptId: 77, checkedMs: 60_100 }).state,
+      'recorded');
       assert.deepEqual(queue.claimNext({ nowMs: 1_800_100 }),
         { state: 'claimed', requestId: 1, pass: 3 });
       assert.equal(queue.getResult(3).attemptId, 77);
