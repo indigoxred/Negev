@@ -161,7 +161,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   // An old Arr or manual torrent may own this exact hash. Check before a
   // durable target reservation so the request can inspect another candidate
   // instead of holding its episode for a collision it cannot resolve.
-  if (expectedHash !== undefined) {
+  const beforeReserve = expectedHash === undefined ? undefined : async () => {
     let sid = qbittorrent.sessionId;
     let fetchImpl = qbittorrent.fetchImpl;
     let response;
@@ -194,9 +194,10 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       }
       if (existing.length) return held('candidate_hash_in_use');
     } catch { return held('provider_unavailable'); }
-  }
+    return { state: 'ready' };
+  };
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
-    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
+    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   // Once the stopped torrent is recorded, start/completion workers own it.
   // Replaying its manifest here cannot make progress after it has downloaded,

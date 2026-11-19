@@ -8,7 +8,7 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 // targets. A Shoko import waiting for Plex is not an absent target.
 export async function reserveMissingTargets({ request, candidate, episodeIds,
   readEvidence, publicLibraryIds, ledger,
-  firstTimePolicy = 'strict', now = Date.now }) {
+  firstTimePolicy = 'strict', now = Date.now, beforeReserve }) {
   if (!validId(request?.id) || !validId(request.anidbId) || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
       request.episodeIds.some((id) => !validId(id)) ||
@@ -19,6 +19,7 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length === 0 ||
       publicLibraryIds.some((id) => !validId(id)) ||
       typeof readEvidence !== 'function' || typeof ledger?.reserve !== 'function' ||
+      (beforeReserve !== undefined && typeof beforeReserve !== 'function') ||
       !['strict', 'single_uncertain_attempt'].includes(firstTimePolicy) ||
       typeof now !== 'function') {
     throw new TypeError('Invalid missing-target reservation');
@@ -39,6 +40,14 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
   const checked = await confirmMissingTargets({ request, episodeIds,
     readEvidence, publicLibraryIds, firstTimePolicy, now });
   if (checked.state !== 'missing_confirmed') return checked;
+  if (beforeReserve) {
+    let preflight;
+    try { preflight = await beforeReserve(); }
+    catch { return held('candidate_preflight_unavailable'); }
+    if (preflight?.state !== 'ready') return preflight?.state === 'held' &&
+      typeof preflight.reason === 'string' ? preflight :
+      held('candidate_preflight_unavailable');
+  }
   return ledger.reserve({ requestId: request.id, candidate, episodeIds,
     evidencePolicy: checked.evidencePolicy ?? 'strict',
     nowMs: checked.checkedAtMs });
