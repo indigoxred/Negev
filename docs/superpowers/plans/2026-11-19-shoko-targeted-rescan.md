@@ -6,7 +6,7 @@
 
 **Tech stack:** Node 24, `node:sqlite`, Shoko API v3, existing Negev acquisition scheduler.
 
-**Spec:** The owner's approval in this chat on 19 November 2026: one bounded automatic Shoko rescan for exact imported files remaining unlinked after the queue settles, with no rehash, replacement, or deletion.
+**Scope:** One bounded automatic Shoko rescan for exact imported files remaining unlinked after the queue settles, with no rehash, replacement, or deletion.
 
 ## Global constraints
 
@@ -36,4 +36,4 @@
 
 - [x] Run focused and broad local checks, then inspect the diff for scope, credential, and media-safety issues. The full Linux suite remains a release gate because several unchanged filesystem tests fail on Windows.
 - [ ] Publish through the existing release process and verify health, zero restarts, and no new qBittorrent 403s.
-- [ ] Verify exact Dull Prince and Cerberus Shoko/Plex availability remains unchanged. A live successful import without a new failed Shoko job does not prove the new recovery branch; retain its isolated failure tests as that evidence.
+- [ ] Verify existing Shoko/Plex availability remains unchanged. A live successful import without a new failed Shoko job does not prove the new recovery branch; retain its isolated failure tests as that evidence.
