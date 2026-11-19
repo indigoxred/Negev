@@ -91,7 +91,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const missingIds = request.episodeIds.filter((id) => !exactAvailable.has(id));
     const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
       missingIds[(pass - 1) % missingIds.length] : null;
-    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId }); }
+    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId,
+      ...(missingIds.length > 1 && missingIds.length <= 10 ?
+        { searchTargetEpisodeIds: missingIds } : {}) }); }
     catch { return held('release_search_unavailable'); }
     if (found?.state !== 'candidates') {
       return held(validReason(found?.reason) ? found.reason :
@@ -165,7 +167,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
       [preferSeasonPack ? 'quality-policy-season-pack-v2' :
-        requireReleasePolicy ? 'quality-policy-v2' :
+        requireReleasePolicy ? 'quality-policy-v3' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');

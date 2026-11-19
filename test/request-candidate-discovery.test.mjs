@@ -123,6 +123,34 @@ test('a missing episode search reaches older releases without losing title alias
   'Official English');
 });
 
+test('one airing search checks every bounded missing episode before reporting no releases', async () => {
+  const searches = [];
+  const multiRequest = { ...request, episodeIds: [1001, 1002, 1003] };
+  const multiDetail = { ...detail, total: 3, episodes: [
+    { id: 1001, number: 1, type: 'Episode', title: 'First' },
+    { id: 1002, number: 2, type: 'Episode', title: 'Second' },
+    { id: 1003, number: 3, type: 'Episode', title: 'Third' },
+  ] };
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => multiRequest, loadDetail: async () => multiDetail,
+    pause: async () => {},
+    searchReleases: async ({ query, targetEpisodeNumber }) => {
+      searches.push([query, targetEpisodeNumber]);
+      return { state: 'candidates', items: query === 'Canonical Anime 03'
+        ? [{ indexerId: 7, guid: 'third-episode',
+          title: 'Canonical Anime - 03 1080p', evidence: 'unverified' }] : [] };
+    },
+  });
+  const found = await discover({ requestId: 12,
+    searchTargetEpisodeIds: [1001, 1002, 1003] });
+  assert.equal(found.state, 'candidates', JSON.stringify(found));
+  assert.deepEqual(searches.slice(0, 3), [
+    ['Canonical Anime 01', 1], ['Canonical Anime 02', 2],
+    ['Canonical Anime 03', 3]]);
+  assert.equal(found.items[0].guid, 'third-episode');
+  assert.equal(found.items[0].targetEpisodeId, 1003);
+});
+
 test('a long official title searches its short main title for the exact episode', async () => {
   const japanese = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
   const longTitle = `${japanese}: ${'Long subtitle '.repeat(12)}`;

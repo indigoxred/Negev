@@ -65,7 +65,9 @@ export function openAcquisitionRequestQueue(dbPath,
       metadata_since_ms INTEGER CHECK(metadata_since_ms>=0),
       scan_started_ms INTEGER CHECK(scan_started_ms>=0),
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
-      candidate_fingerprint TEXT
+      candidate_fingerprint TEXT,
+      search_policy_rechecked INTEGER NOT NULL DEFAULT 0
+        CHECK(search_policy_rechecked IN (0,1,2))
     ) STRICT`);
     // Migration review can hold an unstarted request without cancelling the
     // user's request or changing an existing download. The row survives a
@@ -96,6 +98,22 @@ export function openAcquisitionRequestQueue(dbPath,
       .some((column) => column.name === 'scan_started_ms')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN scan_started_ms INTEGER CHECK(scan_started_ms>=0)');
     }
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'search_policy_rechecked')) {
+      db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN
+        search_policy_rechecked INTEGER NOT NULL DEFAULT 0
+        CHECK(search_policy_rechecked IN (0,1,2))`);
+    }
+    // Revisit one recent multi-episode Airing miss under the broader episode
+    // query once. A settled empty watch retains its normal hourly cadence.
+    const policyNowMs = Date.now();
+    db.prepare(`UPDATE acquisition_request_checks SET
+      next_due_ms=MIN(next_due_ms,?),search_policy_rechecked=1
+      WHERE state='held' AND reason='no_safe_release'
+        AND search_policy_rechecked=0 AND checked_ms>=?
+        AND request_id IN (SELECT request_id FROM request_targets
+          GROUP BY request_id HAVING COUNT(*) BETWEEN 2 AND 10)`)
+      .run(policyNowMs + 60_000, policyNowMs - 2 * 3_600_000);
     // Older releases imposed a 15-minute idle delay after a candidate scan
     // timed out. Keep its saved cursor and make the unfinished sweep eligible
     // on the normal short retry instead of waiting for that artificial pause.
@@ -149,6 +167,7 @@ export function openAcquisitionRequestQueue(dbPath,
       (c.state='stopped_observed' OR (c.state='held' AND (c.reason IN
         ('shoko_metadata_missing','reconciled_observed_attempts',
          'torrent_hash_in_use') OR
+       (c.reason='no_safe_release' AND c.search_policy_rechecked=1) OR
        (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL))))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
@@ -159,6 +178,8 @@ export function openAcquisitionRequestQueue(dbPath,
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,
     attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
+    search_policy_rechecked=CASE WHEN search_policy_rechecked=1 THEN 2
+      ELSE search_policy_rechecked END,
     scan_started_ms=COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms)`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
@@ -198,6 +219,8 @@ export function openAcquisitionRequestQueue(dbPath,
       AND s.request_id IS NULL AND ${cohortFilter}
       ((c.state='held' AND c.reason IN
         ('shoko_metadata_missing','torrent_hash_in_use')) OR
+        (c.state='held' AND c.reason='no_safe_release' AND
+          c.search_policy_rechecked=1) OR
         c.state='stopped_observed')
       AND c.next_due_ms IS NOT NULL
     ORDER BY c.next_due_ms,r.id LIMIT ?`);

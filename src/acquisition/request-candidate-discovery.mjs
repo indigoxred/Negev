@@ -15,7 +15,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       typeof pause !== 'function') {
     throw new TypeError('Invalid request discovery configuration');
   }
-  return async ({ requestId, searchTargetEpisodeId = null }) => {
+  return async ({ requestId, searchTargetEpisodeId = null,
+    searchTargetEpisodeIds = null }) => {
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
     try { request = readRequest(requestId); } catch { return held('request_unavailable'); }
@@ -33,6 +34,15 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
+    if (searchTargetEpisodeIds !== null &&
+        (!Array.isArray(searchTargetEpisodeIds) ||
+          searchTargetEpisodeIds.length < 1 || searchTargetEpisodeIds.length > 10 ||
+          new Set(searchTargetEpisodeIds).size !== searchTargetEpisodeIds.length)) {
+      return held('invalid_request');
+    }
+    const releaseState = inferReleaseState({
+      today: new Date().toISOString().slice(0, 10), ...detail,
+    }).state;
     let target = null;
     if (searchTargetEpisodeId !== null) {
       target = detail.episodes.find((episode) => episode.id === searchTargetEpisodeId);
@@ -47,8 +57,21 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
     const titleQueries = trustedReleaseQueries(detail.title, aliases);
-    const targeted = target ? trustedTargetedQueries(detail.title, aliases,
-      target.number) : [];
+    const targets = releaseState !== 'completed' && searchTargetEpisodeIds
+      ? searchTargetEpisodeIds.map((id) => detail.episodes.find((episode) =>
+        episode.id === id)) : target ? [target] : [];
+    if (targets.some((episode) => request.kind !== 'series' ||
+        !episode || !request.episodeIds.includes(episode.id) ||
+        episode.type !== 'Episode' ||
+        !Number.isSafeInteger(episode.number) || episode.number < 1)) {
+      return held('invalid_request');
+    }
+    const targetByQuery = new Map();
+    for (const episode of targets) {
+      for (const query of trustedTargetedQueries(detail.title, aliases,
+        episode.number)) targetByQuery.set(query, episode);
+    }
+    const targeted = [...targetByQuery.keys()];
     const queries = [...targeted, ...titleQueries];
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
@@ -57,8 +80,9 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     for (const [index, query] of queries.entries()) {
       if (index > 0) await pause(1_000);
       let result;
+      const queryTarget = targetByQuery.get(query);
       try { result = await searchReleases({ query,
-        targetEpisodeNumber: target && targeted.includes(query) ? target.number : null }); }
+        targetEpisodeNumber: queryTarget?.number ?? null }); }
       catch { failedQueries.push(query); continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
           result.items.length > 50 || result.items.some((item) =>
@@ -73,12 +97,12 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // decide whether a candidate can be submitted.
       buckets.push(result.items.map((item) => ({ ...item,
         sourceQuery: query,
-        ...(target && hasTargetEpisodeHint(item, target.number) ?
+        ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
-        ...(targeted.includes(query) ? {
-          ...(!hasTargetEpisodeHint(item, target.number) ?
+        ...(queryTarget ? {
+          ...(!hasTargetEpisodeHint(item, queryTarget.number) ?
             { targetedEpisode: false } : {}),
-          targetEpisodeId: target.id } : {}) })));
+          targetEpisodeId: queryTarget.id } : {}) })));
     }
     if (successful === 0) return held('release_search_unavailable');
     const items = [];
@@ -102,9 +126,6 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (items.length === 0 && failedQueries.length > 0) {
       return held('release_search_incomplete');
     }
-    const releaseState = inferReleaseState({
-      today: new Date().toISOString().slice(0, 10), ...detail,
-    }).state;
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       items, exhaustive: false,
       ...(failedQueries.length > 0 ? {

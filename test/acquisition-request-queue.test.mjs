@@ -13,6 +13,41 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a recent multi-episode empty search is revisited once under a new query policy', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-search-policy-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const ledger = openRequestLedger(dbPath);
+  const nowMs = Date.now();
+  ledger.submit({ requesterId: 1, requestKey: 'multi', nowMs,
+    intent: { ...intent, episodeIds: [1001, 1002, 1003],
+      monitorFuture: true } });
+  ledger.close();
+  let queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    const claim = queue.claimNext({ nowMs });
+    queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+      reason: 'no_safe_release', checkedMs: nowMs });
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 3_600_000);
+    queue.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    assert.ok(queue.getResult(1).nextDueMs <= nowMs + 70_000);
+    assert.deepEqual(queue.listMetadataRetries({ nowMs }),
+      [{ requestId: 1, nextDueMs: queue.getResult(1).nextDueMs }]);
+    const revisit = queue.claimNext({ nowMs: nowMs + 70_000,
+      priorityRequestId: 1 });
+    assert.equal(revisit.requestId, 1);
+    queue.recordResult({ requestId: 1, pass: revisit.pass, state: 'held',
+      reason: 'no_safe_release', checkedMs: nowMs + 70_000 });
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 70_000 + 3_600_000);
+    queue.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 70_000 + 3_600_000);
+  } finally {
+    queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('an interrupted watch resumes only when every saved attempt is observed and scoped',
   async () => fixture(async (dbPath) => {
     const acquisitions = openAcquisitionLedger(dbPath);
