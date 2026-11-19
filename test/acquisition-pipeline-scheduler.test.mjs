@@ -228,6 +228,30 @@ test('restart restores a durable missing-metadata retry', async () => {
   await scheduler.stop();
 });
 
+test('a due collision retry leads restart backlog and reaches its saved request', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled',
+      resumedRequests: [1, 2, 3] }),
+    listMetadataRetries: () => [{ requestId: 88, nextDueMs: 10 }],
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page', results: [] };
+    },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 100,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  await timer.advance();
+  assert.deepEqual(calls, [88]);
+  await scheduler.stop();
+});
+
 test('one paced clock reconciles first and visits all four stages without overlap', async () => {
   const timer = clock();
   const calls = [];

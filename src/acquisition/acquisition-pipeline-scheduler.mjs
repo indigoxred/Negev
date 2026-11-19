@@ -47,7 +47,8 @@ export function createPipelineScheduler({ pipeline,
     if (!Array.isArray(result?.results)) return;
     for (const item of result.results) {
       if (!Number.isSafeInteger(item?.requestId) || item.requestId < 1) continue;
-      if (item.reason === 'shoko_metadata_missing' &&
+      if (['shoko_metadata_missing', 'torrent_hash_in_use']
+        .includes(item.reason) &&
           Number.isSafeInteger(item.nextDueMs) &&
           item.nextDueMs >= 0 && metadataRetries.size < 32) {
         metadataRetries.set(item.requestId, item.nextDueMs);
@@ -81,12 +82,12 @@ export function createPipelineScheduler({ pipeline,
   };
   const tick = async () => {
     const dueMetadataId = [...metadataRetries].find(([, due]) => due <= now())?.[0];
-    const pendingId = freshRequests[0] ?? dueMetadataId;
+    const pendingId = dueMetadataId ?? freshRequests[0];
     const prioritized = !requestRunning && pendingId !== undefined &&
       (!priorityServed || stages[stageIndex] === 'tickRequests');
     const stage = prioritized ? 'tickRequests' : stages[stageIndex];
     const priorityRequestId = prioritized ?
-      freshRequests.length > 0 ? freshRequests.shift() : dueMetadataId : null;
+      dueMetadataId ?? freshRequests.shift() : null;
     if (priorityRequestId !== null) metadataRetries.delete(priorityRequestId);
     const extraTurn = prioritized && stages[stageIndex] !== 'tickRequests';
     if (!extraTurn) stageIndex = (stageIndex + 1) % stages.length;

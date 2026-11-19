@@ -147,7 +147,8 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
       (c.state='held' AND (c.reason IN
-        ('shoko_metadata_missing','reconciled_observed_attempts') OR
+        ('shoko_metadata_missing','reconciled_observed_attempts',
+         'torrent_hash_in_use') OR
        (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL)))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
@@ -195,7 +196,8 @@ export function openAcquisitionRequestQueue(dbPath,
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND ${cohortFilter}
-      c.state='held' AND c.reason='shoko_metadata_missing'
+      c.state='held' AND c.reason IN
+        ('shoko_metadata_missing','torrent_hash_in_use')
       AND c.next_due_ms IS NOT NULL
     ORDER BY c.next_due_ms,r.id LIMIT ?`);
   const advanceLegacyMetadata = db.prepare(`UPDATE acquisition_request_checks

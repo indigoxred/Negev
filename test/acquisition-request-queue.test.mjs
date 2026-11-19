@@ -140,7 +140,13 @@ test('a transient external torrent collision retries in one minute, including sa
       WHERE request_id=1`).run();
     old.close();
     queue = openAcquisitionRequestQueue(dbPath);
-    try { assert.equal(queue.getResult(1).nextDueMs, 60_100); }
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 1, nextDueMs: 60_100 }]);
+      assert.equal(queue.claimNext({ nowMs: 60_100,
+        priorityRequestId: 1 }).requestId, 1);
+    }
     finally { queue.close(); }
   }));
 
