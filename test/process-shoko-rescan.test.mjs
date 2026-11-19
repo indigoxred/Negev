@@ -20,7 +20,12 @@ const shokoMount = { localRoot, appRoot: '/import' };
 const linked = (fileId, episodeId, size, sourcePath) => ({
   ID: fileId, Size: size,
   Locations: [{ AbsolutePath: sourcePath, IsAccessible: true }],
-  SeriesIDs: [{ SeriesID: { AniDB: 42 },
+  SeriesIDs: [{ SeriesID: { ID: 9, AniDB: 42 },
+    EpisodeIDs: [{ AniDB: episodeId }] }],
+});
+const crossReferencedOnly = (fileId, episodeId, size, sourcePath) => ({
+  ...linked(fileId, episodeId, size, sourcePath),
+  SeriesIDs: [{ SeriesID: { ID: null, AniDB: 42 },
     EpisodeIDs: [{ AniDB: episodeId }] }],
 });
 const unknown = (fileId, size, sourcePath) => ({
@@ -69,7 +74,8 @@ test('rescans only two exact unlinked files in a mixed-layout season pack', asyn
   const calls = [];
   const options = {
     item, ledger: saved.ledger, importRoot, shokoMount,
-    verifyPlex: async ({ episodeId }) => ({ state: 'available',
+    verifyPlex: async ({ episodeId }) => ({ state: missing.has(episodeId)
+      ? 'unknown' : 'available',
       fileId: episodeId + 69 }),
     readQueue: async () => ({ state: 'queue_idle_unverified' }),
     readFile: async ({ sourcePath }) => {
@@ -101,6 +107,68 @@ test('rescans only two exact unlinked files in a mixed-layout season pack', asyn
   missing.delete(13);
   assert.equal((await processShokoRescan({ ...options,
     nowMs: 540_100 })).state, 'linked');
+  assert.equal(saved.completion(), 'done');
+});
+
+test('rescan resolves a verified Shoko Source mounted separately from Negev handoff', async () => {
+  const saved = witness();
+  const sourcePath = '/pure/.negev-handoff/source/Negev/negev-71-aaaaaaaaaaaaaaaa/group/01 [BD].mkv';
+  const result = await processShokoRescan({
+    item: { ...item, manifest: { ...manifest, files: [manifest.files[0]] } },
+    ledger: saved.ledger,
+    importRoot: path.join(tmpdir(), 'handoff', 'source', 'Negev'),
+    shokoMount: { localRoot: path.join(tmpdir(), 'pure'), appRoot: '/pure' },
+    shokoSourcePath: '/pure/.negev-handoff/source',
+    nowMs: 300_100,
+    readQueue: async () => ({ state: 'queue_idle_unverified' }),
+    readFile: async ({ sourcePath: observed }) => {
+      assert.equal(observed, sourcePath);
+      return [unknown(80, manifest.files[0].size, observed)];
+    },
+    rescan: async () => { throw Error('Not due yet'); },
+    verifyPlex: async () => ({ state: 'unknown' }),
+  });
+  assert.equal(result.state, 'observed');
+  assert.equal(saved.completion(), null);
+});
+
+test('an exact AniDB cross-reference without a local Shoko series is rescanned once', async () => {
+  const saved = witness();
+  const single = { ...item, manifest: { ...manifest, files: [manifest.files[0]] } };
+  const calls = [];
+  const options = { item: single, ledger: saved.ledger, importRoot,
+    shokoMount, readQueue: async () => ({ state: 'queue_idle_unverified' }),
+    readFile: async ({ sourcePath }) => [crossReferencedOnly(80, 11,
+      manifest.files[0].size, sourcePath)],
+    rescan: async ({ fileId }) => { calls.push(fileId);
+      return { state: 'accepted' }; },
+    verifyPlex: async () => ({ state: 'unknown' }),
+  };
+  assert.equal((await processShokoRescan({ ...options,
+    nowMs: 300_100 })).state, 'observed');
+  assert.equal((await processShokoRescan({ ...options,
+    nowMs: 360_100 })).state, 'rescan_requested');
+  assert.deepEqual(calls, [80]);
+  assert.equal(saved.completion(), null);
+});
+
+test('a moved exact file completes only after its own Plex episode is verified', async () => {
+  const saved = witness();
+  saved.files.set(manifest.files[0].name, { fileId: 80,
+    status: 'dispatched', firstSeenMs: 300_100, updatedMs: 360_100 });
+  const single = { ...item, manifest: { ...manifest, files: [manifest.files[0]] } };
+  const options = { item: single, ledger: saved.ledger, importRoot,
+    shokoMount, readQueue: async () => ({ state: 'queue_idle_unverified' }),
+    readFile: async () => [], rescan: async () => {
+      throw Error('No second rescan'); },
+    verifyPlex: async () => ({ state: 'unknown' }),
+  };
+  assert.notEqual((await processShokoRescan({ ...options,
+    nowMs: 420_100 })).state, 'linked');
+  assert.equal(saved.completion(), null);
+  assert.equal((await processShokoRescan({ ...options,
+    verifyPlex: async () => ({ state: 'available', fileId: 80 }),
+    nowMs: 480_100 })).state, 'linked');
   assert.equal(saved.completion(), 'done');
 });
 

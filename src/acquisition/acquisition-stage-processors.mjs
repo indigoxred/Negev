@@ -40,7 +40,8 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyShokoSource,
   readRelatedTitles,
   ownershipGate = null,
-  shoko, shokoMount = null, providerFetchImpl = fetch, readPacer, now = Date.now,
+  shoko, shokoMount = null, shokoSourcePath = null,
+  providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
   ensureImportRoot = ensureImportChild,
   readEd2kMode = readShokoEd2kMode,
@@ -149,7 +150,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         return held('rescan_unavailable');
       }
       return processShokoRescan({ item, ledger: shokoRescans,
-        importRoot, shokoMount, nowMs: now(),
+        importRoot, shokoMount, shokoSourcePath, nowMs: now(),
         readQueue: () => readShokoImportActivity({ baseUrl: shoko.baseUrl,
           apiKey: shoko.apiKey, fetchImpl: providerFetchImpl }),
         readFile: async ({ sourcePath }) => {

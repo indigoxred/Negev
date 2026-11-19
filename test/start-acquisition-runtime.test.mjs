@@ -63,6 +63,7 @@ test('enabled startup passes only guarded paths and waits for journal reconcilia
     stagingHostPath: acquisition.stagingHostPath,
     qbitStagingRoot: acquisition.qbitStagingRoot,
     holdingRoot: acquisition.holdingRoot, importRoot: acquisition.importRoot,
+    shokoSourcePath: acquisition.shokoSourcePath,
     realpathImpl,
     shokoProviderId: acquisition.shokoProviderId }, 'reconcile']);
   assert.equal(calls[2], 'source');

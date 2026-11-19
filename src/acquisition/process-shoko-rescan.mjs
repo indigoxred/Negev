@@ -4,10 +4,13 @@ import { validMount } from '../availability/known-card-availability.mjs';
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
-const exactLink = (item, anidbId, episodeIds) => {
+const exactLink = (item, anidbId, episodeIds,
+  requireLocalSeries = false) => {
   if (!Array.isArray(item.SeriesIDs)) return null;
   const linked = item.SeriesIDs.flatMap((series) =>
-    series?.SeriesID?.AniDB === anidbId && Array.isArray(series.EpisodeIDs)
+    series?.SeriesID?.AniDB === anidbId &&
+      (!requireLocalSeries || validId(series?.SeriesID?.ID)) &&
+      Array.isArray(series.EpisodeIDs)
       ? series.EpisodeIDs.map((episode) => episode.AniDB) : []);
   return linked.length === episodeIds.length &&
     [...linked].sort((a, b) => a - b).every((id, i) =>
@@ -15,7 +18,8 @@ const exactLink = (item, anidbId, episodeIds) => {
 };
 
 export async function processShokoRescan({ item, ledger, importRoot,
-  shokoMount, readQueue, readFile, rescan, verifyPlex, nowMs } = {}) {
+  shokoMount, shokoSourcePath = null, readQueue, readFile, rescan,
+  verifyPlex, nowMs } = {}) {
   const { attemptId, requestId, anidbId, publishedMs, manifest } = item ?? {};
   const videos = manifest?.files?.filter((file) =>
     Array.isArray(file.episodeIds));
@@ -30,6 +34,15 @@ export async function processShokoRescan({ item, ledger, importRoot,
         file.episodeIds.every(validId)) ||
       typeof importRoot !== 'string' || !path.isAbsolute(importRoot) ||
       !validMount(shokoMount) ||
+      (shokoSourcePath !== null &&
+        (typeof shokoSourcePath !== 'string' ||
+          !path.posix.isAbsolute(shokoSourcePath) ||
+          path.posix.normalize(shokoSourcePath) !== shokoSourcePath ||
+          /[\0\r\n\\]/.test(shokoSourcePath) ||
+          !validMount({ ...shokoMount, appRoot: shokoSourcePath }) ||
+          (path.posix.relative(shokoMount.appRoot, shokoSourcePath) === '..' ||
+            path.posix.relative(shokoMount.appRoot, shokoSourcePath)
+              .startsWith('../')))) ||
       typeof ledger?.getFile !== 'function' ||
       typeof ledger?.observeFile !== 'function' ||
       typeof ledger?.beginDispatch !== 'function' ||
@@ -59,6 +72,26 @@ export async function processShokoRescan({ item, ledger, importRoot,
   let review = false;
   const recoveredEpisodes = [];
   for (const video of videos) {
+    const prior = ledger.getFile(attemptId, video.name);
+    if (prior && ['dispatched', 'linked'].includes(prior.status)) {
+      let allPlayable = true;
+      for (const episodeId of video.episodeIds) {
+        let result;
+        try { result = await verifyPlex({ requestId, anidbId, episodeId }); }
+        catch { result = null; }
+        if (result?.state !== 'available' || result.fileId !== prior.fileId) {
+          allPlayable = false;
+          break;
+        }
+      }
+      if (allPlayable) {
+        if (prior.status !== 'linked') ledger.markLinked({ attemptId,
+          fileName: video.name, fileId: prior.fileId, nowMs });
+        recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
+          ({ episodeId, fileId: prior.fileId })));
+        continue;
+      }
+    }
     const child = path.join(importRoot,
       `negev-${attemptId}-${manifest.torrentHash.slice(0, 16)}`);
     const local = path.join(child,
@@ -70,12 +103,14 @@ export async function processShokoRescan({ item, ledger, importRoot,
       return reviewHold('published_file_outside_tree');
     }
     const relative = path.relative(shokoMount.localRoot, local);
-    if (!relative || relative === '..' ||
-        relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    if (shokoSourcePath === null && (!relative || relative === '..' ||
+        relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) {
       return reviewHold('shoko_source_outside_mount');
     }
-    const sourcePath = path.posix.join(shokoMount.appRoot,
-      ...relative.split(path.sep));
+    const sourcePath = shokoSourcePath === null
+      ? path.posix.join(shokoMount.appRoot, ...relative.split(path.sep))
+      : path.posix.join(shokoSourcePath, path.basename(importRoot),
+        path.basename(child), ...insideChild.split(path.sep));
     let matches;
     try { matches = await readFile({ sourcePath }); }
     catch { matches = null; }
@@ -99,18 +134,20 @@ export async function processShokoRescan({ item, ledger, importRoot,
       return { state: 'awaiting_shoko' };
     }
     const file = exact[0];
-    const prior = ledger.getFile(attemptId, video.name);
     if (prior && prior.fileId !== file.ID) {
       return reviewHold('shoko_file_changed');
     }
-    if (exactLink(file, anidbId, video.episodeIds)) {
+    if (exactLink(file, anidbId, video.episodeIds, true)) {
       if (prior && prior.status !== 'linked') ledger.markLinked({ attemptId,
         fileName: video.name, fileId: file.ID, nowMs });
       if (prior) recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
         ({ episodeId, fileId: file.ID })));
       continue;
     }
-    if (file.SeriesIDs.length > 0) return reviewHold('shoko_identity_conflict');
+    if (file.SeriesIDs.length > 0 &&
+        !exactLink(file, anidbId, video.episodeIds)) {
+      return reviewHold('shoko_identity_conflict');
+    }
     if (prior?.status === 'unresolved') { review = true; continue; }
     if (prior?.status === 'linked') return reviewHold('shoko_link_lost');
     if (!prior) {
