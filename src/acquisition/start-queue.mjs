@@ -35,6 +35,11 @@ export function openStartQueue(dbPath) {
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0)
     ) STRICT`);
+    // Earlier builds treated a busy metadata reader as a thirty-minute hold.
+    // Bring only that transient condition forward on reopen.
+    db.exec(`UPDATE start_checks SET next_due_ms=MIN(next_due_ms,
+      checked_ms+60000) WHERE state='held' AND reason='metadata_reader_busy'
+      AND next_due_ms>checked_ms+60000`);
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
@@ -108,7 +113,7 @@ export function openStartQueue(dbPath) {
         throw new TypeError('Invalid start result');
       }
       const sessionRetry = ['provider_http_403', 'authentication_backoff',
-        'authentication_unavailable'].includes(reason);
+        'authentication_unavailable', 'metadata_reader_busy'].includes(reason);
       const metadataRetry = ['related_title_unavailable',
         'shoko_settings_unavailable'].includes(reason);
       const due = state === 'held' && sessionRetry

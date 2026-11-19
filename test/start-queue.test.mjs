@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
@@ -69,6 +70,25 @@ test('a temporary session backoff remains retryable after the second start check
     assert.equal(second.attemptId, first.attemptId);
     ctx.queue.recordResult({ attemptId: second.attemptId, version: second.version,
       state: 'held', reason: 'authentication_backoff', checkedMs: 61_002 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
+  }));
+
+test('a busy metadata reader retries a saved start in one minute', async () =>
+  fixture(async (ctx) => {
+    const first = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: first.attemptId, version: first.version,
+      state: 'held', reason: 'metadata_reader_busy', checkedMs: 1_001 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 61_001);
+    const second = ctx.queue.claimNext({ nowMs: 61_001 });
+    assert.equal(second.attemptId, first.attemptId);
+    ctx.queue.recordResult({ attemptId: second.attemptId, version: second.version,
+      state: 'held', reason: 'metadata_reader_busy', checkedMs: 61_002 });
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
+    const db = new DatabaseSync(ctx.dbPath);
+    db.prepare('UPDATE start_checks SET next_due_ms=? WHERE attempt_id=?')
+      .run(1_861_002, first.attemptId);
+    db.close();
+    ctx.reopen();
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
   }));
 
