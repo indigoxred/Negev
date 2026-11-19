@@ -10,7 +10,7 @@ export async function searchReleaseCandidates({
   categories = [], limit = 25,
   targetEpisodeNumber = null,
   includeProxyUrl = false,
-  fetchImpl = fetch, timeoutMs = 10_000,
+  fetchImpl = fetch, timeoutMs = 20_000,
 }) {
   const term = typeof query === 'string' ? query.trim() : '';
   const validIds = (ids, max) => Array.isArray(ids) && ids.length <= max &&
