@@ -51,12 +51,13 @@ const options = (calls) => ({
 test('the live stage sends one targeted Shoko rescan without qBittorrent', async () => {
   const calls = [];
   const root = path.join(tmpdir(), 'negev-rescan-stage');
-  const importRoot = path.join(root, 'Negev');
+  const importRoot = path.join(root, 'handoff', 'source', 'Negev');
   const stages = createAcquisitionStageProcessors({ ...options(calls),
-    pureMode: true, importRoot, holdingRoot: path.join(root, 'holding'),
+    pureMode: true, importRoot, holdingRoot: path.join(root, 'handoff', 'holding'),
     pureMoves: { getIntent: () => null, recordIntent: () => ({}),
       markPrepared: () => ({}) },
-    shokoMount: { localRoot: root, appRoot: '/import' },
+    shokoMount: { localRoot: path.join(root, 'pure'), appRoot: '/pure' },
+    shokoSourcePath: '/pure/.negev-handoff/source',
     verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
     shokoRescans: {
       getFile: () => ({ fileId: 81, status: 'observed',
@@ -75,6 +76,8 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
       });
       if (url.pathname === '/api/v3/File/PathEndsWith') {
         const sourcePath = url.searchParams.get('path');
+        assert.equal(sourcePath,
+          '/pure/.negev-handoff/source/Negev/negev-7-aaaaaaaaaaaaaaaa/group/01.mkv');
         return Response.json([{ ID: 81, Size: 1000, SeriesIDs: [],
           Locations: [{ AbsolutePath: sourcePath, IsAccessible: true }] }]);
       }
