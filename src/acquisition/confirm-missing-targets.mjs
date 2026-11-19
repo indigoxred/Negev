@@ -113,15 +113,15 @@ export async function confirmMissingTargets({ request, episodeIds,
     }
     if (result.state !== 'absent') return held('target_not_proven_missing', episodeId);
   }
-  // Empty indexed views can precede Shoko's hashing/recognition of a manual
-  // import. A future installed adapter must supply a target-scoped, bracketing
-  // observation; the current queue-idle signal is insufficient. The observed
-  // quiet window is a narrower, explicitly uncertain first-acquisition policy,
-  // never a claim that Shoko has settled.
+  // A first acquisition can remain explicitly uncertain when the public
+  // source is healthy but cannot enumerate absence. Recheck the exact targets
+  // around that public probe; unrelated Import activity does not prove that
+  // these targets exist or require a global wait.
   const fence = snapshot.importFence;
   const quietWindow = permissiveFirstTime &&
     fence?.state === 'quiet_window_observed';
-  if (!(fence?.state === 'settled' || quietWindow) ||
+  const targetRechecked = fence?.state === 'target_rechecked';
+  if (!(fence?.state === 'settled' || quietWindow || targetRechecked) ||
       fence.anidbId !== request.anidbId ||
       !Array.isArray(fence.episodeIds) ||
       fence.episodeIds.length !== episodeIds.length ||

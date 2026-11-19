@@ -263,7 +263,7 @@ test('a missing first-time Shoko episode queues one supported metadata refresh',
     force: true }); }
 });
 
-test('internal first-time observation uses installed Shoko, Plex and Import readers without acquisition', async () => {
+test('internal first-time observation rechecks targets without waiting for unrelated Import activity', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-first-time-service-'));
   const dbPath = path.join(dir, 'negev.sqlite');
   const importRoot = path.join(dir, 'Import');
@@ -332,23 +332,24 @@ test('internal first-time observation uses installed Shoko, Plex and Import read
     assert.equal(snapshot.plex.complete, false);
     assert.equal(snapshot.plex.probeCoverage, 'health_only');
     assert.equal(snapshot.plex.sourceVerified, true);
-    assert.equal(snapshot.importFence.state, 'quiet_window_observed');
-    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 4);
+    assert.equal(snapshot.importFence.state, 'target_rechecked');
+    assert.equal(clock, 100);
+    assert.equal(reads.filter((path) => path === '/api/v3/Queue').length, 0);
     assert.equal(reads.filter((path) => path === '/library/sections/102/all').length, 2);
     assert.equal(reads.some((path) => /torrent|download|prowlarr/i.test(path)), false);
     service.flagShokoReconciliation('feed_disconnected');
     connectionState = 'disconnected';
     const queueReads = reads.filter((path) => path === '/api/v3/Queue').length;
-    assert.deepEqual(await service.observeFirstTimeUncertain({
-      anidbId: 42, episodeIds: [1001], kind: 'series' }),
-    { state: 'held', reason: 'import_quiet_window_unverified' });
+    const disconnected = await service.observeFirstTimeUncertain({
+      anidbId: 42, episodeIds: [1001], kind: 'series' });
+    assert.equal(disconnected?.importFence?.state, 'target_rechecked');
     assert.equal(reads.filter((path) => path === '/api/v3/Queue').length,
       queueReads);
     connectionState = 'connected';
     service.flagShokoReconciliation('feed_reconnected');
     const afterReconnect = await service.observeFirstTimeUncertain({
       anidbId: 42, episodeIds: [1001], kind: 'series' });
-    assert.equal(afterReconnect?.importFence?.state, 'quiet_window_observed');
+    assert.equal(afterReconnect?.importFence?.state, 'target_rechecked');
     const workerOptions = {
       qbBaseUrl: 'http://qb.internal:8080/',
       sessionGate: { get: async () => { throw Error('no login'); },

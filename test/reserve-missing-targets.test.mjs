@@ -44,6 +44,19 @@ test('reserves only when all selected episodes are absent in one fresh complete 
     assert.deepEqual(acquisitions.getAttempt(result.attemptId).episodeIds, [1001, 1002]);
   }));
 
+test('target-scoped recheck authorizes missing targets despite unrelated import activity', async () =>
+  withLedgers(async ({ request, acquisitions }) => {
+    const result = await reserveMissingTargets({ request, candidate,
+      episodeIds: [1001, 1002],
+      readEvidence: async () => evidence({ importFence: {
+        state: 'target_rechecked', anidbId: 42,
+        episodeIds: [1001, 1002],
+        beforeObservedAtMs: 99, afterObservedAtMs: 100,
+      } }), publicLibraryIds: [102], ledger: acquisitions,
+      now: () => 101 });
+    assert.equal(result.state, 'reserved');
+  }));
+
 test('an exact already observed torrent is busy without a second absence observation', async () =>
   withLedgers(async ({ request, acquisitions }) => {
     const input = { requestId: request.id, candidate,
