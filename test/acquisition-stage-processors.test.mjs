@@ -48,6 +48,52 @@ const options = (calls) => ({
   now: () => 200,
 } );
 
+test('the live stage sends one targeted Shoko rescan without qBittorrent', async () => {
+  const calls = [];
+  const root = path.join(tmpdir(), 'negev-rescan-stage');
+  const importRoot = path.join(root, 'Negev');
+  const stages = createAcquisitionStageProcessors({ ...options(calls),
+    pureMode: true, importRoot, holdingRoot: path.join(root, 'holding'),
+    pureMoves: { getIntent: () => null, recordIntent: () => ({}),
+      markPrepared: () => ({}) },
+    shokoMount: { localRoot: root, appRoot: '/import' },
+    verifyHandoffMounts: async () => ({ state: 'mounted_handoff_roots' }),
+    shokoRescans: {
+      getFile: () => ({ fileId: 81, status: 'observed',
+        firstSeenMs: 300_209 }),
+      beginDispatch: () => ({ state: 'dispatched' }),
+      observeFile: () => { throw Error('already observed'); },
+      markLinked: () => {}, markUnresolved: () => {},
+      delayAttempt: () => {}, endAttempt: () => {},
+    },
+    observePublicTarget: async () => ({ state: 'available' }),
+    now: () => 360_209,
+    providerFetchImpl: async (url, request) => {
+      if (url.pathname === '/api/v3/Queue') return Response.json({
+        WaitingCount: 0, BlockedCount: 0, ScheduledCount: 0,
+        TotalCount: 0, CurrentlyExecuting: [], Pools: [],
+      });
+      if (url.pathname === '/api/v3/File/PathEndsWith') {
+        const sourcePath = url.searchParams.get('path');
+        return Response.json([{ ID: 81, Size: 1000, SeriesIDs: [],
+          Locations: [{ AbsolutePath: sourcePath, IsAccessible: true }] }]);
+      }
+      assert.equal(url.pathname, '/api/v3/File/81/Rescan');
+      assert.equal(request.method, 'POST');
+      calls.push('rescan');
+      return new Response(null, { status: 200 });
+    },
+  });
+  const result = await stages.processRescan({ item: {
+    attemptId: 7, requestId: 1, anidbId: 42, publishedMs: 209,
+    manifest: { torrentHash: 'a'.repeat(40), files: [
+      { name: 'group/01.mkv', size: 1000, episodeIds: [1001] },
+    ] },
+  } });
+  assert.equal(result.state, 'rescan_requested');
+  assert.deepEqual(calls, ['rescan']);
+});
+
 test('Sonarr ownership blocks request search and a previously reserved start', async () => {
   const calls = [];
   const guard = { refresh: async () => ({ state: 'ready' }),

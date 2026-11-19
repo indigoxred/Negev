@@ -19,6 +19,8 @@ import { readShokoPathFile } from './shoko-path-file.mjs';
 import { readShokoUnrecognizedFile } from './shoko-unrecognized-file.mjs';
 import { readStoppedRecoveryTorrent } from './read-stopped-recovery-torrent.mjs';
 import { processRecognitionRecovery } from './process-recognition-recovery.mjs';
+import { processShokoRescan } from './process-shoko-rescan.mjs';
+import { requestShokoFileRescan } from './request-shoko-file-rescan.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -28,9 +30,11 @@ const held = (reason) => ({ state: 'held', reason });
 // does not create a timer or perform I/O. The caller must still prove installed
 // availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
-  handoffs, pureMoves = null, recognitionRecoveries = null, pureMode = false,
+  handoffs, pureMoves = null, recognitionRecoveries = null,
+  shokoRescans = null, pureMode = false,
   discoverCandidates, previewCandidate, loadDetail,
-  releaseQueries, readEvidence, readPublicCoverage, publicSections, prowlarr,
+  releaseQueries, readEvidence, readPublicCoverage, observePublicTarget,
+  publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
   verifyStagingRoot, realpathImpl,
   verifyShokoSource,
@@ -59,6 +63,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readVideoExtensions,
         verifyShokoSource]
         .some((fn) => typeof fn !== 'function') ||
+      (shokoRescans && typeof observePublicTarget !== 'function') ||
       !Array.isArray(episode) || episode.length < 1 || episode.length > 20 ||
       !Array.isArray(movie) || movie.length > 20 ||
       [...episode, ...movie].some((id) => !validId(id)) ||
@@ -139,6 +144,34 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     } catch { return null; }
   };
   return {
+    ...(shokoRescans ? { async processRescan({ item } = {}) {
+      if (!pureMode || !await handoffMountReady()) {
+        return held('rescan_unavailable');
+      }
+      return processShokoRescan({ item, ledger: shokoRescans,
+        importRoot, shokoMount, nowMs: now(),
+        readQueue: () => readShokoImportActivity({ baseUrl: shoko.baseUrl,
+          apiKey: shoko.apiKey, fetchImpl: providerFetchImpl }),
+        readFile: async ({ sourcePath }) => {
+          const result = await readShokoPathFile({ baseUrl: shoko.baseUrl,
+            apiKey: shoko.apiKey, sourcePath, fetchImpl: providerFetchImpl });
+          if (result.state !== 'files') throw new Error('Shoko file unavailable');
+          return result.items;
+        },
+        rescan: ({ fileId }) => requestShokoFileRescan({
+          baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId,
+          fetchImpl: providerFetchImpl }),
+        verifyPlex: ({ requestId, anidbId, episodeId }) => {
+          const request = requests.getRequest(requestId);
+          if (request?.anidbId !== anidbId ||
+              !['series', 'movie'].includes(request.kind)) {
+            return { state: 'unknown' };
+          }
+          return observePublicTarget({ anidbId, episodeId,
+            kind: request.kind });
+        },
+      });
+    } } : {}),
     async processRecovery({ attemptId, qbittorrent, fetchImpl } = {}) {
       if (!pureMode || !recognitionRecoveries || !await handoffMountReady()) {
         return held('recovery_unavailable');

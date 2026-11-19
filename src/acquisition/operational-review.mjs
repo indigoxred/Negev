@@ -6,18 +6,19 @@ const held = () => ({ state: 'held', reason: 'review_evidence_unavailable' });
 // Admin read only. The returned rows deliberately omit hashes, paths and
 // indexer details; neither a review row nor its absence changes a job state.
 export function listOperationalReview({ acquisitions, publishQueue, startQueue,
-  completionQueue,
+  completionQueue, shokoRescans = null,
   afterAttemptId = 0, limit = 20 } = {}) {
   if (typeof acquisitions?.listRejectedNeedsReview !== 'function' ||
       typeof acquisitions.getAttempt !== 'function' ||
       typeof publishQueue?.listReviewNeeded !== 'function' ||
       typeof startQueue?.listReviewNeeded !== 'function' ||
       typeof completionQueue?.listReviewNeeded !== 'function' ||
+      (shokoRescans && typeof shokoRescans.listReviewNeeded !== 'function') ||
       !Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
     throw new TypeError('Invalid operational review');
   }
-  let rejected, publish, starts, completions;
+  let rejected, publish, starts, completions, rescans;
   try {
     rejected = acquisitions.listRejectedNeedsReview({ afterAttemptId,
       limit: limit + 1 });
@@ -27,18 +28,21 @@ export function listOperationalReview({ acquisitions, publishQueue, startQueue,
       limit: limit + 1 });
     completions = completionQueue.listReviewNeeded({ afterAttemptId,
       limit: limit + 1 });
+    rescans = shokoRescans?.listReviewNeeded({ afterAttemptId,
+      limit: limit + 1 }) ?? [];
   } catch { return held(); }
   const ordered = (rows) => Array.isArray(rows) && rows.length <= limit + 1 &&
     rows.every((row, index) => validId(row?.attemptId) &&
       row.attemptId > (index === 0 ? afterAttemptId : rows[index - 1].attemptId));
   if (!ordered(rejected) || !ordered(publish) || !ordered(starts) ||
-      !ordered(completions)) return held();
+      !ordered(completions) || !ordered(rescans)) return held();
   const candidates = [
     ...rejected.map((row) => ({ ...row, stage: 'release_rejected' })),
     ...publish.map((row) => ({ ...row, stage: 'import_hold' })),
     ...starts.map((row) => ({ ...row, stage: 'start_hold' })),
     ...completions.map((row) => ({ ...row,
       stage: 'completion_interrupted' })),
+    ...rescans.map((row) => ({ ...row, stage: 'shoko_rescan_hold' })),
   ].sort((a, b) => a.attemptId - b.attemptId);
   if (new Set(candidates.map((row) => row.attemptId)).size !== candidates.length) {
     return held();
@@ -48,7 +52,8 @@ export function listOperationalReview({ acquisitions, publishQueue, startQueue,
     let requestId = row.requestId;
     let anidbId = row.anidbId;
     const observedMs = row.stage === 'release_rejected' ||
-      row.stage === 'completion_interrupted'
+      row.stage === 'completion_interrupted' ||
+      row.stage === 'shoko_rescan_hold'
       ? row.observedMs : row.checkedMs;
     if (row.stage === 'import_hold' || row.stage === 'start_hold' ||
         row.stage === 'completion_interrupted') {
