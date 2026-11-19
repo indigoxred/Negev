@@ -116,6 +116,12 @@ export function openAcquisitionRequestQueue(dbPath,
       SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
       WHERE state='held' AND reason='import_quiet_window_unverified'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    // A hash already held by another qBittorrent owner is a candidate-level
+    // collision. Older builds saved a 30-minute request hold for this case.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='torrent_hash_in_use'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -528,7 +534,7 @@ export function openAcquisitionRequestQueue(dbPath,
             checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable', 'release_search_incomplete',
-            'import_quiet_window_unverified'].includes(reason)
+            'import_quiet_window_unverified', 'torrent_hash_in_use'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);

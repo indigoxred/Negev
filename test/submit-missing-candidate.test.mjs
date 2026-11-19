@@ -97,13 +97,16 @@ function prowlarrFetch() {
     : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } });
 }
 
-function qbittorrentFetch(calls) {
+function qbittorrentFetch(calls, emptyInfoReads = 1) {
   return async (url, init) => {
     const endpoint = new URL(url).pathname;
     calls.push({ endpoint, method: init.method });
     if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
     if (endpoint.endsWith('/add')) return new Response('Ok.');
-    if (calls.filter((call) => call.endpoint.endsWith('/info')).length === 1) return Response.json([]);
+    if (endpoint.endsWith('/info') &&
+        calls.filter((call) => call.endpoint.endsWith('/info')).length <= emptyInfoReads) {
+      return Response.json([]);
+    }
     return Response.json(endpoint.endsWith('/files') ? files :
       endpoint.endsWith('/properties')
         ? { save_path: savePath, download_path: '' } : [torrent]);
@@ -395,6 +398,23 @@ test('a changed torrent hash after preflight cannot reserve or reach qBittorrent
     assert.equal(ledger.getAttempt(1), null);
   }));
 
+test('an externally owned torrent hash advances without reserving a target', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const calls = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: prowlarrFetch(),
+      qbittorrentFetch: async (url, init) => {
+        calls.push({ path: new URL(url).pathname, method: init.method });
+        return Response.json([{ ...torrent, category: 'anime-sonar-imported',
+          save_path: '/Downloads' }]);
+      } });
+    assert.deepEqual(await submitMissingCandidate({ ...input,
+      expectedHash: hash }),
+    { state: 'held', reason: 'candidate_hash_in_use' });
+    assert.equal(ledger.getAttempt(1), null);
+    assert.deepEqual(calls, [{ path: '/api/v2/torrents/info', method: 'GET' }]);
+  }));
+
 test('a present target or unavailable Prowlarr cannot send a torrent', async () =>
   withLedgers(async ({ request, ledger }) => {
     let qbCalls = 0;
@@ -454,7 +474,7 @@ test('one saved request advances through the bounded processor to one stopped to
     const calls = [];
     try {
       const input = options({ request, ledger, readEvidence: async () => absent(),
-        prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls) });
+        prowlarrFetch: prowlarrFetch(), qbittorrentFetch: qbittorrentFetch(calls, 2) });
       const processRequest = createAcquisitionRequestProcessor({
         readRequest: () => request,
         now: () => 201,

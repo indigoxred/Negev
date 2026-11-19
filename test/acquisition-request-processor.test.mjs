@@ -867,6 +867,31 @@ test('an owned busy target yields to another episode without a second grab', asy
   assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
 });
 
+test('an externally owned hash yields to a different release on the next turn', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-1'
+        ? { state: 'held', reason: 'candidate_hash_in_use' }
+        : { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'candidate_hash_in_use');
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assertAttempt(second, 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
+
 test('bounded automatic path skips unsafe preflight and submits one exact stopped candidate', async () => {
   const inspected = [];
   const submitted = [];

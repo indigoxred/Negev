@@ -126,6 +126,24 @@ test('startup brings legacy 30-minute metadata holds forward once',
     } finally { queue.close(); }
   }));
 
+test('a transient external torrent collision retries in one minute, including saved holds',
+  async () => fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'torrent_hash_in_use', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+    } finally { queue.close(); }
+    const old = new DatabaseSync(dbPath);
+    old.prepare(`UPDATE acquisition_request_checks SET next_due_ms=1800100
+      WHERE request_id=1`).run();
+    old.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try { assert.equal(queue.getResult(1).nextDueMs, 60_100); }
+    finally { queue.close(); }
+  }));
+
 test('an unavailable related-title lookup retries within five minutes',
   async () => fixture(async (dbPath) => {
     let queue = openAcquisitionRequestQueue(dbPath);

@@ -415,6 +415,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'candidate_rejected' ||
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||
+          outcome.reason === 'candidate_hash_in_use' ||
           outcome.reason === 'target_busy' ||
           outcome.reason === 'uncertain_attempt_exhausted' ||
           outcome.reason === 'target_not_proven_missing' &&
