@@ -830,6 +830,8 @@ test('held and failed requests are recorded while later requests continue', asyn
       assert.deepEqual(passes, [1, 1, 1]);
       assert.deepEqual(page.results.map((result) => result.state),
         ['held', 'held', 'stopped_observed']);
+      assert.equal(page.results.find((result) => result.requestId === 3).nextDueMs,
+        60_100);
       assert.deepEqual(queue.getResult(1), { requestId: 1, pass: 1, attemptId: null,
         state: 'held', reason: 'shoko_unrecognized', checkedMs: 100,
         nextDueMs: 1_800_100 });

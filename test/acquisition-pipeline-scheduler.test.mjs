@@ -203,6 +203,36 @@ test('missing metadata gets a due retry without waiting for a full stage cycle',
   await scheduler.stop();
 });
 
+test('an observed download keeps its one-minute continuation during a live run', async () => {
+  const timer = clock();
+  const calls = [];
+  let nowMs = 0;
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page', results: priorityRequestId === 88 && nowMs === 0
+        ? [{ requestId: 88, state: 'stopped_observed', nextDueMs: 60_000 }] : [] };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => nowMs,
+    stepDelayMs: 120_000, setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(88);
+  await timer.advance();
+  nowMs = 60_000;
+  await timer.advance();
+  nowMs = 61_000;
+  await timer.advance();
+  assert.deepEqual(calls, [88, 'completion', 88]);
+  await scheduler.stop();
+});
+
 test('restart restores a durable missing-metadata retry', async () => {
   const timer = clock();
   let nowMs = 0;
@@ -251,6 +281,7 @@ test('a due collision retry leads restart backlog and reaches its saved request'
   assert.deepEqual(calls, [88]);
   await scheduler.stop();
 });
+
 
 test('one paced clock reconciles first and visits all four stages without overlap', async () => {
   const timer = clock();

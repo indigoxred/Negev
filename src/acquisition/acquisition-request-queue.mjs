@@ -659,12 +659,13 @@ export function createAcquisitionPageWorker({ queue, processRequest,
             if (saved.state !== 'recorded') return { state: 'held',
               reason: 'queue_unavailable', results };
           } catch { return { state: 'held', reason: 'queue_unavailable', results }; }
-          const check = state === 'held' ? queue.getResult(next.requestId) : null;
+          const check = queue.getResult(next.requestId);
           const continuing = state === 'held' && check?.nextDueMs !== null &&
             check?.nextDueMs <= now() && (check?.candidateOffset > 0 ||
               reason?.startsWith('season_pack_'));
           results.push({ requestId: next.requestId, state,
-            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId } : {}),
+            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId,
+              nextDueMs: check?.nextDueMs } : {}),
             ...(reason === null ? {} : { reason }),
             ...(continuing ? { continuationDueMs: check.nextDueMs } : {}),
             ...(reason === 'shoko_metadata_missing' ?
