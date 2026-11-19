@@ -36,6 +36,36 @@ test('discovers candidates for an existing exact request without authorizing the
   assert.deepEqual(queries, [{ query: 'Canonical Anime', targetEpisodeNumber: null }]);
 });
 
+test('a failed alias search marks a surviving candidate set incomplete', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async () => ['Official English'],
+    pause: async () => {},
+    searchReleases: async ({ query }) => query === 'Official English'
+      ? { state: 'unavailable' }
+      : { state: 'candidates', items: [{
+        indexerId: 7, guid: 'low-quality',
+        title: 'Canonical Anime - 01 720p',
+        evidence: 'unverified' }] },
+  });
+  const found = await discover({ requestId: 12 });
+  assert.equal(found.state, 'candidates');
+  assert.equal(found.searchIncomplete, true);
+  assert.deepEqual(found.failedQueries, ['Official English']);
+});
+
+test('an empty partial search reports provider uncertainty, not no releases', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async () => ['Official English'], pause: async () => {},
+    searchReleases: async ({ query }) => query === 'Official English'
+      ? { state: 'unavailable' } : { state: 'candidates', items: [] },
+  });
+  assert.deepEqual(await discover({ requestId: 12 }), {
+    state: 'held', reason: 'release_search_incomplete',
+  });
+});
+
 test('a catalogue year does not hide same-title Airing releases', async () => {
   const queries = [];
   const discover = createRequestCandidateDiscovery({

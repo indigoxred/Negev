@@ -356,6 +356,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (!selected) return { ...held('no_safe_release'),
       nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
       nextCandidateFingerprint: cursor };
+    // A failed alias/indexer query is not evidence that only a lower-quality
+    // fallback exists. Retry the complete bounded search before downgrading.
+    if (found.searchIncomplete === true &&
+        assessRelease(selected.candidate).quality < 3) {
+      return { ...held('release_search_incomplete'),
+        nextCandidateOffset: 0 };
+    }
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }

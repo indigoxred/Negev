@@ -145,6 +145,17 @@ test('an unavailable related-title lookup retries within five minutes',
     } finally { queue.close(); }
   }));
 
+test('an incomplete provider search retries within one minute', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'release_search_incomplete', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+    } finally { queue.close(); }
+  }));
+
 test('an unverified Import quiet window retries after one minute without clearing its hold',
   async () => fixture(async (dbPath) => {
     let queue = openAcquisitionRequestQueue(dbPath);

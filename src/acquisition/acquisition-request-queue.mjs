@@ -520,13 +520,14 @@ export function openAcquisitionRequestQueue(dbPath,
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
-          reason === 'related_title_unavailable'
+          ['related_title_unavailable',
+            'release_search_unavailable'].includes(reason)
             ? checkedMs + RELATED_RETRY_MS :
           state === 'stopped_observed' ? checkedMs + 60_000 :
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
-            'authentication_unavailable',
+            'authentication_unavailable', 'release_search_incomplete',
             'import_quiet_window_unverified'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&

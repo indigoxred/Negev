@@ -21,6 +21,39 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('an incomplete search cannot silently choose a 720p fallback', async () => {
+  let submits = 0;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, searchIncomplete: true,
+      items: [{ ...candidate(1), title: 'Example - 01 720p',
+        seeders: 12 }] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () => { submits++; },
+  });
+  const result = await process({ requestId: 4 });
+  assert.equal(result.state, 'held');
+  assert.equal(result.reason, 'release_search_incomplete');
+  assert.equal(submits, 0);
+});
+
+test('an incomplete alias search can use a strong verified 1080p result', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, searchIncomplete: true,
+      items: [{ ...candidate(1), title: 'Example - 01 1080p',
+        seeders: 12 }] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () =>
+      ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+});
+
 test('a completed series selects a verified full-season plan before an episode', async () => {
   let selected;
   const process = createAcquisitionRequestProcessor({

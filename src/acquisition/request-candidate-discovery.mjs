@@ -53,16 +53,18 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
+    const failedQueries = [];
     for (const [index, query] of queries.entries()) {
       if (index > 0) await pause(1_000);
       let result;
       try { result = await searchReleases({ query,
         targetEpisodeNumber: target && targeted.includes(query) ? target.number : null }); }
-      catch { continue; }
+      catch { failedQueries.push(query); continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
           result.items.length > 50 || result.items.some((item) =>
             typeof item?.guid !== 'string' || !item.guid ||
             typeof item.title !== 'string' || !item.title || item.evidence !== 'unverified')) {
+        failedQueries.push(query);
         continue;
       }
       successful++;
@@ -97,11 +99,16 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       }
       if (!any) break;
     }
+    if (items.length === 0 && failedQueries.length > 0) {
+      return held('release_search_incomplete');
+    }
     const releaseState = inferReleaseState({
       today: new Date().toISOString().slice(0, 10), ...detail,
     }).state;
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       items, exhaustive: false,
+      ...(failedQueries.length > 0 ? {
+        searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };
   };
 }
