@@ -249,6 +249,38 @@ test('completion and publication get a turn within one minute without overlappin
   await scheduler.stop();
 });
 
+test('a pending release search does not delay a completed transfer turn', async () => {
+  const timer = clock();
+  let releaseSearch;
+  let enteredSearch;
+  const searchStarted = new Promise((resolve) => { enteredSearch = resolve; });
+  const searchPending = new Promise((resolve) => { releaseSearch = resolve; });
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async () => { enteredSearch(); await searchPending;
+      return { state: 'page', results: [] }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  for (let i = 0; i < 3; i++) await timer.advance();
+  const searchTurn = timer.advance();
+  await searchStarted;
+  try {
+    await timer.advance();
+    assert.deepEqual(calls, ['completion', 'completion']);
+  } finally {
+    releaseSearch();
+    await searchTurn;
+    await scheduler.stop();
+  }
+});
+
 test('shutdown drains an active stage and never starts another stage', async () => {
   const timer = clock();
   let release;
