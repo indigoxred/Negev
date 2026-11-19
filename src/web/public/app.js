@@ -1523,7 +1523,8 @@ async function loadOperationalReview(append = false) {
         ? 'Downloaded file rejected' : item.stage === 'start_hold'
           ? 'Download start needs review' :
           item.stage === 'completion_interrupted'
-            ? 'File check interrupted' : 'Import held';
+            ? 'File check interrupted' : item.stage === 'shoko_rescan_hold'
+              ? 'Shoko import needs review' : 'Import held';
       row.append(element('strong', `${label} · Request #${item.requestId}`),
         element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
       list.append(row);

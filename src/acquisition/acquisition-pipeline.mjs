@@ -15,9 +15,9 @@ const held = (reason) => ({ state: 'held', reason });
 // to bound concurrent media reads. A caller must supply guarded processors
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
-  recognitionRecoveries = null,
+  recognitionRecoveries = null, shokoRescans = null,
   processRequest, processStart, processCompletion, processPublish,
-  processRecovery,
+  processRecovery, processRescan,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now, pureMode = false,
   requestPageLimit = 3 } = {}) {
@@ -29,7 +29,13 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
         .some((fn) => typeof fn !== 'function') ||
       (recognitionRecoveries &&
         (typeof recognitionRecoveries.listPending !== 'function' ||
-         typeof processRecovery !== 'function'))) {
+         typeof processRecovery !== 'function')) ||
+      (shokoRescans &&
+        (typeof shokoRescans.listDue !== 'function' ||
+         typeof shokoRescans.isEnrolled !== 'function' ||
+         typeof shokoRescans.getAttemptStatus !== 'function' ||
+         typeof shokoRescans.endAttempt !== 'function' ||
+         typeof processRescan !== 'function'))) {
     throw new TypeError('Invalid acquisition pipeline');
   }
   const sessionRunners = createAcquisitionSessionRunners({ qbBaseUrl,
@@ -122,15 +128,33 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     listMetadataRetries: () => closed ? [] :
       requestQueue.listMetadataRetries({ nowMs: now() }),
     tickStarts: () => run(startWorker),
-    ...(recognitionRecoveries ? { tickRecovery: () => run({
+    ...(recognitionRecoveries || shokoRescans ? { tickRecovery: () => run({
       runOnce: async () => {
+        const due = shokoRescans?.listDue({ nowMs: now(), limit: 1 })[0];
+        if (due) {
+          if (!due.manifest) {
+            shokoRescans.endAttempt({ attemptId: due.attemptId,
+              review: true, nowMs: now() });
+            return held('shoko_rescan_manifest_invalid');
+          }
+          const result = await processRescan({ item: due });
+          if (result?.state === 'linked') {
+            requestQueue.wakeRecognitionRecovery({
+              requestId: result.requestId, nowMs: now() });
+          }
+          return result;
+        }
+        if (!recognitionRecoveries) return { state: 'idle' };
         let page = recognitionRecoveries.listPending({
           afterAttemptId: recoveryAfterId, limit: 20 });
         if (page.length === 0 && recoveryAfterId !== 0) {
           recoveryAfterId = 0;
           page = recognitionRecoveries.listPending({ limit: 20 });
         }
-        const item = page[0];
+        const item = page.find((candidate) =>
+          !shokoRescans?.isEnrolled(candidate.attemptId) ||
+          shokoRescans.getAttemptStatus(candidate.attemptId) === 'review');
+        if (!item && page.length > 0) recoveryAfterId = page.at(-1).attemptId;
         if (!item) return { state: 'idle' };
         recoveryAfterId = item.attemptId;
         const result = await sessionRunners.processRecovery({

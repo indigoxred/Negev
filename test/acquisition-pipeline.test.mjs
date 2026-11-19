@@ -16,6 +16,52 @@ const authorizedSession = { get: async () => ({ state: 'authenticated',
   sessionId: 'synthetic_sid' }), invalidate: () => ({ state: 'invalidated' }) };
 const qbBaseUrl = 'http://qb:8080/';
 
+test('targeted rescan runs before single-file replacement and cannot duplicate it', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-rescan-pipeline-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  const submitted = requests.submit({ requesterId: 1,
+    requestKey: 'rescan', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      episodeIds: [1001], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  let status = 'pending';
+  let rescans = 0;
+  let replacements = 0;
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    shokoRescans: {
+      listDue: () => status === 'pending' ? [{ attemptId: 7,
+        manifest: {} }] : [],
+      isEnrolled: () => true, getAttemptStatus: () => status,
+      endAttempt: () => { status = 'review'; },
+    },
+    recognitionRecoveries: { listPending: () => [{ attemptId: 7 }] },
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async () => ({ state: 'held', reason: 'no_safe_release' }),
+    processRescan: async () => { rescans++; status = 'done';
+      return { state: 'linked', requestId: submitted.requestId,
+        attemptId: 7 }; },
+    processRecovery: async () => { replacements++;
+      return { state: 'recovered', requestId: submitted.requestId,
+        attemptId: 7 }; },
+    processStart: async () => {}, processCompletion: async () => {},
+    processPublish: async () => {}, now: () => 100 });
+  try {
+    await pipeline.initialize();
+    assert.equal((await pipeline.tickRecovery()).state, 'linked');
+    assert.equal((await pipeline.tickRecovery()).state, 'idle');
+    assert.equal(rescans, 1);
+    assert.equal(replacements, 0);
+    status = 'review';
+    assert.equal((await pipeline.tickRecovery()).state, 'recovered');
+    assert.equal(replacements, 1);
+  } finally {
+    await pipeline.close(); handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a preserved recovery wakes its request for an immediate guarded replacement pass', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-recovery-pipeline-'));
   const dbPath = path.join(dir, 'state.sqlite');

@@ -51,3 +51,18 @@ test('pages in attempt order and holds on inconsistent evidence', () => {
     startQueue, completionQueue, limit: 2 }),
     { state: 'held', reason: 'review_evidence_unavailable' });
 });
+
+test('surfaces unresolved Shoko rescan to the owner', () => {
+  const empty = { listReviewNeeded: () => [] };
+  const result = listOperationalReview({
+    acquisitions: { listRejectedNeedsReview: () => [],
+      getAttempt: () => { throw Error('not needed'); } },
+    publishQueue: empty, startQueue: empty, completionQueue: empty,
+    shokoRescans: { listReviewNeeded: () => [{ attemptId: 7,
+      requestId: 9, anidbId: 42, reason: 'shoko_rescan_unresolved',
+      observedMs: 700 }] },
+  });
+  assert.deepEqual(result.items, [{ attemptId: 7, requestId: 9,
+    anidbId: 42, stage: 'shoko_rescan_hold',
+    reason: 'shoko_rescan_unresolved', observedMs: 700 }]);
+});

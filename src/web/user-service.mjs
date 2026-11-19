@@ -11,6 +11,8 @@ import { openHandoffLedger } from '../acquisition/handoff-ledger.mjs';
 import { openPureMoveLedger } from '../acquisition/pure-move-ledger.mjs';
 import { openRecognitionRecoveryLedger } from
   '../acquisition/recognition-recovery-ledger.mjs';
+import { openShokoRescanLedger } from
+  '../acquisition/shoko-rescan-ledger.mjs';
 import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mjs';
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
@@ -197,6 +199,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let handoffs;
   let pureMoves;
   let recognitionRecoveries;
+  let shokoRescans;
   let publishReview;
   let startReview;
   let completionReview;
@@ -220,6 +223,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     handoffs = openHandoffLedger(dbPath);
     if (acquisition?.pureMode === true) pureMoves = openPureMoveLedger(dbPath);
     if (pureMoves) recognitionRecoveries = openRecognitionRecoveryLedger(dbPath);
+    if (pureMoves) shokoRescans = openShokoRescanLedger(dbPath);
     publishReview = openHandoffPublishQueue(dbPath,
       { pureMode: acquisition?.pureMode === true });
     startReview = openStartQueue(dbPath);
@@ -822,6 +826,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       listOperationalReview: (input) => listOperationalReview({
         acquisitions, publishQueue: publishReview,
         startQueue: startReview, completionQueue: completionReview,
+        shokoRescans,
         ...input }),
       probeRequestTargets: plexObserver ? ({ request, episodeIds }) =>
         probeTargetPresence({ anidbId: request.anidbId,
@@ -1098,7 +1103,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
           dbPath, requests, acquisitions, handoffs, pureMoves,
-          recognitionRecoveries, pureMode,
+          recognitionRecoveries, shokoRescans, pureMode,
           qbBaseUrl, sessionGate,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
@@ -1110,6 +1115,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           publicSections: plex.publicSections, prowlarr,
           shokoMount: plex.shokoMount,
           firstTimePolicy: 'single_uncertain_attempt',
+          observePublicTarget: (target) =>
+            observeCurrentPublic(target, undefined, true),
           readPublicCoverage: ({ anidbId, episodeIds }) => {
             const checkedMs = now();
             return recentPublicCoverage({ episodeIds, includeIds: true,
@@ -1149,7 +1156,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               recent?.close();
               inventory.close(); hydration.close(); progress.close();
               completionReview.close(); startReview.close(); publishReview.close();
-              recognitionRecoveries?.close(); pureMoves?.close();
+              shokoRescans?.close(); recognitionRecoveries?.close();
+              pureMoves?.close();
               handoffs.close(); acquisitions.close();
               pendingTitles.close(); requests.close(); accounts.close();
             }
@@ -1164,7 +1172,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     inventory?.close(); hydration?.close();
     progress?.close(); completionReview?.close(); startReview?.close();
     publishReview?.close();
-    recognitionRecoveries?.close(); pureMoves?.close();
+    shokoRescans?.close(); recognitionRecoveries?.close(); pureMoves?.close();
     handoffs?.close(); acquisitions?.close();
     pendingTitles?.close(); requests?.close(); accounts?.close();
     throw error;
