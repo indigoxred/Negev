@@ -218,7 +218,8 @@ export function openAcquisitionRequestQueue(dbPath,
     WHERE r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND ${cohortFilter}
       ((c.state='held' AND c.reason IN
-        ('shoko_metadata_missing','torrent_hash_in_use')) OR
+        ('shoko_metadata_missing','torrent_hash_in_use',
+         'reconciled_observed_attempts')) OR
         (c.state='held' AND c.reason='no_safe_release' AND
           c.search_policy_rechecked=1) OR
         c.state='stopped_observed')
@@ -253,7 +254,8 @@ export function openAcquisitionRequestQueue(dbPath,
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;
   const resumeObservedSql = `UPDATE acquisition_request_checks
-    SET reason='reconciled_observed_attempts',next_due_ms=?
+    SET reason='reconciled_observed_attempts',
+      next_due_ms=COALESCE(next_due_ms,?)
     WHERE request_id=? AND state='held'
       AND ((reason='interrupted_attempt_present' AND next_due_ms IS NULL)
         OR (reason='reconciled_observed_attempts' AND next_due_ms<=?))`;

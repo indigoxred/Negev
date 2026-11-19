@@ -69,7 +69,8 @@ test('an interrupted watch resumes only when every saved attempt is observed and
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
       assert.equal(queue.getResult(1).nextDueMs, 200);
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 199 }), []);
-      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 260 }), [1]);
+      assert.equal(queue.getResult(1).nextDueMs, 200);
       assert.equal(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }).requestId, 1);
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 201 }), []);
     } finally { db.close(); queue.close(); acquisitions.close(); }
