@@ -25,7 +25,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
-    const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
+    let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
     let titleReads = 0;
@@ -110,6 +110,14 @@ test('title and library controls recover from pending and failed reads without d
       } else if(path === '/api/catalogue/3/display') {
         json(response,{state:'display',anidbId:3,title:'Series example',type:'TV Series',description:'Series synopsis',tags:[]});
       } else if(path.endsWith('/related')) {json(response,{state:'related',items:[],nextPage:null});
+      } else if(path === '/api/release-previews') {
+        previewOpens++;let body='';for await(const chunk of request)body+=chunk;
+        json(response,{state:'preview',previewId:'preview-'+previewOpens});
+      } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/release-choice')) {
+        if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1};}
+        json(response,{state:'updated',control,context:{confirmedAiring:true}});
+      } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/releases')) {
+        json(response,{state:'candidates',items:[],nextOffset:null});
       } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
@@ -328,7 +336,14 @@ test('title and library controls recover from pending and failed reads without d
       await until("![...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').disabled");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
       await until("document.querySelector('dialog[open] [aria-label=Quality]')");
-      assert.deepEqual(submittedModes,['manual']);
+      assert.deepEqual(submittedModes,[],'opening Manual Pick does not submit a request');
+      assert.equal(previewOpens,1);
+      const pendingPreviewKey=await evaluate("sessionStorage.getItem('negev-request-1-3-installment')");
+      assert.ok(pendingPreviewKey);
+      await evaluate("document.querySelector('dialog[open] .release-preference-editor').open=true;document.querySelector('dialog[open] [aria-label=\"Preferred release group\"]').value='Group';[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Save group').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Future release preference saved')");
+      assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),pendingPreviewKey,'preview preference does not clear the pending request key');
+      assert.deepEqual(submittedModes,[]);
       assert.equal(await evaluate("document.querySelector('dialog[open] [aria-label=Quality]').value"),'bd1080');
       await evaluate("location.hash='#/requests'");
       await until("!document.querySelector('#view-requests').hidden");
@@ -339,7 +354,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Automatic acquisition is enabled')");
-      assert.deepEqual(submittedModes,['manual','auto_review']);
+      assert.deepEqual(submittedModes,['auto_review']);
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
       await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
       await evaluate("location.hash='#/title/1'");await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");

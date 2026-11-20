@@ -1,0 +1,24 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {randomBytes} from 'node:crypto';
+import {mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {openRequestLedger} from '../src/requests/request-ledger.mjs';
+import {createHeldRequestSubmitter} from '../src/requests/submit-held-request.mjs';
+import {createReleasePreviews} from '../src/requests/release-previews.mjs';
+import {buildUserApp} from '../src/web/user-app.mjs';
+test('preview HTTP lifecycle reuses real preparation without persisting until Grab',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-preview-http-'));const requests=openRequestLedger(path.join(dir,'db.sqlite'));t.after(async()=>{requests.close();await rm(dir,{recursive:true,force:true});});
+ const user={id:7,username:'Member',role:'member',adultAllowed:true,sessionVersion:1};let current=user;
+ const accounts={authenticate:async()=>current,getSessionUser:()=>current,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false};
+ const detail={state:'details',anidbId:42,title:'Known film',kind:'movie',restricted:false,complete:true,page:1,total:1,nextPage:null,airDate:'2020-01-01',endDate:'2020-01-01',episodeCount:1,episodes:[{id:99,number:1,type:'Episode',title:'Film',airDate:'2020-01-01'}]};
+ const prepare=createHeldRequestSubmitter({ledger:{...requests,submit:submission=>({state:'prepared',submission})},confirmKnownTitle:async()=>true,loadDetail:async()=>detail,now:()=>1000,today:()=> '2026-11-20',authorizeRequester:()=>({active:true,adultAllowed:true})});
+ const selectionOptions={discoverCandidates:async()=>({state:'candidates',releaseState:'completed',items:[{guid:'film',indexerId:1,title:'Known film BD 1080p',size:100,seeders:10}]}),previewCandidate:async()=>({state:'preflight',torrentHash:'b'.repeat(40),episodeIds:[99],files:[{name:'film.mkv',size:100,episodeIds:[99]}]}),readPublicCoverage:async()=>({availableEpisodeIds:[],uncertainEpisodeIds:[]}),loadDetail:async()=>detail};
+ const releasePreviews=createReleasePreviews({requests,prepare,selectionOptions,now:()=>1000});
+ const origin='http://localhost:3000';const app=await buildUserApp({accounts,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,submitRequest:async()=>{throw Error('must not submit through ordinary path');},readRequest:id=>requests.getRequest(id),loadDetail:async()=>detail,releaseSelection:releasePreviews.selection,releasePreviews});t.after(()=>app.close());
+ const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Member',password:'long-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];const session=await app.inject({url:'/api/session',headers:{cookie}});const headers={cookie,origin,'x-negev-csrf':session.json().csrfToken};
+ const opened=await app.inject({method:'POST',url:'/api/release-previews',headers,payload:{anidbId:42,scope:'installment',requestKey:'film'}});assert.equal(opened.statusCode,200,opened.body);const previewId=opened.json().previewId;
+ const base='/api/release-previews/'+previewId;const found=await app.inject({url:base+'/releases',headers:{cookie}});assert.equal(found.statusCode,200,found.body);assert.equal(requests.listRequests({requesterId:7}).items.length,0);
+ const control=await app.inject({url:base+'/release-choice',headers:{cookie}});const chosen=await app.inject({method:'POST',url:base+'/release-choice',headers,payload:{action:'choose',revision:control.json().control.revision,token:found.json().items[0].token}});assert.equal(chosen.statusCode,200,chosen.body);assert.equal(requests.listRequests({requesterId:7}).items.length,1);assert.equal(chosen.json().control.phase,'chosen');assert.equal(JSON.stringify(chosen.json()).includes('proxyUrl'),false);
+});

@@ -1,3 +1,4 @@
+import { createReleasePreviews } from '../requests/release-previews.mjs';
 import { createReleaseWake, observedReleaseEpisodes } from '../acquisition/release-wake.mjs';
 import { createReleaseSelection } from '../acquisition/release-selection.mjs';
 import path from 'node:path';
@@ -420,7 +421,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }
       return result;
     };
-    const submitHeldRequest = createHeldRequestSubmitter({
+    const heldRequestOptions = {
       titleRegistry, confirmKnownTitle, loadDetail: loadFastDetail,
       ledger: requests, now, today,
       authorizeRequester: ({ requesterId }) => {
@@ -436,7 +437,22 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           file: fileProofs?.getCurrent(target),
         }).availability === 'available';
       },
-    });
+    };
+    const submitHeldRequest = createHeldRequestSubmitter(heldRequestOptions);
+    const prepareRequest = createHeldRequestSubmitter({...heldRequestOptions,
+      ledger: {...requests, submit: submission => ({state:'prepared',submission})}});
+    let releasePreviews;
+    const readSelectionRequest = id => releasePreviews?.readRequest(id) ?? requests.getRequest(id);
+    const preparePreview = async input => {
+      if(acquisitionAllowedAnidbIds && !acquisitionAllowedAnidbIds.includes(input.anidbId)) return {state:'held',reason:'title_not_in_cutover'};
+      if(acquisitionOwnershipGate){
+        let ownership;try{ownership=await acquisitionOwnershipGate.refresh();}catch{}
+        if(ownership?.state!=='ready')return {state:'held',reason:'sonarr_ownership_unavailable'};
+        const status=acquisitionOwnershipGate.status(input.anidbId);
+        if(status!=='eligible')return {state:'held',reason:status==='owned'?'title_sonarr_owned':'sonarr_identity_unmapped'};
+      }
+      return prepareRequest({...input,releaseMode:'manual'});
+    };
     const submitRequest = async (input) => {
       const result = await submitHeldRequest(input);
       if (result.created === true && Number.isSafeInteger(result.requestId) &&
@@ -466,7 +482,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       };
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
       now,
-      readRequest: (id) => requests.getRequest(id),
+      readRequest: readSelectionRequest,
       loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
       searchReleases: ({ query, targetEpisodeNumber, limit = 25 }) => searchReleaseCandidates({
@@ -495,8 +511,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     });
     const previewCandidate = prowlarr ? async ({ requestId, candidate,
       offlineCache }) => {
-      const request = requests.getRequest(requestId);
-      const saved = request?.status === 'held' && offlineCache instanceof Map
+      const request = readSelectionRequest(requestId);
+      const saved = request?.status === 'held' && !request.preview && offlineCache instanceof Map
         ? candidateChecks.get({ request, candidate }) : null;
       if (saved) return { ...saved, cacheHit: true };
       const result = await previewRequestCandidate({ requestId, candidate,
@@ -506,7 +522,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           filename, fetchImpl })),
         readVideoExtensions: () => metadata.run(() => readShokoVideoExtensions({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fetchImpl })),
-        readRequest: (id) => requests.getRequest(id),
+        readRequest: readSelectionRequest,
         loadDetail: (input) => loadCurrentDetail(input),
         readRelatedTitles,
         releaseQueries,
@@ -515,7 +531,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           indexerIds: prowlarr.indexerIds, ...input, fetchImpl,
         })),
       });
-      if (request) candidateChecks.put({ request, candidate, result });
+      if (request && !request.preview) candidateChecks.put({ request, candidate, result });
       return result;
     } : undefined;
     const readRequestCoverage = async (request) => {
@@ -538,6 +554,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       requests,discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
       loadDetail:input=>loadCurrentDetail(input),
       wake:id=>acquisitionRuntime?.wakeRequest(id),now }):undefined;
+    releasePreviews = releaseSelection ? createReleasePreviews({requests,prepare:preparePreview,now,
+      selectionOptions:{discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
+        loadDetail:input=>loadCurrentDetail(input)},
+      wake:id=>acquisitionRuntime?.wakeRequest(id),
+      onCommitted: result=>autoTrackSavedAiringRequest({result,requesterId:result.requesterId,
+        anidbId:result.anidbId,readRequest:id=>requests.getRequest(id),accounts})}) : undefined;
     const readAiringDetail = ({ anidbId }) => collectAniDbDetail({ anidbId,
       loadPage: async ({ page }) => {
         if (page > 1) await sleep(250);
@@ -895,7 +917,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         titleChecks.start({ anidbId, nowMs: now() }) : undefined,
       getTitleCheck: titleChecks ? ({ anidbId }) =>
         titleChecks.getProgress({ anidbId, nowMs: now() }) : undefined,
-      discoverCandidates, previewCandidate, releaseSelection,
+      discoverCandidates, previewCandidate, releaseSelection, releasePreviews,
       listOperationalReview: async (input) => {
         await titleSource?.refresh();
         const page = listOperationalReview({

@@ -19,6 +19,7 @@ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==und
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
 const selection={candidate,preview,registration:'unknown'};
+let previewWrites=0,previewSaved=null;
 let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false,preferredFlag=false;
 const api=async(url,options={})=>{
  if(url.endsWith('/release-choice')&&!options.method)return {control};
@@ -26,13 +27,14 @@ const api=async(url,options={})=>{
  if(url.includes('/releases'))return url.includes('offset=50')
    ?{state:'candidates',items:[{...candidate,guid:'two',title:'[Another] Example WEB 1080p',token:'second'}],nextOffset:null,confirmedAiring:true}
    :{state:'candidates',items:[candidate],nextOffset:50,confirmedAiring:true};
- const body=JSON.parse(options.body);
- if(body.action==='inspect')return {state:'preflight',...preview};
+ const body=JSON.parse(options.body);if(url.includes('/release-previews/'))previewWrites++;
+ if(body.action==='inspect')return {state:'preflight',requestId:Number.MAX_SAFE_INTEGER,...preview};
+ if(body.action==='preference')control={...control,preference:null,revision:control.revision+1};
  if(body.action==='begin')control={mode:body.mode,phase:'selecting',revision:control.revision+1};
- if(body.action==='choose'){preferredFlag=body.preferFutureGroup===true;chooseCalls++;control={mode:'manual',phase:'chosen',revision:control.revision+1,selection};}
+ if(body.action==='choose'){preferredFlag ||=body.preferFutureGroup===true;chooseCalls++;control={mode:'manual',phase:'chosen',revision:control.revision+1,selection};}
  if(body.action==='auto'){autoCalls++;control={mode:'auto',phase:'proposal',revision:control.revision+1,expiresMs:Date.now()+300000,proposal:{registered:{...selection,registration:'likely'},better:{...selection,candidate:{...candidate,title:'[Better] Example BD 1080p',source:'Blu-ray'}},benefit:'Blu-ray source'}};}
  if(['better','registered'].includes(body.action)){decision=body.action;control={mode:'auto',phase:'chosen',revision:control.revision+1,selection};}
- return {state:'updated',control};
+ return {state:'updated',control,...(url.includes('/release-previews/')&&body.action==='choose'?{requestId:42}:{})};
 };
 const dialog=createReleaseDialog({api,element});
 const tick=()=>new Promise(r=>setTimeout(r,20));
@@ -55,14 +57,27 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const defaults=document.querySelector('[aria-label=Quality]').value==='bd1080'&&document.querySelector('[aria-label=Audio]').value==='japanese';
  document.querySelector('[aria-label="Prefer this release group for future episodes"]').checked=true;
  click('Pick');await tick();
- const saved=document.querySelector('dialog').textContent.includes('Exact release saved')&&chooseCalls===1;
+ const saved=document.querySelector('dialog').textContent.includes('Request #1 submitted')&&chooseCalls===1;
+ const savedLink=document.querySelector('dialog a[href="#/requests?requestId=1"]')?.textContent==='View request';
  click('Close');control={mode:'auto',phase:'selecting',revision:10};
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
  const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
  click('Use registered release');await tick();
+ const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&document.querySelector('dialog').textContent.includes('Auto-Pick selected this release');
  dialog.close();
  const closed=!document.querySelector('dialog');
- document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,compact,defaults,saved,prompt,decision,autoCalls,closed,preferredFlag});
+ control={mode:'manual',phase:'selecting',revision:1};
+ const draftDialog=createReleaseDialog({api,element,onSaved:data=>{previewSaved=data;}});
+ await draftDialog.open({previewId:'preview-token',title:'Preview',mode:'manual'});
+ document.querySelector('dialog .release-preference-editor').open=true;click('Clear preference');await tick();
+ const draftPreferenceUnsubmitted=previewSaved===null;
+ click('Close');await tick();
+ const abandonedPreview=previewWrites===1&&previewSaved===null;
+ await draftDialog.open({previewId:'preview-token',title:'Preview',mode:'manual'});
+ click('Pick');await tick();
+ const committedPreview=previewSaved?.requestId===42&&previewSaved?.previewId==='preview-token'&&Boolean(document.querySelector('dialog a[href="#/requests?requestId=42"]'));
+ draftDialog.close();
+ document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -71,6 +86,6 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,compact:true,defaults:true,saved:true,prompt:true,decision:'registered',autoCalls:1,closed:true,preferredFlag:true});
+      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,decision:'registered',autoCalls:1,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });

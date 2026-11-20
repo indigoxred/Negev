@@ -113,6 +113,42 @@ test('season sequence rejects duplicate, ranged, extra and conflicting video fil
   }
 });
 
+test('a complete installment pack can provisionally normalize one consistent absolute sequence', () => {
+  const files = [27, 25, 26].map((n) => ({
+    name: `[Group] Show - ${n}.mkv`, size: 1000 + n,
+  }));
+  const plan = planTorrentTargets({ request, detail,
+    prepared: { state: 'prepared_stopped', files },
+    releaseTitle: '[Group] Show (2025) (Season 2)', trustedTitle: 'Show (2025)' });
+  assert.equal(plan.state, 'planned_targets');
+  assert.deepEqual(plan.plannedFiles.map((file) => file.episodeIds),
+    [[1003], [1001], [1002]]);
+});
+
+test('absolute pack normalization requires a complete single unambiguous regular installment', () => {
+  for (const numbers of [[25, 26], [25, 25, 27], [25, 26, 28], [24, 25, 26, 27]]) {
+    const plan = planTorrentTargets({ request, detail,
+      prepared: { state: 'prepared_stopped', files: numbers.map((n) =>
+        ({ name: `Show - ${n}.mkv`, size: 1000 })) },
+      releaseTitle: 'Show (2025)', trustedTitle: 'Show (2025)' });
+    assert.equal(plan.state, 'held', numbers.join(','));
+  }
+  for (const names of [
+    ['Show - 25 E01.mkv', 'Show - 26 E02.mkv', 'Show - 27 E03.mkv'],
+    ['Show - 25 Part 01.mkv', 'Show - 26 Part 02.mkv', 'Show - 27 Part 03.mkv'],
+    ['Show - S25.mkv', 'Show - S26.mkv', 'Show - S27.mkv'],
+  ]) {
+    assert.equal(planTorrentTargets({ request, detail,
+      prepared: { state: 'prepared_stopped', files: names.map((name) => ({name,size:1000})) },
+      releaseTitle: 'Show (2025)', trustedTitle: 'Show (2025)' }).state, 'held');
+  }
+  const subset = { ...request, episodeIds: [1002, 1003] };
+  assert.equal(planTorrentTargets({ request: subset, detail,
+    prepared: { state: 'prepared_stopped', files: [26,27].map(n=>
+      ({name:`Show - ${n}.mkv`,size:1000})) },
+    releaseTitle: 'Show (2025)', trustedTitle: 'Show (2025)' }).state,'held');
+});
+
 test('selects requested regular episodes while excluding a separate Specials folder', () => {
   const files = [
     { name: '[Group]_Show_01_[DVD][4BD6D6B5].mkv', size: 1200 },

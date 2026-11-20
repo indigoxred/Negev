@@ -436,12 +436,38 @@ async function api(url, options = {}) {
   }
   return data;
 }
-const releaseDialog=createReleaseDialog({api,element,onSaved:()=>{void loadRequests();}});
+const releasePreviewSaved=new Map();
+const releaseDialog=createReleaseDialog({api,element,onSaved:data=>{
+  if(data?.previewId&&(!Number.isSafeInteger(data.requestId)||data.requestId<1))return;
+  const saved=releasePreviewSaved.get(data?.previewId);
+  if(saved){releasePreviewSaved.delete(data.previewId);saved(data);refreshTrackingAfterRequest();}
+  void loadRequests();
+}});
 function dismissRequestDialogs() {
   releaseDialog.close();
   // Hiding an ancestor does not close a native modal: it still makes the
   // newly visible page inert. Release the top layer before changing views.
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+}
+async function openPreviewReleaseRequests(jobs) {
+  if(!state.releaseSearch)return;
+  const session=sessionResponses.current(),route=location.hash;
+  const show=async index=>{
+    if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
+    const item=jobs[index];if(!item)return;
+    try{
+      const preview=await api('/api/release-previews',{method:'POST',body:JSON.stringify(item.body)});
+      if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
+      while(releasePreviewSaved.size>=100)releasePreviewSaved.delete(releasePreviewSaved.keys().next().value);
+      const previewUserId=state.user.id;
+      releasePreviewSaved.set(preview.previewId,result=>{
+        if(state.user?.id===previewUserId)item.saved(result);
+      });
+      void releaseDialog.open({previewId:preview.previewId,title:preferredDisplayTitle(item),mode:'manual',
+        next:index+1<jobs.length?()=>{void show(index+1);}:null});
+    }catch(error){message(requestFailureMessage(error),true);}
+  };
+  await show(0);
 }
 async function openSavedReleaseRequests(saved,mode) {
   if(!state.releaseSearch)return;
@@ -2949,6 +2975,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           refresh();
           return;
         }
+        if(releasePicker?.value()==='manual'){
+          reviewing=false;review.hidden=true;action.close();
+          await openPreviewReleaseRequests(selected.map(row=>({title:row.title,englishTitle:row.englishTitle,
+            body:{anidbId:row.anidbId,scope:'installment',requestKey:requestKeys.pending({userId:state.user.id,anidbId:row.anidbId})},
+            saved:()=>{requestKeys.saved({userId:state.user.id,anidbId:row.anidbId});row.requested=true;
+              row.statusText.textContent='Requested';refresh();}})));
+          return;
+        }
         saving = true;
         refresh();
         const saved = [];
@@ -3262,6 +3296,18 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestReview.hidden = false;
         button.textContent = 'Confirm request';
         requestStatus.textContent = 'Review this installment, then confirm.';
+        return;
+      }
+      if(filmReleasePicker?.value()==='manual'){
+        const selectedFilmId=needsFilmChoice?Number(filmChoiceSelect.value):null;
+        const keyScope={userId:state.user.id,anidbId:selectedInstallmentId,
+          ...(selectedFilmId?{selection:'film-entry-'+selectedFilmId}:{})};
+        filmPopup?.close();
+        await openPreviewReleaseRequests([{title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle,
+          body:{anidbId:selectedInstallmentId,scope:selectedFilmId?'episodes':'installment',
+            ...(selectedFilmId?{episodeIds:[selectedFilmId]}:{}),requestKey:requestKeys.pending(keyScope)},
+          saved:result=>{requestKeys.saved(keyScope);requestSaved=true;reviewingRequest=false;requestReview.hidden=true;
+            button.textContent='Requested';button.disabled=true;requestStatus.textContent=savedRequestMessage(result);viewRequest.hidden=false;}}]);
         return;
       }
       requestSaving = true;

@@ -269,6 +269,31 @@ test('Shoko filename preview marks exact identity and refuses a different episod
     { state: 'held', reason: 'shoko_preview_wrong_identity' });
 });
 
+test('a normalized absolute season pack retains exact Shoko identity checks and provisional labels', async () => {
+  const files = [{ name: 'Example - 25.mkv', size: 1000 },
+    { name: 'Example - 26.mkv', size: 1000 }];
+  const run = (wrongIdentity) => previewRequestCandidate({ requestId: 4,
+    candidate: { ...candidate, title: 'Example (2025) Season 2' },
+    readRequest: () => request, loadDetail: async () => detail,
+    prepare: async () => ({ ...prepared, totalBytes: 2000, files }),
+    offlineLookup: async ({ filename }) => {
+      const episodeId = filename === 'Example - 25.mkv' ? 1001 : 1002;
+      return { status: 200, release: { ProviderName: 'Offline Importer',
+        IsCorrupted: false, ID: `offline://${wrongIdentity ? 43 : 42}-${episodeId}`,
+        OriginalFilename: filename,
+        CrossReferences: [{ AnidbAnimeID: wrongIdentity ? 43 : 42,
+          AnidbEpisodeID: episodeId, PercentageStart: 0, PercentageEnd: 100 }] } };
+    },
+  });
+  const result = await run(false);
+  assert.equal(result.state, 'preflight');
+  assert.deepEqual(result.files.map((file) => file.episodeIds), [[1001], [1002]]);
+  assert.equal(result.shokoPreview, 'exact');
+  assert.equal(result.registeredInAniDb, false);
+  assert.equal(result.downloadStarted, false);
+  assert.deepEqual(await run(true), { state: 'held', reason: 'shoko_preview_wrong_identity' });
+});
+
 test('a numbered release for an unrelated title cannot become a preflight', async () => {
   const result = await previewRequestCandidate({ requestId: 4,
     candidate: { ...candidate, title: 'Different Anime - 01' },

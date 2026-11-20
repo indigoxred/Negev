@@ -100,7 +100,7 @@ function episodeNumbers(name) {
 // Constant title, season, year, and resolution numbers do not vary across
 // files; the single position covering every requested regular number does.
 // This is never used for one-file guesses or a partly numbered season.
-function completePackNumbers(files, wantedNumbers) {
+function completePackNumbers(files, wantedNumbers, { allowAbsolute = false } = {}) {
   if (files.length < 2 || files.length !== wantedNumbers.size) return null;
   const tokens = files.map((file) => {
     // A bracketed hexadecimal checksum varies per file but is not episode
@@ -118,9 +118,27 @@ function completePackNumbers(files, wantedNumbers) {
     if (new Set(numbers).size > 1) varying.push(numbers);
   }
   if (varying.length > 1) return { state: 'ambiguous' };
-  if (varying.length !== 1 || new Set(varying[0]).size !== files.length ||
-      !varying[0].every((number) => wantedNumbers.has(number))) return null;
-  return { state: 'mapped', numbers: varying[0] };
+  if (varying.length !== 1 || new Set(varying[0]).size !== files.length) return null;
+  const sourceNumbers = varying[0];
+  if (sourceNumbers.every((number) => wantedNumbers.has(number))) {
+    return { state: 'mapped', numbers: sourceNumbers };
+  }
+  if (!allowAbsolute) return null;
+  const ordered = [...sourceNumbers].sort((a, b) => a - b);
+  const wanted = [...wantedNumbers].sort((a, b) => a - b);
+  // Only a full 1..N installment and a disjoint contiguous absolute run.
+  // Never shift a subset, a partly overlapping run, or conflicting explicit
+  // coordinates. This is provisional scope evidence, not file identity proof.
+  if (!wanted.every((number, index) => number === index + 1) ||
+      ordered[0] <= wanted.at(-1) ||
+      !ordered.every((number, index) => number === ordered[0] + index) ||
+      files.some((file, index) => {
+        const parsed = episodeNumbers(file.name);
+        return parsed?.type !== 'Episode' || parsed.numbers.length !== 1 ||
+          parsed.numbers[0] !== sourceNumbers[index];
+      })) return null;
+  return { state: 'mapped', sourceNumbers,
+    numbers: sourceNumbers.map((number) => number - ordered[0] + 1) };
 }
 
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
@@ -192,8 +210,14 @@ export function planTorrentTargets({ request, detail, prepared,
     const episode = episodeNumbers(file.name);
     return episode === null || episode.type === 'Unnumbered';
   });
-  const packSequence = hasRequestedSpecial || !needsSequence ? null :
-    completePackNumbers(targetVideos, requestedRegularNumbers);
+  const allowAbsolute = titleMatched && regular.length === requestedRegularNumbers.size &&
+    targetVideos.every((file) => {
+      const parsed = episodeNumbers(file.name);
+      return parsed?.type === 'Episode' && parsed.numbers.length === 1 &&
+        !requestedRegularNumbers.has(parsed.numbers[0]);
+    });
+  const packSequence = hasRequestedSpecial || (!needsSequence && !allowAbsolute) ? null :
+    completePackNumbers(targetVideos, requestedRegularNumbers, { allowAbsolute });
   if (packSequence?.state === 'ambiguous') return held('ambiguous_pack_numbering');
 
   const byNumber = new Map();
@@ -220,7 +244,9 @@ export function planTorrentTargets({ request, detail, prepared,
     if (inferred !== null && episode === null) return held('ambiguous_pack_numbering');
     if (inferred !== null && episode?.type !== 'Unnumbered' &&
         (episode.type !== 'Episode' || episode.numbers.length !== 1 ||
-          episode.numbers[0] !== inferred)) return held('ambiguous_pack_numbering');
+          episode.numbers[0] !== (packSequence.sourceNumbers?.[index] ?? inferred))) {
+      return held('ambiguous_pack_numbering');
+    }
     const ids = inferred !== null ? [byNumber.get(`Episode:${inferred}`)] :
       episode?.type === 'Unnumbered' && soleUnnumberedTarget
       ? [soleUnnumberedTarget]
