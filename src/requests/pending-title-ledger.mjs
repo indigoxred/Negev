@@ -33,6 +33,9 @@ export function openPendingTitleLedger(dbPath) {
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS pending_title_due
       ON pending_title_intents(state,next_due_ms,id)`);
+    if(!db.prepare('PRAGMA table_info(pending_title_intents)').all().some(c=>c.name==='release_mode')) {
+      db.exec("ALTER TABLE pending_title_intents ADD COLUMN release_mode TEXT NOT NULL DEFAULT 'auto'");
+    }
     db.exec(`CREATE INDEX IF NOT EXISTS pending_title_active_owner
       ON pending_title_intents(requester_id,anidb_id,state,id)`);
   } catch (error) { db.close(); throw error; }
@@ -69,7 +72,7 @@ export function openPendingTitleLedger(dbPath) {
     state: row.state, nextDueMs: row.next_due_ms,
     leaseUntilMs: row.lease_until_ms, version: row.version,
     attempts: row.attempts, normalRequestId: row.normal_request_id,
-    reason: row.reason });
+    reason: row.reason, ...(row.release_mode==='auto'?{}:{releaseMode:row.release_mode}) });
   const outcome = (row, created) => ({ state: row.state, intentId: row.id,
     ...(row.normal_request_id === null ? {} :
       { normalRequestId: row.normal_request_id }), created });
@@ -84,7 +87,8 @@ export function openPendingTitleLedger(dbPath) {
 
   return {
     enqueue({ requesterId, anidbId, title, requestKey, nowMs,
-      initialReason = null }) {
+      initialReason = null, releaseMode = 'auto' }) {
+      if(!['auto','manual','auto_review'].includes(releaseMode))throw new TypeError('Invalid release mode');
       if (!validId(requesterId) || !validId(anidbId) ||
           typeof title !== 'string' || title.trim() !== title ||
           !title || title.length > 300 || /[\x00-\x1f\x7f]/.test(title) ||
@@ -104,6 +108,7 @@ export function openPendingTitleLedger(dbPath) {
         if (active) return outcome(active, false);
         const id = Number(insert.run(requesterId, requestKey, anidbId,
           title, nowMs, nowMs, initialReason).lastInsertRowid);
+        db.prepare('UPDATE pending_title_intents SET release_mode=? WHERE id=?').run(releaseMode,id);
         return outcome(byId.get(id), true);
       });
     },

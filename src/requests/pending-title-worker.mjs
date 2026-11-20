@@ -41,7 +41,7 @@ export function createPendingTitleWorker({ ledger, submitRequest,
         }
         result = await submitRequest({ requesterId: claim.requesterId,
           anidbId: claim.anidbId, scope: 'installment',
-          requestKey: claim.requestKey });
+          requestKey: claim.requestKey, ...(claim.releaseMode?{releaseMode:claim.releaseMode}:{}) });
       } catch { result = { state: 'held', reason: authorized === true
         ? 'submit_unavailable' : 'authorization_unavailable' }; }
       if (result?.state === 'held' && Number.isSafeInteger(result.requestId) &&

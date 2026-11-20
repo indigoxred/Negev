@@ -1,0 +1,144 @@
+import { randomUUID } from 'node:crypto';
+import { assessRelease, compareReleases, hasSeasonPackHint } from './release-preference.mjs';
+
+const held=reason=>({state:'held',reason});
+export function publicRelease(c) {
+  const title=c.title;
+  const resolution=/\b1080p?\b|1920x1080/i.test(title)?1080:
+    /\b720p?\b|1280x720/i.test(title)?720:/\b(?:480|576)p?\b/i.test(title)?480:null;
+  return {guid:c.guid,indexerId:c.indexerId,title,size:c.size,seeders:c.seeders??null,
+    evidence:'unverified',group:/^\[([^\]]{1,80})\]/.exec(title)?.[1]??'Not advertised',
+    source:/\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title)?'Blu-ray':
+      /\bDVD(?:rip)?\b/i.test(title)?'DVD':/\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title)?'WEB':'Not advertised',
+    resolution,coverage:hasSeasonPackHint(c)?'Season pack advertised; inspect file coverage':'Inspect file coverage',
+    indexer:typeof c.indexer==='string'?c.indexer.slice(0,120):`Indexer ${c.indexerId}`,
+    languageHints:/dual[ ._-]?audio/i.test(title)?'Dual audio advertised; subtitles unverified':
+      /(?:eng(?:lish)?[ ._-]?subs?|multi[ ._-]?subs?|subsplease|erai[ ._-]?raws)/i.test(title)?
+        'English subtitle hint advertised; tracks unverified':'Languages not advertised',
+    eligible:assessRelease(c).eligible,reason:assessRelease(c).reason};
+}
+export function correspondenceLevel(preview) {
+  const files=preview?.files;
+  if (!files?.length) return 'unknown';
+  const states=files.map(f=>preview.correspondence?.files?.find(e=>e.name===f.name&&e.size===f.size)?.state??'unknown');
+  return states.every(s=>s==='previously_verified')?'confirmed':
+    states.every(s=>['previously_verified','likely'].includes(s))?'likely':'unknown';
+}
+const coverageKey=s=>[...s.preview.episodeIds].sort((a,b)=>a-b).join(',');
+export function chooseReleaseProposal(selections) {
+  const ordered=selections.filter(s=>assessRelease(s.candidate).eligible)
+    .sort((a,b)=>compareReleases(a.candidate,b.candidate));
+  const strongest=ordered[0];
+  if (!strongest) return {state:'empty'};
+  // Registration is a recognition preference, never permission to drop the
+  // resolution or viability tier. Source improvements can be offered explicitly.
+  const resolution=publicRelease(strongest.candidate).resolution;
+  const healthy=assessRelease(strongest.candidate).healthyPeers;
+  const registered=ordered.find(s=>correspondenceLevel(s.preview)!=='unknown' &&
+    publicRelease(s.candidate).resolution===resolution &&
+    assessRelease(s.candidate).healthyPeers===healthy && coverageKey(s)===coverageKey(strongest));
+  if (!registered) return {state:'selected',selection:strongest};
+  const a=assessRelease(strongest.candidate),b=assessRelease(registered.candidate);
+  const benefit=a.quality>b.quality?'Blu-ray source instead of the advertised web source':
+    a.trusted&&!b.trusted?'Preferred trusted indexer source':
+      a.seeders>=Math.max(10,b.seeders*3)?`More reported peers (${a.seeders} versus ${b.seeders})`:null;
+  return strongest!==registered && benefit && correspondenceLevel(strongest.preview)==='unknown'
+    ?{state:'proposal',registered,better:strongest,benefit}
+    :{state:'selected',selection:registered};
+}
+
+// Candidate receipts are bounded and short-lived; the selected descriptor and
+// exact torrent hash are persisted in the request ledger before any worker wake.
+export function createReleaseSelection({requests,discoverCandidates,previewCandidate,
+  readPublicCoverage,wake=()=>{},now=Date.now}) {
+  const receipts=new Map();
+  const inFlight=new Map();
+  const snapshot=id=>requests.getReleaseControl(id,now());
+  const save=(id,revision,next)=>requests.updateReleaseControl(id,revision,next,now());
+  const cache=(requestId,candidate,preview=null)=>{
+    for(const [key,value] of receipts) if(value.expiresMs<=now()) receipts.delete(key);
+    while(receipts.size>=500) receipts.delete(receipts.keys().next().value);
+    const token=randomUUID();receipts.set(token,{requestId,candidate,preview,expiresMs:now()+600_000});return token;
+  };
+  const receipt=(id,token)=>{
+    const value=receipts.get(token);return value?.requestId===id&&value.expiresMs>now()?value:null;
+  };
+  const inspect=async(id,token)=>{
+    const found=receipt(id,token);if(!found) return held('release_search_expired');
+    if(!found.preview) {
+      try {found.preview=await previewCandidate({requestId:id,candidate:found.candidate});}
+      catch {return held('torrent_preflight_unavailable');}
+    }
+    return found.preview;
+  };
+  const search=async(id,query)=>{
+    const request=requests.getRequest(id);
+    if(!request||request.status!=='held') return held('request_missing');
+    if(!request.episodeIds.length) return {state:'candidates',requestId:id,items:[],waitingFor:'first_episode'};
+    let result;
+    try {result=await discoverCandidates({requestId:id,interactive:true,...(query?{query}:{})});}
+    catch {return held('release_search_unavailable');}
+    if(result?.state!=='candidates') return result??held('release_search_unavailable');
+    return {...result,items:result.items.map(c=>({...publicRelease(c),token:cache(id,c)}))};
+  };
+  const begin=(id,mode,revision)=>{
+    if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');
+    const updated=save(id,revision,{mode,phase:'selecting',...(mode==='auto'?{expiresMs:now()+300_000}:{})});
+    if(updated.state==='updated') wake(id);
+    return updated;
+  };
+  const choose=async(id,token,revision)=>{
+    const found=receipt(id,token);if(!found) return held('release_search_expired');
+    if(!assessRelease(found.candidate).eligible) return held('release_not_eligible');
+    const preview=await inspect(id,token);
+    if(preview?.state!=='preflight') return preview??held('torrent_preflight_unavailable');
+    if(!preview.episodeIds.length) return held('release_has_no_requested_episodes');
+    const updated=save(id,revision,{mode:'manual',phase:'chosen',
+      selection:{candidate:found.candidate,preview}});
+    if(updated.state==='updated') wake(id);
+    return updated;
+  };
+  const auto=async(id,revision)=>{
+    if(inFlight.has(id)) return held('release_search_in_progress');
+    inFlight.set(id,true);
+    try {
+      const current=snapshot(id);
+      if(current.revision!==revision || current.mode!=='auto'||current.phase!=='selecting') return held('stale_release_selection');
+      const found=await search(id);
+      if(found.state!=='candidates') return found;
+      const request=requests.getRequest(id);
+      const coverage=await readPublicCoverage(request);
+      const available=new Set([...(coverage.availableEpisodeIds??[]),...(coverage.uncertainEpisodeIds??[])]);
+      const preferPack=found.releaseState==='completed'&&request.kind==='series'&&request.episodeIds.filter(x=>!available.has(x)).length>1;
+      const inspected=[];
+      for(const c of found.items.filter(c=>c.eligible).sort((a,b)=>compareReleases(
+        receipt(id,a.token).candidate,receipt(id,b.token).candidate,{preferSeasonPack:preferPack})).slice(0,3)) {
+        const preview=await inspect(id,c.token);
+        if(preview?.state!=='preflight'||preview.episodeIds.every(x=>available.has(x))||
+          preview.episodeIds.some(x=>(coverage.uncertainEpisodeIds??[]).includes(x))) continue;
+        if(preferPack&&request.episodeIds.some(x=>!available.has(x)&&!preview.episodeIds.includes(x))) continue;
+        inspected.push({candidate:receipt(id,c.token).candidate,preview});
+      }
+      const proposal=chooseReleaseProposal(inspected);
+      const proposed=proposal.selection??proposal.registered;
+      if(proposal.state==='empty'||found.searchIncomplete===true&&
+          (publicRelease(proposed.candidate).resolution??0)<1080) {
+        // No interactive decision is useful; normal bounded acquisition can
+        // continue through later candidate pages without waiting on this tab.
+        const updated=save(id,revision,{mode:'auto',phase:'consumed'});if(updated.state==='updated') wake(id);return updated;
+      }
+      const next=proposal.state==='proposal'?{mode:'auto',phase:'proposal',expiresMs:now()+300_000,
+        proposal:{registered:proposal.registered,better:proposal.better,benefit:proposal.benefit}}:
+        {mode:'auto',phase:'chosen',selection:proposal.selection};
+      const updated=save(id,revision,next);if(updated.state==='updated') wake(id);
+      return updated;
+    } finally {inFlight.delete(id);}
+  };
+  const decide=(id,action,revision)=>{
+    const current=snapshot(id);
+    if(current.revision!==revision||current.phase!=='proposal'||!['better','registered'].includes(action)) return held('stale_release_selection');
+    const updated=save(id,revision,{mode:'auto',phase:'chosen',selection:current.proposal[action]});
+    if(updated.state==='updated') wake(id);return updated;
+  };
+  return {search,inspect,begin,choose,auto,decide,snapshot};
+}

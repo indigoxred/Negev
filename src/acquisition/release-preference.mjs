@@ -44,8 +44,8 @@ export function assessRelease(candidate) {
     has(title, /\b720p?\b|1280x720/i) ? 720 :
       has(title, /\b(?:480|576)p?\b/i) ? 480 : 0;
   const quality = bluray && resolution >= 1080 ? 5 :
-    bluray && resolution >= 720 ? 4 :
-      resolution >= 1080 ? 3 :
+    resolution >= 1080 ? 4 :
+      bluray && resolution >= 720 ? 3 :
         resolution >= 720 ? 2 :
           resolution >= 480 ? 1 : 0;
   const subtitleHint = has(title,

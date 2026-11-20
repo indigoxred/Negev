@@ -9,6 +9,19 @@ const detail = { state: 'details', anidbId: 1234, page: 1, total: 1,
   complete: true, nextPage: null,
   episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
 
+test('interactive search bounds queries and a custom phrase cannot become identity evidence',async()=>{
+  const queries=[];
+  const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>detail,
+    releaseQueries:async()=>['Another official name','Another alias','Third alias','Fourth alias'],pause:async()=>{},
+    searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[{guid:query,indexerId:1,
+      title:'Canonical Anime - 01',evidence:'unverified'}]};}});
+  assert.ok((await discover({requestId:12,interactive:true})).items.length<=3);
+  assert.ok(queries.length<=3);queries.length=0;
+  const result=await discover({requestId:12,interactive:true,query:'Canonical Anime 1080p'});
+  assert.deepEqual(queries,['Canonical Anime 1080p']);assert.equal(result.items[0].sourceQuery,undefined);
+  assert.equal((await discover({requestId:12,query:'untrusted'})).reason,'invalid_request');
+});
+
 test('overlapping fuzzy queries preserve the later correct episode evidence', async () => {
   const discover = createRequestCandidateDiscovery({
     readRequest: () => ({ ...request, episodeIds: [1001, 1002, 1003] }),

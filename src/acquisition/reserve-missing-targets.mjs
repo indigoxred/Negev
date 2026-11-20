@@ -8,7 +8,7 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 // targets. A Shoko import waiting for Plex is not an absent target.
 export async function reserveMissingTargets({ request, candidate, episodeIds,
   readEvidence, publicLibraryIds, ledger,
-  firstTimePolicy = 'strict', now = Date.now, beforeReserve }) {
+  firstTimePolicy = 'strict', now = Date.now, beforeReserve, preparedHash, plannedFiles }) {
   if (!validId(request?.id) || !validId(request.anidbId) || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
       request.episodeIds.some((id) => !validId(id)) ||
@@ -49,6 +49,7 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       held('candidate_preflight_unavailable');
   }
   return ledger.reserve({ requestId: request.id, candidate, episodeIds,
+    ...(preparedHash===undefined?{}:{preparedHash,plannedFiles}),
     evidencePolicy: checked.evidencePolicy ?? 'strict',
     nowMs: checked.checkedAtMs });
 }

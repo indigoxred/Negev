@@ -98,6 +98,7 @@ export async function searchReleaseCandidates({
         guid: item.guid, indexerId: item.indexerId, title: item.title,
         size: item.size, protocol: item.protocol,
         seeders: item.seeders ?? null, evidence: 'unverified',
+        ...(typeof item.indexer === 'string' ? {indexer:item.indexer.slice(0,120)} : {}),
         ...(trustedIndexerIds.includes(item.indexerId) ? { trusted: true } : {}),
         ...(includeProxyUrl && isTrustedProxy(item.downloadUrl ?? item.magnetUrl,
           base, apiKey, item.indexerId) ?

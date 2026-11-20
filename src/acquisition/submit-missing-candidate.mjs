@@ -197,6 +197,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     return { state: 'ready' };
   };
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
+    preparedHash:prepared.expected.hash,plannedFiles,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   // Once the stopped torrent is recorded, start/completion workers own it.

@@ -18,8 +18,8 @@ test('rejects zero peers, explicit English dub only, unsubbed, and 4K', () => {
 
 test('prefers BD and 1080p with 720p and 480p as ordered fallbacks', () => {
   const names = [
-    'Show WEB 720p', 'Show WEB 1080p',
-    'Show BD 720p', 'Show BD 1080p',
+    'Show WEB 720p', 'Show BD 720p',
+    'Show WEB 1080p', 'Show BD 1080p',
   ];
   assert.deepEqual(names.map((title) => item(title)).sort(compareReleases)
     .map((release) => release.title), names.reverse());

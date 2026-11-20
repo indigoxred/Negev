@@ -1,4 +1,5 @@
 import { createReleaseWake, observedReleaseEpisodes } from '../acquisition/release-wake.mjs';
+import { createReleaseSelection } from '../acquisition/release-selection.mjs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
@@ -517,6 +518,25 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       if (request) candidateChecks.put({ request, candidate, result });
       return result;
     } : undefined;
+    const readRequestCoverage = async (request) => {
+      const { anidbId, episodeIds } = request;
+      const checkedMs = now();
+      const cached = recentPublicCoverage({ episodeIds, includeIds: true,
+        directIds: directAvailability.getRecentAvailableIds({anidbId,nowMs:checkedMs}),
+        titleIds: titleChecks?.getRecentAvailableIds({anidbId,nowMs:checkedMs})??[],
+        fileIds: fileProofs?.getRecentAvailableIds({anidbId})??[] });
+      return verifyCachedPositiveCoverage({ request, cached,
+        cache: acquisitionCoverageCache, now,
+        ownedEpisodeIds:episodeIds.filter(episodeId=>inventory.getObservedFileIds({anidbId,episodeId}).length>0),
+        readRevision:target=>JSON.stringify([
+          inventory.getObservedFileIds(target).map(fileId=>[fileId,inventory.getFile(fileId)?.observedMs]),
+          directAvailability.getObservation(target)?.observedMs]),
+        readShoko:target=>readShokoEpisodeFiles({baseUrl:shokoBaseUrl,apiKey:shokoApiKey,...target,purpose:'availability',fetchImpl}),
+        readPublic:(target,shoko)=>plexObserver.observeTarget(target,shoko,{includeProof:true}) });
+    };
+    const releaseSelection=discoverCandidates&&previewCandidate?createReleaseSelection({
+      requests,discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
+      wake:id=>acquisitionRuntime?.wakeRequest(id),now }):undefined;
     const readAiringDetail = ({ anidbId }) => collectAniDbDetail({ anidbId,
       loadPage: async ({ page }) => {
         if (page > 1) await sleep(250);
@@ -603,7 +623,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       publicAvailabilityConfigured: Boolean(plexObserver),
       now, submitRequest: (input) => submitRequest(input),
       queuePendingTitle: async ({ requesterId, anidbId, requestKey,
-        initialReason }) => {
+        initialReason, releaseMode = 'auto' }) => {
         if (!Number.isSafeInteger(requesterId) || requesterId < 1 ||
             !Number.isSafeInteger(anidbId) || anidbId < 1 ||
             typeof requestKey !== 'string') {
@@ -619,7 +639,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           return { state: 'held', reason: 'title_unavailable' };
         }
         return pendingTitles.enqueue({ requesterId, anidbId,
-          title, requestKey, nowMs: now(), initialReason });
+          title, requestKey, nowMs: now(), initialReason, releaseMode });
       },
       listPendingTitles: async (input) => {
         await titleSource?.refresh();
@@ -680,6 +700,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               ...positivesByTitle.get(item.anidbId) });
           }
           return { ...item,
+            releaseSelection: (()=>{const c=requests.getReleaseControl(item.id,checkedMs);
+              return ['selecting','proposal','chosen'].includes(c.phase)
+                ? {mode:c.mode,phase:c.phase,expiresMs:c.expiresMs??null}:null;})(),
             englishTitle: englishTitles[index],
             requesterName: ownerNames.get(item.requesterId) ?? `User #${item.requesterId}`,
             progress: coverage?.verifiedTargets > 0
@@ -860,7 +883,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         titleChecks.start({ anidbId, nowMs: now() }) : undefined,
       getTitleCheck: titleChecks ? ({ anidbId }) =>
         titleChecks.getProgress({ anidbId, nowMs: now() }) : undefined,
-      discoverCandidates, previewCandidate,
+      discoverCandidates, previewCandidate, releaseSelection,
       listOperationalReview: (input) => listOperationalReview({
         acquisitions, publishQueue: publishReview,
         startQueue: startReview, completionQueue: completionReview,
@@ -1143,32 +1166,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           firstTimePolicy: 'single_uncertain_attempt',
           observePublicTarget: (target) =>
             observeCurrentPublic(target, undefined, true),
-          readPublicCoverage: async (request) => {
-            const { anidbId, episodeIds } = request;
-            const checkedMs = now();
-            const cached = recentPublicCoverage({ episodeIds, includeIds: true,
-              directIds: directAvailability.getRecentAvailableIds({
-                anidbId, nowMs: checkedMs }),
-              titleIds: titleChecks?.getRecentAvailableIds({
-                anidbId, nowMs: checkedMs }) ?? [],
-              fileIds: fileProofs?.getRecentAvailableIds({ anidbId }) ?? [],
-            });
-            return verifyCachedPositiveCoverage({ request, cached,
-              cache: acquisitionCoverageCache, now,
-              ownedEpisodeIds: episodeIds.filter(episodeId =>
-                inventory.getObservedFileIds({ anidbId, episodeId }).length > 0),
-              readRevision: (target) => JSON.stringify([
-                inventory.getObservedFileIds(target).map((fileId) =>
-                  [fileId, inventory.getFile(fileId)?.observedMs]),
-                directAvailability.getObservation(target)?.observedMs,
-              ]),
-              readShoko: (target) => readShokoEpisodeFiles({
-                baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
-                ...target, purpose: 'availability', fetchImpl }),
-              readPublic: (target, shoko) =>
-                plexObserver.observeTarget(target, shoko,
-                  { includeProof: true }) });
-          },
+          readPublicCoverage: readRequestCoverage,
           discoverCandidates, previewCandidate, releaseQueries,
           hydrateMetadata: shokoHydration ? hydrateAndWake : null,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,

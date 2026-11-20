@@ -29,7 +29,8 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
       typeof authorizeRequester !== 'function') {
     throw new TypeError('Invalid held-request configuration');
   }
-  return async ({ requesterId, anidbId, scope, episodeIds, requestKey }) => {
+  return async ({ requesterId, anidbId, scope, episodeIds, requestKey, releaseMode = 'auto' }) => {
+    if (!['auto','manual','auto_review'].includes(releaseMode)) return held('invalid_request');
     if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
         !Number.isSafeInteger(anidbId) || anidbId <= 0 ||
         !['installment', 'episodes'].includes(scope) ||
@@ -83,7 +84,7 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     if (!intent.monitorFuture && missingIds.length === 0) {
       return held('already_available');
     }
-    return ledger.submit({ requesterId, requestKey, commandKey,
+    return ledger.submit({ requesterId, requestKey, commandKey, releaseMode,
       intent: { ...intent, episodeIds: missingIds, title }, nowMs: now() });
   };
 }

@@ -20,7 +20,7 @@ const assets = new Map([
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'title-preference.mjs',
+    'title-preference.mjs', 'release-dialog.mjs',
     'season-request-selection.mjs', 'episode-schedule.mjs',
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs']

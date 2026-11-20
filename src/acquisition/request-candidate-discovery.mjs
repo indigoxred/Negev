@@ -18,7 +18,10 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
   }
   const queryCache = new Map();
   const discover = async ({ requestId, searchTargetEpisodeId = null,
-    searchTargetEpisodeIds = null }) => {
+    searchTargetEpisodeIds = null, interactive = false, query = null }) => {
+    if (typeof interactive !== 'boolean' || (query !== null && (!interactive ||
+        typeof query !== 'string' || query.trim().length<2 || query.length>120 ||
+        /[\x00-\x1f\x7f]/.test(query)))) return held('invalid_request');
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
     try { request = readRequest(requestId); } catch { return held('request_unavailable'); }
@@ -43,7 +46,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       return held('invalid_request');
     }
     const releaseState = inferReleaseState({
-      today: new Date().toISOString().slice(0, 10), ...detail,
+      today: new Date(now()).toISOString().slice(0, 10), ...detail,
     }).state;
     let target = null;
     if (searchTargetEpisodeId !== null) {
@@ -81,9 +84,11 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const primaryAliases = target ? targeted.filter(query =>
       targetByQuery.get(query)?.id === target.id) : [];
     const originalQueries = [...targeted, ...titleQueries];
-    const queries = originalQueries.length <= 16 ? originalQueries :
+    let queries = originalQueries.length <= 16 ? originalQueries :
       [...new Set([...canonicalTargets, ...titleQueries,
         ...primaryAliases, ...targeted])].slice(0, 16);
+    const interactiveTruncated=interactive&&!query&&queries.length>3;
+    if(interactive) queries=query?[query.trim()]:queries.slice(0,3);
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
@@ -118,7 +123,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // is ordering evidence only; stopped metainfo and identity checks still
       // decide whether a candidate can be submitted.
       buckets.push(result.items.map((item) => ({ ...item,
-        sourceQuery: query,
+        ...(!interactive ? {sourceQuery: query} : {}),
         ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
         ...(queryTarget ? {
@@ -162,6 +167,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       return held('release_search_incomplete');
     }
     return { state: 'candidates', requestId, anidbId: request.anidbId,
+      ...(interactiveTruncated?{searchIncomplete:true}:{}),
       items, exhaustive: false,
       ...(failedQueries.length > 0 ? {
         searchIncomplete: true, failedQueries } : {}),

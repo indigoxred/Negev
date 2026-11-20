@@ -5,6 +5,8 @@ import { assessRelease, compareReleases, compareReleaseSuitability, hasSeasonPac
   hasSingleEpisodeHint } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
+import { correspondenceLevel, publicRelease } from './release-selection.mjs';
+import { sameReleaseFiles } from './release-control.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -18,6 +20,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles,
+  readReleaseControl, consumeReleaseChoice, readChosenAttempt,
+  preferRegisteredCorrespondence = false,
   preferShokoPreview = false, requireReleasePolicy = false,
   maxPreflights = 3, now = Date.now } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
@@ -29,6 +33,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
         typeof readRecoveredTargets !== 'function') ||
       (readRelatedTitles !== undefined &&
         typeof readRelatedTitles !== 'function') ||
+      [readReleaseControl,consumeReleaseChoice,readChosenAttempt].some(fn=>fn!==undefined&&typeof fn!=='function') ||
+      typeof preferRegisteredCorrespondence!=='boolean' ||
       typeof preferShokoPreview !== 'boolean' ||
       typeof requireReleasePolicy !== 'boolean' ||
       typeof now !== 'function' ||
@@ -36,6 +42,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
       maxPreflights > 5) throw new TypeError('Invalid acquisition processor');
   return async ({ requestId, pass = 1, candidateOffset = 0,
     candidateFingerprint = null, scanStartedMs = null } = {}) => {
+    const strongerRequiredTier=(a,b)=>preferRegisteredCorrespondence
+      ? (assessRelease(a).healthyPeers&&!assessRelease(b).healthyPeers ||
+        assessRelease(a).healthyPeers===assessRelease(b).healthyPeers&&
+        (publicRelease(a).resolution??0)>(publicRelease(b).resolution??0))
+      : compareReleaseSuitability(a,b)<0;
     if (!validId(requestId) || !validId(pass) ||
         (scanStartedMs !== null &&
           (!Number.isSafeInteger(scanStartedMs) || scanStartedMs < 0)) ||
@@ -52,6 +63,22 @@ export function createAcquisitionRequestProcessor({ readRequest,
         request.episodeIds.some((id) => !validId(id)) ||
         new Set(request.episodeIds).size !== request.episodeIds.length) {
       return held('request_unavailable');
+    }
+    const control = readReleaseControl?.(requestId,now());
+    if(control && ['selecting','proposal'].includes(control.phase)) return held('release_selection_pending');
+    let pinned=control?.phase==='chosen'?control.selection:null;
+    if(pinned&&readChosenAttempt) {
+      const owned=await readChosenAttempt({requestId,candidate:pinned.candidate,
+        episodeIds:pinned.preview.episodeIds});
+      if(owned?.torrentHash===pinned.preview.torrentHash&&
+          sameReleaseFiles(owned.files,pinned.preview.files)) {
+        consumeReleaseChoice?.(requestId,control.revision);pinned=null;
+      }
+    }
+    if(pinned) {
+      if(pinned.preview.episodeIds.some(id=>!request.episodeIds.includes(id))) return held('release_choice_changed');
+      request={...request,episodeIds:[...pinned.preview.episodeIds]};
+      candidateOffset=0;candidateFingerprint=null;
     }
     let recoveredTargets = new Set();
     if (readRecoveredTargets) {
@@ -93,6 +120,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         uncertainOwned = new Set(ids);
       }
       if (coverage.verifiedTargets === request.episodeIds.length) {
+        if(pinned) consumeReleaseChoice?.(requestId,control.revision);
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
       }
     }
@@ -102,7 +130,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (missingIds.length === 0) return held('availability_unverified');
     const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
       missingIds[(pass - 1) % missingIds.length] : null;
-    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId,
+    try { found = pinned ? {state:'candidates',requestId,anidbId:request.anidbId,
+      items:[{...pinned.candidate,evidence:'unverified'}]} : await discoverCandidates({ requestId, searchTargetEpisodeId,
       ...(missingIds.length > 1 && missingIds.length <= 10 ?
         { searchTargetEpisodeIds: missingIds } : {}) }); }
     catch { return held('release_search_unavailable'); }
@@ -282,6 +311,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
       try { preview = await previewCandidate({ requestId, candidate,
         offlineCache }); }
       catch { freshReads++; transientFailure = true; continue; }
+      if(pinned && (preview?.state!=='preflight' ||
+        preview.torrentHash!==pinned.preview.torrentHash ||
+        !sameReleaseFiles(preview.files,pinned.preview.files) ||
+        JSON.stringify(preview.episodeIds)!==JSON.stringify(pinned.preview.episodeIds))) {
+        return held(preview?.state==='held'?preview.reason:'release_choice_changed');
+      }
       if (preview?.cacheHit !== true) freshReads++;
       if (preview?.state === 'held' && ['provider_unavailable',
         'torrent_preflight_unavailable', 'related_title_unavailable',
@@ -328,14 +363,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
           missingIds.some((id) => !preview.episodeIds.includes(id))) {
         continue;
       }
-      if (preferShokoPreview && !uncertainPackPhase &&
-          preview.shokoPreview !== 'exact') {
+      if (!pinned && preferShokoPreview && !uncertainPackPhase &&
+          (preferRegisteredCorrespondence ? correspondenceLevel(preview)==='unknown' : preview.shokoPreview !== 'exact')) {
         uncertainSelection ??= { candidate, preview, index };
         continue;
       }
       if (uncertainSelection && requireReleasePolicy &&
           !uncertainPackPhase) {
-        if (compareReleaseSuitability(uncertainSelection.candidate, candidate) < 0) {
+        if (strongerRequiredTier(uncertainSelection.candidate, candidate)) {
           selected = uncertainSelection;
           nextIndex = uncertainSelection.index + 1;
           break;
@@ -347,10 +382,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
       // bounded uncertain-pack phase revisits those candidates and validates
       // them again before any submission.
       if (preferSeasonPack && preferShokoPreview && !uncertainPackPhase &&
-          preview.shokoPreview === 'exact' && consumed.some((id) => {
+          (preferRegisteredCorrespondence ? correspondenceLevel(preview)!=='unknown' : preview.shokoPreview === 'exact') && consumed.some((id) => {
             const prior = currentById.get(id);
             if (!prior) return false;
-            return compareReleaseSuitability(prior, candidate) < 0;
+            return strongerRequiredTier(prior, candidate);
           })) continue;
       selected = { candidate, preview };
       break;
@@ -379,7 +414,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // A failed alias/indexer query is not evidence that only a lower-quality
     // fallback exists. Retry the complete bounded search before downgrading.
     if (found.searchIncomplete === true &&
-        assessRelease(selected.candidate).quality < 3) {
+        (publicRelease(selected.candidate).resolution??0) < 1080) {
       return { ...held('release_search_incomplete'),
         nextCandidateOffset: 0 };
     }
@@ -415,6 +450,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         { searchQuery: selected.preview.searchQuery }) }); }
     catch { return held('submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
+      if(pinned) consumeReleaseChoice?.(requestId,control.revision);
       // The attempt now owns its exact target. Keep the request's search
       // position moving so a Shoko hold for this episode cannot starve later
       // episodes. The ledger still prevents a second claim for that target.
