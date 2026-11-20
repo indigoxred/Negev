@@ -18,6 +18,20 @@ const record = { anime: {
   ] },
 } };
 
+test('request titles prefer full English names over short aliases, regardless of provider order', async () => {
+  for (const titles of [
+    [{ '@lang':'en','@type':'short','#text':'WTTOR' },
+      { '@lang':'x-jat','@type':'main','#text':'Tsuihousha Shokudou e Youkoso!' },
+      { '@lang':'en','@type':'official','#text':"Welcome to the Outcast’s Restaurant!" }],
+    [{ '@lang':'en','@type':'short','#text':'XYZ' },
+      { '@lang':'x-jat','@type':'main','#text':'A Full Original Title' }],
+  ]) {
+    const reader=createAniMapRawDetailReader({fetchImpl:async()=>new Response(JSON.stringify({anime:{...record.anime,titles:{title:titles}}}))});
+    const result=await reader.read({anidbId:19586,page:1});
+    assert.equal(result.title,titles.find(x=>x['@type']==='official')?.['#text']??'A Full Original Title');
+  }
+});
+
 test('public raw AniDB record gives exact bounded episode pages', async () => {
   let calls = 0;
   const reader = createAniMapRawDetailReader({ pageSize: 2,

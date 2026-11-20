@@ -10,6 +10,57 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
 
+test('registration reports the actual invalid field before touching an invitation',async()=>{
+  let calls=0;
+  const app=await buildUserApp({accounts:{authenticate:async()=>null,getSessionUser:()=>null,createInvite:()=>null,revokeSessions:()=>false,registerInvite:async()=>{calls++;throw Error('must not register');}},submitRequest:async()=>null,readRequest:()=>null,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false});
+  try{
+    const valid={code:'a'.repeat(64),username:'New_User',password:'long-enough-password'};
+    for(const [i,[field,value,pattern]]of [
+      ['code','bad',/invitation code/i],['username','email@example.com',/username.*3.*32/i],
+      ['password','short',/password.*12.*128/i],['password','x'.repeat(129),/password.*12.*128/i],
+      ['password','long-password\n',/password/i],
+    ].entries()){
+      const r=await app.inject({method:'POST',url:'/api/register',remoteAddress:`192.0.2.${i+1}`,headers:{origin},payload:{...valid,[field]:value}});
+      assert.equal(r.statusCode,400);assert.equal(r.json().field,field);assert.match(r.json().error,pattern);
+      assert.ok(!r.body.includes(value),'does not echo submitted credentials');
+    }
+    assert.equal(calls,0);
+  }finally{await app.close();}
+});
+
+test('registration distinguishes retryable, invitation and username outcomes without changing passwords',async()=>{
+  let reason='username_unavailable',received;
+  const accounts={authenticate:async()=>null,getSessionUser:()=>null,createInvite:()=>null,revokeSessions:()=>false,
+    registerInvite:async body=>{received=body;return {state:'held',reason};}};
+  const app=await buildUserApp({accounts,submitRequest:async()=>null,readRequest:()=>null,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false});
+  try{
+    const payload={code:' '+ 'A'.repeat(64)+' ',username:' New_User ',password:' password with spaces '};
+    const send=()=>app.inject({method:'POST',url:'/api/register',headers:{origin},payload});
+    const taken=await send();assert.equal(taken.statusCode,409);assert.equal(taken.json().field,'username');assert.match(taken.json().error,/invitation has not been used/);
+    assert.deepEqual(received,{code:'a'.repeat(64),username:'New_User',password:payload.password});
+    reason='invite_unavailable';const unavailable=await send();assert.equal(unavailable.json().field,'code');assert.match(unavailable.json().error,/invalid, expired or already used/);
+    reason='authentication_busy';assert.equal((await send()).statusCode,503);
+  }finally{await app.close();}
+});
+
+test('an exact request history link retains the existing owner and admin boundary',async()=>{
+  const user={id:7,username:'Member',role:'member',sessionVersion:1};
+  const own={id:1,requesterId:7},other={id:2,requesterId:8};
+  const accounts={authenticate:async()=>user,getSessionUser:()=>user,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false};
+  let selected;
+  const app=await buildUserApp({accounts,submitRequest:async()=>null,readRequest:id=>id===1?own:id===2?other:null,
+    listRequests:input=>{selected=input.requestId;return {items:[own],nextBeforeId:null};},sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false});
+  try{
+    const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Member',password:'long-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];
+    const read=q=>app.inject({method:'GET',url:'/api/requests?'+q,headers:{cookie}});
+    assert.equal((await read('requestId=1')).statusCode,200);assert.equal(selected,1);
+    assert.equal((await read('requestId=2')).statusCode,404);
+    assert.equal((await read('requestId=999')).statusCode,404);
+    assert.equal((await read('requestId=1&scope=all')).statusCode,403);
+    assert.equal((await read('requestId=1e2')).statusCode,400);
+  }finally{await app.close();}
+});
+
 test('a saved airing request is tracked for its requester without changing the Airing preset', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };
@@ -579,7 +630,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
         description: 'A story about a test.', tags: ['Adventure'] }
       : { state: 'unavailable' },
     listOperationalReview: () => ({ state: 'review', items: [{
-      attemptId: 9, requestId: 1, anidbId: 1234,
+      attemptId: 9, requestId: 1, anidbId: 1234, title:'Full review title', englishTitle:'Full English title',
       stage: 'release_rejected', reason: 'file_wrong_identity', observedMs: 900,
     }, {
       attemptId: 10, requestId: 2, anidbId: 1235,
@@ -792,12 +843,12 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(review.statusCode, 200);
     assert.deepEqual(review.json().items, [{ attemptId: 9, requestId: 1,
       anidbId: 1234, stage: 'release_rejected',
-      reason: 'file_wrong_identity', observedMs: 900 },
+      reason: 'file_wrong_identity', observedMs: 900, title:'Full review title', englishTitle:'Full English title' },
     { attemptId: 10, requestId: 2, anidbId: 1235,
-      stage: 'start_hold', reason: 'provider_unavailable', observedMs: 901 },
+      stage: 'start_hold', reason: 'provider_unavailable', observedMs: 901, title:'Anime 1235',englishTitle:null },
     { attemptId: 11, requestId: 3, anidbId: 1236,
       stage: 'completion_interrupted', reason: 'completion_interrupted',
-      observedMs: 902 }]);
+      observedMs: 902, title:'Anime 1236',englishTitle:null }]);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review?limit=100', headers: { cookie } })).statusCode, 400);
     assert.deepEqual(session.json().capabilities, {

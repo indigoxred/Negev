@@ -54,9 +54,12 @@
           <button class="primary" type="submit">Sign in</button>
         </form>
         <form id="register-form" method="post" action="/api/register" hidden>
-          <label>Invitation code<input name="code" autocomplete="off" required></label>
-          <label>Username<input name="username" autocomplete="username" required></label>
+          <label>Invitation code<input name="code" autocomplete="off" aria-describedby="invite-help" required></label>
+          <small id="invite-help">Paste the complete invitation code supplied by the owner.</small>
+          <label>Username<input name="username" autocomplete="username" aria-describedby="username-help" required></label>
+          <small id="username-help">3–32 characters. Start with a letter; use letters, numbers or underscores.</small>
           <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+          <small>Use a long password. Maximum 128 UTF-8 bytes; no tabs or line breaks.</small>
           <button class="primary" type="submit">Create account</button>
         </form>
       </div>
@@ -184,6 +187,7 @@
         </div>
       </section>
       <section id="view-requests" class="page-view" hidden>
+        <p id="request-focus" hidden></p>
         <header class="page-head"><p class="eyebrow">Your activity</p><h1 id="requests-heading">My requests</h1>
           <p id="requests-description">See your anime requests here. TV and regular movie requests remain in Seerr.</p></header>
         <div id="request-scope" class="request-scope" aria-label="Request owners" hidden>

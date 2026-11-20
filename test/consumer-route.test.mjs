@@ -1,7 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseConsumerRoute, titleRoute, searchRoute, librarySearchRoute,
-  seasonRoute, browseReturnDestination } from '../src/web/public/consumer-route.mjs';
+  seasonRoute, browseReturnDestination, requestRoute } from '../src/web/public/consumer-route.mjs';
+
+test('review links open one exact request and survive Back without accepting arbitrary query data', () => {
+  const route=requestRoute(58);
+  assert.equal(route,'#/requests?requestId=58');
+  const parsed=parseConsumerRoute(route);
+  assert.deepEqual(parsed,{page:'requests',anidbId:null,query:'',requestId:58});
+  assert.equal(browseReturnDestination(parsed).href,route);
+  for(const q of ['requestId=0','requestId=1e2','requestId=58&owner=1','requestId=58&requestId=60'])
+    assert.equal(parseConsumerRoute('#/requests?'+q).page,'discover');
+});
 
 test('consumer routes use stable URLs for all main pages and exact AniDB title IDs', () => {
   for (const page of ['discover', 'airing', 'library', 'requests', 'admin']) {

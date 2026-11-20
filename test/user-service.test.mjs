@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
 import { randomBytes } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
@@ -17,6 +18,31 @@ import { createUserService } from '../src/web/user-service.mjs';
 const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
 const json = (value) => ({ status: 200, text: async () => JSON.stringify(value) });
+
+test('an exact older request link resolves full display titles without rewriting historical titles',async()=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'negev-full-request-'));const dbPath=path.join(dir,'negev.sqlite');
+  const accounts=openAccountLedger(dbPath,{now:()=>1000});
+  const owner=await accounts.bootstrapAdmin({username:'Owner',password:'long-owner-passphrase'});accounts.close();
+  const ledger=openRequestLedger(dbPath);
+  const saved=ledger.submit({requesterId:owner.id,requestKey:'old',nowMs:1000,intent:{state:'ready',anidbId:19054,title:'WTTOR',kind:'series',episodeIds:[1],monitorFuture:false}});
+  ledger.submit({requesterId:owner.id,requestKey:'new',nowMs:1001,intent:{state:'ready',anidbId:42,title:'New title',kind:'series',episodeIds:[2],monitorFuture:false}});ledger.close();
+  const dump=gzipSync('# aid|type|language|title\n19054|1|x-jat|Tsuihousha Shokudou e Youkoso!\n19054|3|en|WTTOR\n19054|4|en|Welcome to the Outcast Restaurant!\n42|1|x-jat|New title\n42|4|en|New title\n');
+  const service=await createUserService({dbPath,shokoBaseUrl:'http://shoko.internal:8111',shokoApiKey:'synthetic',sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,anidbTitleDump:true,now:()=>1000,
+    fetchImpl:async url=>String(url)==='https://anidb.net/api/anime-titles.dat.gz'?new Response(dump):json({})});
+  try{
+    const login=await service.app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Owner',password:'long-owner-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];
+    const evidence=new DatabaseSync(dbPath);
+    evidence.prepare("INSERT INTO acquisition_attempts(id,request_id,anidb_id,indexer_id,candidate_digest,status,created_ms,updated_ms) VALUES(1,?,19054,1,'synthetic','reserved',1000,1000)").run(saved.requestId);
+    evidence.prepare("INSERT INTO acquisition_rejections(attempt_id,torrent_hash,reason,rejected_ms) VALUES(1,?,'file_wrong_identity',1000)").run('a'.repeat(40));evidence.close();
+    const cold=await service.app.inject({method:'GET',url:'/api/admin/review',headers:{cookie}});
+    assert.equal(cold.statusCode,200,cold.body);
+    assert.equal(cold.json().items[0].title,'Tsuihousha Shokudou e Youkoso!','review must load full titles even as the first catalogue read after startup');
+    const r=await service.app.inject({method:'GET',url:`/api/requests?scope=all&requestId=${saved.requestId}`,headers:{cookie}});
+    assert.equal(r.statusCode,200,r.body);assert.deepEqual(r.json().items.map(x=>x.id),[saved.requestId]);
+    assert.equal(r.json().items[0].title,'Tsuihousha Shokudou e Youkoso!');assert.equal(r.json().items[0].englishTitle,'Welcome to the Outcast Restaurant!');
+    const verify=openRequestLedger(dbPath);assert.equal(verify.getRequest(saved.requestId).title,'WTTOR');verify.close();
+  }finally{await service.close();await rm(dir,{recursive:true,force:true});}
+});
 
 test('paced provisional recheck discovers a Shoko link with unchanged file timestamp', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-provisional-recheck-'));

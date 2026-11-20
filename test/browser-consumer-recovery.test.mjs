@@ -72,7 +72,7 @@ test('title and library controls recover from pending and failed reads without d
         json(response, { state: 'signed_out' });
       } else if (path === '/api/admin/review') {
         operationalReads++;
-        json(response, { items: [], nextAfterAttemptId: null });
+        json(response, { items: [{attemptId:66,requestId:6,anidbId:2,title:'Older completed title',englishTitle:'Full English title',stage:'start_hold',reason:'provider_unavailable',observedMs:1}], nextAfterAttemptId: null });
       } else if (path === '/api/catalogue/1' && request.method === 'GET') {
         titleReads++;
         if (titleReads === 1) { firstTitleResponse = response; return; }
@@ -141,6 +141,10 @@ test('title and library controls recover from pending and failed reads without d
             : { state: 'unknown', verifiedEpisodeCount: 0 } }] });
       } else if (path === '/api/requests') {
         requestReads++;
+        if(url.searchParams.has('requestId')){
+          json(response,{items:[{id:6,anidbId:2,title:'Older completed title',englishTitle:'Full English title',kind:'movie',episodeIds:[21],monitorFuture:false,watchClosed:false,
+            progress:{state:'saved',targetCount:1,publicAvailability:'verified_recently',publicVerifiedTargets:1,oneTimeAcquisitionComplete:true}}],nextBeforeId:null});return;
+        }
         if (url.searchParams.get('view') === 'watching' && holdWatchingRequests) {
           response.writeHead(200, { 'Content-Type': 'application/json',
             'Cache-Control': 'no-store' });
@@ -477,6 +481,17 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')"), null);
       transferObservedMs = null;
+      await evaluate("location.hash='#/admin'");
+      await until("!document.querySelector('#view-admin').hidden");
+      await until("document.querySelector('#review-list a')?.textContent.includes('Older completed title')");
+      assert.equal(await evaluate("document.querySelector('#review-list a').getAttribute('href')"),'#/requests?requestId=6');
+      await evaluate("document.querySelector('#review-list a').click()");
+      await until("document.querySelector('#request-list [data-request-id=\"6\"]')?.textContent.includes('Request #6')");
+      assert.equal(await evaluate("document.querySelector('#request-list details.request-group').open"),true,
+        'an older completed request opens visibly instead of remaining collapsed');
+      assert.equal(await evaluate("document.querySelector('#request-focus').hidden"),false);
+      await evaluate("document.querySelector('#request-focus a').click()");
+      await until("document.querySelector('#request-focus').hidden && document.querySelector('#request-list [data-request-id=\"7\"]')");
       holdWatchingRequests = true;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");

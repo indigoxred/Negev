@@ -18,6 +18,14 @@ export function parseConsumerRoute(hash) {
       ? { page: 'title', anidbId, query: '' } : home();
   }
   if (!mainPages.has(path)) return home();
+  if (path === 'requests' && search) {
+    const params = new URLSearchParams(search);
+    const id = params.get('requestId');
+    const requestId = Number(id);
+    return [...params.keys()].length === 1 && /^[1-9]\d*$/.test(id ?? '') &&
+      Number.isSafeInteger(requestId) ? { page: 'requests', anidbId: null,
+        query: '', requestId } : home();
+  }
   if (path === 'discover' && search && new URLSearchParams(search).has('year')) {
     const params = new URLSearchParams(search);
     if ([...params.keys()].some((key) => !['year', 'season', 'after', 'kind', 'tag', 'sort'].includes(key)) ||
@@ -67,6 +75,11 @@ export function titleRoute(anidbId) {
   return `#/title/${anidbId}`;
 }
 
+export function requestRoute(requestId) {
+  if (!Number.isSafeInteger(requestId) || requestId < 1) throw new TypeError('Invalid request ID');
+  return `#/requests?requestId=${requestId}`;
+}
+
 export function searchRoute(query) {
   if (typeof query !== 'string' || query.trim().length > 120) {
     throw new TypeError('Invalid search query');
@@ -91,7 +104,8 @@ export function browseReturnDestination(route) {
           sort: route.sort ?? 'newest' })
       : searchRoute(route.query ?? ''), label: 'Discover' };
   if (['airing', 'library', 'requests'].includes(route?.page)) return {
-    href: route.page === 'library' ? librarySearchRoute(route.query ?? '') : `#/${route.page}`,
+    href: route.page === 'library' ? librarySearchRoute(route.query ?? '') :
+      route.page === 'requests' && route.requestId ? requestRoute(route.requestId) : `#/${route.page}`,
     label: route.page[0].toUpperCase() + route.page.slice(1) };
   return null;
 }

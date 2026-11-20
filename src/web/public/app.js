@@ -19,7 +19,7 @@ import { relationLabel } from './relation-label.mjs';
 import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
 import { hideChineseProduction } from './chinese-visibility.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
-  seasonRoute, browseReturnDestination } from './consumer-route.mjs';
+  seasonRoute, browseReturnDestination, requestRoute } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
@@ -33,7 +33,7 @@ const state = { csrf: null, user: null, selected: null,
   libraryLoaded: false, libraryAfter: null, airingLoaded: false,
   airingPreferences: null,
   seasonalRouteKey: null, routePage: null,
-  requestHistoryExpanded: false,
+  requestHistoryExpanded: false, focusedRequestId: null,
   requestScope: 'mine',
   showAdult: true, showChinese: true, preferEnglish: false, usersLoaded: false,
   detailHydrationQueued: new Set() };
@@ -73,9 +73,12 @@ function element(tag, text, className) {
   if (className) node.className = className;
   return node;
 }
+function preferredDisplayTitle(item) {
+  return state.preferEnglish && item.englishTitle?.trim() || item.title;
+}
 function titleLabel(item, { tag = 'strong', className } = {}) {
   const english = item.englishTitle?.trim();
-  const label = element(tag, state.preferEnglish && english || item.title,
+  const label = element(tag, preferredDisplayTitle(item),
     className);
   if (english && english !== item.title) {
     label.dataset.originalTitle = item.title;
@@ -293,6 +296,8 @@ function renderRoute() {
   const page = route.page === 'admin' && state.user.role !== 'admin'
     ? 'discover' : route.page;
   const returning = state.routePage !== null && state.routePage !== page;
+  const focusChanged = state.focusedRequestId !== (route.requestId ?? null);
+  state.focusedRequestId = route.requestId ?? null;
   if (returning || page === 'title' && state.selected !== route.anidbId) {
     dismissRequestDialogs();
   }
@@ -349,7 +354,20 @@ function renderRoute() {
   } else if (page === 'library' && route.query.length < 2 &&
       (returning || !state.libraryLoaded)) {
     void loadLibrary();
-  } else if (page === 'requests' && returning) {
+  } else if (page === 'requests' && (returning || focusChanged)) {
+    const focus = byId('request-focus');
+    focus.hidden = !state.focusedRequestId;
+    focus.replaceChildren();
+    if (state.focusedRequestId) {
+      state.requestScope = state.user.role === 'admin' ? 'all' : 'mine';
+      updateRequestScopeButtons();
+      const clear = element('a','Show all requests','text-link');clear.href='#/requests';
+      focus.append(element('span',`Request #${state.focusedRequestId} · `),clear);
+      byId('request-history').hidden=false;
+      byId('request-watching').hidden=true;
+      for(const tab of document.querySelectorAll('[data-request-tab]'))
+        tab.setAttribute('aria-selected',String(tab.dataset.requestTab!=='watching'));
+    }
     void loadRequests();
   } else if (page === 'airing') {
     if (!state.airingLoaded) void loadAiring();
@@ -361,6 +379,7 @@ window.addEventListener('hashchange', renderRoute);
 window.addEventListener('popstate', renderRoute);
 for (const tab of document.querySelectorAll('[data-request-tab]')) {
   tab.addEventListener('click', () => {
+    if (state.focusedRequestId) location.hash='#/requests';
     const watching = tab.dataset.requestTab === 'watching';
     byId('request-history').hidden = watching;
     byId('request-watching').hidden = !watching;
@@ -398,6 +417,7 @@ async function api(url, options = {}) {
     const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
     error.status = response.status;
     error.reason = data.reason;
+    error.field = data.field;
     throw error;
   }
   return data;
@@ -417,7 +437,7 @@ async function openSavedReleaseRequests(saved,mode) {
   const show=index=>{
     if(!state.user || !sessionResponses.isCurrent(session) || location.hash!==route)return;
     const item=jobs[index];if(!item)return;
-    void releaseDialog.open({requestId:item.requestId,title:item.title,
+    void releaseDialog.open({requestId:item.requestId,title:preferredDisplayTitle(item),
       mode:mode==='manual'?'manual':'auto',
       next:index+1<jobs.length?()=>show(index+1):null});
   };
@@ -608,7 +628,8 @@ async function loadRequestView(view, append = false, silent = false) {
   const suffix = append && state.nextBeforeId[view]
     ? `&beforeId=${state.nextBeforeId[view]}` : '';
   try {
-    const page = await api(`/api/requests?view=${view}&scope=${scope}${suffix}`);
+    const focused = state.focusedRequestId;
+    const page = await api(`/api/requests?view=${focused?'all':view}&scope=${scope}${focused?`&requestId=${focused}`:suffix}`);
     if (!sessionResponses.isCurrent(session) ||
         !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId ||
         state.requestScope !== scope) return;
@@ -624,6 +645,7 @@ async function loadRequestView(view, append = false, silent = false) {
     }
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row request-entry');
+      row.dataset.requestId=String(item.id);
       row.dataset.recentPage = String(!append);
       row.append(posterImage(item));
       const heading = element('div');
@@ -638,6 +660,8 @@ async function loadRequestView(view, append = false, silent = false) {
           `${item.monitorFuture ? (item.watchClosed ? 'Future-episode watch finished' : 'Watching for future episodes') : 'One-time request'}`),
         element('small', `Requested by ${item.requesterName || `User #${item.requesterId}`}`,
           'request-owner'));
+      const number=element('a',`Request #${item.id}`,'text-link request-number');
+      number.href=requestRoute(item.id);heading.querySelector('.request-owner').append(' · ',number);
       const openTitle = element('a', 'View title →', 'text-link');
       openTitle.href = titleRoute(item.anidbId);
       const actions = element('div', undefined, 'request-actions');
@@ -702,7 +726,7 @@ async function loadRequestView(view, append = false, silent = false) {
         const tools=element('div',undefined,'release-search-actions');
         for(const [mode,label] of [['auto','Auto-Pick'],['manual','Manual Pick']]) {
           const search=element('button',label,'quiet');
-          search.addEventListener('click',()=>{void releaseDialog.open({requestId:item.id,title:item.title??'Anime request',mode});});
+          search.addEventListener('click',()=>{void releaseDialog.open({requestId:item.id,title:preferredDisplayTitle(item)??'Anime request',mode});});
           tools.append(search);
         }
         details.append(tools);
@@ -711,6 +735,7 @@ async function loadRequestView(view, append = false, silent = false) {
       if (watching) list.append(row);
       else requestGroupRows(list, presentation.group, expandedGroups).append(row);
     }
+    if (focused) for(const group of list.querySelectorAll('details.request-group')) group.open=true;
     state.nextBeforeId[view] = page.nextBeforeId;
     if (append && !watching) state.requestHistoryExpanded = true;
     more.hidden = state.nextBeforeId[view] === null;
@@ -859,6 +884,11 @@ async function refreshExpandedHistory() {
 }
 function loadRequests({ silent = false } = {}) {
   if (!state.user) return;
+  if (state.focusedRequestId) {
+    requestResponses.preparing.invalidate();requestResponses.watching.invalidate();
+    byId('preparing-list').replaceChildren();byId('watch-list').replaceChildren();
+    void loadRequestView('history',false,silent);return;
+  }
   void loadPreparations(silent);
   void loadRequestView('watching', false, silent);
   void loadRequestView('history', false, silent);
@@ -1507,14 +1537,20 @@ async function loadOperationalReview(append = false) {
     }
     for (const item of page.items) {
       const row = element('div', undefined, 'request-row');
+      row.classList.add('operational-review-row');
       const label = item.stage === 'release_rejected'
         ? 'Downloaded file rejected' : item.stage === 'start_hold'
           ? 'Download start needs review' :
           item.stage === 'completion_interrupted'
             ? 'File check interrupted' : item.stage === 'shoko_rescan_hold'
               ? 'Shoko import needs review' : 'Import held';
-      row.append(element('strong', `${label} · Request #${item.requestId}`),
+      const link=element('a',undefined,'text-link');link.href=requestRoute(item.requestId);
+      link.append(titleLabel(item),element('span',` · Request #${item.requestId}`));
+      const openTitle=element('a','View title →','text-link');openTitle.href=titleRoute(item.anidbId);
+      const copy=element('div');
+      copy.append(link,element('strong',label),
         element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
+      row.append(copy,openTitle);
       list.append(row);
     }
     nextReviewAttemptId = page.nextAfterAttemptId;
@@ -1567,7 +1603,10 @@ byId('register-form').addEventListener('submit', async (event) => {
     form.reset();
     authTab(false);
     message('Account created. Sign in to continue.');
-  } catch (error) { message(error.message, true); }
+  } catch (error) {
+    message(error.message, true);
+    if (['code','username','password'].includes(error.field)) form.elements.namedItem(error.field)?.focus();
+  }
 });
 byId('signout').addEventListener('click', async () => {
   try { await api('/api/logout', { method: 'POST', body: '{}' }); }
@@ -2740,9 +2779,16 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             ? `Request ${selected.length} seasons` : selected[0].status.state === 'partial'
               ? 'Complete season' : selected[0].status.state === 'watching'
                 ? 'Watch future episodes' : 'Request season';
-        reviewSummary.textContent = seasonSelectionSummary(selected);
+        reviewSummary.textContent = seasonSelectionSummary(selected.map(row=>({...row,title:preferredDisplayTitle(row)})));
       };
       const updateRow = (row, detail) => {
+        if(detail?.state==='details' && (detail.originalTitle || detail.title)) {
+          row.title=detail.originalTitle||detail.title;
+          row.englishTitle=detail.englishTitle;
+          const label=titleLabel({title:row.title,englishTitle:detail.englishTitle},
+            {tag:'span',className:'season-request-title'});
+          row.titleElement.replaceWith(label);row.titleElement=label;
+        }
         const status = row.anidbId === item.anidbId && checkingCompleteSeries
           ? { state: 'unverified', text: 'Checking complete season…', selectable: false }
           : seasonRequestStatus(detail);
@@ -2797,7 +2843,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       };
       const addRow = (entry) => {
         if (rows.has(entry.anidbId)) return;
-        const row = { anidbId: entry.anidbId, title: entry.title,
+        const row = { anidbId: entry.anidbId, title: entry.title, englishTitle:entry.englishTitle,
           status: null, requested: false, detailFailed: false, loading: false };
         const label = element('label', undefined, 'season-request-row');
         label.dataset.anidbId = String(entry.anidbId);
@@ -2810,7 +2856,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           feedback.textContent = '';
           refresh();
         });
-        const title = element('span', entry.title, 'season-request-title');
+        const title = titleLabel(entry,{tag:'span',className:'season-request-title'});
+        row.titleElement=title;
         const count = element('span', '', 'season-request-count');
         const statusText = element('span', 'Checking…', 'season-request-status');
         label.append(input, title, count, statusText);
@@ -2916,7 +2963,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               } else {
                 row.statusText.textContent = payload.state === 'pending'
                   ? 'Queued for details' : 'Requested';
-                if(payload.created!==false&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title});
+                if(payload.created!==false&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title,englishTitle:row.englishTitle});
                 saved.push(Number.isSafeInteger(payload.requestId)
                   ? `#${payload.requestId}` : row.title);
               }
@@ -3226,7 +3273,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
         filmPopup?.close();
-        if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());}
+        if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle}],filmReleasePicker.value());}
         viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'
