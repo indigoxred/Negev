@@ -14,13 +14,17 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
   }
 
   return {
-    async load({ anidbId, missingEpisodeId } = {}) {
+    async load({ anidbId, missingEpisodeId, missingEpisodeNumber } = {}) {
       if (!Number.isSafeInteger(anidbId) || anidbId <= 0) {
         throw new TypeError('Invalid AniDB ID');
       }
       if (missingEpisodeId !== undefined &&
           (!Number.isSafeInteger(missingEpisodeId) || missingEpisodeId <= 0)) {
         throw new TypeError('Invalid missing AniDB episode ID');
+      }
+      if (missingEpisodeNumber !== undefined &&
+          (!Number.isSafeInteger(missingEpisodeNumber) || missingEpisodeNumber < 1 || missingEpisodeNumber > 9999)) {
+        throw new TypeError('Invalid missing episode number');
       }
       let known;
       try { known = await isKnownTitle({ anidbId }); }
@@ -36,8 +40,10 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
         if (detail.anidbId !== anidbId) return { state: 'held', reason: 'invalid_detail_evidence' };
         if (detail.complete !== true) return { state: 'pending', reason: 'detail_pagination_required' };
         if (!isCompleteAniDbDetail(detail, anidbId)) return { state: 'held', reason: 'invalid_detail_evidence' };
-        if (missingEpisodeId === undefined ||
-            detail.episodes.some((episode) => episode.id === missingEpisodeId)) {
+        if ((missingEpisodeId === undefined ||
+            detail.episodes.some((episode) => episode.id === missingEpisodeId)) &&
+            (missingEpisodeNumber === undefined || detail.episodes.some(episode =>
+              episode.type === 'Episode' && Number(episode.number) === missingEpisodeNumber))) {
           const finished = ledger.finishLatestFromDetail(anidbId, detail, now());
           if (finished.state === 'held') return finished;
           return { state: 'detail_ready', detail, requestable: false };

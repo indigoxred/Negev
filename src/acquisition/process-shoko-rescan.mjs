@@ -80,8 +80,10 @@ export async function processShokoRescan({ item, ledger, importRoot,
   let dispatched = 0;
   const pendingRank = {awaiting_shoko:0,rescan_unresolved:1,observed:2,rescan_unconfirmed:3,rescan_requested:4};
   const notePending = (state) => { if (!pending || pendingRank[state]>pendingRank[pending]) pending=state; };
+  const deferred = [];
+  const deferFile = (state, reason) => deferred.push({state,reason});
   const recoveredEpisodes = [];
-  for (const video of videos) {
+  files: for (const video of videos) {
     const prior = ledger.getFile(attemptId, video.name);
     if (prior && ['dispatched', 'linked', 'unresolved'].includes(prior.status)) {
       let allPlayable = true;
@@ -125,7 +127,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
     try { matches = await readFile({ sourcePath }); }
     catch { matches = null; }
     if (!Array.isArray(matches) || matches.length > 100) {
-      return delay('held','shoko_provider_unavailable');
+      deferFile('held','shoko_provider_unavailable'); continue files;
     }
     const exact = matches.filter((file) => file?.Size === video.size &&
       validId(file.ID) && Array.isArray(file.Locations) &&
@@ -140,7 +142,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
       try { moved = await readFile({ sourcePath:
         `/${path.posix.basename(video.name)}` }); }
       catch { moved = null; }
-      if (!Array.isArray(moved) || moved.length > 100) return delay('held','shoko_provider_unavailable');
+      if (!Array.isArray(moved) || moved.length > 100) { deferFile('held','shoko_provider_unavailable'); continue files; }
       if (Array.isArray(moved) && moved.length <= 100) {
         const confirmed = [];
         for (const file of moved) {
@@ -184,7 +186,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
     }
     if (exact.length !== 1 || !Array.isArray(exact[0].SeriesIDs)) {
       if (exact.length > 1) { reviewHold('shoko_identity_ambiguous'); review=true; continue; }
-      return delay('awaiting_shoko',matches.length ? 'shoko_file_mismatch' : 'shoko_processing');
+      deferFile('awaiting_shoko',matches.length ? 'shoko_file_mismatch' : 'shoko_processing'); continue files;
     }
     const file = exact[0];
     if (prior && prior.fileId !== file.ID) {
@@ -212,22 +214,22 @@ export async function processShokoRescan({ item, ledger, importRoot,
         if (metadata?.state === 'missing') {
           if (hydrateMetadata) {
             try { await hydrateMetadata({anidbId,missingEpisodeId:episodeId}); }
-            catch { return delay('held','shoko_provider_unavailable'); }
+            catch { deferFile('held','shoko_provider_unavailable'); continue files; }
           }
-          return delay('awaiting_shoko','shoko_metadata_missing');
+          deferFile('awaiting_shoko','shoko_metadata_missing'); continue files;
         }
-        if (metadata?.state !== 'present') return delay('held','shoko_provider_unavailable');
+        if (metadata?.state !== 'present') { deferFile('held','shoko_provider_unavailable'); continue files; }
       }
     }
     if (file.SeriesIDs.length && hydrateMetadata) {
       try { await hydrateMetadata({anidbId,missingEpisodeId:video.episodeIds[0]}); }
-      catch { return delay('held','shoko_provider_unavailable'); }
+      catch { deferFile('held','shoko_provider_unavailable'); continue files; }
     }
     if (prior?.status === 'unresolved' && readUnrecognized && !file.SeriesIDs.length) {
       let classification;
       try { classification = await readUnrecognized({fileId:file.ID}); } catch { classification = null; }
-      if (classification?.state !== 'unrecognized') return delay('awaiting_shoko',
-        classification?.state === 'not_unrecognized' ? 'shoko_processing' : 'shoko_provider_unavailable');
+      if (classification?.state !== 'unrecognized') { deferFile('awaiting_shoko',
+        classification?.state === 'not_unrecognized' ? 'shoko_processing' : 'shoko_provider_unavailable'); continue files; }
     }
     if (prior?.status === 'unresolved') {
       review = true;
@@ -235,9 +237,9 @@ export async function processShokoRescan({ item, ledger, importRoot,
         file.SeriesIDs.length ? 'shoko_metadata_missing' : readUnrecognized ? 'shoko_unrecognized_file' : 'registration_unconfirmed',nowMs});
       continue;
     }
-    if (prior?.status === 'linked') return reviewHold('shoko_link_lost');
-    if (!await queueReady()) return delay('awaiting_shoko',
-      !queue?.state || queue.state === 'unavailable' ? 'shoko_provider_unavailable' : 'shoko_processing');
+    if (prior?.status === 'linked') { reviewHold('shoko_link_lost'); review=true; continue; }
+    if (!await queueReady()) { deferFile('awaiting_shoko',
+      !queue?.state || queue.state === 'unavailable' ? 'shoko_provider_unavailable' : 'shoko_processing'); continue files; }
     if (!prior) {
       const observed = ledger.observeFile({ attemptId,
         fileName: video.name, fileId: file.ID, nowMs });
@@ -279,6 +281,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
       return delay('awaiting_plex','plex_publication_pending');
     }
   }
+  if (deferred.length) return delay(deferred[0].state,deferred[0].reason);
   if (pending) {
     ledger.delayAttempt({attemptId,nextDueMs:nowMs+60_000,nowMs});
     return {state:pending,requestId,attemptId};

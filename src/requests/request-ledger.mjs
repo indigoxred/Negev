@@ -138,6 +138,8 @@ export function openRequestLedger(dbPath) {
     WHERE r.id>? AND r.monitor_future=1 AND r.watch_closed=0 AND
       r.cancelled_ms IS NULL AND COALESCE(wt.next_metadata_ms,0)<=?
     ORDER BY r.id LIMIT ?`);
+  const exactActiveAiring = db.prepare(`SELECT id,anidb_id FROM requests
+    WHERE id=? AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL`);
   const recordWatchTiming = db.prepare(`INSERT INTO rss_watch_timing
     (request_id,next_metadata_ms,feed_interval_ms) VALUES (?,?,?)
     ON CONFLICT(request_id) DO UPDATE SET
@@ -213,13 +215,20 @@ export function openRequestLedger(dbPath) {
         : held('stale_cursor'));
     },
     listActiveAirings({ afterId = 0, limit = 20,
-      nowMs = Date.now() } = {}) {
+      requestId = null, nowMs = Date.now() } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
-          !Number.isSafeInteger(nowMs) || nowMs < 0) {
+          !Number.isSafeInteger(nowMs) || nowMs < 0 ||
+          (requestId !== null && (!Number.isSafeInteger(requestId) || requestId < 1))) {
         throw new TypeError('Invalid airing watch page');
       }
-      return activeAirings.all(afterId, nowMs, limit).map((row) => ({
+      // An authorized RSS follow-up can reread exactly one active watch even
+      // when an earlier encoder notification just advanced its normal deadline.
+      if (requestId !== null && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_request_suspensions'").get() &&
+          db.prepare('SELECT 1 FROM acquisition_request_suspensions WHERE request_id=?').get(requestId)) return [];
+      const rows = requestId === null ? activeAirings.all(afterId, nowMs, limit) :
+        exactActiveAiring.all(requestId);
+      return rows.map((row) => ({
         requestId: row.id, anidbId: row.anidb_id }));
     },
     recordAiringTiming({ requestId, nextMetadataMs, feedIntervalMs,

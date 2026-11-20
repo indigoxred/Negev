@@ -100,6 +100,7 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
             Array.isArray(aliases) ? aliases : []) };
         });
         const woken = new Set();
+        const wakeTitles = new Map();
         let newItems = 0;
         for (const item of items) {
           if (insertSeen.run(indexerId, hashGuid(item.guid), nowMs).changes === 0) continue;
@@ -107,6 +108,9 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
           newItems++;
           for (const request of terms) {
             if (!request.terms.some((term) => matchesTitle(term, item.title))) continue;
+            const titles = wakeTitles.get(request.id) ?? new Set();
+            if (titles.size < 32) titles.add(item.title);
+            wakeTitles.set(request.id,titles);
             const timing = rush.run(request.id, nowMs,
               nowMs + 24 * 60 * 60_000);
             const queue = wake.run(nowMs, request.id, nowMs);
@@ -120,7 +124,7 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
         cap.run(indexerId, indexerId);
         db.prepare('DELETE FROM rss_release_wakes WHERE observed_ms<?').run(Math.max(0,nowMs-30*86400000));
         db.exec('COMMIT'); begun = false;
-        for (const id of woken) { try { Promise.resolve(onWake(id)).catch(() => {}); } catch { /* Durable deadline remains. */ } }
+        for (const id of woken) { try { Promise.resolve(onWake(id,{releaseTitles:[...(wakeTitles.get(id) ?? [])]})).catch(() => {}); } catch { /* Durable deadline remains. */ } }
         return { state: seeded ? 'processed' : 'seeded', newItems,
           wokenRequests: woken.size };
       } catch (error) {

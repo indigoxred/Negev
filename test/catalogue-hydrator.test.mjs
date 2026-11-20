@@ -195,3 +195,10 @@ test('a pending earlier title still blocks a different refresh', async () => wit
   assert.deepEqual(posts, [1234]);
   assert.equal(ledger.getClaim(first.claimId).status, 'reserved');
 }));
+
+
+test('RSS can request missing episode-number metadata without inventing an AniDB ID',async()=>withLedger(async ledger=>{
+ let posts=0;const hydrator=createCatalogueHydrator({isKnownTitle:async()=>true,loadDetail:async()=>detail,ledger,requestHydration:async()=>{posts++;return{state:'queued'}},now:()=>nowMs});
+ assert.equal((await hydrator.load({anidbId:1234,missingEpisodeNumber:2})).reason,'refresh_queued');assert.equal(posts,1);
+ assert.equal((await hydrator.load({anidbId:1234,missingEpisodeNumber:2})).reason,'active_refresh');assert.equal(posts,1);
+}));

@@ -62,6 +62,18 @@ test('targeted rescan runs before single-file replacement and cannot duplicate i
   }
 });
 
+test('a perpetually due rescan cannot starve another file preservation', async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),'negev-fair-recovery-'));
+  const dbPath=path.join(dir,'state.sqlite');const requests=openRequestLedger(dbPath);
+  const acquisitions=openAcquisitionLedger(dbPath),handoffs=openHandoffLedger(dbPath);const calls=[];
+  const pipeline=openAcquisitionPipeline({dbPath,acquisitions,qbBaseUrl,sessionGate:authorizedSession,
+    shokoRescans:{listDue:()=>[{attemptId:7,manifest:{}}],isEnrolled:()=>true,getAttemptStatus:id=>id===8?'review':'pending',endAttempt:()=>{}},
+    recognitionRecoveries:{listPending:()=>[{attemptId:8}]},processRescan:async()=>{calls.push('rescan');return{state:'awaiting_shoko'}},processRecovery:async()=>{calls.push('preserve');return{state:'awaiting_shoko'}},
+    processRequest:async()=>{},processStart:async()=>{},processCompletion:async()=>{},processPublish:async()=>{},now:()=>100});
+  try{await pipeline.initialize();await pipeline.tickRecovery();await pipeline.tickRecovery();assert.deepEqual(calls,['rescan','preserve']);}
+  finally{await pipeline.close();handoffs.close();acquisitions.close();requests.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('a preserved recovery wakes its request for an immediate guarded replacement pass', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-recovery-pipeline-'));
   const dbPath = path.join(dir, 'state.sqlite');

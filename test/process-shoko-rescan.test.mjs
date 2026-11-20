@@ -369,3 +369,13 @@ test('large packs observe all members but dispatch at most four one-shot rescans
  await processShokoRescan({...options,nowMs:360100});assert.equal(calls.length,4);
  await processShokoRescan({...options,nowMs:420100});assert.equal(calls.length,8);assert.equal(new Set(calls).size,8);
 });
+
+
+test('missing path or metadata for one pack member cannot starve later recovery',async()=>{
+ for(const mode of ['path','metadata','provider']){
+ const saved=witness(),calls=[];const options={item,ledger:saved.ledger,importRoot,shokoMount,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>{const i=manifest.files.findIndex(f=>sourcePath.endsWith(f.name));if(i<0)return[];if(i===0&&mode==='path')return[];if(i===0&&mode==='provider')throw Error('temporary file lookup failure');return[unknown(80+i,manifest.files[i].size,sourcePath)]},readMetadata:async({episodeId})=>({state:mode==='metadata'&&episodeId===11?'missing':'present'}),hydrateMetadata:async()=>{},rescan:async({fileId})=>{calls.push(fileId);return{state:'accepted'}},verifyPlex:async()=>({state:'unknown'})};
+ await processShokoRescan({...options,nowMs:300100});assert.equal(saved.files.has(manifest.files[2].name),true);
+ await processShokoRescan({...options,nowMs:360100});assert.ok(calls.includes(82));
+ }
+});

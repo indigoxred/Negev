@@ -89,7 +89,7 @@ export function openShokoRescanLedger(dbPath) {
       file_id=? AND status=?`);
   const upsertAttempt = db.prepare(`INSERT INTO shoko_rescan_attempts
     (attempt_id,status,next_due_ms,updated_ms) VALUES (?,'pending',?,?)
-    ON CONFLICT(attempt_id) DO UPDATE SET status='pending',next_due_ms=excluded.next_due_ms,
+    ON CONFLICT(attempt_id) DO UPDATE SET next_due_ms=excluded.next_due_ms,
       updated_ms=excluded.updated_ms WHERE status IN ('pending','review')`);
   const endAttempt = db.prepare(`INSERT INTO shoko_rescan_attempts
     (attempt_id,status,next_due_ms,updated_ms) VALUES (?,?,?,?)

@@ -97,7 +97,7 @@ try {
   if (config.acquisitionRuntime && prowlarr) {
     releaseFeedLedger = openReleaseFeedLedger(config.dbPath, {
       aliasesForId: service.cachedReleaseAliases,
-      onWake: (id) => service.wakeReleaseRequest(id) });
+      onWake: (id, notification) => service.wakeReleaseRequest(id, notification) });
     releaseFeedScheduler = createReleaseFeedScheduler({
       indexerIds: prowlarr.indexerIds, feedLedger: releaseFeedLedger,
       readFeed: (indexerId) => readProwlarrRss({
