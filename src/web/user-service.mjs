@@ -86,6 +86,7 @@ import { createRequestCandidateDiscovery } from
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
 import { createAniDbCorrespondence } from '../identity/anidb-correspondence.mjs';
+import { openCandidateCheckCache } from '../acquisition/candidate-check-cache.mjs';
 import { readPreviouslyVerifiedFile } from '../identity/previously-verified-file.mjs';
 import { readShokoVideoExtensions } from '../acquisition/shoko-video-extensions.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
@@ -195,6 +196,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   }
   let accounts;
   let requests;
+  let candidateChecks;
   let pendingTitles;
   let acquisitions;
   let handoffs;
@@ -221,6 +223,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     requests = openRequestLedger(dbPath);
     pendingTitles = openPendingTitleLedger(dbPath);
     acquisitions = openAcquisitionLedger(dbPath);
+    if (prowlarr) candidateChecks = openCandidateCheckCache(dbPath, { now });
     handoffs = openHandoffLedger(dbPath);
     if (acquisition?.pureMode === true) pureMoves = openPureMoveLedger(dbPath);
     if (pureMoves) recognitionRecoveries = openRecognitionRecoveryLedger(dbPath);
@@ -274,6 +277,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         positiveLifetimeMs: fileProofLifetimeMs, now });
     }
     let recentImportUntilMs = 0;
+    const acquisitionCoverageCache = new Map();
     const enqueueChangedFile = ({ before, after, observedMs,
       priority = 'reconcile' }) => {
       if (priority === 'event' && after?.state === 'linked' &&
@@ -287,6 +291,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         pairs.set(`${pair.anidbId}:${pair.episodeId}`, pair);
       }
       for (const pair of pairs.values()) {
+        candidateChecks?.invalidateTarget(pair);
+        acquisitionCoverageCache.delete(`${pair.anidbId}:series:${pair.episodeId}`);
+        acquisitionCoverageCache.delete(`${pair.anidbId}:movie:${pair.episodeId}`);
         const previous = directAvailability.getObservation(pair);
         directAvailability.enqueue({ ...pair,
           observedMs: Math.max(observedMs, (previous?.observedMs ?? -1) + 1),
@@ -405,6 +412,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       const result = await metadata.run(() => hydrator.load(input));
       if (result?.state === 'detail_ready' &&
           result.detail?.anidbId === input.anidbId) {
+        candidateChecks?.invalidateTitle(input.anidbId);
         try { acquisitionRuntime?.wakeHydratedTitle(input.anidbId); }
         catch { /* Durable queue retry remains the fallback. */ }
       }
@@ -455,6 +463,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           ? titleSource.releaseQueries(anidbId) : [];
       };
     const discoverCandidates = prowlarr ? createRequestCandidateDiscovery({
+      now,
       readRequest: (id) => requests.getRequest(id),
       loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
@@ -482,9 +491,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           apiKey: shokoApiKey, shokoMount: plex?.shokoMount, fetchImpl, signal });
       },
     });
-    const previewCandidate = prowlarr ? ({ requestId, candidate,
-      offlineCache }) =>
-      previewRequestCandidate({ requestId, candidate,
+    const previewCandidate = prowlarr ? async ({ requestId, candidate,
+      offlineCache }) => {
+      const request = requests.getRequest(requestId);
+      const saved = request?.status === 'held' && offlineCache instanceof Map
+        ? candidateChecks.get({ request, candidate }) : null;
+      if (saved) return { ...saved, cacheHit: true };
+      const result = await previewRequestCandidate({ requestId, candidate,
         offlineCache, inspectCorrespondence,
         offlineLookup: ({ filename }) => metadata.run(() => previewOfflineRelease({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
@@ -499,7 +512,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
           indexerIds: prowlarr.indexerIds, ...input, fetchImpl,
         })),
-      }) : undefined;
+      });
+      if (request) candidateChecks.put({ request, candidate, result });
+      return result;
+    } : undefined;
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
         ledger: requests, afterId, limit, today: today(), nowMs: now(),
@@ -1125,6 +1141,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               fileIds: fileProofs?.getRecentAvailableIds({ anidbId }) ?? [],
             });
             return verifyCachedPositiveCoverage({ request, cached,
+              cache: acquisitionCoverageCache, now,
+              ownedEpisodeIds: episodeIds.filter(episodeId =>
+                inventory.getObservedFileIds({ anidbId, episodeId }).length > 0),
+              readRevision: (target) => JSON.stringify([
+                inventory.getObservedFileIds(target).map((fileId) =>
+                  [fileId, inventory.getFile(fileId)?.observedMs]),
+                directAvailability.getObservation(target)?.observedMs,
+              ]),
               readShoko: (target) => readShokoEpisodeFiles({
                 baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
                 ...target, purpose: 'availability', fetchImpl }),
@@ -1162,7 +1186,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               completionReview.close(); startReview.close(); publishReview.close();
               shokoRescans?.close(); recognitionRecoveries?.close();
               pureMoves?.close();
-              handoffs.close(); acquisitions.close();
+              candidateChecks?.close(); handoffs.close(); acquisitions.close();
               pendingTitles.close(); requests.close(); accounts.close();
             }
           })();
@@ -1177,7 +1201,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     progress?.close(); completionReview?.close(); startReview?.close();
     publishReview?.close();
     shokoRescans?.close(); recognitionRecoveries?.close(); pureMoves?.close();
-    handoffs?.close(); acquisitions?.close();
+    candidateChecks?.close(); handoffs?.close(); acquisitions?.close();
     pendingTitles?.close(); requests?.close(); accounts?.close();
     throw error;
   }

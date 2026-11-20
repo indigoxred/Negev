@@ -486,7 +486,7 @@ test('real journals and stages hold a no-candidate request across restart withou
     await pipeline.initialize();
     const first = await pipeline.tickRequests();
     assert.deepEqual(first.results, [{ requestId: 1, state: 'held',
-      reason: 'no_release_candidates' }]);
+      reason: 'no_release_candidates', nextDueMs: 1_800_200 }]);
     assert.deepEqual(calls, ['search']);
     await pipeline.close();
     pipeline = open();

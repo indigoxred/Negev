@@ -36,7 +36,11 @@ export function openAcquisitionRuntime(options = {}) {
   const scheduler = createPipelineScheduler({ pipeline, now });
   return { start: () => scheduler.start(),
     stop: () => scheduler.stop(),
-    wakeRequest: (requestId) => scheduler.wakeRequest(requestId),
+    wakeRequest: (requestId) => {
+      const request = providers.requests?.getRequest(requestId);
+      if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);
+      scheduler.wakeRequest(requestId);
+    },
     wakeHydratedTitle: (anidbId) => {
       const ids = pipeline.wakeHydratedTitle({ anidbId, nowMs: now() });
       for (const id of ids) scheduler.wakeRequest(id);

@@ -41,17 +41,19 @@ export function createPipelineScheduler({ pipeline,
   let lastFinishedMs = null;
   let reviewHeld = false;
   const freshRequests = [];
+  const submittedRequests = new Set();
   const metadataRetries = new Map();
   let priorityServed = false;
   const recordRequestResult = (result) => {
     if (!Array.isArray(result?.results)) return;
     for (const item of result.results) {
       if (!Number.isSafeInteger(item?.requestId) || item.requestId < 1) continue;
-      if ((['shoko_metadata_missing', 'torrent_hash_in_use']
-        .includes(item.reason) || item.state === 'stopped_observed') &&
-          Number.isSafeInteger(item.nextDueMs) &&
-          item.nextDueMs >= 0 && metadataRetries.size < 32) {
+      if (Number.isSafeInteger(item.nextDueMs) && item.nextDueMs >= 0) {
         metadataRetries.set(item.requestId, item.nextDueMs);
+        if (metadataRetries.size > 32) {
+          const latest = [...metadataRetries].sort((a,b) => b[1]-a[1])[0][0];
+          metadataRetries.delete(latest);
+        }
       } else metadataRetries.delete(item.requestId);
       if (Number.isSafeInteger(item.continuationDueMs) &&
           item.continuationDueMs <= now() &&
@@ -81,13 +83,32 @@ export function createPipelineScheduler({ pipeline,
     }, delay);
   };
   const tick = async () => {
+    // RSS and metadata workers update durable due times outside this scheduler.
+    // Refresh the small earliest-deadline page during a live run, not only startup.
+    if (typeof pipeline.listMetadataRetries === 'function') {
+      try {
+        const rows = pipeline.listMetadataRetries();
+        metadataRetries.clear();
+        for (const row of rows.slice(0, 32)) {
+          if (Number.isSafeInteger(row.requestId) && row.requestId > 0 &&
+              Number.isSafeInteger(row.nextDueMs) && row.nextDueMs >= 0) {
+            metadataRetries.set(row.requestId, row.nextDueMs);
+          }
+        }
+      } catch { /* Existing recorded deadlines remain the fallback. */ }
+    }
     const dueMetadataId = [...metadataRetries].find(([, due]) => due <= now())?.[0];
-    const pendingId = dueMetadataId ?? freshRequests[0];
+    const submittedId = freshRequests.find(id => submittedRequests.has(id));
+    const pendingId = submittedId ?? dueMetadataId ?? freshRequests[0];
     const prioritized = !requestRunning && pendingId !== undefined &&
       (!priorityServed || stages[stageIndex] === 'tickRequests');
     const stage = prioritized ? 'tickRequests' : stages[stageIndex];
-    const priorityRequestId = prioritized ?
-      dueMetadataId ?? freshRequests.shift() : null;
+    const priorityRequestId = prioritized ? pendingId : null;
+    if (priorityRequestId !== null) {
+      const index = freshRequests.indexOf(priorityRequestId);
+      if (index >= 0) freshRequests.splice(index, 1);
+      submittedRequests.delete(priorityRequestId);
+    }
     if (priorityRequestId !== null) metadataRetries.delete(priorityRequestId);
     const extraTurn = prioritized && stages[stageIndex] !== 'tickRequests';
     if (!extraTurn) stageIndex = (stageIndex + 1) % stages.length;
@@ -192,10 +213,11 @@ export function createPipelineScheduler({ pipeline,
       if (closed) return;
       const queued = freshRequests.indexOf(requestId);
       if (queued >= 0) freshRequests.splice(queued, 1);
-      else if (freshRequests.length >= 32) freshRequests.pop();
+      else if (freshRequests.length >= 32) submittedRequests.delete(freshRequests.pop());
       // A submitted request must lead restart-recovered backlog. Any displaced
       // saved row remains durable and will be found by the ordinary cursor.
       freshRequests.unshift(requestId);
+      submittedRequests.add(requestId);
       metadataRetries.delete(requestId);
       if (timer !== undefined && recoveryState.startsWith('waiting') &&
           !priorityServed) {

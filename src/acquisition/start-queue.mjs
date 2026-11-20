@@ -38,9 +38,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     ) STRICT`);
     // Earlier builds treated a busy metadata reader as a thirty-minute hold.
     // Bring only that transient condition forward on reopen.
-    db.exec(`UPDATE start_checks SET next_due_ms=MIN(next_due_ms,
+    db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),
       checked_ms+60000) WHERE state='held' AND reason='metadata_reader_busy'
-      AND next_due_ms>checked_ms+60000`);
+      AND checked_ms IS NOT NULL AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a

@@ -28,6 +28,33 @@ test('overlapping fuzzy queries preserve the later correct episode evidence', as
   assert.equal(result.items[0].sourceQuery, 'Canonical Anime 03');
 });
 
+test('repeated candidate pages reuse successful queries instead of searching the same titles again', async () => {
+  let calls = 0;
+  const discover = createRequestCandidateDiscovery({ readRequest: () => request,
+    loadDetail: async () => detail, pause: async () => {},
+    searchReleases: async () => { calls++; return { state: 'candidates', items: [{
+      indexerId: 7, guid: 'same', title: 'Canonical Anime - 01', evidence: 'unverified' }] }; } });
+  await discover({ requestId: 12 }); await discover({ requestId: 12 });
+  assert.equal(calls, 1);
+});
+
+test('a ten-episode request bounds query fanout while checking every canonical episode and broad aliases', async () => {
+  const queries = [];
+  const episodes = Array.from({ length: 10 }, (_, i) => ({
+    id: 1001 + i, number: i + 1, type: 'Episode', title: String(i + 1) }));
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => ({ ...request, episodeIds: episodes.map(item => item.id) }),
+    loadDetail: async () => ({ ...detail, total: 10, episodes }),
+    releaseQueries: async () => ['English Name', 'Another Alias', 'Last Alias'],
+    pause: async () => {}, searchReleases: async ({ query }) => {
+      queries.push(query); return { state: 'candidates', items: [] };
+    } });
+  await discover({ requestId: 12, searchTargetEpisodeIds: episodes.map(item => item.id) });
+  assert.ok(queries.length <= 16);
+  for (let i = 1; i <= 10; i++) assert.ok(queries.includes(`Canonical Anime ${String(i).padStart(2, '0')}`));
+  assert.ok(queries.includes('English Name'));
+});
+
 test('correct evidence beyond the visible cap upgrades an already visible release', async () => {
   const discover = createRequestCandidateDiscovery({
     readRequest: () => ({ ...request, episodeIds: [1001, 1002] }),

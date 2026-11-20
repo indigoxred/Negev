@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createHash } from 'node:crypto';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -104,6 +105,17 @@ export function openAcquisitionRequestQueue(dbPath,
         search_policy_rechecked INTEGER NOT NULL DEFAULT 0
         CHECK(search_policy_rechecked IN (0,1,2))`);
     }
+    for (const [column, type] of [['scan_scope', 'TEXT'], ['decision_ms', 'INTEGER'], ['scan_target_count', 'INTEGER']]) {
+      if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+        .some(item => item.name === column)) {
+        db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN ${column} ${type}`);
+      }
+    }
+    db.exec(`UPDATE acquisition_request_checks SET
+      next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
+      WHERE state='held' AND reason IN ('metadata_reader_busy',
+        'provider_unavailable','release_preflight_unavailable') AND checked_ms IS NOT NULL
+        AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
     // Revisit one recent multi-episode Airing miss under the broader episode
     // query once. A settled empty watch retains its normal hourly cadence.
     const policyNowMs = Date.now();
@@ -161,22 +173,18 @@ export function openAcquisitionRequestQueue(dbPath,
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
-      (c.request_id IS NULL OR (c.state IS NOT NULL AND c.next_due_ms<=?))
+      (c.request_id IS NULL OR (c.state IS NOT NULL AND (c.next_due_ms<=? OR
+        c.scan_target_count IS NOT NULL AND c.scan_target_count<>(
+          SELECT COUNT(*) FROM request_targets rt2 WHERE rt2.request_id=r.id))))
     ORDER BY r.id LIMIT 1`;
   const next = db.prepare(nextSql);
   // A freshly saved request can take its first turn ahead of older due rows.
   // The same eligibility guards apply, and the ordinary cursor stays put.
-  const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
-    .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
-      (c.state='stopped_observed' OR (c.state='held' AND (c.reason IN
-        ('shoko_metadata_missing','reconciled_observed_attempts',
-         'torrent_hash_in_use','service_stopping') OR
-       (c.reason='no_safe_release' AND c.search_policy_rechecked=1) OR
-       (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL))))) LIMIT 1`));
+  const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?) ON CONFLICT(request_id) DO UPDATE SET
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?) ON CONFLICT(request_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
@@ -184,13 +192,26 @@ export function openAcquisitionRequestQueue(dbPath,
     attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
     search_policy_rechecked=CASE WHEN search_policy_rechecked=1 THEN 2
       ELSE search_policy_rechecked END,
-    scan_started_ms=COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms)`);
+    decision_ms=CASE WHEN scan_scope IS NOT NULL AND scan_scope<>excluded.scan_scope
+      THEN NULL ELSE decision_ms END,
+    scan_started_ms=CASE WHEN scan_scope IS NOT NULL AND scan_scope<>excluded.scan_scope
+      THEN excluded.scan_started_ms
+      ELSE COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms) END,
+    scan_scope=excluded.scan_scope,scan_target_count=excluded.scan_target_count`);
+  const targetScope = db.prepare(`SELECT t.anidb_id,t.episode_id FROM targets t
+    JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
+  const claimRequest = (id, pass, nowMs) => {
+    const targets = targetScope.all(id);
+    return claim.run(id, pass, nowMs,
+      createHash('sha256').update(JSON.stringify(targets)).digest('hex'), targets.length);
+  };
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
     metadata_since_ms=?,
     scan_started_ms=?,
     candidate_offset=COALESCE(?,candidate_offset),
-    candidate_fingerprint=COALESCE(?,candidate_fingerprint)
+      candidate_fingerprint=COALESCE(?,candidate_fingerprint),
+      decision_ms=COALESCE(decision_ms,?)
     WHERE request_id=? AND pass=? AND state IS NULL`);
   const result = db.prepare(`SELECT request_id AS requestId,pass,state,reason,
     attempt_id AS attemptId,candidate_offset AS candidateOffset,
@@ -201,8 +222,7 @@ export function openAcquisitionRequestQueue(dbPath,
     FROM acquisition_request_checks WHERE request_id=?`);
   const wakeRecovered = db.prepare(`UPDATE acquisition_request_checks
     SET state='held',reason='reconciled_observed_attempts',attempt_id=NULL,
-      next_due_ms=?,candidate_offset=0,candidate_fingerprint=NULL,
-      scan_started_ms=NULL
+      next_due_ms=?,candidate_offset=0,candidate_fingerprint=NULL
     WHERE request_id=? AND state IS NOT NULL AND
       EXISTS (SELECT 1 FROM requests r WHERE r.id=request_id AND
         r.status='held' AND r.cancelled_ms IS NULL)`);
@@ -216,19 +236,16 @@ export function openAcquisitionRequestQueue(dbPath,
     SET next_due_ms=? WHERE request_id=? AND state='held'
       AND reason='shoko_metadata_missing' AND next_due_ms>?`);
   const pendingMetadata = db.prepare(`SELECT r.id AS requestId,
-      c.next_due_ms AS nextDueMs FROM requests r
-    JOIN acquisition_request_checks c ON c.request_id=r.id
+      CASE WHEN c.scan_target_count IS NOT NULL AND c.scan_target_count<>
+        (SELECT COUNT(*) FROM request_targets rt2 WHERE rt2.request_id=r.id)
+        THEN 0 ELSE c.next_due_ms END AS nextDueMs
+    FROM requests r JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND ${cohortFilter}
-      ((c.state='held' AND c.reason IN
-        ('shoko_metadata_missing','torrent_hash_in_use',
-         'reconciled_observed_attempts','service_stopping')) OR
-        (c.state='held' AND c.reason='no_safe_release' AND
-          c.search_policy_rechecked=1) OR
-        c.state='stopped_observed')
-      AND c.next_due_ms IS NOT NULL
-    ORDER BY c.next_due_ms,r.id LIMIT ?`);
+      c.state IS NOT NULL AND c.next_due_ms IS NOT NULL AND
+      NOT ((r.monitor_future=0 OR r.watch_closed=1) AND COALESCE(c.reason,'')='request_fully_available')
+    ORDER BY nextDueMs,r.id LIMIT ?`);
   const advanceLegacyMetadata = db.prepare(`UPDATE acquisition_request_checks
     SET metadata_since_ms=COALESCE(checked_ms,?),
       next_due_ms=MIN(next_due_ms,?)
@@ -457,7 +474,7 @@ export function openAcquisitionRequestQueue(dbPath,
           if (row) {
             const ownership = ownershipGate?.status(row.anidbId) ?? 'eligible';
             if (ownership === 'eligible') {
-              claim.run(row.id, position.pass, nowMs);
+              claimRequest(row.id, position.pass, nowMs);
               return { state: 'claimed', requestId: row.id, pass: position.pass,
                 ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
                 ...(row.candidateFingerprint ?
@@ -486,7 +503,7 @@ export function openAcquisitionRequestQueue(dbPath,
           }
           afterId = row.id;
           if (ownership !== 'eligible') continue;
-          claim.run(row.id, position.pass, nowMs);
+          claimRequest(row.id, position.pass, nowMs);
           return { state: 'claimed', requestId: row.id, pass: position.pass,
             ...(row.candidateOffset > 0 ? { candidateOffset: row.candidateOffset } : {}),
             ...(row.candidateFingerprint ?
@@ -567,17 +584,18 @@ export function openAcquisitionRequestQueue(dbPath,
           (['provider_http_403', 'authentication_backoff',
             'authentication_unavailable', 'release_search_incomplete',
             'import_quiet_window_unverified', 'torrent_hash_in_use',
-            'service_stopping'].includes(reason)
+            'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
+            'provider_unavailable'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
-      const scanStartedMs = reason === 'candidate_scan_time_budget' ||
-        nextCandidateOffset === 0 &&
-          !['season_pack_scan_complete', 'season_pack_uncertain_complete'].includes(reason)
-        ? null : newScanPolicy ? checkedMs : previous?.scanStartedMs ?? checkedMs;
+      const scanStartedMs = previous?.scanStartedMs ?? checkedMs;
+      const decisionMs = state === 'stopped_observed' || reason === 'request_fully_available' ||
+        ['no_safe_release','no_release_candidates'].includes(reason) && nextCandidateOffset === 0
+        ? checkedMs : null;
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         emptySinceMs, metadataSinceMs, scanStartedMs,
-        nextCandidateOffset, nextCandidateFingerprint,
+        nextCandidateOffset, nextCandidateFingerprint, decisionMs,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
     },
@@ -594,6 +612,12 @@ export function openAcquisitionRequestQueue(dbPath,
     getScanStartedMs(requestId) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       return result.get(requestId)?.scanStartedMs ?? null;
+    },
+    getDecisionTiming(requestId) {
+      const row = db.prepare(`SELECT scan_started_ms AS startedMs,
+        decision_ms AS decisionMs FROM acquisition_request_checks WHERE request_id=?`).get(requestId);
+      return row && row.startedMs !== null ? { ...row,
+        elapsedMs: row.decisionMs === null ? null : row.decisionMs - row.startedMs } : null;
     },
     listUnresolved({ afterId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterId) || afterId < 0 ||
@@ -669,12 +693,10 @@ export function createAcquisitionPageWorker({ queue, processRequest,
             check?.nextDueMs <= now() && (check?.candidateOffset > 0 ||
               reason?.startsWith('season_pack_'));
           results.push({ requestId: next.requestId, state,
-            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId,
-              nextDueMs: check?.nextDueMs } : {}),
+            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId } : {}),
             ...(reason === null ? {} : { reason }),
             ...(continuing ? { continuationDueMs: check.nextDueMs } : {}),
-            ...(reason === 'shoko_metadata_missing' ?
-              { nextDueMs: queue.getResult(next.requestId)?.nextDueMs } : {}) });
+            ...(Number.isSafeInteger(check?.nextDueMs) ? { nextDueMs: check.nextDueMs } : {}) });
         }
         return { state: 'page', results };
       } finally { busy = false; }
