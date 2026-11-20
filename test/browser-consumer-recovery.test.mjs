@@ -382,6 +382,8 @@ test('title and library controls recover from pending and failed reads without d
       assert.ok(titleReads > beforeReentry, 'returning to title revalidates details');
       await evaluate("location.hash = '#/title/2'");
       await until("document.querySelector('#detail')?.textContent.includes('Try again')");
+      assert.equal(await evaluate("document.querySelector('#detail')?.textContent.includes('No synopsis is available for this title yet.')"),false,
+        'provider failure is not a successful missing-synopsis result');
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Try again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Recovered title')");
       assert.equal(failedTitleReads, 2);
