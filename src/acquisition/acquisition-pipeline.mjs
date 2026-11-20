@@ -72,6 +72,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let holdingRecovered = false;
   let recoveryAfterId = 0;
   let preferRecognitionRecovery = false;
+  let preferUrgentRescan = true;
   const run = (worker, lane = 'media') => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
@@ -132,9 +133,11 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     tickStarts: () => run(startWorker),
     ...(recognitionRecoveries || shokoRescans ? { tickRecovery: () => run({
       runOnce: async () => {
-        const due = shokoRescans?.listDue({ nowMs: now(), limit: 1 })[0];
+        const due = shokoRescans?.listDue({ nowMs: now(), limit: 1,
+          preferUrgent: preferUrgentRescan })[0];
         const runRescan = async () => {
           preferRecognitionRecovery = true;
+          preferUrgentRescan = !preferUrgentRescan;
           if (!due.manifest) {
             shokoRescans.endAttempt({ attemptId: due.attemptId,
               review: true, nowMs: now() });

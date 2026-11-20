@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -152,4 +153,15 @@ test('retry scheduling cannot clear an existing review without exact playback su
  saved.rescan.endAttempt({attemptId:saved.attemptId,review:false,nowMs:420209});
  assert.equal(saved.rescan.listReviewNeeded().length,0);
  }finally{await saved.close();}
+});
+
+
+test('urgent recovery can lead historical backfill while ordinary turns retain age ordering',async()=>{
+ const saved=await fixture();let d;try{const requests=openRequestLedger(saved.dbPath);const urgent=requests.submit({requesterId:2,requestKey:'urgent',nowMs:400000000,intent:{state:'ready',anidbId:43,kind:'series',monitorFuture:false,episodeIds:saved.files.flatMap(f=>f.episodeIds)}});requests.close();d=new DatabaseSync(saved.dbPath);const id=Number(d.prepare(`INSERT INTO acquisition_attempts(request_id,anidb_id,indexer_id,candidate_digest,status,torrent_hash,created_ms,updated_ms) SELECT ?,anidb_id+1,indexer_id,?,status,torrent_hash,400000000,400000000 FROM acquisition_attempts WHERE id=?`).run(urgent.requestId,'b'.repeat(64),saved.attemptId).lastInsertRowid);
+ d.prepare('INSERT INTO acquisition_target_claims(attempt_id,anidb_id,episode_id,active) SELECT ?,anidb_id+1,episode_id,active FROM acquisition_target_claims WHERE attempt_id=?').run(id,saved.attemptId);
+ d.prepare('INSERT INTO pure_move_intents SELECT ?,torrent_hash,manifest_digest,manifest_json,status,400000000,400000000 FROM pure_move_intents WHERE attempt_id=?').run(id,saved.attemptId);
+ d.prepare("INSERT INTO shoko_rescan_attempts VALUES(?,'review',400300000,400300000)").run(id);d.close();d=null;
+ assert.equal(saved.rescan.listDue({nowMs:400600000,limit:1,preferUrgent:true})[0].attemptId,id);
+ assert.equal(saved.rescan.listDue({nowMs:400600000,limit:1,preferUrgent:false})[0].attemptId,saved.attemptId);
+ }finally{d?.close();await saved.close();}
 });
