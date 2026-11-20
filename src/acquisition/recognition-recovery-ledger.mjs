@@ -31,6 +31,16 @@ export function openRecognitionRecoveryLedger(dbPath) {
   const row = db.prepare(`SELECT attempt_id AS attemptId,file_id AS fileId,
     status,first_seen_ms AS firstSeenMs,updated_ms AS updatedMs
     FROM recognition_recoveries WHERE attempt_id=?`);
+  // Filter before LIMIT: packs and exhausted alternates cannot hide a later
+  // eligible single-file preservation. Pack members use the rescan journal.
+  const singleEligible = `CASE WHEN json_valid(p.manifest_json) THEN
+    (SELECT COUNT(*) FROM json_each(p.manifest_json,'$.files') f
+      WHERE json_type(f.value,'$.episodeIds')='array') ELSE 0 END=1
+    AND NOT EXISTS (SELECT 1 FROM recognition_recoveries prior
+      JOIN acquisition_target_claims old ON old.attempt_id=prior.attempt_id
+      JOIN acquisition_target_claims current ON current.anidb_id=old.anidb_id
+        AND current.episode_id=old.episode_id
+      WHERE current.attempt_id=a.id AND prior.status='released')`;
   const pending = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND
       r.cancelled_ms IS NULL
@@ -40,7 +50,7 @@ export function openRecognitionRecoveryLedger(dbPath) {
     LEFT JOIN pure_move_content_observations content ON content.attempt_id=a.id
     LEFT JOIN recognition_recoveries recovery ON recovery.attempt_id=a.id
     WHERE a.request_id=? AND content.attempt_id IS NULL AND
-      (recovery.attempt_id IS NULL OR recovery.status<>'released')
+      (recovery.attempt_id IS NULL OR recovery.status<>'released') AND ${singleEligible}
     GROUP BY a.id ORDER BY a.id LIMIT 1`);
   const pendingPage = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND
@@ -51,7 +61,7 @@ export function openRecognitionRecoveryLedger(dbPath) {
     LEFT JOIN pure_move_content_observations content ON content.attempt_id=a.id
     LEFT JOIN recognition_recoveries recovery ON recovery.attempt_id=a.id
     WHERE a.id>? AND content.attempt_id IS NULL AND
-      (recovery.attempt_id IS NULL OR recovery.status<>'released')
+      (recovery.attempt_id IS NULL OR recovery.status<>'released') AND ${singleEligible}
     GROUP BY a.id ORDER BY a.id LIMIT ?`);
   const releasedTargets = db.prepare(`SELECT DISTINCT c.episode_id AS episodeId
     FROM recognition_recoveries recovery

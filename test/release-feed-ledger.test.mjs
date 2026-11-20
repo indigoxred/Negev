@@ -33,14 +33,18 @@ test('seeds existing feed, wakes only a matching waiting request, and survives r
     assert.deepEqual(first.accept({ indexerId: 5, items: [old], nowMs: 10_000 }),
       { state: 'seeded', newItems: 0, wokenRequests: 0 });
     first.close();
-    const second = openReleaseFeedLedger(dbPath);
+    const wakes=[];
+    const second = openReleaseFeedLedger(dbPath,{onWake:id=>wakes.push(id)});
     const fresh = { ...old, guid: 'https://nyaa.si/view/2', publishedMs: 11_000 };
     assert.deepEqual(second.accept({ indexerId: 5, items: [old, fresh], nowMs: 12_000 }),
       { state: 'processed', newItems: 1, wokenRequests: 1 });
     assert.deepEqual(second.accept({ indexerId: 5, items: [fresh], nowMs: 13_000 }),
       { state: 'processed', newItems: 0, wokenRequests: 0 });
+    assert.deepEqual(wakes,[1]);
     second.close();
     const verify = new DatabaseSync(dbPath);
+    const trace=verify.prepare('SELECT * FROM rss_release_wakes').all();
+    assert.equal(trace.length,1);assert.equal(trace[0].title,fresh.title);assert.equal(trace[0].observed_ms,12000);
     assert.equal(verify.prepare('SELECT next_due_ms FROM acquisition_request_checks WHERE request_id=1').get().next_due_ms, 12_000);
     assert.equal(verify.prepare('SELECT next_due_ms FROM acquisition_request_checks WHERE request_id=2').get().next_due_ms, 9_000_000);
     assert.equal(verify.prepare('SELECT next_due_ms FROM acquisition_request_checks WHERE request_id=3').get().next_due_ms, 9_000_000);

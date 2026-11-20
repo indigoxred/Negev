@@ -4,8 +4,8 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 
-// Enrol only attempts created after this policy is installed. Historical
-// imports remain untouched; their media and request records are not replayed.
+// Reconcile exact published manifests for existing active requests too.
+// Retired or released attempts must never be replayed.
 export function openShokoRescanLedger(dbPath) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable Shoko rescan path required');
@@ -39,6 +39,10 @@ export function openShokoRescanLedger(dbPath) {
       updated_ms INTEGER NOT NULL CHECK(updated_ms>=first_seen_ms),
       PRIMARY KEY(attempt_id,file_name)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_recovery_observations (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      state TEXT NOT NULL,reason TEXT NOT NULL,observed_ms INTEGER NOT NULL
+    ) STRICT`);
     db.prepare(`INSERT OR IGNORE INTO shoko_rescan_policy(id,minimum_attempt_id)
       SELECT 1,COALESCE(MAX(id),0)+1 FROM acquisition_attempts`).run();
   } catch (error) { db.close(); throw error; }
@@ -46,36 +50,35 @@ export function openShokoRescanLedger(dbPath) {
     r.anidb_id AS anidbId,p.manifest_json AS manifestJson,
     p.updated_ms AS publishedMs
     FROM acquisition_attempts a
-    JOIN shoko_rescan_policy policy ON policy.id=1 AND
-      a.id>=policy.minimum_attempt_id
     JOIN requests r ON r.id=a.request_id AND r.status='held' AND
       r.cancelled_ms IS NULL
     JOIN pure_move_intents p ON p.attempt_id=a.id AND
       p.status='published_observed'
     JOIN acquisition_target_claims c ON c.attempt_id=a.id AND c.active=1
     LEFT JOIN shoko_rescan_attempts progress ON progress.attempt_id=a.id
-    WHERE p.updated_ms<=? AND (progress.attempt_id IS NULL OR
-      (progress.status='pending' AND progress.next_due_ms<=?))
-    GROUP BY a.id ORDER BY a.id ASC LIMIT ?`);
+    WHERE NOT EXISTS (SELECT 1 FROM acquisition_retirements x WHERE x.attempt_id=a.id)
+      AND p.updated_ms<=? AND (progress.attempt_id IS NULL OR
+      (progress.status IN ('pending','review') AND progress.next_due_ms<=?))
+    GROUP BY a.id ORDER BY COALESCE(progress.next_due_ms,p.updated_ms),a.id LIMIT ?`);
   const eligible = db.prepare(`SELECT p.manifest_json AS manifestJson
     FROM acquisition_attempts a
-    JOIN shoko_rescan_policy policy ON policy.id=1 AND
-      a.id>=policy.minimum_attempt_id
     JOIN pure_move_intents p ON p.attempt_id=a.id AND
-      p.status='published_observed' WHERE a.id=?`);
+      p.status='published_observed' WHERE a.id=?
+      AND NOT EXISTS (SELECT 1 FROM acquisition_retirements retired WHERE retired.attempt_id=a.id)
+      AND EXISTS (SELECT 1 FROM acquisition_target_claims c WHERE c.attempt_id=a.id AND c.active=1)`);
   const fileRow = db.prepare(`SELECT file_id AS fileId,status,
     first_seen_ms AS firstSeenMs,updated_ms AS updatedMs
     FROM shoko_rescan_files WHERE attempt_id=? AND file_name=?`);
-  const floor = db.prepare(`SELECT minimum_attempt_id AS minimumAttemptId
-    FROM shoko_rescan_policy WHERE id=1`).get().minimumAttemptId;
+
   const attemptStatus = db.prepare(`SELECT status FROM shoko_rescan_attempts
     WHERE attempt_id=?`);
   const reviewRows = db.prepare(`SELECT a.attempt_id AS attemptId,
     r.id AS requestId,r.anidb_id AS anidbId,
-    'shoko_rescan_unresolved' AS reason,a.updated_ms AS observedMs
+    COALESCE(o.reason,'shoko_rescan_unresolved') AS reason,a.updated_ms AS observedMs
     FROM shoko_rescan_attempts a
     JOIN acquisition_attempts attempts ON attempts.id=a.attempt_id
     JOIN requests r ON r.id=attempts.request_id
+    LEFT JOIN shoko_recovery_observations o ON o.attempt_id=a.attempt_id
     WHERE a.status='review' AND a.attempt_id>?
     ORDER BY a.attempt_id LIMIT ?`);
   const insertFile = db.prepare(`INSERT INTO shoko_rescan_files
@@ -86,13 +89,13 @@ export function openShokoRescanLedger(dbPath) {
       file_id=? AND status=?`);
   const upsertAttempt = db.prepare(`INSERT INTO shoko_rescan_attempts
     (attempt_id,status,next_due_ms,updated_ms) VALUES (?,'pending',?,?)
-    ON CONFLICT(attempt_id) DO UPDATE SET next_due_ms=excluded.next_due_ms,
-      updated_ms=excluded.updated_ms WHERE status='pending'`);
+    ON CONFLICT(attempt_id) DO UPDATE SET status='pending',next_due_ms=excluded.next_due_ms,
+      updated_ms=excluded.updated_ms WHERE status IN ('pending','review')`);
   const endAttempt = db.prepare(`INSERT INTO shoko_rescan_attempts
     (attempt_id,status,next_due_ms,updated_ms) VALUES (?,?,?,?)
     ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,
       next_due_ms=excluded.next_due_ms,updated_ms=excluded.updated_ms
-      WHERE status='pending'`);
+      WHERE status IN ('pending','review')`);
   const transact = (fn) => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; }
@@ -107,9 +110,23 @@ export function openShokoRescanLedger(dbPath) {
     } catch { return false; }
   };
   return {
+    recordObservation({attemptId,state,reason,nowMs}) {
+      if (!validId(attemptId) || !validTime(nowMs) || !eligible.get(attemptId) ||
+          ![state,reason].every(x=>typeof x==='string' && /^[a-z][a-z0-9_]{0,79}$/.test(x))) {
+        throw new TypeError('Invalid recovery observation');
+      }
+      db.prepare(`INSERT INTO shoko_recovery_observations VALUES(?,?,?,?)
+        ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,reason=excluded.reason,
+        observed_ms=excluded.observed_ms WHERE observed_ms<=excluded.observed_ms`)
+        .run(attemptId,state,reason,nowMs);
+    },
+    getObservation(attemptId) {
+      if (!validId(attemptId)) throw new TypeError('Invalid recovery observation');
+      return db.prepare('SELECT state,reason,observed_ms AS observedMs FROM shoko_recovery_observations WHERE attempt_id=?').get(attemptId)??null;
+    },
     isEnrolled(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid rescan attempt');
-      return attemptId >= floor;
+      return Boolean(eligible.get(attemptId));
     },
     getAttemptStatus(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid rescan attempt');
@@ -213,7 +230,8 @@ export function openShokoRescanLedger(dbPath) {
           !validTime(nowMs) || !eligible.get(attemptId)) {
         throw new TypeError('Invalid rescan completion');
       }
-      endAttempt.run(attemptId, review ? 'review' : 'done', nowMs, nowMs);
+      endAttempt.run(attemptId, review ? 'review' : 'done',
+        review ? nowMs + 300_000 : nowMs, nowMs);
     },
     close() { db.close(); },
   };

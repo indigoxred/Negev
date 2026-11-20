@@ -49,3 +49,13 @@ test('never moves before two quiet Shoko observations and a stopped torrent', as
     nowMs: 660_000 })).state, 'recovered');
   assert.equal(moves, 1);
 });
+
+
+test('the separate Shoko Source mount resolves the same exact preserved file',async()=>{
+ let observed=false;
+ const result=await processRecognitionRecovery({attemptId:7,
+ recovery:{getEligible:()=>({requestId:4,manifest,video:manifest.files[0],publishedMs:0}),get:()=>null,recordFirstSeen:()=>{observed=true;},beginPreserve:()=>{},markPreserved:()=>{},releaseForAlternate:()=>{}},
+ pureMoves:{getIntent:()=>({status:'published_observed',manifest})},importRoot:path.join(process.cwd(),'handoff','source','Negev'),holdingRoot:path.join(process.cwd(),'handoff','holding'),shokoMount:mount,shokoSourcePath:'/pure/.negev-handoff/source',nowMs:600000,
+ readQueue:async()=>({state:'quiet_observed'}),readFile:async({sourcePath})=>{assert.equal(sourcePath,'/pure/.negev-handoff/source/Negev/negev-7-aaaaaaaaaaaaaaaa/01.mkv');return[{...file,Locations:[{AbsolutePath:sourcePath,IsAccessible:true}]}]},readUnrecognized:async()=>({state:'unrecognized'}),checkTorrent:async()=>({state:'stopped'}),preserve:async()=>{throw Error('needs two observations')}});
+ assert.equal(result.state,'awaiting_shoko');assert.equal(observed,true);
+});

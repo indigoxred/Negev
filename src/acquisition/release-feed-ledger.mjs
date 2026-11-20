@@ -13,9 +13,9 @@ const matchesTitle = (title, release) => {
 
 // A feed hit only advances a guarded request's next check. It cannot select
 // a torrent, change an import, or revive a suspended/cancelled request.
-export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [] } = {}) {
+export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake = () => {} } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
-      typeof aliasesForId !== 'function') {
+      typeof aliasesForId !== 'function' || typeof onWake !== 'function') {
     throw new TypeError('Durable feed ledger path required');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -30,6 +30,11 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [] } = {}) 
       observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
       PRIMARY KEY(indexer_id,guid_hash)) STRICT;
       CREATE INDEX IF NOT EXISTS rss_seen_age ON rss_seen(indexer_id,observed_ms);`);
+    db.exec(`CREATE TABLE IF NOT EXISTS rss_release_wakes (
+      request_id INTEGER NOT NULL REFERENCES requests(id), indexer_id INTEGER NOT NULL,
+      guid_hash TEXT NOT NULL, title TEXT NOT NULL, published_ms INTEGER,
+      observed_ms INTEGER NOT NULL, acquisition_due_changed INTEGER NOT NULL,
+      PRIMARY KEY(request_id,indexer_id,guid_hash)) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS rss_watch_timing (
       request_id INTEGER PRIMARY KEY REFERENCES requests(id),
       next_metadata_ms INTEGER NOT NULL CHECK(next_metadata_ms>=0),
@@ -60,7 +65,7 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [] } = {}) 
       rush_until_ms=MAX(rush_until_ms,excluded.rush_until_ms)`);
   const wake = db.prepare(`UPDATE acquisition_request_checks
     SET next_due_ms=? WHERE request_id=? AND state='held' AND
-      reason IN ('no_release_candidates','no_safe_release') AND next_due_ms>?`);
+      reason IN ('no_release_candidates','no_safe_release','request_fully_available','shoko_metadata_missing') AND next_due_ms>?`);
   const prune = db.prepare('DELETE FROM rss_seen WHERE indexer_id=? AND observed_ms<?');
   const cap = db.prepare(`DELETE FROM rss_seen WHERE indexer_id=? AND guid_hash NOT IN
     (SELECT guid_hash FROM rss_seen WHERE indexer_id=?
@@ -105,13 +110,17 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [] } = {}) 
             const timing = rush.run(request.id, nowMs,
               nowMs + 24 * 60 * 60_000);
             const queue = wake.run(nowMs, request.id, nowMs);
+            db.prepare('INSERT OR IGNORE INTO rss_release_wakes VALUES(?,?,?,?,?,?,?)')
+              .run(request.id,indexerId,hashGuid(item.guid),item.title,item.publishedMs,nowMs,queue.changes);
             if (timing.changes === 1 || queue.changes === 1) woken.add(request.id);
           }
         }
         insertState.run(indexerId, nowMs);
         prune.run(indexerId, Math.max(0, nowMs - 14 * 24 * 60 * 60_000));
         cap.run(indexerId, indexerId);
+        db.prepare('DELETE FROM rss_release_wakes WHERE observed_ms<?').run(Math.max(0,nowMs-30*86400000));
         db.exec('COMMIT'); begun = false;
+        for (const id of woken) { try { Promise.resolve(onWake(id)).catch(() => {}); } catch { /* Durable deadline remains. */ } }
         return { state: seeded ? 'processed' : 'seeded', newItems,
           wokenRequests: woken.size };
       } catch (error) {

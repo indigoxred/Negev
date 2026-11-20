@@ -83,3 +83,17 @@ test('a published unrecognized file releases one claim only after durable preser
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('ineligible packs cannot hide a later single-file recovery behind the page cap',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'negev-recovery-page-'));const dbPath=path.join(root,'state.sqlite');let recovery;
+ try{const db=new DatabaseSync(dbPath);db.exec(`CREATE TABLE requests(id INTEGER PRIMARY KEY,status TEXT,cancelled_ms INTEGER);
+ CREATE TABLE acquisition_attempts(id INTEGER PRIMARY KEY,request_id INTEGER);
+ CREATE TABLE acquisition_target_claims(attempt_id INTEGER,anidb_id INTEGER,episode_id INTEGER,active INTEGER);
+ CREATE TABLE pure_move_intents(attempt_id INTEGER,status TEXT,manifest_json TEXT,updated_ms INTEGER);
+ CREATE TABLE pure_move_content_observations(attempt_id INTEGER);
+ INSERT INTO requests VALUES(1,'held',NULL);`);
+ for(let i=1;i<=25;i++){db.prepare('INSERT INTO acquisition_attempts VALUES(?,1)').run(i);db.prepare('INSERT INTO acquisition_target_claims VALUES(?,42,1001,1)').run(i);db.prepare('INSERT INTO pure_move_intents VALUES(?,?,?,209)').run(i,'published_observed',JSON.stringify({files:Array.from({length:i===25?1:2},(_,n)=>({name:n+'.mkv',size:1000,episodeIds:[1001+n]}))}));}db.close();
+ recovery=openRecognitionRecoveryLedger(dbPath);assert.deepEqual(recovery.listPending({limit:20}).map(x=>({...x})),[{attemptId:25}]);assert.equal(recovery.getPendingForRequest(1).attemptId,25);
+ }finally{recovery?.close();await rm(root,{recursive:true,force:true});}
+});

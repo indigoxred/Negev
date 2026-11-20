@@ -81,6 +81,7 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
         return Response.json([{ ID: 81, Size: 1000, SeriesIDs: [],
           Locations: [{ AbsolutePath: sourcePath, IsAccessible: true }] }]);
       }
+      if (url.pathname === '/api/v3/Episode/AniDB/1001') return Response.json({ID:1001,AnimeID:42});
       assert.equal(url.pathname, '/api/v3/File/81/Rescan');
       assert.equal(request.method, 'POST');
       calls.push('rescan');

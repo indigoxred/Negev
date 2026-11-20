@@ -207,3 +207,10 @@ test('an ended series stays watched until its expected final episode appears', a
       [1001, 1002, 1003]);
   } finally { ledger.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('an exact RSS watch refresh does not advance a different next watch',async()=>{
+ const calls=[];const result=await pollAiringWatches({requestId:7,today:'2026-01-20',intervalMs:0,
+ ledger:{listActiveAirings:options=>{calls.push(options);return[{requestId:8,anidbId:42}]},advanceAiring:()=>{throw Error('wrong watch')}},loadDetail:async()=>{throw Error('wrong read')}});
+ assert.equal(result.state,'page');assert.equal(result.results.length,0);assert.equal(calls[0].afterId,6);assert.equal(calls[0].limit,1);
+});
