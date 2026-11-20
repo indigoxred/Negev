@@ -8,7 +8,7 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
 export async function processRecognitionRecovery({ attemptId, recovery,
   pureMoves,
-  importRoot, holdingRoot, shokoMount, readQueue, readFile,
+  importRoot, holdingRoot, shokoMount, shokoSourcePath = null, readQueue, readFile,
   readUnrecognized, checkTorrent,
   nowMs, preserve = preserveUnrecognizedTree } = {}) {
   if (!validId(attemptId) ||
@@ -21,7 +21,11 @@ export async function processRecognitionRecovery({ attemptId, recovery,
       typeof pureMoves?.getIntent !== 'function' ||
       typeof importRoot !== 'string' || !path.isAbsolute(importRoot) ||
       typeof holdingRoot !== 'string' || !path.isAbsolute(holdingRoot) ||
-      !validMount(shokoMount) || typeof readQueue !== 'function' ||
+      !validMount(shokoMount) || (shokoSourcePath !== null && (typeof shokoSourcePath !== 'string' ||
+        !path.posix.isAbsolute(shokoSourcePath) || path.posix.normalize(shokoSourcePath) !== shokoSourcePath ||
+        /[\\\0\r\n]/.test(shokoSourcePath) ||
+        path.posix.relative(shokoMount.appRoot, shokoSourcePath).startsWith('..'))) ||
+      typeof readQueue !== 'function' ||
       typeof readFile !== 'function' ||
       typeof readUnrecognized !== 'function' ||
       typeof checkTorrent !== 'function' ||
@@ -38,12 +42,15 @@ export async function processRecognitionRecovery({ attemptId, recovery,
   const name = `negev-${attemptId}-${manifest.torrentHash.slice(0, 16)}`;
   const local = path.join(importRoot, name, ...video.name.split('/'));
   const relative = path.relative(shokoMount.localRoot, local);
-  if (!relative || relative === '..' ||
-      relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+  const childRelative = path.relative(path.join(importRoot,name),local);
+  if (!childRelative || childRelative === '..' || childRelative.startsWith(`..${path.sep}`) || path.isAbsolute(childRelative)) return held('published_file_outside_tree');
+  if (shokoSourcePath === null && (!relative || relative === '..' ||
+      relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))) {
     return held('shoko_source_outside_mount');
   }
-  const sourcePath = path.posix.join(shokoMount.appRoot,
-    ...relative.split(path.sep));
+  const sourcePath = shokoSourcePath === null ? path.posix.join(shokoMount.appRoot,
+    ...relative.split(path.sep)) : path.posix.join(shokoSourcePath,
+      path.basename(importRoot),name,...childRelative.split(path.sep));
   const prior = recovery.get(attemptId);
   const observe = () => observeShokoUnrecognized({ sourcePath,
     expectedSize: video.size, publishedMs, nowMs,

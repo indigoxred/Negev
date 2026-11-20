@@ -96,7 +96,8 @@ try {
     shokoApiKey, ownershipGate: acquisitionOwnershipGate });
   if (config.acquisitionRuntime && prowlarr) {
     releaseFeedLedger = openReleaseFeedLedger(config.dbPath, {
-      aliasesForId: service.cachedReleaseAliases });
+      aliasesForId: service.cachedReleaseAliases,
+      onWake: (id, notification) => service.wakeReleaseRequest(id, notification) });
     releaseFeedScheduler = createReleaseFeedScheduler({
       indexerIds: prowlarr.indexerIds, feedLedger: releaseFeedLedger,
       readFeed: (indexerId) => readProwlarrRss({

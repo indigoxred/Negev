@@ -8,11 +8,15 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // One paced, read-only catalogue poll for a bounded page of durable Airing
 // watches. The request ledger is the only writer. No download is dispatched.
 export async function pollAiringWatches({ ledger, loadDetail, today,
-  afterId = 0, limit = 3, intervalMs = 1_000,
-  nowMs = Date.now() } = {}) {
+  afterId = 0, limit = 3, intervalMs = 1_000, requestId = null,
+  expectedEpisodeNumbers = [], hydrateMetadata = null, nowMs = Date.now() } = {}) {
   if (typeof ledger?.listActiveAirings !== 'function' ||
       typeof ledger?.advanceAiring !== 'function' ||
       typeof loadDetail !== 'function' ||
+      (requestId !== null && !validId(requestId)) ||
+      !Array.isArray(expectedEpisodeNumbers) || expectedEpisodeNumbers.length > 32 ||
+      expectedEpisodeNumbers.some(n => !validId(n) || n > 9999) ||
+      (hydrateMetadata !== null && typeof hydrateMetadata !== 'function') ||
       !Number.isSafeInteger(afterId) || afterId < 0 ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > 10 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 10_000 ||
@@ -20,7 +24,11 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today)) {
     throw new TypeError('Invalid Airing poll configuration');
   }
-  const watches = ledger.listActiveAirings({ afterId, limit, nowMs });
+  if (requestId !== null) { afterId=requestId-1; limit=1; }
+  const page = ledger.listActiveAirings({ afterId, limit, nowMs,
+    ...(requestId === null ? {} : {requestId}) });
+  const watches = requestId === null || !Array.isArray(page) ? page :
+    page.filter(watch => watch.requestId === requestId);
   if (!Array.isArray(watches) || watches.length > limit ||
       watches.some((item, index) => !validId(item?.requestId) ||
         item.requestId <= (index === 0 ? afterId : watches[index - 1].requestId) ||
@@ -45,6 +53,19 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
         detail.episodes.length > 2_000) {
       results.push({ ...watch, ...held('detail_incomplete') });
       continue;
+    }
+    const missingNumber = expectedEpisodeNumbers.find(number => !detail.episodes.some(
+      episode => episode.type === 'Episode' && Number(episode.number) === number));
+    if (missingNumber !== undefined) {
+      try { await hydrateMetadata?.({anidbId:watch.anidbId,missingEpisodeNumber:missingNumber}); }
+      catch { /* Retain the durable watch deadline for later provider recovery. */ }
+      results.push({...watch,...held('episode_metadata_pending')});
+      continue;
+    }
+    if (expectedEpisodeNumbers.length && hydrateMetadata) {
+      try { await hydrateMetadata({anidbId:watch.anidbId,
+        missingEpisodeNumber:expectedEpisodeNumbers[0]}); }
+      catch { /* Existing complete metadata still permits the ordinary watch advance. */ }
     }
     if (typeof detail.restricted !== 'boolean') {
       results.push({ ...watch, ...held('restricted_or_unverified') });

@@ -24,3 +24,9 @@ test('requires Shoko explicit Unrecognized membership for the exact file ID', as
   assert.deepEqual(seen[0], ['/api/v3/File', 'Unrecognized', '100',
     'Bearer private']);
 });
+
+
+test('bounded pagination can confirm a file beyond the first hundred without inferring absence',async()=>{
+ const calls=[];const result=await readShokoUnrecognizedFile({baseUrl:'http://shoko:8111/',apiKey:'private',fileId:150,fetchImpl:async(url)=>{const p=Number(new URL(url).searchParams.get('page'));calls.push(p);return Response.json({Total:150,List:Array.from({length:p===1?100:50},(_,i)=>({ID:(p-1)*100+i+1}))});}});
+ assert.equal(result.state,'unrecognized');assert.deepEqual(calls,[1,2]);
+});

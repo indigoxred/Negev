@@ -94,15 +94,15 @@ test('rescans only two exact unlinked files in a mixed-layout season pack', asyn
   assert.deepEqual(calls, []);
   assert.equal((await processShokoRescan({ ...options,
     nowMs: 360_100 })).state, 'rescan_requested');
-  assert.deepEqual(calls, [81]);
+  assert.deepEqual(calls, [81,82]);
   assert.equal((await processShokoRescan({ ...options,
     nowMs: 360_101 })).state, 'awaiting_shoko');
-  assert.deepEqual(calls, [81]);
+  assert.deepEqual(calls, [81,82]);
   missing.delete(12);
   assert.equal((await processShokoRescan({ ...options,
-    nowMs: 420_100 })).state, 'observed');
+    nowMs: 420_100 })).state, 'awaiting_shoko');
   assert.equal((await processShokoRescan({ ...options,
-    nowMs: 480_100 })).state, 'rescan_requested');
+    nowMs: 480_100 })).state, 'awaiting_shoko');
   assert.deepEqual(calls, [81, 82]);
   missing.delete(13);
   assert.equal((await processShokoRescan({ ...options,
@@ -299,4 +299,83 @@ test('another playable copy cannot complete the rescanned file proof', async () 
   });
   assert.equal(result.state, 'awaiting_plex');
   assert.equal(saved.completion(), null);
+});
+
+
+test('a linked file without a prior rescan must wait for its exact Plex publication', async () => {
+  const saved = witness(); const video=manifest.files[0];
+  const options={ item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:4_000_000,
+    readQueue:async()=>({state:'busy'}),readFile:async({sourcePath})=>[linked(80,11,video.size,sourcePath)],rescan:async()=>{throw Error('must not rescan recognized file')},verifyPlex:async()=>({state:'unknown'})};
+  assert.equal((await processShokoRescan(options)).state,'awaiting_plex');
+  assert.equal(saved.completion(),null);
+  assert.equal((await processShokoRescan({...options,verifyPlex:async()=>({state:'available',fileId:80})})).state,'linked');
+  assert.equal(saved.completion(),'done');
+});
+
+test('provider failures and a busy Shoko queue remain recoverable after hours',async()=>{
+  for(const mode of ['provider','busy']){
+    const saved=witness(); const video=manifest.files[0];
+    const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:50_000_000,
+      readQueue:async()=>({state:'busy'}),readFile:async({sourcePath})=>{if(mode==='provider')throw Error('offline');return[unknown(80,video.size,sourcePath)]},rescan:async()=>{throw Error('no rescan')},verifyPlex:async()=>({state:'unknown'})});
+    assert.equal(saved.completion(),null);
+    assert.ok(['awaiting_shoko','held'].includes(result.state));
+    assert.equal(result.reason,mode==='provider'?'shoko_provider_unavailable':'shoko_processing');
+  }
+});
+
+test('an unresolved pack member later recognized clears review without another rescan',async()=>{
+  const saved=witness();const video=manifest.files[0];saved.files.set(video.name,{fileId:80,status:'unresolved',firstSeenMs:300100,updatedMs:660100});
+  const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:4_000_000,
+    readQueue:async()=>({state:'busy'}),readFile:async()=>[],rescan:async()=>{throw Error('once only')},verifyPlex:async()=>({state:'available',fileId:80})});
+  assert.equal(result.state,'linked');assert.equal(saved.completion(),'done');
+});
+
+
+test('missing local episode metadata is refreshed through the shared hydrator',async()=>{
+ const saved=witness();const video=manifest.files[0];const calls=[];
+ const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:300100,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>[crossReferencedOnly(80,11,video.size,sourcePath)],rescan:async()=>({state:'accepted'}),verifyPlex:async()=>({state:'unknown'}),hydrateMetadata:async(input)=>calls.push(input)});
+ assert.deepEqual(calls,[{anidbId:42,missingEpisodeId:11}]);assert.equal(result.state,'observed');
+});
+
+
+test('one ambiguous pack file cannot prevent independent pack members recovering',async()=>{
+ const saved=witness();let reads=[];
+ const result=await processShokoRescan({item,ledger:saved.ledger,importRoot,shokoMount,nowMs:400000,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>{const i=manifest.files.findIndex(f=>sourcePath.endsWith(f.name));reads.push(i);const f=manifest.files[i];return i===0?[{...linked(80,11,f.size,sourcePath),SeriesIDs:[{SeriesID:{ID:9,AniDB:99},EpisodeIDs:[{AniDB:11}]}]}]:[linked(80+i,f.episodeIds[0],f.size,sourcePath)];},rescan:async()=>{throw Error('no scan of linked member')},verifyPlex:async({episodeId})=>({state:'available',fileId:episodeId+69})});
+ assert.deepEqual(reads.sort(),[0,1,2]);assert.equal(result.state,'rescan_unresolved');assert.equal(saved.files.get(manifest.files[2].name).status,'linked');
+});
+
+
+test('missing AniDB episode metadata is hydrated before attempting file recovery',async()=>{
+ const saved=witness();const video=manifest.files[0];const calls=[];
+ const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:300100,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>[unknown(80,video.size,sourcePath)],readMetadata:async()=>({state:'missing'}),hydrateMetadata:async input=>calls.push(input),rescan:async()=>{throw Error('metadata not ready')},verifyPlex:async()=>({state:'unknown'})});
+ assert.equal(result.reason,'shoko_metadata_missing');assert.deepEqual(calls,[{anidbId:42,missingEpisodeId:11}]);assert.equal(saved.completion(),null);assert.equal(saved.files.size,0);
+});
+
+test('a moved known file awaits Plex publication rather than Shoko processing',async()=>{
+ const saved=witness();const video=manifest.files[0];const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:300100,
+ readQueue:async()=>({state:'busy'}),readFile:async({sourcePath})=>sourcePath==='/01 [BD].mkv'?[{...linked(80,11,video.size,'/import/Anime/Example/01 [BD].mkv'),Created:new Date(200).toISOString()}]:[],rescan:async()=>{throw Error('no rescan')},verifyPlex:async()=>({state:'unknown'})});
+ assert.equal(result.state,'awaiting_plex');assert.equal(result.reason,'plex_publication_pending');
+});
+
+
+test('large packs observe all members but dispatch at most four one-shot rescans per pass',async()=>{
+ const saved=witness(),calls=[];const videos=Array.from({length:20},(_,i)=>({name:'E'+i+'.mkv',size:1000+i,episodeIds:[100+i]}));
+ const options={item:{...item,manifest:{...manifest,files:videos}},ledger:saved.ledger,importRoot,shokoMount,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>{const i=videos.findIndex(v=>sourcePath.endsWith('/'+v.name));return[unknown(1000+i,videos[i].size,sourcePath)]},rescan:async({fileId})=>{calls.push(fileId);return{state:'accepted'}},verifyPlex:async()=>({state:'unknown'})};
+ assert.equal((await processShokoRescan({...options,nowMs:300100})).state,'observed');assert.equal(saved.files.size,20);
+ await processShokoRescan({...options,nowMs:360100});assert.equal(calls.length,4);
+ await processShokoRescan({...options,nowMs:420100});assert.equal(calls.length,8);assert.equal(new Set(calls).size,8);
+});
+
+
+test('missing path or metadata for one pack member cannot starve later recovery',async()=>{
+ for(const mode of ['path','metadata','provider']){
+ const saved=witness(),calls=[];const options={item,ledger:saved.ledger,importRoot,shokoMount,
+ readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>{const i=manifest.files.findIndex(f=>sourcePath.endsWith(f.name));if(i<0)return[];if(i===0&&mode==='path')return[];if(i===0&&mode==='provider')throw Error('temporary file lookup failure');return[unknown(80+i,manifest.files[i].size,sourcePath)]},readMetadata:async({episodeId})=>({state:mode==='metadata'&&episodeId===11?'missing':'present'}),hydrateMetadata:async()=>{},rescan:async({fileId})=>{calls.push(fileId);return{state:'accepted'}},verifyPlex:async()=>({state:'unknown'})};
+ await processShokoRescan({...options,nowMs:300100});assert.equal(saved.files.has(manifest.files[2].name),true);
+ await processShokoRescan({...options,nowMs:360100});assert.ok(calls.includes(82));
+ }
 });

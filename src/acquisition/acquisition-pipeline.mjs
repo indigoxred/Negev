@@ -71,6 +71,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   const running = { request: false, media: false };
   let holdingRecovered = false;
   let recoveryAfterId = 0;
+  let preferRecognitionRecovery = false;
   const run = (worker, lane = 'media') => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
@@ -132,7 +133,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     ...(recognitionRecoveries || shokoRescans ? { tickRecovery: () => run({
       runOnce: async () => {
         const due = shokoRescans?.listDue({ nowMs: now(), limit: 1 })[0];
-        if (due) {
+        const runRescan = async () => {
+          preferRecognitionRecovery = true;
           if (!due.manifest) {
             shokoRescans.endAttempt({ attemptId: due.attemptId,
               review: true, nowMs: now() });
@@ -144,7 +146,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
               requestId: result.requestId, nowMs: now() });
           }
           return result;
-        }
+        };
+        if (due && (!preferRecognitionRecovery || !recognitionRecoveries)) return runRescan();
         if (!recognitionRecoveries) return { state: 'idle' };
         let page = recognitionRecoveries.listPending({
           afterAttemptId: recoveryAfterId, limit: 20 });
@@ -156,7 +159,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
           !shokoRescans?.isEnrolled(candidate.attemptId) ||
           shokoRescans.getAttemptStatus(candidate.attemptId) === 'review');
         if (!item && page.length > 0) recoveryAfterId = page.at(-1).attemptId;
-        if (!item) return { state: 'idle' };
+        if (!item) return due ? runRescan() : { state: 'idle' };
+        preferRecognitionRecovery = false;
         recoveryAfterId = item.attemptId;
         const result = await sessionRunners.processRecovery({
           attemptId: item.attemptId });

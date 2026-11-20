@@ -74,7 +74,7 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
     const finishedMs = now();
     blockedUntilMs = failed ? finishedMs + Math.min(86_400_000,
       Math.max(retryAfterMs, 5 * 60_000 * 2 ** (failures - 1))) : 0;
-    nextPollMs = finishedMs + cadence;
+    nextPollMs = failed ? blockedUntilMs : finishedMs + cadence;
     schedule(Math.min(recheckMs, Math.max(1, nextPollMs - now())));
   };
   return {

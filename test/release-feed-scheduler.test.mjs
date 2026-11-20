@@ -42,7 +42,7 @@ test('no active watches cause no feed request and rate limits back off', async (
   interval = 3_600_000;
   await timers.shift().fn();
   assert.equal(reads, 1);
-  assert.equal(timers.at(-1).ms, 3_600_000);
+  assert.equal(timers.at(-1).ms, 300_000);
   await scheduler.stop();
 });
 

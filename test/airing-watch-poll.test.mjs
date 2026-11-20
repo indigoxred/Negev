@@ -207,3 +207,28 @@ test('an ended series stays watched until its expected final episode appears', a
       [1001, 1002, 1003]);
   } finally { ledger.close(); await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('an exact RSS watch refresh does not advance a different next watch',async()=>{
+ const calls=[];const result=await pollAiringWatches({requestId:7,today:'2026-01-20',intervalMs:0,
+ ledger:{listActiveAirings:options=>{calls.push(options);return[{requestId:8,anidbId:42}]},advanceAiring:()=>{throw Error('wrong watch')}},loadDetail:async()=>{throw Error('wrong read')}});
+ assert.equal(result.state,'page');assert.equal(result.results.length,0);assert.equal(calls[0].afterId,6);assert.equal(calls[0].limit,1);
+});
+
+
+test('RSS with a not-yet-cached episode number requests bounded metadata hydration',async()=>{
+ const calls=[];const result=await pollAiringWatches({requestId:7,expectedEpisodeNumbers:[3],today:'2026-03-01',intervalMs:0,
+ ledger:{listActiveAirings:()=>[{requestId:7,anidbId:42}],advanceAiring:()=>{throw Error('new target metadata not present')}},
+ loadDetail:async()=>details(42,{episodes:[{id:1001,number:1,type:'Episode',airDate:'2026-01-01'},{id:1002,number:2,type:'Episode',airDate:'2026-02-01'}]}),hydrateMetadata:async input=>calls.push(input)});
+ assert.deepEqual(calls,[{anidbId:42,missingEpisodeNumber:3}]);assert.equal(result.results[0].reason,'episode_metadata_pending');
+});
+
+
+test('an exact RSS follow-up bypasses only its metadata deadline and retains cancellation guards',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'negev-rss-followup-'));const dbPath=path.join(root,'requests.sqlite');const ledger=openRequestLedger(dbPath);const hydrated=[];let reads=0;
+ try{const saved=ledger.submit({requesterId:1,requestKey:'rss',nowMs:1,intent:{state:'ready',anidbId:42,kind:'series',monitorFuture:true,episodeIds:[1001]}});const options={ledger,requestId:saved.requestId,today:'2026-03-01',nowMs:10000,intervalMs:0,loadDetail:async()=>{reads++;return details(42,{total:1,episodes:[{id:1001,number:1,type:'Episode',airDate:'2026-01-01'}]})},hydrateMetadata:async input=>hydrated.push(input)};
+ await pollAiringWatches({...options,expectedEpisodeNumbers:[1]});assert.equal(ledger.listActiveAirings({nowMs:10001}).length,0);hydrated.length=0;
+ const second=await pollAiringWatches({...options,nowMs:10001,expectedEpisodeNumbers:[1,2]});assert.equal(second.results[0]?.reason,'episode_metadata_pending');assert.deepEqual(hydrated,[{anidbId:42,missingEpisodeNumber:2}]);
+ const db=new DatabaseSync(dbPath);db.prepare('UPDATE requests SET cancelled_ms=10002 WHERE id=?').run(saved.requestId);db.close();const before=reads;await pollAiringWatches({...options,nowMs:10003,expectedEpisodeNumbers:[2]});assert.equal(reads,before);
+ }finally{ledger.close();await rm(root,{recursive:true,force:true});}
+});

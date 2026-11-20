@@ -113,15 +113,43 @@ test('unresolved files remain recorded and finished attempts leave the sweep', a
     saved.rescan.endAttempt({ attemptId: saved.attemptId,
       review: true, nowMs: 720_210 });
     assert.equal(saved.rescan.listDue({ nowMs: 900_000 }).length, 0);
+    assert.equal(saved.rescan.listDue({ nowMs: 1_020_210 }).length, 1);
+    saved.rescan.endAttempt({attemptId:saved.attemptId,review:false,nowMs:1_020_211});
+    assert.equal(saved.rescan.listReviewNeeded().length,0);
     assert.equal(saved.rescan.getFile(saved.attemptId,
       saved.files[0].name).status, 'unresolved');
   } finally { await saved.close(); }
 });
 
-test('an import predating the rescan policy is not replayed', async () => {
+test('an existing active import predating the policy can be reconciled without a new download', async () => {
   const saved = await fixture({ policyBeforeAttempt: false });
   try {
-    assert.equal(saved.rescan.isEnrolled(saved.attemptId), false);
-    assert.equal(saved.rescan.listDue({ nowMs: 900_000 }).length, 0);
+    assert.equal(saved.rescan.isEnrolled(saved.attemptId), true);
+    assert.equal(saved.rescan.listDue({ nowMs: 900_000 }).length, 1);
   } finally { await saved.close(); }
+});
+
+
+test('recovery classification persists across restart and clears with proof',async()=>{
+ const saved=await fixture();let ledger=saved.rescan;try{
+ ledger.recordObservation({attemptId:saved.attemptId,state:'awaiting_plex',reason:'plex_publication_pending',nowMs:300209});
+ ledger.close();ledger=openShokoRescanLedger(saved.dbPath);
+ assert.equal(ledger.getObservation(saved.attemptId).reason,'plex_publication_pending');
+ ledger.endAttempt({attemptId:saved.attemptId,review:true,nowMs:300210});
+ ledger.recordObservation({attemptId:saved.attemptId,state:'linked',reason:'playable',nowMs:700000});
+ ledger.endAttempt({attemptId:saved.attemptId,review:false,nowMs:700000});
+ assert.equal(ledger.listReviewNeeded().length,0);
+ }finally{ledger.close();saved.moves.close();saved.acquisition.close();await rm(saved.root,{recursive:true,force:true});}
+});
+
+
+test('retry scheduling cannot clear an existing review without exact playback success',async()=>{
+ const saved=await fixture();try{
+ saved.rescan.endAttempt({attemptId:saved.attemptId,review:true,nowMs:300209});
+ saved.rescan.delayAttempt({attemptId:saved.attemptId,nextDueMs:420209,nowMs:360209});
+ assert.equal(saved.rescan.getAttemptStatus(saved.attemptId),'review');
+ assert.equal(saved.rescan.listReviewNeeded().length,1);
+ saved.rescan.endAttempt({attemptId:saved.attemptId,review:false,nowMs:420209});
+ assert.equal(saved.rescan.listReviewNeeded().length,0);
+ }finally{await saved.close();}
 });

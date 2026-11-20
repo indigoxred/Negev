@@ -1,3 +1,4 @@
+import { createReleaseWake, observedReleaseEpisodes } from '../acquisition/release-wake.mjs';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { openAccountLedger } from '../auth/account-ledger.mjs';
@@ -516,6 +517,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       if (request) candidateChecks.put({ request, candidate, result });
       return result;
     } : undefined;
+    const readAiringDetail = ({ anidbId }) => collectAniDbDetail({ anidbId,
+      loadPage: async ({ page }) => {
+        if (page > 1) await sleep(250);
+        return loadCurrentDetail({ anidbId, page });
+      } });
+    const wakeRelease = createReleaseWake({
+      wakeRequest: (id) => acquisitionRuntime?.wakeRequest(id),
+      pollWatch: (requestId, {releaseTitles = []}) => pollAiringWatches({ ledger: requests,
+        requestId, expectedEpisodeNumbers:observedReleaseEpisodes(releaseTitles),
+        hydrateMetadata:shokoHydration ? hydrateAndWake : null,
+        today: today(), nowMs: now(), loadDetail: readAiringDetail }),
+    });
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
         ledger: requests, afterId, limit, today: today(), nowMs: now(),
@@ -1157,6 +1170,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                   { includeProof: true }) });
           },
           discoverCandidates, previewCandidate, releaseQueries,
+          hydrateMetadata: shokoHydration ? hydrateAndWake : null,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {
               if (page > 1) await sleep(250);
@@ -1166,11 +1180,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         });
         return acquisitionRuntime;
       },
+      wakeReleaseRequest: (requestId, notification) => stopping ? Promise.resolve() : track(wakeRelease(requestId, notification)),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {
           stopping = true;
           stopPromise = (async () => {
+            await wakeRelease.close();
             try { await app.close(); }
             finally {
               await acquisitionRuntime?.stop();

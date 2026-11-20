@@ -1,3 +1,4 @@
+import { readShokoEpisodeMetadata } from './shoko-episode-metadata.mjs';
 import { createAcquisitionRequestProcessor } from './acquisition-request-processor.mjs';
 import { submitMissingCandidate } from './submit-missing-candidate.mjs';
 import { processRecordedStart } from './process-recorded-start.mjs';
@@ -32,7 +33,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function createAcquisitionStageProcessors({ requests, acquisitions,
   handoffs, pureMoves = null, recognitionRecoveries = null,
   shokoRescans = null, pureMode = false,
-  discoverCandidates, previewCandidate, loadDetail,
+  discoverCandidates, previewCandidate, loadDetail, hydrateMetadata = null,
   releaseQueries, readEvidence, readPublicCoverage, observePublicTarget,
   publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
@@ -150,7 +151,11 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         return held('rescan_unavailable');
       }
       return processShokoRescan({ item, ledger: shokoRescans,
-        importRoot, shokoMount, shokoSourcePath, nowMs: now(),
+        importRoot, shokoMount, shokoSourcePath, nowMs: now(), hydrateMetadata,
+        readMetadata: (target) => readShokoEpisodeMetadata({
+          baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,...target,fetchImpl:providerFetchImpl}),
+        readUnrecognized: ({fileId}) => readShokoUnrecognizedFile({
+          baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,fileId,fetchImpl:providerFetchImpl}),
         readQueue: () => readShokoImportActivity({ baseUrl: shoko.baseUrl,
           apiKey: shoko.apiKey, fetchImpl: providerFetchImpl }),
         readFile: async ({ sourcePath }) => {
@@ -179,7 +184,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       }
       return processRecognitionRecovery({ attemptId,
         recovery: recognitionRecoveries, pureMoves,
-        importRoot, holdingRoot, shokoMount,
+        importRoot, holdingRoot, shokoMount, shokoSourcePath,
         nowMs: now(),
         readQueue: () => readShokoImportActivity({ baseUrl: shoko.baseUrl,
           apiKey: shoko.apiKey, fetchImpl: providerFetchImpl }),

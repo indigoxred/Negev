@@ -19,18 +19,24 @@ export async function readShokoUnrecognizedFile({ baseUrl, apiKey, fileId,
     url.searchParams.set('include_only', 'Unrecognized');
     url.searchParams.set('pageSize', '100');
     url.searchParams.set('page', '1');
-    const response = await fetchImpl(url, { method: 'GET',
-      redirect: 'manual', headers: {
-        Authorization: `Bearer ${apiKey}`, Accept: 'application/json',
-      }, signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return { state: 'unavailable' };
-    const page = await readBoundedJson(response, 2_000_000);
-    if (!Number.isSafeInteger(page?.Total) || page.Total < 0 ||
-        page.Total > 100 || !Array.isArray(page.List) ||
-        page.List.length !== page.Total ||
-        page.List.some((item) => !Number.isSafeInteger(item?.ID) ||
-          item.ID < 1)) return { state: 'unavailable' };
-    return { state: page.List.some((item) => item.ID === fileId)
-      ? 'unrecognized' : 'not_unrecognized' };
+    let total=null;
+    const seen = new Set();
+    const signal=AbortSignal.timeout(timeoutMs);
+    for(let number=1;number<=10;number++) {
+      url.searchParams.set('page',String(number));
+      const response=await fetchImpl(url,{method:'GET',redirect:'manual',headers:{
+        Authorization:`Bearer ${apiKey}`,Accept:'application/json'},signal});
+      if(response.status!==200)return {state:'unavailable'};
+      const page=await readBoundedJson(response,2000000);
+      if(!Number.isSafeInteger(page?.Total)||page.Total<0||page.Total>1000||
+        total!==null&&total!==page.Total||!Array.isArray(page.List)||
+        page.List.length!==Math.min(100,Math.max(0,page.Total-(number-1)*100))||
+        page.List.some(x=>!Number.isSafeInteger(x?.ID)||x.ID<1||seen.has(x.ID)))return {state:'unavailable'};
+      total=page.Total;
+      for(const x of page.List){if(seen.has(x.ID))return {state:'unavailable'};seen.add(x.ID);}
+      if(seen.has(fileId))return {state:'unrecognized'};
+      if(seen.size===total)return {state:'not_unrecognized'};
+    }
+    return {state:'unavailable'};
   } catch { return { state: 'unavailable' }; }
 }
