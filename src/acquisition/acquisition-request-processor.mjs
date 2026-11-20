@@ -1,7 +1,7 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
-import { assessRelease, compareReleases, hasSeasonPackHint,
+import { assessRelease, compareReleases, compareReleaseSuitability, hasSeasonPackHint,
   hasSingleEpisodeHint } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
@@ -314,10 +314,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       }
       if (uncertainSelection && requireReleasePolicy &&
           !uncertainPackPhase) {
-        const uncertainQuality = assessRelease(uncertainSelection.candidate);
-        const exactQuality = assessRelease(candidate);
-        if (uncertainQuality.healthyPeers === exactQuality.healthyPeers &&
-            uncertainQuality.quality > exactQuality.quality) {
+        if (compareReleaseSuitability(uncertainSelection.candidate, candidate) < 0) {
           selected = uncertainSelection;
           nextIndex = uncertainSelection.index + 1;
           break;
@@ -332,10 +329,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           preview.shokoPreview === 'exact' && consumed.some((id) => {
             const prior = currentById.get(id);
             if (!prior) return false;
-            const priorQuality = assessRelease(prior);
-            const currentQuality = assessRelease(candidate);
-            return priorQuality.healthyPeers === currentQuality.healthyPeers &&
-              priorQuality.quality > currentQuality.quality;
+            return compareReleaseSuitability(prior, candidate) < 0;
           })) continue;
       selected = { candidate, preview };
       break;

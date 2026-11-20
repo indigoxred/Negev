@@ -62,6 +62,18 @@ export function assessRelease(candidate) {
   };
 }
 
+// Recognition may break a tie in this tier, never reverse it. Keep the same
+// viability/quality policy in initial ordering and final preview selection.
+export function compareReleaseSuitability(left, right) {
+  const a = assessRelease(left);
+  const b = assessRelease(right);
+  if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
+  if (a.healthyPeers !== b.healthyPeers) {
+    return Number(b.healthyPeers) - Number(a.healthyPeers);
+  }
+  return b.quality - a.quality;
+}
+
 export function compareReleases(left, right, { preferSeasonPack = false } = {}) {
   const a = assessRelease(left);
   const b = assessRelease(right);
@@ -73,10 +85,8 @@ export function compareReleases(left, right, { preferSeasonPack = false } = {}) 
     return Number(right.targetedEpisode === true) -
       Number(left.targetedEpisode === true);
   }
-  if (a.healthyPeers !== b.healthyPeers) {
-    return Number(b.healthyPeers) - Number(a.healthyPeers);
-  }
-  if (a.quality !== b.quality) return b.quality - a.quality;
+  const suitability = compareReleaseSuitability(left, right);
+  if (suitability !== 0) return suitability;
   if (a.trusted !== b.trusted) return Number(b.trusted) - Number(a.trusted);
   if (a.subtitleHint !== b.subtitleHint) {
     return Number(b.subtitleHint) - Number(a.subtitleHint);
