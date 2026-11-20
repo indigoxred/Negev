@@ -60,6 +60,20 @@ let detailPollTimer = null;
 let trackingPrefsPromise = null;
 let trackingSaving = false;
 const genreSelections = { season: new Set(), airing: new Set() };
+const dropdownSelector = '#identity[open], .genre-picker[open]';
+document.addEventListener('click', (event) => {
+  for (const menu of document.querySelectorAll(dropdownSelector)) {
+    if (!menu.contains(event.target)) menu.open = false;
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  for (const menu of document.querySelectorAll(dropdownSelector)) {
+    const hadFocus = menu.contains(document.activeElement);
+    menu.open = false;
+    if (hadFocus) menu.querySelector('summary')?.focus();
+  }
+});
 let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
 function message(text, error = false) {
   const node = byId('message');
@@ -274,7 +288,7 @@ function applyAdultVisibility() {
   toggle.title = toggle.disabled ? '18+ access is disabled for this account' :
     'Show or hide titles marked 18+';
   const chinese = byId('chinese-toggle');
-  chinese.textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
+  chinese.querySelector('span').textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
   chinese.setAttribute('aria-pressed', String(state.showChinese));
   chinese.title = 'Show or hide titles tagged Chinese production';
 }
@@ -2002,10 +2016,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       alias.dataset.titleAlias = display.englishTitle;
       main.append(alias);
     }
-    if (display.description) {
-      const description = element('p', display.description, 'detail-description');
-      main.append(description);
-      if (display.description.length > 600) {
+    const synopsis = typeof display.description === 'string'
+      ? display.description.trim() : '';
+    const description = element('p', synopsis ||
+      'No synopsis is available for this title yet.', 'detail-description');
+    main.append(description);
+    if (synopsis) {
+      if (synopsis.length > 600) {
         description.classList.add('is-collapsed');
         const toggle = element('button', 'Read full synopsis',
           'detail-description-toggle');

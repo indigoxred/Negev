@@ -215,6 +215,72 @@ async function inspectMobile(url, profile, width = 390) {
         return {right: account.querySelector('.account-menu').getBoundingClientRect().right,
           signoutVisible: signout.getBoundingClientRect().width > 0}; })()`,
     });
+    const dropdowns = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => {
+        const account = document.querySelector('#identity');
+        account.open = true;
+        document.querySelector('#username').click();
+        const accountInside = account.open;
+        document.querySelector('main').click();
+        const accountOutside = !account.open;
+        const picker = document.querySelector('#season-form .genre-picker');
+        picker.open = true;
+        const search = picker.querySelector('input[type=search]');
+        search.click();search.focus();search.value='genre 55';search.dispatchEvent(new Event('input',{bubbles:true}));
+        const genreSearch=picker.open && Boolean(picker.querySelector('input[type=checkbox]'));
+        const choice = picker.querySelector('input[type=checkbox]');
+        const before = choice.checked; choice.click();
+        const genreInside = picker.open && choice.checked !== before;
+        const selected = choice.checked;
+        document.querySelector('.brand span').click();
+        const genreOutside = !picker.open && choice.checked === selected;
+        picker.open = true;
+        search.focus();
+        search.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true}));
+        const escape = !picker.open && document.activeElement === picker.querySelector('summary');
+        choice.click();
+        const airing = document.querySelector('#airing-form .genre-picker');
+        airing.open = true;
+        document.querySelector('main').click();
+        return {accountInside,accountOutside,genreInside,genreOutside,genreSearch,escape,
+          airingOutside:!airing.open};
+      })()`,
+    });
+    await send('Page.navigate',{url:url.replace('#/discover','#/airing')});
+    await wait(500);
+    const airingDropdown=await send('Runtime.evaluate',{returnByValue:true,
+      expression:`(() => {const picker=document.querySelector('#airing-form .genre-picker');
+        const visible=picker.getBoundingClientRect().height>0;
+        picker.querySelector('summary').click();
+        const search=picker.querySelector('input[type=search]');search.click();search.focus();
+        search.value='genre';search.dispatchEvent(new Event('input',{bubbles:true}));
+        const searchInside=picker.open;
+        const choice=picker.querySelector('input[type=checkbox]');
+        const before=choice.checked;choice.click();const checkboxInside=picker.open&&choice.checked!==before;
+        const selected=choice.checked;document.querySelector('main').click();
+        const outside=!picker.open&&choice.checked===selected;
+        picker.querySelector('summary').click();search.focus();
+        search.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
+        const escape=!picker.open&&document.activeElement===picker.querySelector('summary');
+        choice.click();return{visible,searchInside,checkboxInside,outside,escape};})()`});
+    await send('Page.navigate',{url});await wait(300);
+    const toggleGeometry = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => { const toggle = document.querySelector('#chinese-toggle');
+        const account = document.querySelector('#identity');
+        const measure = () => { const b=toggle.getBoundingClientRect();
+          const range=document.createRange();range.selectNodeContents(toggle);
+          const css=getComputedStyle(toggle);
+          return {width:b.width,height:b.height,accountLeft:account.getBoundingClientRect().left,
+            fits:range.getBoundingClientRect().width<=b.width-parseFloat(css.borderLeftWidth)-parseFloat(css.borderRightWidth)-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)}; };
+        const on=measure();toggle.click();const off=measure();toggle.click();
+        const restored=measure();const original=toggle.style.fontFamily;
+        const fontChecks=['serif','monospace','Arial'].map(font=>{
+          toggle.style.fontFamily=font;const before=measure();toggle.click();const after=measure();toggle.click();
+          return {font,stable:before.width===after.width&&before.height===after.height&&before.accountLeft===after.accountLeft,
+            fits:before.fits&&after.fits};
+        });toggle.style.fontFamily=original;
+        return {on,off,restored,fontChecks}; })()`,
+    });
     const adultChoice = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const toggle = document.querySelector('#adult-toggle');
         const before = toggle.getAttribute('aria-pressed'); toggle.click();
@@ -263,6 +329,13 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
     await wait(800);
+    const longSynopsis=await send('Runtime.evaluate',{returnByValue:true,
+      expression:`(() => {const description=document.querySelector('#detail .detail-description');
+        const toggle=document.querySelector('#detail .detail-description-toggle');
+        const collapsed=description.classList.contains('is-collapsed');toggle.click();
+        const expanded=!description.classList.contains('is-collapsed')&&toggle.getAttribute('aria-expanded')==='true';
+        toggle.click();return{collapsed,expanded,collapsedAgain:description.classList.contains('is-collapsed'),
+          label:toggle.textContent};})()`});
     const titleTrack = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const button = document.querySelector('#detail .detail-action-row .track-toggle');
         return {label: button?.textContent, enabled: !button?.disabled,
@@ -567,7 +640,22 @@ async function inspectMobile(url, profile, width = 390) {
       })()` });
       await wait(300);
     }
-    return { ...result.value,
+    const synopsis = [];
+    for (const id of [8,9]) {
+      await send('Page.navigate', {url:url.replace('#/discover','#/title/'+id)});
+      for(let attempt=0;attempt<40;attempt++) {
+        const ready=await send('Runtime.evaluate',{returnByValue:true,
+          expression:"Boolean(document.querySelector('#detail .detail-main'))"});
+        if(ready.result.value)break;
+        await wait(100);
+      }
+      const entry=await send('Runtime.evaluate',{returnByValue:true,
+        expression:`({text:document.querySelector('#detail .detail-description')?.textContent,
+          expand:Boolean(document.querySelector('#detail .detail-description-toggle'))})`});
+      synopsis.push(entry.result.value);
+    }
+    return { ...result.value, dropdowns:dropdowns.result.value,airingDropdown:airingDropdown.result.value,longSynopsis:longSynopsis.result.value,
+      toggleGeometry:toggleGeometry.result.value,synopsis,
       browseScroll: { first: browseFirst.result.value,
         after: browseScrolled.result.value, sorted: browseSorted.result.value,
         retry: browseRetry.result.value, recovered: browseRecovered.result.value },
@@ -950,7 +1038,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.end(JSON.stringify({ state: 'display',
           anidbId: movie ? 8 : 9,
           title: movie ? 'Film extras only' : 'Series Special only',
-          restricted: false }));
+          restricted: false, description: movie ? null : "   " }));
         return;
       }
       if (path === '/api/catalogue/42') {
@@ -1180,9 +1268,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       if (path === '/api/catalogue/4158/display') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId: 4158,
-          title: 'Pale Cocoon', englishTitle: null, type: 'OVA',
+          title: 'Pale Cocoon', englishTitle: null, type: 'OVA', restricted: false,
           startYear: 2005, startDate: '2005-12-10', endDate: '2005-12-10',
-          episodeCount: 1, description: 'A quiet archive and a lost world.',
+          episodeCount: 1, description: 'A quiet archive and a lost world. '.repeat(30),
           tags: ['Science fiction'] }));
         return;
       }
@@ -1263,6 +1351,20 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
       assert.equal(mobile.width, 390);
+      for(const view of [mobile]) {
+        assert.deepEqual(view.dropdowns,{accountInside:true,accountOutside:true,
+          genreInside:true,genreOutside:true,genreSearch:true,escape:true,airingOutside:true});
+        assert.deepEqual(view.airingDropdown,{visible:true,searchInside:true,checkboxInside:true,outside:true,escape:true});
+        assert.deepEqual(view.longSynopsis,{collapsed:true,expanded:true,collapsedAgain:true,label:'Read full synopsis'});
+        assert.deepEqual(view.toggleGeometry.on,view.toggleGeometry.off,
+          'Chinese toggle and adjacent Account position stay identical in both states');
+        assert.deepEqual(view.toggleGeometry.on,view.toggleGeometry.restored);
+        assert.equal(view.toggleGeometry.on.fits,true,'both toggle labels fit without clipping');
+        assert.ok(view.toggleGeometry.fontChecks.every(result=>result.stable&&result.fits),JSON.stringify(view.toggleGeometry.fontChecks));
+        assert.deepEqual(view.synopsis,[
+          {text:'No synopsis is available for this title yet.',expand:false},
+          {text:'No synopsis is available for this title yet.',expand:false}]);
+      }
       assert.equal(mobile.hasContent, true);
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
@@ -1398,6 +1500,13 @@ test('signed-in consumer routes render real shell with search, library and reque
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.equal(desktopRelated.franchise.posterCards, 7);
+      assert.deepEqual(desktopRelated.dropdowns,mobile.dropdowns);
+      assert.deepEqual(desktopRelated.airingDropdown,mobile.airingDropdown);
+      assert.deepEqual(desktopRelated.longSynopsis,mobile.longSynopsis);
+      assert.deepEqual(desktopRelated.toggleGeometry.on,desktopRelated.toggleGeometry.off);
+      assert.equal(desktopRelated.toggleGeometry.on.fits,true);
+      assert.ok(desktopRelated.toggleGeometry.fontChecks.every(result=>result.stable&&result.fits),JSON.stringify(desktopRelated.toggleGeometry.fontChecks));
+      assert.deepEqual(desktopRelated.synopsis,mobile.synopsis);
       assert.equal(desktopRelated.franchise.before.count,
         desktopRelated.franchise.before.capacity,
         'initial desktop view fills its first row');
