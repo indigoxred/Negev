@@ -13,6 +13,15 @@ const validPassword = (value) => typeof value === 'string' &&
   Buffer.byteLength(value, 'utf8') >= 12 && Buffer.byteLength(value, 'utf8') <= 128 &&
   !/[\x00-\x1f\x7f]/.test(value);
 const digest = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+export function invitedAccountValidation({ code, username, password } = {}) {
+  if (typeof code !== 'string' || !/^[a-f0-9]{64}$/.test(code)) return {
+    field: 'code', error: 'Enter the complete 64-character invitation code supplied by the owner.' };
+  if (!validUsername(username)) return { field: 'username',
+    error: 'Username must be 3–32 characters, start with a letter, and use only letters, numbers or underscores.' };
+  if (!validPassword(password)) return { field: 'password',
+    error: 'Password must be 12–128 UTF-8 bytes and cannot contain tabs, line breaks or other control characters.' };
+  return null;
+}
 async function hashPassword(password, salt) {
   return (await scrypt(password, Buffer.from(salt, 'hex'), 32,
     { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })).toString('hex');
@@ -153,8 +162,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       return { state: 'created', code, expiresMs };
     },
     async registerInvite({ code, username, password }) {
-      if (typeof code !== 'string' || !/^[a-f0-9]{64}$/.test(code) ||
-          !validUsername(username) || !validPassword(password)) {
+      if (invitedAccountValidation({ code, username, password })) {
         throw new TypeError('Invalid invited account');
       }
       const codeHash = digest(code);

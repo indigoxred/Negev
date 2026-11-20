@@ -646,6 +646,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         await titleSource?.refresh();
         const page = pendingTitles.listForUser(input);
         const items = await Promise.all(page.items.map(async (item) => ({ ...item,
+          title: titleSource?.getTitle(item.anidbId) ?? item.title,
           englishTitle: await englishTitleFor(item.anidbId) })));
         return { ...page, items };
       },
@@ -673,7 +674,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
         await titleSource?.refresh();
-        const page = requests.listRequests(input);
+        const target = input.requestId ? requests.getRequest(input.requestId) : null;
+        const page = input.requestId ? { items: target &&
+          (input.scope === 'all' || target.requesterId === input.requesterId) ? [target] : [], nextBeforeId: null }
+          : requests.listRequests(input);
         const englishTitles = await Promise.all(page.items.map((item) =>
           englishTitleFor(item.anidbId)));
         const ownerNames = input.scope === 'all'
@@ -702,6 +706,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           const local = progress.read(item.id,{availableEpisodeIds:coverage?.availableEpisodeIds??[]});
           if(coverage){const {availableEpisodeIds,...publicCoverage}=coverage;coverage=publicCoverage;}
           return { ...item,
+            title: titleSource?.getTitle(item.anidbId) ??
+              titleRegistry.getTitle({ anidbId: item.anidbId }) ?? item.title,
             preferredWait:requests.getPreferredWait(item.id,checkedMs),
             releaseSelection: (()=>{const c=requests.getReleaseControl(item.id,checkedMs);
               return ['selecting','proposal','chosen'].includes(c.phase)
@@ -819,7 +825,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           libraryPresence: publicPresenceForTitle(item.anidbId, checkedMs) })) };
       },
       titleRegistry, confirmKnownTitle, loadDetail: async (input) => {
-        const detail = await loadFastDetail(input);
+        const loaded = await loadFastDetail(input);
+        const detail = loaded?.state === 'details' ? { ...loaded,
+          title: titleSource?.getTitle(loaded.anidbId) ?? loaded.title,
+          englishTitle: titleSource?.getEnglishTitle(loaded.anidbId) ?? loaded.englishTitle ?? null } : loaded;
         if (detail?.state !== 'details' || !Array.isArray(detail.episodes) ||
             detail.episodes.length > 100) return detail;
         const originalTitle = titleSource?.getTitle(detail.anidbId) ?? null;
@@ -887,11 +896,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       getTitleCheck: titleChecks ? ({ anidbId }) =>
         titleChecks.getProgress({ anidbId, nowMs: now() }) : undefined,
       discoverCandidates, previewCandidate, releaseSelection,
-      listOperationalReview: (input) => listOperationalReview({
+      listOperationalReview: async (input) => {
+        await titleSource?.refresh();
+        const page = listOperationalReview({
         acquisitions, publishQueue: publishReview,
         startQueue: startReview, completionQueue: completionReview,
         shokoRescans,
-        ...input }),
+        ...input });
+        return page.state !== 'review' ? page : { ...page, items: page.items.map(item => ({ ...item,
+          title: titleSource?.getTitle(item.anidbId) ??
+            titleRegistry.getTitle({ anidbId: item.anidbId }) ?? requests.getRequest(item.requestId)?.title ?? `Anime ${item.anidbId}`,
+          englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null })) };
+      },
       probeRequestTargets: plexObserver ? ({ request, episodeIds }) =>
         probeTargetPresence({ anidbId: request.anidbId,
           kind: request.kind, episodeIds, now,

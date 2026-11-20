@@ -16,8 +16,10 @@ const asArray = (value) => value == null ? [] : Array.isArray(value) ? value : [
 const unavailable = () => ({ state: 'unavailable' });
 
 function textFor(value) {
-  const choices = asArray(value).filter((item) => typeof item?.['#text'] === 'string');
-  const picked = choices.find((item) => item['@lang'] === 'en') ??
+  const choices = asArray(value).filter((item) => typeof item?.['#text'] === 'string' &&
+    !['short','3'].includes(item['@type']));
+  const picked = choices.find((item) => item['@lang'] === 'en' && item['@type'] === 'official') ??
+    choices.find((item) => item['@lang'] === 'en') ??
     choices.find((item) => item['@type'] === 'main') ?? choices[0];
   return picked?.['#text']?.trim() ?? '';
 }

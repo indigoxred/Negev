@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
+import { invitedAccountValidation } from '../auth/account-ledger.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
@@ -219,16 +220,23 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const body = request.body;
     if (!allowedBody(body, ['code', 'username', 'password']) ||
         !['code', 'username', 'password'].every((key) => Object.hasOwn(body, key))) {
-      return reply.code(400).send({ error: 'Invalid registration' });
+      return reply.code(400).send({ error: 'Enter an invitation code, username and password using the registration form.' });
     }
+    const normalized = { ...body,
+      code: typeof body.code === 'string' ? body.code.trim().toLowerCase() : body.code,
+      username: typeof body.username === 'string' ? body.username.trim() : body.username };
+    const invalid = invitedAccountValidation(normalized);
+    if (invalid) return reply.code(400).send(invalid);
     let user;
-    try { user = await accounts.registerInvite(body); }
-    catch (error) { if (error instanceof TypeError) return reply.code(400).send({ error: 'Invalid registration' }); throw error; }
+    try { user = await accounts.registerInvite(normalized); }
+    catch (error) { if (error instanceof TypeError) return reply.code(400).send({ error: 'Registration could not be completed. Check the fields and retry.' }); throw error; }
     if (user.state === 'held' && user.reason === 'authentication_busy') {
       return reply.header('Retry-After', '1').code(503)
         .send({ error: 'Authentication busy; retry shortly' });
     }
-    if (user.state === 'held') return reply.code(409).send({ error: 'Invitation unavailable' });
+    if (user.state === 'held') return reply.code(409).send(user.reason === 'username_unavailable'
+      ? { field: 'username', error: 'That username is unavailable. Choose another; your invitation has not been used.' }
+      : { field: 'code', error: 'This invitation is invalid, expired or already used. Ask the owner for a new invitation.' });
     return reply.code(201).send({ user: { id: user.id, username: user.username, role: user.role } });
   });
   app.post('/api/login', { preHandler: requireOrigin,
@@ -547,8 +555,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     return { state: 'review', nextAfterAttemptId: result.nextAfterAttemptId,
       items: result.items.map(({ attemptId, requestId, anidbId,
-        stage, reason, observedMs }) =>
-        ({ attemptId, requestId, anidbId, stage, reason, observedMs })) };
+        stage, reason, observedMs, title, englishTitle }) =>
+        ({ attemptId, requestId, anidbId, stage, reason, observedMs,
+          title: typeof title === 'string' && title.trim() && title.length <= 500 &&
+            !/[\x00-\x1f\x7f]/.test(title) ? title : `Anime ${anidbId}`,
+          englishTitle: typeof englishTitle === 'string' && englishTitle.trim() &&
+            englishTitle.length <= 500 && !/[\x00-\x1f\x7f]/.test(englishTitle) ? englishTitle : null })) };
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
@@ -1037,10 +1049,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   app.get('/api/requests', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (typeof listRequests !== 'function') return reply.code(503).send({ error: 'Request history unavailable' });
-    const { beforeId: rawBefore, limit: rawLimit, view = 'all', scope = 'mine' } = request.query;
+    const { beforeId: rawBefore, limit: rawLimit, requestId: rawRequestId, view = 'all', scope = 'mine' } = request.query;
+    const requestId = rawRequestId === undefined ? null : Number(rawRequestId);
     const beforeId = rawBefore === undefined ? Number.MAX_SAFE_INTEGER : Number(rawBefore);
     const limit = rawLimit === undefined ? 20 : Number(rawLimit);
-    if (Object.keys(request.query).some((key) => !['beforeId', 'limit', 'view', 'scope'].includes(key)) ||
+    if (Object.keys(request.query).some((key) => !['beforeId', 'limit', 'view', 'scope', 'requestId'].includes(key)) ||
+        rawRequestId !== undefined && (typeof rawRequestId !== 'string' || !/^[1-9]\d*$/.test(rawRequestId) || !Number.isSafeInteger(requestId)) ||
         !['all', 'watching', 'history'].includes(view) ||
         !['mine', 'all'].includes(scope) ||
         (rawBefore !== undefined && (typeof rawBefore !== 'string' || !/^[1-9]\d*$/.test(rawBefore))) ||
@@ -1052,7 +1066,13 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (scope === 'all' && request.negevUser.role !== 'admin') {
       return reply.code(403).send({ error: 'Owner access required' });
     }
-    return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view, scope });
+    if (requestId !== null) {
+      const target = readRequest(requestId);
+      if (!target || (request.negevUser.role !== 'admin' && target.requesterId !== request.negevUser.id))
+        return reply.code(404).send({ error: 'Request not found' });
+    }
+    return listRequests({ requesterId: request.negevUser.id, beforeId, limit, view, scope,
+      ...(requestId === null ? {} : { requestId }) });
   });
   app.get('/api/request-preparations', { preHandler: requireUser },
   async (request, reply) => {

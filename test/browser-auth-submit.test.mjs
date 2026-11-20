@@ -38,9 +38,11 @@ test('browser completes successful login and registration submit transitions',
         const calls = [];
         let currentMessage = '';
         let selectedTab = 'register';
+        let failRegistration=false;
         const api = async (path) => {
           calls.push(path);
           await new Promise((resolve) => setTimeout(resolve, 1));
+          if(path==='/api/register'&&failRegistration){const e=new Error('Username must be 3–32 characters, start with a letter, and use only letters, numbers or underscores.');e.field='username';throw e;}
           return {};
         };
         const refreshSession = async () => { calls.push('refreshSession'); return true; };
@@ -65,9 +67,11 @@ test('browser completes successful login and registration submit transitions',
           byId('register-form').elements.password.value = 'secret';
           byId('register-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
           await settle();
-          byId('result').textContent = JSON.stringify({ login: loginResult,
-            register: { calls, message: currentMessage, tab: selectedTab,
-              field: byId('register-form').elements.username.value } });
+          const registerResult={calls:[...calls],message:currentMessage,tab:selectedTab,field:byId('register-form').elements.username.value};
+          failRegistration=true;byId('register-form').elements.username.value='bad name';
+          byId('register-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await settle();
+          byId('result').textContent = JSON.stringify({ login: loginResult,register:registerResult,
+            failure:{message:currentMessage,field:byId('register-form').elements.username.value,focused:document.activeElement===byId('register-form').elements.username} });
         })();
       </script>`;
     const dir = mkdtempSync(join(tmpdir(), 'negev-browser-auth-'));
@@ -92,6 +96,8 @@ test('browser completes successful login and registration submit transitions',
       assert.equal(result.register.message, 'Account created. Sign in to continue.');
       assert.equal(result.register.tab, 'login');
       assert.equal(result.register.field, '');
+      assert.match(result.failure.message,/Username must be 3–32/);
+      assert.equal(result.failure.field,'bad name');assert.equal(result.failure.focused,true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
