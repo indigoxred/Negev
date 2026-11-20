@@ -35,7 +35,7 @@ The current source includes guarded components for these flows. Genuine installe
 
 ## Safe Docker example
 
-[`compose.example.yaml`](compose.example.yaml) pins the versioned v0.0.257 image for a Linux host-network preview of catalogue search and requests. It binds Negev to `127.0.0.1:3000` and keeps acquisition off. Create a private host data directory **outside this checkout**, owned by UID 1000 with mode `0700`, and place a dedicated Shoko API key in `secrets/shoko.token` with mode `0600`. Set `NEGEV_HOST_DATA` and the locally reachable `NEGEV_SHOKO_URL` in your shell or a gitignored `.env` beside the Compose file. The `.env.example` values are placeholders, not credentials. Review the image tag and release notes before updating an installed service; this example never follows `latest` automatically.
+[`compose.example.yaml`](compose.example.yaml) pins the versioned v0.0.258 image for a Linux host-network preview of catalogue search and requests. It binds Negev to `127.0.0.1:3000` and keeps acquisition off. Create a private host data directory **outside this checkout**, owned by UID 1000 with mode `0700`, and place a dedicated Shoko API key in `secrets/shoko.token` with mode `0600`. Set `NEGEV_HOST_DATA` and the locally reachable `NEGEV_SHOKO_URL` in your shell or a gitignored `.env` beside the Compose file. The `.env.example` values are placeholders, not credentials. Review the image tag and release notes before updating an installed service; this example never follows `latest` automatically.
 
 Before the first start, create the owner account with the same Compose configuration. On a Linux shell, enter a 12–128 byte password at the prompt:
 
