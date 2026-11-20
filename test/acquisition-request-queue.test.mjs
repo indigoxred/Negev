@@ -556,11 +556,11 @@ test('a forward candidate cursor can continue next pass without a 30-minute dela
       queue.recordResult({ requestId: 1, pass: second.pass, state: 'held',
         reason: 'provider_unavailable', nextCandidateOffset: 1,
         nextCandidateFingerprint: fingerprint, checkedMs: 101 });
-      assert.equal(queue.getResult(1).nextDueMs, 1_800_101);
+      assert.equal(queue.getResult(1).nextDueMs, 60_101);
     } finally { queue.close(); }
   }));
 
-test('a candidate scan keeps its original start across pages and resets after exhaustion', async () =>
+test('a candidate scan keeps its original start across pages and exhausted retries', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
     const fingerprint = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
@@ -584,9 +584,53 @@ test('a candidate scan keeps its original start across pages and resets after ex
       queue.claimNext({ nowMs: 302 });
       const third = queue.claimNext({ nowMs: 1_800_302 });
       assert.equal(third.requestId, 1);
-      assert.equal(queue.getScanStartedMs(1), 1_800_302);
+      assert.equal(queue.getScanStartedMs(1), 100);
     } finally { queue.close(); }
   }));
+
+test('startup restores permanent busy-reader request deadlines without resetting elapsed time', async () =>
+  fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    const claim = queue.claimNext({ nowMs: 100 });
+    queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+      state: 'held', reason: 'metadata_reader_busy', checkedMs: 200 });
+    queue.close();
+    const db = new DatabaseSync(dbPath);
+    db.exec('UPDATE acquisition_request_checks SET next_due_ms=NULL WHERE request_id=1');
+    db.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 60_200);
+      assert.equal(queue.getScanStartedMs(1), 100);
+      assert.equal(queue.listMetadataRetries({ nowMs: 300 })[0].requestId, 1);
+    } finally { queue.close(); }
+  }));
+
+test('a newly aired target becomes immediately due and starts its own decision clock', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-new-target-clock-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'watch', nowMs: 1,
+    intent: { ...intent, monitorFuture: true } });
+  const queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    const claim = queue.claimNext({ nowMs: 100 });
+    queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+      reason: 'no_release_candidates', nextCandidateOffset: 0, checkedMs: 200 });
+    assert.equal(queue.getDecisionTiming(1).elapsedMs, 100);
+    const advanced = requests.advanceAiring({ requestId: 1, releaseState: 'airing', today: '2026-11-20',
+      detail: { state: 'details', complete: true, anidbId: 42, kind: 'series',
+        title: 'Example', total: 2, page: 1, nextPage: null, restricted: false,
+        episodes: [1,2].map(number => ({ id: 1000 + number, number, type: 'Episode',
+          title: String(number), airDate: '2026-11-19' })) } });
+    assert.deepEqual(advanced.addedEpisodeIds, [1002], JSON.stringify(advanced));
+    assert.equal(queue.listMetadataRetries({ nowMs: 300 })[0].nextDueMs, 0);
+    const next = queue.claimNext({ nowMs: 300, priorityRequestId: 1 });
+    assert.equal(next.state, 'claimed');
+    assert.equal(queue.getScanStartedMs(1), 300);
+    assert.equal(queue.getDecisionTiming(1).decisionMs, null);
+  } finally { queue.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
+});
 
 test('a legacy timed-out candidate scan resumes promptly after reopening', async () =>
   fixture(async (dbPath) => {
@@ -599,7 +643,7 @@ test('a legacy timed-out candidate scan resumes promptly after reopening', async
         nextCandidateOffset: 1, nextCandidateFingerprint: fingerprint,
         checkedMs: 900_101 });
       assert.equal(queue.getResult(1).nextDueMs, 960_101);
-      assert.equal(queue.getScanStartedMs(1), null);
+      assert.equal(queue.getScanStartedMs(1), 100);
     } finally { queue.close(); }
     const legacy = new DatabaseSync(dbPath);
     legacy.prepare(`UPDATE acquisition_request_checks SET next_due_ms=?
@@ -614,11 +658,11 @@ test('a legacy timed-out candidate scan resumes promptly after reopening', async
       const next = queue.claimNext({ nowMs: 960_101 });
       assert.equal(next.requestId, 1);
       assert.equal(next.candidateOffset, 1);
-      assert.equal(queue.getScanStartedMs(1), 960_101);
+      assert.equal(queue.getScanStartedMs(1), 100);
     } finally { queue.close(); }
   }));
 
-test('a changed policy fingerprint starts a fresh scan clock', async () =>
+test('a changed candidate policy fingerprint does not erase acquisition elapsed time', async () =>
   fixture(async (dbPath) => {
     const queue = openAcquisitionRequestQueue(dbPath);
     const oldCursor = `${'a'.repeat(64)}:${'b'.repeat(64)},${'c'.repeat(64)}`;
@@ -636,7 +680,7 @@ test('a changed policy fingerprint starts a fresh scan clock', async () =>
       queue.recordResult({ requestId: 1, pass: second.pass,
         state: 'held', reason: 'no_safe_release', nextCandidateOffset: 1,
         nextCandidateFingerprint: newCursor, checkedMs: 900_001 });
-      assert.equal(queue.getScanStartedMs(1), 900_001);
+      assert.equal(queue.getScanStartedMs(1), 100);
     } finally { queue.close(); }
   }));
 
@@ -862,7 +906,8 @@ test('held and failed requests are recorded while later requests continue', asyn
         state: 'held', reason: 'worker_unavailable', checkedMs: 100,
         nextDueMs: 1_800_100 });
       assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
-        [{ requestId: 3, nextDueMs: 60_100 }]);
+        [{ requestId: 3, nextDueMs: 60_100 }, { requestId: 1, nextDueMs: 1_800_100 },
+          { requestId: 2, nextDueMs: 1_800_100 }]);
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1, results: [] });
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 2, results: [] });
       const continuation = queue.claimNext({ nowMs: 60_100, priorityRequestId: 3 });
@@ -932,7 +977,7 @@ test('overlapping ticks do not claim twice and invalid results never report prog
       assert.deepEqual(await worker.runOnce(), { state: 'held', reason: 'page_in_progress' });
       release({ state: 'available' });
       assert.deepEqual(await first, { state: 'page', results: [{ requestId: 1,
-        state: 'held', reason: 'worker_unavailable' }] });
+        state: 'held', reason: 'worker_unavailable', nextDueMs: 1_800_200 }] });
       assert.equal(queue.getResult(1).reason, 'worker_unavailable');
       assert.equal(queue.claimNext().requestId, 2);
     } finally { queue.close(); }

@@ -64,6 +64,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       recoveredTargets = new Set(ids);
     }
     let exactAvailable = new Set();
+    let uncertainOwned = new Set();
     if (readPublicCoverage) {
       let coverage;
       try { coverage = await readPublicCoverage(request); }
@@ -83,12 +84,22 @@ export function createAcquisitionRequestProcessor({ readRequest,
         }
         exactAvailable = new Set(ids);
       }
+      if (coverage.uncertainEpisodeIds !== undefined) {
+        const ids = coverage.uncertainEpisodeIds;
+        if (!Array.isArray(ids) || new Set(ids).size !== ids.length ||
+            ids.some((id) => !request.episodeIds.includes(id) || exactAvailable.has(id))) {
+          return held('availability_unverified');
+        }
+        uncertainOwned = new Set(ids);
+      }
       if (coverage.verifiedTargets === request.episodeIds.length) {
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
       }
     }
     let found;
-    const missingIds = request.episodeIds.filter((id) => !exactAvailable.has(id));
+    const missingIds = request.episodeIds.filter((id) =>
+      !exactAvailable.has(id) && !uncertainOwned.has(id));
+    if (missingIds.length === 0) return held('availability_unverified');
     const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
       missingIds[(pass - 1) % missingIds.length] : null;
     try { found = await discoverCandidates({ requestId, searchTargetEpisodeId,
@@ -250,8 +261,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
     let uncertainSelection;
     const start = consumed.length < ordered.length ? consumed.length : 0;
     let nextIndex = start;
+    let freshReads = 0;
+    let transientFailure = false;
     for (let index = start; index < ordered.length; index++) {
-      if (seen.size >= maxPreflights) break;
+      if (freshReads >= maxPreflights) break;
       const candidate = ordered[index];
       nextIndex = index + 1;
       if (preferSeasonPack && !fallbackPhase &&
@@ -268,7 +281,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
       let preview;
       try { preview = await previewCandidate({ requestId, candidate,
         offlineCache }); }
-      catch { continue; }
+      catch { freshReads++; transientFailure = true; continue; }
+      if (preview?.cacheHit !== true) freshReads++;
+      if (preview?.state === 'held' && ['provider_unavailable',
+        'torrent_preflight_unavailable', 'related_title_unavailable',
+        'shoko_settings_unavailable', 'metadata_reader_busy', 'detail_unavailable',
+        'candidate_changed', 'torrent_unavailable'].includes(preview.reason)) {
+        transientFailure = true;
+      }
       if (preview?.state !== 'preflight' ||
           preview.requestId !== requestId ||
           preview.anidbId !== request.anidbId ||
@@ -293,6 +313,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.
       if (preview.episodeIds.every((id) => exactAvailable.has(id))) continue;
+      if (preview.episodeIds.some((id) => uncertainOwned.has(id))) continue;
       if (preview.episodeIds.some((id) => recoveredTargets.has(id)) &&
           preview.shokoPreview !== 'exact') continue;
       if (inspectCandidateTargets) {
@@ -338,6 +359,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
       selected = uncertainSelection;
       nextIndex = uncertainSelection.index + 1;
     }
+    if (!selected && transientFailure) return { ...held('release_preflight_unavailable'),
+      nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+      nextCandidateFingerprint: cursor };
     if (!selected && preferSeasonPack && !fallbackPhase) {
       const exhausted = nextIndex >= ordered.length;
       const nextPhaseFingerprint = uncertainPackPhase || !preferShokoPreview ?
@@ -406,8 +430,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (outcome?.state === 'held' &&
         (outcome.reason === 'target_already_available' ||
           (outcome.reason === 'target_not_proven_unimported' &&
-            selected.preview.episodeIds.includes(outcome.episodeId) &&
-            exactAvailable.has(outcome.episodeId)) ||
+            selected.preview.episodeIds.includes(outcome.episodeId)) ||
           outcome.reason === 'candidate_rejected' ||
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||

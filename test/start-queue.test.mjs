@@ -109,6 +109,18 @@ test('a busy metadata reader retries a saved start in one minute', async () =>
     assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, 121_002);
   }));
 
+test('reopening recovers a permanent legacy metadata-reader-busy row', async () =>
+  fixture(async (ctx) => {
+    const claim = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ attemptId: claim.attemptId, version: claim.version,
+      state: 'held', reason: 'metadata_reader_busy', checkedMs: 1_001 });
+    const db = new DatabaseSync(ctx.dbPath);
+    db.prepare('UPDATE start_checks SET next_due_ms=NULL WHERE attempt_id=?').run(claim.attemptId);
+    db.close(); ctx.reopen();
+    assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61_001);
+    assert.equal(ctx.queue.claimNext({ nowMs: 61_001 }).attemptId, claim.attemptId);
+  }));
+
 test('temporary related-title failure retries after several checks without starting twice', async () =>
   fixture(async (ctx) => {
     const first = ctx.queue.claimNext({ nowMs: 1_000 });

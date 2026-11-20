@@ -9,13 +9,15 @@ const held = (reason) => ({ state: 'held', reason });
 // Neither a title nor a Prowlarr hit proves the release's AniDB file identity.
 export function createRequestCandidateDiscovery({ readRequest, loadDetail,
   searchReleases, releaseQueries = async () => [],
+  now = Date.now,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   if (typeof readRequest !== 'function' || typeof loadDetail !== 'function' ||
       typeof searchReleases !== 'function' || typeof releaseQueries !== 'function' ||
-      typeof pause !== 'function') {
+      typeof pause !== 'function' || typeof now !== 'function') {
     throw new TypeError('Invalid request discovery configuration');
   }
-  return async ({ requestId, searchTargetEpisodeId = null,
+  const queryCache = new Map();
+  const discover = async ({ requestId, searchTargetEpisodeId = null,
     searchTargetEpisodeIds = null }) => {
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
@@ -72,17 +74,33 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         episode.number)) targetByQuery.set(query, episode);
     }
     const targeted = [...targetByQuery.keys()];
-    const queries = [...targeted, ...titleQueries];
+    // One canonical query per missing episode first, then broad aliases and
+    // remaining targeted aliases. Never multiply ten episodes by every alias.
+    const canonicalTargets = targets.map(episode =>
+      trustedTargetedQueries(detail.title, aliases, episode.number)[0]).filter(Boolean);
+    const primaryAliases = target ? targeted.filter(query =>
+      targetByQuery.get(query)?.id === target.id) : [];
+    const originalQueries = [...targeted, ...titleQueries];
+    const queries = originalQueries.length <= 16 ? originalQueries :
+      [...new Set([...canonicalTargets, ...titleQueries,
+        ...primaryAliases, ...targeted])].slice(0, 16);
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
     const failedQueries = [];
     for (const [index, query] of queries.entries()) {
-      if (index > 0) await pause(1_000);
       let result;
       const queryTarget = targetByQuery.get(query);
-      try { result = await searchReleases({ query,
-        targetEpisodeNumber: queryTarget?.number ?? null }); }
+      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null]);
+      const saved = queryCache.get(cacheKey);
+      try {
+        if (saved && saved.until > now()) result = saved.result;
+        else {
+          if (index > 0) await pause(1_000);
+          result = await searchReleases({ query,
+            targetEpisodeNumber: queryTarget?.number ?? null });
+        }
+      }
       catch { failedQueries.push(query); continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
           result.items.length > 50 || result.items.some((item) =>
@@ -92,6 +110,10 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         continue;
       }
       successful++;
+      queryCache.set(cacheKey, { result, anidbId: request.anidbId,
+        until: saved?.result === result ? saved.until :
+          now() + (result.items.length ? 300_000 : 20_000) });
+      while (queryCache.size > 64) queryCache.delete(queryCache.keys().next().value);
       // Preserve which bucket answered the exact missing-episode query. This
       // is ordering evidence only; stopped metainfo and identity checks still
       // decide whether a candidate can be submitted.
@@ -145,4 +167,10 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };
   };
+  discover.invalidateTitle = (anidbId) => {
+    for (const [key, value] of queryCache) {
+      if (value.anidbId === anidbId) queryCache.delete(key);
+    }
+  };
+  return discover;
 }

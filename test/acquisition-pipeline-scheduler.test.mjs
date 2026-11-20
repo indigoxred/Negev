@@ -203,6 +203,55 @@ test('missing metadata gets a due retry without waiting for a full stage cycle',
   await scheduler.stop();
 });
 
+test('a busy-reader deadline from the real request worker reaches the live scheduler', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-live-deadline-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const ledger = openRequestLedger(dbPath);
+  ledger.submit({ requesterId: 1, requestKey: 'deadline', nowMs: 0,
+    intent: { state: 'ready', anidbId: 42, kind: 'series',
+      episodeIds: [1001], monitorFuture: false } });
+  const queue = openAcquisitionRequestQueue(dbPath);
+  let nowMs = 0;
+  const timer = clock(), seen = [];
+  const worker = createAcquisitionPageWorker({ queue, limit: 1, now: () => nowMs,
+    processRequest: async ({ requestId }) => { seen.push(requestId);
+      return { state: 'held', reason: 'metadata_reader_busy' }; } });
+  const pipeline = { initialize: async () => ({ state: 'reconciled' }),
+    tickRequests: (options) => worker.runOnce(options),
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }), close: async () => {} };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => nowMs,
+    stepDelayMs: 120_000, setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  try {
+    await scheduler.start(); scheduler.wakeRequest(1); await timer.advance();
+    assert.deepEqual(timer.delays(), [60_000]);
+    nowMs = 60_000; await timer.advance();
+    nowMs = 61_000; await timer.advance();
+    assert.deepEqual(seen, [1, 1]);
+  } finally { await scheduler.stop(); queue.close(); ledger.close();
+    await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a deadline advanced externally after startup reaches the running scheduler', async () => {
+  const timer = clock(), seen = [];
+  let released = false;
+  const pipeline = { initialize: async () => ({ state: 'reconciled' }),
+    listMetadataRetries: () => released ? [{ requestId: 32, nextDueMs: 0 }] : [],
+    tickRequests: async ({ priorityRequestId } = {}) => { seen.push(priorityRequestId);
+      released = false; return { state: 'page', results: [] }; },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }), close: async () => {} };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 100,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  try {
+    await scheduler.start(); released = true;
+    await timer.advance();
+    assert.deepEqual(seen, [32]);
+  } finally { await scheduler.stop(); }
+});
+
 test('an observed download keeps its one-minute continuation during a live run', async () => {
   const timer = clock();
   const calls = [];

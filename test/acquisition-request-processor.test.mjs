@@ -21,6 +21,49 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('an uncertain owned episode cannot block an independently missing episode or receive another grab', async () => {
+  const selected = [], targets = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    readPublicCoverage: async () => ({ verifiedTargets: 0, targetCount: 2,
+      availableEpisodeIds: [], uncertainEpisodeIds: [1001] }),
+    discoverCandidates: async (input) => {
+      targets.push(input.searchTargetEpisodeId);
+      return { state: 'candidates', requestId: 4, anidbId: 42,
+        items: [candidate(1), candidate(2)] };
+    },
+    previewCandidate: async ({ candidate: item }) => item.guid === 'candidate-1'
+      ? preflight : { ...preflight, episodeIds: [1002], files: [{
+        name: 'Example - 02.mkv', size: 1000, episodeIds: [1002] }] },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ episodeIds }) => {
+      selected.push(episodeIds); return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assert.equal((await process({ requestId: 4 })).state, 'stopped_observed');
+  assert.deepEqual(targets, [1002]);
+  assert.deepEqual(selected, [[1002]]);
+});
+
+test('transient preflight failures advance to later releases and use a provider retry, not an empty-release verdict', async () => {
+  let ready = false;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, maxPreflights: 3,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [1, 2, 3, 4].map(candidate) }),
+    previewCandidate: async ({ candidate: item }) => ready && item.guid === 'candidate-4'
+      ? preflight : { state: 'held', reason: 'provider_unavailable' },
+    loadDetail: async () => detail,
+    submitCandidate: async () => ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'release_preflight_unavailable');
+  assert.equal(first.nextCandidateOffset, 3);
+  ready = true;
+  assert.equal((await process({ requestId: 4, candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint })).state, 'stopped_observed');
+});
+
 test('an incomplete search cannot silently choose a 720p fallback', async () => {
   let submits = 0;
   const process = createAcquisitionRequestProcessor({
@@ -287,7 +330,7 @@ test('a slow candidate sweep keeps advancing through its finite candidate list',
     submitCandidate: async () => { throw new Error('Unexpected submission'); },
   });
   const result = await process({ requestId: 4, scanStartedMs: 100 });
-  assert.equal(result.reason, 'no_safe_release');
+  assert.equal(result.reason, 'release_preflight_unavailable');
   assert.equal(result.nextCandidateOffset, 0);
   assert.equal(seen.length, 2);
 });
@@ -1350,7 +1393,7 @@ test('a Shoko hold on a recently playable candidate yields to a missing episode'
   assert.deepEqual(submitted, ['candidate-2']);
 });
 
-test('an unproven Shoko hold does not skip a candidate', async () => {
+test('an uncertainty outside the selected targets cannot advance a candidate', async () => {
   const process = createAcquisitionRequestProcessor({
     readRequest: () => request,
     readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 2,
@@ -1360,10 +1403,28 @@ test('an unproven Shoko hold does not skip a candidate', async () => {
     previewCandidate: async () => preflight,
     loadDetail: async () => detail,
     submitCandidate: async () => ({ state: 'held',
-      reason: 'target_not_proven_unimported', episodeId: 1001 }),
+      reason: 'target_not_proven_unimported', episodeId: 9999 }),
   });
   assert.deepEqual(await process({ requestId: 4 }),
     { state: 'held', reason: 'target_not_proven_unimported' });
+});
+
+test('a selected episode with unproven Shoko absence yields to a disjoint missing episode', async () => {
+  const process = createAcquisitionRequestProcessor({ readRequest: () => request,
+    readPublicCoverage: () => ({ verifiedTargets: 0, targetCount: 2, availableEpisodeIds: [] }),
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async ({ candidate: item }) => item.guid === 'candidate-1' ? preflight : {
+      ...preflight, episodeIds: [1002], files: [{ name: 'Example - 02.mkv', size: 1000,
+        episodeIds: [1002] }] },
+    loadDetail: async () => detail,
+    submitCandidate: async ({ episodeIds }) => episodeIds[0] === 1001
+      ? { state: 'held', reason: 'target_not_proven_unimported', episodeId: 1001 }
+      : { state: 'stopped_observed', attemptId: 12 } });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.nextCandidateOffset, 1);
+  assertAttempt(await process({ requestId: 4, candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint }), 12);
 });
 
 test('a terminally rejected release yields to a later eligible release', async () => {
