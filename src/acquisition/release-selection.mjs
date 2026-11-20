@@ -1,9 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { assessRelease, compareReleases, hasSeasonPackHint } from './release-preference.mjs';
+import { releaseFacts, matchesReleaseFilters, validReleaseFilters, DEFAULT_RELEASE_FILTERS } from '../web/public/release-choice-fields.mjs';
+import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
+import { validPreferredGroup } from './preferred-release.mjs';
 
 const held=reason=>({state:'held',reason});
 export function publicRelease(c) {
   const title=c.title;
+  const facts=releaseFacts(title);
   const range=/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E|E)?\d{1,3}\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
   const coordinate=/\bS\d{1,2}E(\d{1,3})(?:v\d+)?\b/i.exec(title)?.[1]??
     /\s[-–]\s(\d{1,3})(?:v\d+)?(?=\s|$|[.\[(])/i.exec(title)?.[1];
@@ -12,10 +16,11 @@ export function publicRelease(c) {
   const resolution=/\b1080p?\b|1920x1080/i.test(title)?1080:
     /\b720p?\b|1280x720/i.test(title)?720:/\b(?:480|576)p?\b/i.test(title)?480:null;
   return {guid:c.guid,indexerId:c.indexerId,title,size:c.size,seeders:c.seeders??null,
-    evidence:'unverified',group:/^\[([^\]]{1,80})\]/.exec(title)?.[1]??'Not advertised',
+    evidence:'unverified',group:facts.group??'Not advertised',
     source:/\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title)?'Blu-ray':
       /\bDVD(?:rip)?\b/i.test(title)?'DVD':/\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title)?'WEB':'Not advertised',
-    resolution,coverage,
+    resolution:facts.resolution,coverage,audio:facts.audio,audioLabel:facts.audioLabel,
+    qualityLabel:[facts.source,facts.resolution?`${facts.resolution}p`:null].filter(Boolean).join(' ')||'Not specified',
     indexer:typeof c.indexer==='string'?c.indexer.slice(0,120):`Indexer ${c.indexerId}`,
     languageHints:/dual[ ._-]?audio|multi[ ._-]?audio|\bdual\b/i.test(title)?'Dual audio advertised; subtitles unverified':
       /\b(?:english|eng)[ ._-]*dub(?:bed)?\b|\bdub[ ._-]*only\b/i.test(title)?'English dub advertised; Japanese audio not advertised':
@@ -56,11 +61,32 @@ export function chooseReleaseProposal(selections) {
 // Candidate receipts are bounded and short-lived; the selected descriptor and
 // exact torrent hash are persisted in the request ledger before any worker wake.
 export function createReleaseSelection({requests,discoverCandidates,previewCandidate,
-  readPublicCoverage,wake=()=>{},now=Date.now}) {
+  readPublicCoverage,loadDetail,wake=()=>{},now=Date.now}) {
   const receipts=new Map();
   const inFlight=new Map();
+  const contexts=new Map();
   const snapshot=id=>requests.getReleaseControl(id,now());
   const save=(id,revision,next)=>requests.updateReleaseControl(id,revision,next,now());
+  const remember=(id,request,releaseState)=>{
+    contexts.set(id,{confirmedAiring:request.kind==='series'&&request.monitorFuture&&!request.watchClosed&&releaseState==='airing',until:now()+300_000});
+    while(contexts.size>100)contexts.delete(contexts.keys().next().value);
+  };
+  const context=async id=>{
+    const request=requests.getRequest(id);let saved=contexts.get(id);
+    if(!saved||saved.until<=now()){
+      let state='unknown';try{if(loadDetail){const detail=await loadDetail({anidbId:request.anidbId,page:1});
+        if(detail?.state==='details')state=inferReleaseState({...detail,today:new Date(now()).toISOString().slice(0,10)}).state;}}
+      catch{/* Preference controls stay hidden until metadata is known. */}
+      remember(id,request,state);saved=contexts.get(id);
+    }
+    return {confirmedAiring:saved.confirmedAiring,preferredGroup:snapshot(id).preference?.group??null};
+  };
+  const makePreference=(id,group,audio)=>{
+    if(!validPreferredGroup(group))return null;
+    const request=requests.getRequest(id),prior=snapshot(id).preference;
+    return {group,audio:['english','dual'].includes(audio)?audio:'japanese',
+      knownEpisodeIds:prior?.knownEpisodeIds??[...request.episodeIds],createdMs:prior?.createdMs??now()};
+  };
   const cache=(requestId,candidate,preview=null)=>{
     for(const [key,value] of receipts) if(value.expiresMs<=now()) receipts.delete(key);
     while(receipts.size>=500) receipts.delete(receipts.keys().next().value);
@@ -86,7 +112,8 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     }
     return found.preview;
   };
-  const search=async(id,query,resultOffset=0)=>{
+  const search=async(id,query,resultOffset=0,filters=DEFAULT_RELEASE_FILTERS)=>{
+    if(filters!==null&&!validReleaseFilters(filters))return held('invalid_release_filters');
     const request=requests.getRequest(id);
     if(!request||request.status!=='held') return held('request_missing');
     if(!request.episodeIds.length) return {state:'candidates',requestId:id,items:[],waitingFor:'first_episode'};
@@ -94,7 +121,11 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,...(query?{query}:{})});}
     catch {return held('release_search_unavailable');}
     if(result?.state!=='candidates') return result??held('release_search_unavailable');
-    return {...result,items:[...result.items].sort(compareReleases).map(c=>({...publicRelease(c),token:cache(id,c)}))};
+    remember(id,request,result.releaseState);
+    const items=result.items.filter(c=>filters===null||matchesReleaseFilters(c,filters)).map(c=>filters===null?c:
+      {...c,selectionPolicy:{allowUhd:true,allowEnglishDub:filters.audio==='english'}});
+    return {...result,...await context(id),
+      items:items.sort(compareReleases).map(c=>({...publicRelease(c),token:cache(id,c)}))};
   };
   const begin=(id,mode,revision)=>{
     if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');
@@ -102,7 +133,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(updated.state==='updated') wake(id);
     return updated;
   };
-  const choose=async(id,token,revision)=>{
+  const choose=async(id,token,revision,preferFutureGroup=false)=>{
     const found=receipt(id,token);if(!found) return held('release_search_expired');
     if(!assessRelease(found.candidate).eligible) return held('release_not_eligible');
     const preview=await inspect(id,token);
@@ -110,8 +141,15 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(['already_available','owned_unverified'].includes(preview.selectionStatus))return held(
       preview.selectionStatus==='already_available'?'target_already_available':'target_already_owned');
     if(!preview.episodeIds.length) return held('release_has_no_requested_episodes');
+    let preference;
+    const ctx=await context(id);
+    if(preferFutureGroup){
+      if(!ctx.confirmedAiring)return held('title_not_airing');
+      const facts=releaseFacts(found.candidate.title);preference=makePreference(id,facts.group,facts.audio);
+      if(!preference)return held('release_group_unavailable');
+    }else if(ctx.confirmedAiring)preference=null;
     const updated=save(id,revision,{mode:'manual',phase:'chosen',
-      selection:{candidate:found.candidate,preview}});
+      ...(preference===undefined?{}:{preference}),selection:{candidate:found.candidate,preview}});
     if(updated.state==='updated') wake(id);
     return updated;
   };
@@ -121,7 +159,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     try {
       const current=snapshot(id);
       if(current.revision!==revision || current.mode!=='auto'||current.phase!=='selecting') return held('stale_release_selection');
-      const found=await search(id);
+      const found=await search(id,undefined,0,null);
       if(found.state!=='candidates') return found;
       const request=requests.getRequest(id);
       const coverage=await readPublicCoverage(request);
@@ -157,5 +195,14 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const updated=save(id,revision,{mode:'auto',phase:'chosen',selection:current.proposal[action]});
     if(updated.state==='updated') wake(id);return updated;
   };
-  return {search,inspect,begin,choose,auto,decide,snapshot};
+  const setPreference=async(id,group,revision,audio)=>{
+    if(group!==null&&!(await context(id)).confirmedAiring)return held('title_not_airing');
+    const current=snapshot(id);
+    if(current.revision!==revision)return held('stale_release_selection');
+    const preference=group===null?null:makePreference(id,group,audio??current.preference?.audio??'japanese');
+    if(group!==null&&!preference)return held('release_group_unavailable');
+    const updated=requests.updateReleasePreference(id,revision,preference,now());
+    if(updated.state==='updated')wake(id);return updated;
+  };
+  return {search,inspect,begin,choose,auto,decide,snapshot,context,setPreference};
 }

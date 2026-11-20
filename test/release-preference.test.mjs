@@ -15,6 +15,13 @@ test('rejects zero peers, explicit English dub only, unsubbed, and 4K', () => {
   assert.equal(assessRelease(item('[Group] Show 2160p')).eligible, false);
   assert.equal(assessRelease(item('[Group] Show Dual Audio Eng Sub 1080p')).eligible, true);
 });
+test('manual audio and UHD exceptions are explicit and do not change automatic defaults',()=>{
+ const dub=item('[G] Show English Dub 1080p');const uhd=item('[G] Show BD 2160p');
+ assert.equal(assessRelease(dub).eligible,false);assert.equal(assessRelease(uhd).eligible,false);
+ assert.equal(assessRelease({...dub,selectionPolicy:{allowEnglishDub:true}}).eligible,true);
+ assert.equal(assessRelease({...uhd,selectionPolicy:{allowUhd:true}}).eligible,true);
+ assert.equal(assessRelease({...dub,selectionPolicy:{allowUhd:true}}).eligible,false);
+});
 
 test('prefers BD and 1080p with 720p and 480p as ordered fallbacks', () => {
   const names = [

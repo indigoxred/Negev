@@ -13,6 +13,18 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a preferred-group expiry is scheduled durably without another RSS event',async()=>fixture(async dbPath=>{
+ let queue=openAcquisitionRequestQueue(dbPath);
+ try{
+   const claim=queue.claimNext({nowMs:100});
+   queue.recordResult({requestId:claim.requestId,pass:claim.pass,state:'held',reason:'preferred_group_wait',retryAtMs:7_200_100,checkedMs:100});
+   assert.equal(queue.getResult(1).nextDueMs,7_200_100);queue.close();queue=openAcquisitionRequestQueue(dbPath);
+   assert.ok(queue.listMetadataRetries({nowMs:100}).some(row=>row.requestId===1&&row.nextDueMs===7_200_100));
+   assert.notEqual(queue.claimNext({nowMs:101,priorityRequestId:1}).requestId,1);
+   assert.equal(queue.claimNext({nowMs:7_200_100,priorityRequestId:1}).requestId,1);
+ }finally{queue.close();}
+}));
+
 test('a recent multi-episode empty search is revisited once under a new query policy', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-search-policy-'));
   const dbPath = path.join(dir, 'state.sqlite');

@@ -38,12 +38,15 @@ export function assessRelease(candidate) {
     !dualAudio;
   const noEnglishSubtitles = has(title,
     /\b(?:no[ ._-]*subtitles?|unsubbed|raw[ ._-]*only|sub[ ._-]*french)\b/i);
-  const fourK = has(title, /\b(?:2160p?|4k|uhd)\b/i);
+  const numericResolution=Number(/\b(\d{3,4})p\b/i.exec(title)?.[1]??/\b\d{3,4}x(\d{3,4})\b/i.exec(title)?.[1]??0);
+  const fourK = has(title, /\b(?:2160p?|4k|uhd)\b/i)||numericResolution>=2160;
   const bluray = has(title, /\b(?:bd(?:rip|remux)?|blu[ ._-]*ray|bluray)\b/i);
-  const resolution = has(title, /\b1080p?\b|1920x1080/i) ? 1080 :
+  const allowDub = candidate?.selectionPolicy?.allowEnglishDub === true;
+  const allowUhd = candidate?.selectionPolicy?.allowUhd === true;
+  const resolution = numericResolution>=240&&numericResolution<=4320?numericResolution:fourK ? 2160 : has(title, /\b1080p?\b|1920x1080/i) ? 1080 :
     has(title, /\b720p?\b|1280x720/i) ? 720 :
       has(title, /\b(?:480|576)p?\b/i) ? 480 : 0;
-  const quality = bluray && resolution >= 1080 ? 5 :
+  const quality = resolution >= 2160 ? (bluray ? 7 : 6) : bluray && resolution >= 1080 ? 5 :
     resolution >= 1080 ? 4 :
       bluray && resolution >= 720 ? 3 :
         resolution >= 720 ? 2 :
@@ -51,11 +54,11 @@ export function assessRelease(candidate) {
   const subtitleHint = has(title,
     /\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?|subbed|subsplease|erai[ ._-]*raws)\b/i);
   return {
-    eligible: seeders > 0 && !dubOnly && !noEnglishSubtitles && !fourK,
+    eligible: seeders > 0 && (!dubOnly || allowDub) && !noEnglishSubtitles && (!fourK || allowUhd),
     reason: seeders <= 0 ? 'no_reported_seeders' :
-      dubOnly ? 'english_dub_only' :
+      dubOnly && !allowDub ? 'english_dub_only' :
         noEnglishSubtitles ? 'no_english_subtitles' :
-          fourK ? 'outside_quality_profile' : null,
+          fourK && !allowUhd ? 'outside_quality_profile' : null,
     quality, seeders, healthyPeers: seeders >= 3,
     trusted: candidate?.trusted === true,
     subtitleHint, dualAudio, trackVerified: false,

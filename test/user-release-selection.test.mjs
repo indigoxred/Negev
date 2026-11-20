@@ -38,3 +38,17 @@ test('selection writes require CSRF and a valid revision, and provider failures 
   const failed=await app.inject({url:'/api/requests/1/releases',headers});
   assert.equal(failed.statusCode,503);assert.equal(failed.body.includes('provider-private'),false);
 }));
+
+test('release filters and future preferences validate input and retain ownership and CSRF boundaries',()=>fixture(async({app,headers,selection})=>{
+  const calls=[];selection.setPreference=async(...args)=>{calls.push(args);return {state:'updated'};};
+  for(const query of ['quality=invalid','audio=invalid','offset=1'])assert.equal((await app.inject({url:'/api/requests/1/releases?'+query,headers})).statusCode,400);
+  assert.equal((await app.inject({url:'/api/requests/1/releases?quality=bd1080&audio=japanese',headers})).statusCode,200);
+  const payload={action:'preference',group:'SubsPlease',audio:'japanese',revision:1};
+  const post=(id,body=payload,h=headers)=>app.inject({method:'POST',url:`/api/requests/${id}/release-choice`,headers:h,payload:body});
+  assert.equal((await post(2)).statusCode,404);
+  assert.equal((await post(1,payload,{cookie:headers.cookie,origin:headers.origin})).statusCode,403);
+  assert.equal((await post(1,{...payload,audio:'invalid'})).statusCode,400);
+  assert.equal((await post(1,{action:'choose',token:'receipt',revision:1,preferFutureGroup:'yes'})).statusCode,400);
+  assert.equal(calls.length,0);
+  assert.equal((await post(1)).statusCode,200);assert.deepEqual(calls,[[1,'SubsPlease',1,'japanese']]);
+}));

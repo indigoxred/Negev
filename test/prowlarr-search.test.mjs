@@ -58,6 +58,7 @@ test('uses only read-only search and returns unverified, sanitized candidates', 
       guid: 'release-1', indexerId: 7, title: '[Group] Example Anime - 01', size: 12345,
       protocol: 'torrent', seeders: 4, downloadUrl: 'https://secret.invalid/torrent?key=private',
       magnetUrl: 'magnet:?xt=urn:btih:secret', infoHash: 'a'.repeat(40),
+      selectionPolicy:{allowEnglishDub:true,allowUhd:true},
     }]) };
   } });
   const url = new URL(called.url);

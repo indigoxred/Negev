@@ -20,11 +20,12 @@ const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'season-availability-presentation.mjs', 'season-request-selection.mjs',
   'episode-schedule.mjs',
   'detail-refresh.mjs',
-  'relation-label.mjs', 'title-preference.mjs', 'release-dialog.mjs']);
+  'relation-label.mjs', 'title-preference.mjs', 'release-dialog.mjs', 'release-choice-fields.mjs', 'release-row.mjs']);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+    const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let titleReads = 0;
     let firstTitleResponse = null;
     let detailPosts = 0;
@@ -64,7 +65,7 @@ test('title and library controls recover from pending and failed reads without d
         }
         json(response, { user: { id: 1, username: 'Owner', role: 'admin',
           adultAllowed: true }, csrfToken: 'test', capabilities: {
-          detailLoad: true, acquisitionState: 'disabled' } });
+          detailLoad: true, releaseSearch: true, acquisitionState: 'disabled' } });
       } else if (path === '/api/logout') {
         json(response, { state: 'signed_out' });
       } else if (path === '/api/admin/review') {
@@ -74,7 +75,7 @@ test('title and library controls recover from pending and failed reads without d
         titleReads++;
         if (titleReads === 1) { firstTitleResponse = response; return; }
         json(response, detailReady ? { state: 'details', anidbId: 1,
-          title: 'Pending title', kind: 'movie', page: 1, total: 1, nextPage: null,
+          title: 'Pending title', kind: 'movie', restricted:false, page: 1, total: 1, nextPage: null,
           plexUrl: 'https://app.plex.tv/desktop/#!/server/' + 'a'.repeat(40) +
             '/details?key=%2Flibrary%2Fmetadata%2F502',
           episodes: [{ id: 11, number: 1, type: 'Episode', title: 'Film' }] } :
@@ -102,6 +103,19 @@ test('title and library controls recover from pending and failed reads without d
           : { state: 'display', anidbId: 2, title: 'Recovered title',
             description: 'The recovered catalogue summary.', tags: [] },
         recoveredDisplayReads === 1 ? 503 : 200);
+      } else if (path === '/api/catalogue/3') {
+        json(response,{state:'details',anidbId:3,title:'Series example',kind:'series',restricted:false,page:1,total:1,nextPage:null,episodes:[{id:31,number:1,type:'Episode',title:'First episode',availability:'missing'}]});
+      } else if(path === '/api/catalogue/3/display') {
+        json(response,{state:'display',anidbId:3,title:'Series example',type:'TV Series',description:'Series synopsis',tags:[]});
+      } else if(path.endsWith('/related')) {json(response,{state:'related',items:[],nextPage:null});
+      } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
+        let body='';for await(const chunk of request)body+=chunk;
+        const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
+        json(response,value.seasons?{items:[{anidbId:3,status:201,result:{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
+      } else if(path === '/api/requests/123/release-choice') {
+        if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:value.action==='auto'?'consumed':'selecting',revision:control.revision+1};}
+        json(response,{state:'updated',control});
+      } else if(path === '/api/requests/123/releases') {json(response,{state:'candidates',items:[],nextOffset:null});
       } else if (path === '/api/library') {
         if (url.searchParams.has('afterAnidbId')) pageTwoReads++;
         else firstLibraryReads++;
@@ -226,7 +240,7 @@ test('title and library controls recover from pending and failed reads without d
         workspaceHidden: true }, 'a slow signed-in session must not flash sign-in');
       json(heldSessionResponse, { user: { id: 1, username: 'Owner', role: 'admin',
         adultAllowed: true }, csrfToken: 'test', capabilities: {
-          detailLoad: true, acquisitionState: 'disabled' } });
+          detailLoad: true, releaseSearch: true, acquisitionState: 'disabled' } });
       heldSessionResponse = null;
       await until("document.querySelector('#detail')?.textContent.includes('The catalogue summary is already ready.')");
       assert.equal(await evaluate("document.querySelector('#session-loading').hidden"), true);
@@ -274,6 +288,42 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('#view-discover').hidden");
       await evaluate("location.hash = '#/title/1'");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Auto-Pick')");
+      assert.equal(await evaluate("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')"),true);
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Cancel').click()");
+      assert.equal(submittedModes.length,0,'cancelling the submenu never submits a request');
+      await evaluate("location.hash='#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
+      assert.equal(await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').disabled"),true);
+      await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
+      await until("![...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').disabled");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
+      await until("document.querySelector('dialog[open] [aria-label=Quality]')");
+      assert.deepEqual(submittedModes,['manual']);
+      assert.equal(await evaluate("document.querySelector('dialog[open] [aria-label=Quality]').value"),'bd1080');
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
+      await evaluate("location.hash='#/title/1'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Automatic acquisition is enabled')");
+      assert.deepEqual(submittedModes,['manual','auto_review']);
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
+      await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash='#/title/1'");await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
+      for(const result of [{state:'pending',intentId:901},{state:'saved',created:false,requestId:123}]){
+        filmResult=result;
+        await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
+        await evaluate("location.hash='#/title/1'");await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+        await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
+        await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+        await until("!document.querySelector('dialog[open]')");
+        assert.equal(await evaluate("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Requested')"),true,'pending and idempotent successful requests must finish the submenu');
+      }
       const beforeReentry = titleReads;
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");

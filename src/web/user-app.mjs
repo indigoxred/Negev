@@ -6,6 +6,7 @@ import secureSession from '@fastify/secure-session';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
+import { validReleaseFilters } from './public/release-choice-fields.mjs';
 
 const safeImportReasons = new Set(['incomplete_import_baseline',
   'invalid_sidecar_evidence', 'invalid_import_file',
@@ -130,7 +131,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
-    'title-preference.mjs', 'release-dialog.mjs'];
+    'title-preference.mjs', 'release-dialog.mjs', 'release-choice-fields.mjs', 'release-row.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));
@@ -1243,47 +1244,53 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     torrentHash:s.preview.torrentHash,episodeIds:s.preview.episodeIds,files:s.preview.files,
     correspondence:s.preview.correspondence},registration:correspondenceLevel(s.preview)}:undefined;
   const publicControl=c=>c?{mode:c.mode,phase:c.phase,revision:c.revision,
+    ...(c.preference?{preference:{group:c.preference.group,audio:c.preference.audio}}:{}),
     ...(c.expiresMs?{expiresMs:c.expiresMs}:{}),
     ...(c.selection?{selection:publicSelection(c.selection)}:{}),
     ...(c.proposal?{proposal:{registered:publicSelection(c.proposal.registered),
       better:publicSelection(c.proposal.better),benefit:c.proposal.benefit}}:{})}:undefined;
   app.get('/api/requests/:id/releases',{preHandler:requireUser,
-    config:{rateLimit:{max:10,timeWindow:'1 minute'}}},async(request,reply)=>{
+    config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
     reply.header('Cache-Control','no-store');
     const id=await releaseAccess(request,reply);if(!id)return;
     const offset=request.query.offset===undefined?0:Number(request.query.offset);
-    if(Object.keys(request.query).some(k=>!['query','offset'].includes(k)) ||
+    const filters={quality:request.query.quality??'bd1080',audio:request.query.audio??'japanese'};
+    if(!validReleaseFilters(filters)||Object.keys(request.query).some(k=>!['query','offset','quality','audio'].includes(k)) ||
       !Number.isSafeInteger(offset)||![0,50,100,150].includes(offset)||
       request.query.query!==undefined&&(typeof request.query.query!=='string'||
       request.query.query.trim().length<2||request.query.query.length>120||/[\x00-\x1f\x7f]/.test(request.query.query))) {
       return reply.code(400).send({error:'Use a search phrase between 2 and 120 characters'});
     }
     try {
-      const result=await releaseSelection.search(id,request.query.query,offset);
+      const result=await releaseSelection.search(id,request.query.query,offset,filters);
       return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   app.get('/api/requests/:id/release-choice',{preHandler:requireUser},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
-    return {state:'selection',control:publicControl(releaseSelection.snapshot(id))};
+    return {state:'selection',control:publicControl(releaseSelection.snapshot(id)),context:await releaseSelection.context?.(id)};
   });
   app.post('/api/requests/:id/release-choice',{preHandler:writeGuards,
     config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
     const b=request.body;
-    if(!allowedBody(b,['action','mode','revision','token'])||!['begin','inspect','choose','auto','better','registered'].includes(b.action)||
+    if(!allowedBody(b,['action','mode','revision','token','preferFutureGroup','group','audio'])||!['begin','inspect','choose','auto','better','registered','preference'].includes(b.action)||
       !Number.isSafeInteger(b.revision)||b.revision<0||
+      (b.preferFutureGroup!==undefined&&typeof b.preferFutureGroup!=='boolean')||
+      (b.audio!==undefined&&!['japanese','dual','english'].includes(b.audio))||
+      (b.action==='preference'&&b.group!==null&&(typeof b.group!=='string'||b.group.length>80))||
       (['inspect','choose'].includes(b.action)&&(typeof b.token!=='string'||b.token.length>64))) {
       return reply.code(400).send({error:'Invalid release selection'});
     }
     try {
       const result=b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
         b.action==='inspect'?await releaseSelection.inspect(id,b.token):
-        b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision):
+        b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision,b.preferFutureGroup??false):
+        b.action==='preference'?await releaseSelection.setPreference(id,b.group,b.revision,b.audio):
         b.action==='auto'?await releaseSelection.auto(id,b.revision):
         releaseSelection.decide(id,b.action,b.revision);
       if(result?.state==='held') return reply.code(409).send(result);
-      return result?.control?{...result,control:publicControl(result.control)}:result;
+      return result?.control?{...result,control:publicControl(result.control),context:await releaseSelection.context?.(id)}:result;
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Diagnostic only: no Unknown observation may authorize acquisition.

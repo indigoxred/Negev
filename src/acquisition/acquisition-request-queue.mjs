@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
+import { preferredWaitDuration } from './preferred-release.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -513,7 +514,7 @@ export function openAcquisitionRequestQueue(dbPath,
       });
     },
     recordResult({ requestId, pass, state, reason = null, attemptId = null,
-      nextCandidateOffset = null, nextCandidateFingerprint = null, checkedMs }) {
+      nextCandidateOffset = null, nextCandidateFingerprint = null, checkedMs, retryAtMs = null }) {
       if (!validId(requestId) || !validId(pass) ||
           !['held', 'stopped_observed'].includes(state) ||
           (state === 'held' ? typeof reason !== 'string' ||
@@ -524,6 +525,7 @@ export function openAcquisitionRequestQueue(dbPath,
               nextCandidateOffset < 0 || nextCandidateOffset > 50)) ||
           (nextCandidateFingerprint !== null &&
             !validCandidateFingerprint(nextCandidateFingerprint)) ||
+          (retryAtMs!==null&&(!validTime(retryAtMs)||retryAtMs<checkedMs||retryAtMs>checkedMs+7_200_000))||
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
@@ -572,7 +574,7 @@ export function openAcquisitionRequestQueue(dbPath,
       const elapsed = checkedMs - (emptySinceMs ?? checkedMs);
       const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
-      const nextDueMs = reason === 'interrupted_attempt_present'
+      const nextDueMs = reason==='preferred_group_wait'&&retryAtMs!==null?retryAtMs:reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
           ['related_title_unavailable',
@@ -617,6 +619,12 @@ export function openAcquisitionRequestQueue(dbPath,
     getDecisionTiming(requestId) {
       const row = db.prepare(`SELECT scan_started_ms AS startedMs,
         decision_ms AS decisionMs FROM acquisition_request_checks WHERE request_id=?`).get(requestId);
+      if(row?.startedMs!==null&&row?.startedMs!==undefined){
+        const intentionalGroupWaitMs=preferredWaitDuration(db,requestId,row.startedMs,row.decisionMs??Date.now());
+        if(intentionalGroupWaitMs>0)return {...row,intentionalGroupWaitMs,
+          wallElapsedMs:row.decisionMs===null?null:row.decisionMs-row.startedMs,
+          elapsedMs:row.decisionMs===null?null:Math.max(0,row.decisionMs-row.startedMs-intentionalGroupWaitMs)};
+      }
       return row && row.startedMs !== null ? { ...row,
         elapsedMs: row.decisionMs === null ? null : row.decisionMs - row.startedMs } : null;
     },
@@ -685,6 +693,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
               attemptId: state === 'stopped_observed' ? outcome.attemptId : null,
               nextCandidateOffset: outcome.nextCandidateOffset ?? null,
               nextCandidateFingerprint: outcome.nextCandidateFingerprint ?? null,
+              retryAtMs: outcome.retryAtMs??null,
               checkedMs: now() });
             if (saved.state !== 'recorded') return { state: 'held',
               reason: 'queue_unavailable', results };
