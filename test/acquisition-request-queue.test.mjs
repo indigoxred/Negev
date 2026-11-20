@@ -10,6 +10,57 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from
   '../src/acquisition/acquisition-request-queue.mjs';
 
+
+test('a newly chosen release bypasses only the previous empty-search delay, once across restart',
+  async () => fixture(async dbPath => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    const db = new DatabaseSync(dbPath);
+    const select = revision => db.prepare('UPDATE requests SET release_control=? WHERE id=1')
+      .run(JSON.stringify({mode:'manual',phase:'chosen',revision}));
+    try {
+      const first = queue.claimNext({nowMs:100,priorityRequestId:1});
+      queue.recordResult({requestId:1,pass:first.pass,state:'held',reason:'no_safe_release',checkedMs:100});
+      assert.notEqual(queue.claimNext({nowMs:101,priorityRequestId:1}).requestId,1);
+      select(2);
+      queue.close(); queue = openAcquisitionRequestQueue(dbPath);
+      const chosen = queue.claimNext({nowMs:102,priorityRequestId:1});
+      assert.equal(chosen.requestId,1);
+      assert.notEqual(queue.claimNext({nowMs:103,priorityRequestId:1}).requestId,1);
+      queue.recordResult({requestId:1,pass:chosen.pass,state:'held',reason:'no_safe_release',checkedMs:104});
+      assert.notEqual(queue.claimNext({nowMs:105,priorityRequestId:1}).requestId,1);
+      select(3);
+      assert.equal(queue.claimNext({nowMs:106,priorityRequestId:1}).requestId,1);
+    } finally {db.close();queue.close();}
+  }));
+
+test('a choice saved during an active search survives that search recording an empty result',
+  async () => fixture(async dbPath => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    const db = new DatabaseSync(dbPath);
+    try {
+      const first = queue.claimNext({nowMs:100,priorityRequestId:1});
+      db.prepare('UPDATE requests SET release_control=? WHERE id=1').run(
+        JSON.stringify({mode:'auto',phase:'chosen',revision:2}));
+      assert.notEqual(queue.claimNext({nowMs:101,priorityRequestId:1}).requestId,1);
+      queue.recordResult({requestId:1,pass:first.pass,state:'held',reason:'no_release_candidates',checkedMs:102});
+      assert.equal(queue.claimNext({nowMs:103,priorityRequestId:1}).requestId,1);
+    } finally {db.close();queue.close();}
+  }));
+
+for(const reason of ['preferred_group_wait','shoko_metadata_missing','import_activity_unverified']) {
+  test('a new release choice does not bypass '+reason,async()=>fixture(async dbPath=>{
+    const queue=openAcquisitionRequestQueue(dbPath);const db=new DatabaseSync(dbPath);
+    try{
+      const claim=queue.claimNext({nowMs:100,priorityRequestId:1});
+      queue.recordResult({requestId:1,pass:claim.pass,state:'held',reason,checkedMs:100,
+        ...(reason==='preferred_group_wait'?{retryAtMs:7_200_100}:{})});
+      db.prepare('UPDATE requests SET release_control=? WHERE id=1').run(
+        JSON.stringify({mode:'manual',phase:'chosen',revision:2}));
+      assert.notEqual(queue.claimNext({nowMs:101,priorityRequestId:1}).requestId,1);
+    }finally{db.close();queue.close();}
+  }));
+}
+
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
