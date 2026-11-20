@@ -585,7 +585,8 @@ export function openAcquisitionRequestQueue(dbPath,
             'authentication_unavailable', 'release_search_incomplete',
             'import_quiet_window_unverified', 'torrent_hash_in_use',
             'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
-            'provider_unavailable'].includes(reason)
+            'provider_unavailable','release_selection_pending',
+            'release_choice_changed'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);

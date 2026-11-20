@@ -5,6 +5,7 @@ import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
+import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
 
 const safeImportReasons = new Set(['incomplete_import_baseline',
   'invalid_sidecar_evidence', 'invalid_import_file',
@@ -45,7 +46,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
-  discoverCandidates, previewCandidate, probeRequestTargets,
+  discoverCandidates, previewCandidate, probeRequestTargets, releaseSelection,
   readImportActivity,
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
@@ -129,7 +130,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     'airing-tracking-controls.mjs',
     'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
-    'title-preference.mjs'];
+    'title-preference.mjs', 'release-dialog.mjs'];
   const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));
@@ -261,7 +262,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role, adultAllowed },
       csrfToken: sessionFor(request).get('csrfToken'),
-      capabilities: { releaseSearch: role === 'admin' &&
+      capabilities: { releaseSearch: Boolean(releaseSelection) || role === 'admin' &&
         typeof discoverCandidates === 'function',
       detailLoad: typeof hydrateTitle === 'function',
       availabilityChecks: publicAvailabilityConfigured,
@@ -898,7 +899,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       reply.code(404).send({ error: 'Account unavailable' });
   });
   const processRequest = async (body, requester, reply) => {
-    if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey'])) {
+    if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey','releaseMode']) ||
+        (body.releaseMode!==undefined && (!releaseSelection || !['auto','manual','auto_review'].includes(body.releaseMode)))) {
       return reply.code(400).send({ error: 'Invalid request' });
     }
     if (!requester.adultAllowed) {
@@ -982,7 +984,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof queuePendingTitle === 'function') {
       const pending = await queuePendingTitle({
         requesterId: requester.id, anidbId: body.anidbId,
-        requestKey: body.requestKey, initialReason: result.reason });
+        requestKey: body.requestKey, initialReason: result.reason,
+        ...(body.releaseMode?{releaseMode:body.releaseMode}:{}) });
       if (pending?.state === 'pending' &&
           Number.isSafeInteger(pending.intentId) && pending.intentId > 0) {
         return reply.code(202).send(result.reason === 'release_state_unknown'
@@ -1007,7 +1010,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const body = request.body;
     if (!allowedBody(body, ['seasons']) || !Array.isArray(body.seasons) ||
         body.seasons.length < 1 || body.seasons.length > 20 ||
-        body.seasons.some((entry) => !allowedBody(entry, ['anidbId', 'requestKey']) ||
+        body.seasons.some((entry) => !allowedBody(entry, ['anidbId', 'requestKey','releaseMode']) ||
           !Number.isSafeInteger(entry.anidbId) || entry.anidbId < 1 ||
           typeof entry.requestKey !== 'string' ||
           !/^[A-Za-z0-9_-]{1,64}$/.test(entry.requestKey)) ||
@@ -1219,6 +1222,69 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(503).send({ error: 'Preflight unavailable' });
     }
     return result;
+  });
+  // User-facing discovery shares the existing preflight/coordinator. Receipts
+  // never expose the configured indexer download URL or credentials.
+  const releaseAccess=async(request,reply)=>{
+    const id=Number(request.params.id);
+    if(!Number.isSafeInteger(id)||id<1) {reply.code(400).send({error:'Invalid request ID'});return null;}
+    const saved=readRequest?.(id);
+    if(!saved || (saved.requesterId!==request.negevUser.id&&request.negevUser.role!=='admin')) {
+      reply.code(404).send({error:'Request not found'});return null;
+    }
+    if(!releaseSelection) {reply.code(503).send({error:'Release search unavailable'});return null;}
+    if(!request.negevUser.adultAllowed) {
+      const detail=await loadDetail?.({anidbId:saved.anidbId,page:1});
+      if(detail?.restricted!==false) {reply.code(403).send({error:'18+ access is disabled or unverified'});return null;}
+    }
+    return id;
+  };
+  const publicSelection=s=>s?{candidate:publicRelease(s.candidate),preview:{
+    torrentHash:s.preview.torrentHash,episodeIds:s.preview.episodeIds,files:s.preview.files,
+    correspondence:s.preview.correspondence},registration:correspondenceLevel(s.preview)}:undefined;
+  const publicControl=c=>c?{mode:c.mode,phase:c.phase,revision:c.revision,
+    ...(c.expiresMs?{expiresMs:c.expiresMs}:{}),
+    ...(c.selection?{selection:publicSelection(c.selection)}:{}),
+    ...(c.proposal?{proposal:{registered:publicSelection(c.proposal.registered),
+      better:publicSelection(c.proposal.better),benefit:c.proposal.benefit}}:{})}:undefined;
+  app.get('/api/requests/:id/releases',{preHandler:requireUser,
+    config:{rateLimit:{max:10,timeWindow:'1 minute'}}},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');
+    const id=await releaseAccess(request,reply);if(!id)return;
+    const offset=request.query.offset===undefined?0:Number(request.query.offset);
+    if(Object.keys(request.query).some(k=>!['query','offset'].includes(k)) ||
+      !Number.isSafeInteger(offset)||![0,50,100,150].includes(offset)||
+      request.query.query!==undefined&&(typeof request.query.query!=='string'||
+      request.query.query.trim().length<2||request.query.query.length>120||/[\x00-\x1f\x7f]/.test(request.query.query))) {
+      return reply.code(400).send({error:'Use a search phrase between 2 and 120 characters'});
+    }
+    try {
+      const result=await releaseSelection.search(id,request.query.query,offset);
+      return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
+    } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
+  });
+  app.get('/api/requests/:id/release-choice',{preHandler:requireUser},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
+    return {state:'selection',control:publicControl(releaseSelection.snapshot(id))};
+  });
+  app.post('/api/requests/:id/release-choice',{preHandler:writeGuards,
+    config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
+    const b=request.body;
+    if(!allowedBody(b,['action','mode','revision','token'])||!['begin','inspect','choose','auto','better','registered'].includes(b.action)||
+      !Number.isSafeInteger(b.revision)||b.revision<0||
+      (['inspect','choose'].includes(b.action)&&(typeof b.token!=='string'||b.token.length>64))) {
+      return reply.code(400).send({error:'Invalid release selection'});
+    }
+    try {
+      const result=b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
+        b.action==='inspect'?await releaseSelection.inspect(id,b.token):
+        b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision):
+        b.action==='auto'?await releaseSelection.auto(id,b.revision):
+        releaseSelection.decide(id,b.action,b.revision);
+      if(result?.state==='held') return reply.code(409).send(result);
+      return result?.control?{...result,control:publicControl(result.control)}:result;
+    } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Diagnostic only: no Unknown observation may authorize acquisition.
   app.post('/api/requests/:id/presence-probe', { preHandler: writeGuards,

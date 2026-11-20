@@ -1,3 +1,4 @@
+import { createReleaseDialog, makeReleaseModePicker } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
@@ -398,8 +399,21 @@ async function api(url, options = {}) {
   }
   return data;
 }
+const releaseDialog=createReleaseDialog({api,element,onSaved:()=>{void loadRequests();}});
+async function openSavedReleaseRequests(saved,mode) {
+  if(!state.releaseSearch)return;
+  const jobs=saved.filter(item=>Number.isSafeInteger(item.requestId));
+  const show=index=>{
+    const item=jobs[index];if(!item)return;
+    void releaseDialog.open({requestId:item.requestId,title:item.title,
+      mode:mode==='manual'?'manual':'auto',
+      next:index+1<jobs.length?()=>show(index+1):null});
+  };
+  show(0);
+}
 function showSession(data) {
   if (state.user?.id !== data.user.id) {
+    releaseDialog.close();
     sessionResponses.invalidate();
     invalidateRequestResponses();
     reviewResponses.invalidate();
@@ -483,6 +497,7 @@ function clearWorkspace() {
   libraryResponses.invalidate();
   airingResponses.invalidate();
   seasonalResponses.invalidate();
+  releaseDialog.close();
   state.user = null;
   state.requestScope = 'mine';
   state.showAdult = true;
@@ -671,74 +686,14 @@ async function loadRequestView(view, append = false, silent = false) {
           'Cancellation is unavailable once release processing starts, even before a download begins.',
           'muted'));
       }
-      if (state.user?.role === 'admin' && state.releaseSearch) {
-        const button = element('button', 'Review release candidates');
-        const candidates = element('div', undefined, 'candidate-list');
-        button.addEventListener('click', async () => {
-          button.disabled = true;
-          candidates.replaceChildren(element('p', 'Searching indexers…', 'muted'));
-          try {
-            const result = await api(`/api/requests/${item.id}/candidates`);
-            candidates.replaceChildren(element('p',
-              'Unverified matches only. No download has started.', 'muted'));
-            if (result.items.length === 0) {
-              candidates.append(element('p', 'No candidates returned by this search.', 'muted'));
-            }
-            for (const candidate of result.items) {
-              const entry = element('div');
-              entry.append(element('p',
-                `${candidate.title} · ${Math.round(candidate.size / 1_000_000)} MB · ` +
-                `${candidate.seeders ?? '?'} seeders`));
-              const inspect = element('button', 'Inspect files');
-              const inspection = element('div');
-              inspect.addEventListener('click', async () => {
-                inspect.disabled = true;
-                inspection.replaceChildren(element('p', 'Reading torrent file list…', 'muted'));
-                try {
-                  const preview = await api(`/api/requests/${item.id}/preflight`, {
-                    method: 'POST', body: JSON.stringify({ candidate: {
-                      guid: candidate.guid, indexerId: candidate.indexerId,
-                      title: candidate.title, size: candidate.size,
-                    } }),
-                  });
-                  inspection.replaceChildren(element('p',
-                    `Torrent file list: ${preview.files.length} video file(s). ` +
-                    'Episode identities are provisional. ' +
-                    'No download has started.', 'muted'));
-                  for (const file of preview.files) {
-                    const evidence = preview.correspondence?.files?.find((item) =>
-                      item.name === file.name);
-                    const label = evidence?.state === 'previously_verified'
-                      ? 'Previously verified exact file · AniDB correspondence'
-                      : evidence?.state === 'likely'
-                        ? 'Likely AniDB correspondence · advertised CRC32 and size'
-                        : evidence?.state === 'filename_prediction'
-                          ? 'Filename prediction only · AniDB registration unknown'
-                          : 'AniDB registration unknown';
-                    inspection.append(element('p',
-                      `${file.name} → AniDB episode ${file.episodeIds.join(', ')} · ${label}`));
-                  }
-                  for (const file of preview.subtitles) {
-                    inspection.append(element('p', `${file.name} · subtitle`));
-                  }
-                  for (const file of preview.filesToExclude) {
-                    inspection.append(element('p', `${file.name} · will be excluded before download`));
-                  }
-                } catch (error) {
-                  inspection.replaceChildren(element('p',
-                    `Cannot accept this file list: ${error.message}`, 'error'));
-                } finally { inspect.disabled = false; }
-              });
-              entry.append(inspect, inspection);
-              candidates.append(entry);
-            }
-          } catch {
-            candidates.replaceChildren(element('p', 'Release search is unavailable right now.', 'muted'));
-          } finally { button.disabled = false; }
-        });
-        const advanced = element('details', undefined, 'request-technical');
-        advanced.append(element('summary', 'Advanced release tools'), button, candidates);
-        details.append(advanced);
+      if (state.releaseSearch) {
+        const tools=element('div',undefined,'release-search-actions');
+        for(const [mode,label] of [['auto','Auto search'],['manual','Search releases']]) {
+          const search=element('button',label,'quiet');
+          search.addEventListener('click',()=>{void releaseDialog.open({requestId:item.id,title:item.title??'Anime request',mode});});
+          tools.append(search);
+        }
+        details.append(tools);
       }
       if (details.childElementCount) row.append(details);
       if (watching) list.append(row);
@@ -816,6 +771,12 @@ function renderRequestStatus(status, presentation) {
     'request-note'));
 }
 function requestItemPresentation(item) {
+  if(item.status!=='cancelled'&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='manual') {
+    return {stage:'Choose a release',detail:'Open Search releases to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
+  }
+  if(item.status!=='cancelled'&&item.releaseSelection?.phase==='proposal') {
+    return {stage:'Release choice ready',detail:'Open Auto search to review the better release.',note:'The registered option is used automatically after five minutes.',group:'active'};
+  }
   return item.status === 'cancelled'
     ? { stage: 'Cancelled', detail: 'No further downloads or episode monitoring.',
       note: 'Existing files remain in your library.', group: 'cancelled' }
@@ -2697,6 +2658,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       review.append(element('strong', 'Review your request'));
       const reviewSummary = element('p');
       review.append(reviewSummary);
+      const releasePicker=state.releaseSearch?makeReleaseModePicker(element):null;
+      if(releasePicker)review.append(releasePicker.element);
       review.append(element('p',
         'Each selected installment becomes its own request. You can cancel a saved request in My Requests until processing starts.',
         'muted'));
@@ -2899,6 +2862,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         saving = true;
         refresh();
         const saved = [];
+        const releaseJobs = [];
         const failed = [];
         let alreadyMonitored = 0;
         let closedByPilot = 0;
@@ -2906,6 +2870,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           const result = await api('/api/requests/seasons', { method: 'POST',
             body: JSON.stringify({ seasons: selected.map((row) => ({
               anidbId: row.anidbId,
+              ...(releasePicker?{releaseMode:releasePicker.value()}:{}),
               requestKey: requestKeys.pending({ userId: state.user.id,
                 anidbId: row.anidbId }),
             })) }) });
@@ -2925,6 +2890,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               } else {
                 row.statusText.textContent = payload.state === 'pending'
                   ? 'Queued for details' : 'Requested';
+                if(payload.created!==false&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title});
                 saved.push(Number.isSafeInteger(payload.requestId)
                   ? `#${payload.requestId}` : row.title);
               }
@@ -2968,6 +2934,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         view.hidden = saved.length === 0 && alreadyMonitored === 0;
         refresh();
         if (saved.length) loadRequests();
+        if(releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
       });
       if (checkingCompleteSeries && loadNextEpisodePage) {
         const continueCheck = element('button', 'Continue availability check', 'quiet');
@@ -3072,6 +3039,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? `${data.title || item.title} · one film entry`
       : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
     requestReview.append(reviewSummary);
+    const filmReleasePicker=state.releaseSearch?makeReleaseModePicker(element):null;
+    if(filmReleasePicker)requestReview.append(filmReleasePicker.element);
     requestReview.append(element('p',
       'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
       'muted'));
@@ -3198,6 +3167,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           anidbId: selectedInstallmentId,
           scope: selectedFilmId ? 'episodes' : 'installment',
           ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
+          ...(filmReleasePicker?{releaseMode:filmReleasePicker.value()}:{}),
         }) });
         requestKeys.saved(scope);
         refreshTrackingAfterRequest();
@@ -3206,6 +3176,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestReview.hidden = true;
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
+        if(saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId))void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());
         viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'

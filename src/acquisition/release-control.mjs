@@ -1,0 +1,83 @@
+// Private request-local intent, not an alternative download pipeline. Call
+// reservationGate inside the acquisition transaction so a stale worker cannot
+// race a newly saved manual choice.
+export function initializeReleaseControl(db) {
+  if (!db.prepare('PRAGMA table_info(requests)').all().some(c => c.name === 'release_control')) {
+    db.exec('ALTER TABLE requests ADD COLUMN release_control TEXT');
+  }
+}
+export function sameReleaseFiles(left,right) {
+  const normalize=files=>{
+    if(!Array.isArray(files)||!files.length||files.some(f=>typeof f?.name!=='string'||
+      !Number.isSafeInteger(f.size)||f.size<1||!Array.isArray(f.episodeIds)||!f.episodeIds.length))return null;
+    if(new Set(files.map(f=>f.name)).size!==files.length)return null;
+    return files.map(f=>({name:f.name,size:f.size,episodeIds:[...f.episodeIds].sort((a,b)=>a-b)}))
+      .sort((a,b)=>a.name.localeCompare(b.name));
+  };
+  const a=normalize(left),b=normalize(right);
+  return a!==null&&b!==null&&JSON.stringify(a)===JSON.stringify(b);
+}
+export function readReleaseControl(db, id, nowMs) {
+  const raw = db.prepare('SELECT release_control FROM requests WHERE id=?').get(id)?.release_control;
+  if (!raw) return {mode:'auto',phase:'consumed',revision:0};
+  const control = JSON.parse(raw);
+  if (control.mode === 'auto' && control.expiresMs <= nowMs &&
+      ['proposal','selecting'].includes(control.phase)) {
+    const next = {mode:'auto',phase:control.proposal ? 'chosen' : 'consumed',
+      revision:control.revision+1,
+      ...(control.proposal ? {selection:control.proposal.registered} : {})};
+    db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?')
+      .run(JSON.stringify(next),id,raw);
+    return readReleaseControl(db,id,nowMs);
+  }
+  return control;
+}
+export function updateReleaseControl(db,id,revision,next,nowMs) {
+  if (!Number.isSafeInteger(id) || id<1 || !Number.isSafeInteger(revision) || revision<0 ||
+      !Number.isSafeInteger(nowMs) || nowMs<0 || !['auto','manual'].includes(next?.mode) ||
+      !['selecting','chosen','proposal','consumed'].includes(next?.phase) ||
+      (next.phase==='chosen' && !validSelection(next.selection)) ||
+      (next.phase==='proposal' && (!validSelection(next.proposal?.registered) ||
+        !validSelection(next.proposal?.better))) ||
+      (['selecting','proposal'].includes(next.phase) && next.mode==='auto' &&
+        (!Number.isSafeInteger(next.expiresMs) || next.expiresMs<=nowMs || next.expiresMs>nowMs+300_000))) {
+    return {state:'held',reason:'invalid_release_selection'};
+  }
+  const current=readReleaseControl(db,id,nowMs);
+  if (current.revision!==revision) return {state:'held',reason:'stale_release_selection'};
+  const row=db.prepare('SELECT cancelled_ms,release_control FROM requests WHERE id=?').get(id);
+  if (!row || row.cancelled_ms!==null) return {state:'held',reason:'request_missing'};
+  // Do not alter a selection whose submission has already reserved its files.
+  const selectedTargets=next.selection?.preview?.episodeIds??[];
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='acquisition_target_claims'").get() &&
+      db.prepare(`SELECT c.episode_id,a.status FROM acquisition_target_claims c JOIN acquisition_attempts a ON a.id=c.attempt_id
+        WHERE a.request_id=? AND c.active=1`).all(id).some(row=>
+          row.status!=='torrent_observed'||selectedTargets.includes(row.episode_id))) {
+    return {state:'held',reason:'release_already_processing'};
+  }
+  const value={...next,revision:revision+1};
+  const changed=db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control IS ?')
+    .run(JSON.stringify(value),id,row.release_control).changes;
+  return changed ? {state:'updated',control:value} : {state:'held',reason:'stale_release_selection'};
+}
+function validSelection(s) {
+  return typeof s?.candidate?.guid==='string' && s.candidate.guid.length>0 &&
+    Number.isSafeInteger(s.candidate.indexerId) && s.candidate.indexerId>0 &&
+    /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(s.preview?.torrentHash) &&
+    Array.isArray(s.preview.episodeIds) && s.preview.episodeIds.length>0 &&
+    Array.isArray(s.preview.files) && s.preview.files.length>0;
+}
+export function releaseReservationGate(db,id,candidate,episodeIds,nowMs,preparedHash,plannedFiles) {
+  // Old diagnostic databases need no migration just to read their attempts.
+  if (!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='release_control')) return null;
+  const control=readReleaseControl(db,id,nowMs);
+  if (['selecting','proposal'].includes(control.phase)) return 'release_selection_pending';
+  if (control.phase!=='chosen') return null;
+  const s=control.selection;
+  if (s.candidate.indexerId!==candidate.indexerId || s.candidate.guid!==candidate.guid ||
+      s.candidate.title!==candidate.title || s.candidate.size!==candidate.size ||
+      episodeIds.some(id=>!s.preview.episodeIds.includes(id)) ||
+      preparedHash?.toLowerCase()!==s.preview.torrentHash ||
+      !sameReleaseFiles(plannedFiles,s.preview.files)) return 'release_choice_changed';
+  return null;
+}

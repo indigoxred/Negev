@@ -220,6 +220,16 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       }
       const process = createAcquisitionRequestProcessor({
         readRequest: (id) => requests.getRequest(id),
+        readReleaseControl: requests.getReleaseControl?.bind(requests),
+        consumeReleaseChoice: requests.consumeReleaseChoice?.bind(requests),
+        readChosenAttempt: input=>{
+          const owned=acquisitions.getOwnedObservedCandidate?.(input);
+          if(owned?.state!=='owned_observed')return null;
+          const attempt=acquisitions.getAttempt(owned.attemptId);
+          const plan=acquisitions.getFilePlan?.(owned.attemptId);
+          return {torrentHash:attempt?.torrentHash,files:plan};
+        },
+        preferRegisteredCorrespondence: true,
         readPublicCoverage,
         inspectCandidateTargets: acquisitions.inspectCandidateTargets?.bind(acquisitions),
         ...(recognitionRecoveries ? {

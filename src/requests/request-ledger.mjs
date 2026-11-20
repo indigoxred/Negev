@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { initializeReleaseControl, readReleaseControl, updateReleaseControl } from '../acquisition/release-control.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { hasStatedRegularEpisodes } from '../catalogue/stated-episode-count.mjs';
 
@@ -101,6 +102,7 @@ export function openRequestLedger(dbPath) {
 
   const findRequest = db.prepare(`SELECT id,anidb_id,kind,episode_key,monitor_future,command_key,cancelled_ms
     FROM requests WHERE requester_id=? AND request_key=?`);
+  initializeReleaseControl(db);
   const activeWatch = db.prepare(`SELECT id FROM requests
     WHERE requester_id=? AND anidb_id=? AND kind='series' AND monitor_future=1
       AND watch_closed=0 AND cancelled_ms IS NULL ORDER BY id LIMIT 1`);
@@ -310,7 +312,8 @@ export function openRequestLedger(dbPath) {
       }
       return Boolean(otherActiveWatch.get(anidbId, requesterId));
     },
-    submit({ requesterId, requestKey, commandKey = null, intent, nowMs }) {
+    submit({ requesterId, requestKey, commandKey = null, intent, nowMs, releaseMode = 'auto' }) {
+      if (!['auto','manual','auto_review'].includes(releaseMode)) throw new TypeError('Invalid release mode');
       if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
           typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
           !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -343,6 +346,11 @@ export function openRequestLedger(dbPath) {
         const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.title, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);
         const targetIds = [];
+        if (releaseMode !== 'auto' && item.episodeIds.length) {
+          db.prepare('UPDATE requests SET release_control=? WHERE id=?').run(JSON.stringify({
+            mode:releaseMode==='manual'?'manual':'auto',phase:'selecting',revision:1,
+            ...(releaseMode==='auto_review'?{expiresMs:nowMs+300_000}:{}) }),requestId);
+        }
         for (const episodeId of item.episodeIds) {
           insertTarget.run(item.anidbId, episodeId, REASON);
           const targetId = findTarget.get(item.anidbId, episodeId).id;
@@ -365,6 +373,18 @@ export function openRequestLedger(dbPath) {
         episodeIds: findLinks.all(row.id).map((link) => link.episode_id),
         status: row.cancelled_ms === null ? row.status : 'cancelled',
         reason: row.reason, createdMs: row.created_ms } : null;
+    },
+    getReleaseControl(id,nowMs=Date.now()) { return readReleaseControl(db,id,nowMs); },
+    consumeReleaseChoice(id,revision) {
+      return transact(()=>{
+        const current=readReleaseControl(db,id,0);
+        if(current.revision!==revision||current.phase!=='chosen') return false;
+        return db.prepare('UPDATE requests SET release_control=? WHERE id=?').run(
+          JSON.stringify({...current,mode:'auto',phase:'consumed',revision:revision+1}),id).changes===1;
+      });
+    },
+    updateReleaseControl(id,revision,next,nowMs=Date.now()) {
+      return transact(()=>updateReleaseControl(db,id,revision,next,nowMs));
     },
     countRequests() { return countRequests.get().count; },
     countTargets() { return countTargets.get().count; },

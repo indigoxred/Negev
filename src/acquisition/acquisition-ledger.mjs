@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { releaseReservationGate } from './release-control.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
@@ -379,7 +380,7 @@ export function openAcquisitionLedger(dbPath) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       return { state: attemptForRequest.get(requestId) ? 'attempt_present' : 'no_attempt' };
     },
-    reserve({ requestId, candidate, episodeIds,
+    reserve({ requestId, candidate, episodeIds, preparedHash, plannedFiles,
       evidencePolicy = 'strict', nowMs }) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
@@ -393,6 +394,8 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
+        const selectionReason = releaseReservationGate(db,requestId,candidate,episodeIds,nowMs,preparedHash,plannedFiles);
+        if (selectionReason) return held(selectionReason);
         const digest = digestForCandidate(candidate, request.anidb_id);
         if (episodeIds.some((id) => !requestedEpisode.get(requestId, request.anidb_id, id))) {
           return held('target_not_requested');

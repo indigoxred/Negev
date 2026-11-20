@@ -18,6 +18,16 @@ async function withLedger(run) {
 const item = { requesterId: 4, anidbId: 4158,
   title: 'Pale Cocoon', requestKey: 'cold-key', nowMs: 1_000 };
 
+test('manual selection intent survives preparation and reaches the normal submitter after restart',async()=>withLedger(async({ledger,dbPath})=>{
+  ledger.enqueue({...item,releaseMode:'manual'});
+  const reopened=openPendingTitleLedger(dbPath);let input;
+  try{
+    const worker=createPendingTitleWorker({ledger:reopened,now:()=>1000,authorize:async()=>true,
+      submitRequest:async value=>{input=value;return {state:'held',requestId:27};}});
+    assert.equal((await worker.runOnce()).state,'resolved');assert.equal(input.releaseMode,'manual');
+  }finally{reopened.close();}
+}));
+
 test('pending detail schedules preparation and later resolves with the original key',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);

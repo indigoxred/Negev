@@ -21,6 +21,40 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('a persisted manual choice bypasses search, pins metainfo and uses the normal guarded submit',async()=>{
+  let searches=0,submits=0,consumed=0,changed=false;
+  const selected={...candidate(2),title:'Example - 01 1080p',seeders:20};
+  const process=createAcquisitionRequestProcessor({readRequest:()=>request,
+    readReleaseControl:()=>({phase:'chosen',revision:2,selection:{candidate:selected,preview:preflight}}),
+    consumeReleaseChoice:()=>{consumed++;},discoverCandidates:async()=>{searches++;},
+    previewCandidate:async()=>({...preflight,torrentHash:(changed?'b':'a').repeat(40)}),
+    loadDetail:async()=>detail,submitCandidate:async input=>{
+      assert.equal(input.candidate.guid,selected.guid);assert.deepEqual(input.episodeIds,[1001]);
+      submits++;return {state:'stopped_observed',attemptId:11};}});
+  changed=true;assert.equal((await process({requestId:4})).reason,'release_choice_changed');
+  assert.equal(submits,0);changed=false;
+  assert.equal((await process({requestId:4})).state,'stopped_observed');
+  assert.equal(searches,0);assert.equal(submits,1);assert.equal(consumed,1);
+});
+test('an unanswered interactive choice blocks search without blocking other pipeline stages',async()=>{
+  let calls=0;const process=createAcquisitionRequestProcessor({readRequest:()=>request,
+    readReleaseControl:()=>({phase:'proposal',mode:'auto'}),
+    discoverCandidates:async()=>{calls++;},previewCandidate:async()=>{},loadDetail:async()=>detail,
+    submitCandidate:async()=>{calls++;}});
+  assert.equal((await process({requestId:4})).reason,'release_selection_pending');assert.equal(calls,0);
+});
+test('restart consumes only an exactly owned chosen torrent and can check another episode while it downloads',async()=>{
+ let consumed=0,searches=0;
+ const process=createAcquisitionRequestProcessor({readRequest:()=>request,
+   readReleaseControl:()=>({phase:'chosen',revision:2,selection:{candidate:candidate(1),preview:preflight}}),
+   consumeReleaseChoice:()=>{consumed++;},
+   readChosenAttempt:async()=>({torrentHash:preflight.torrentHash,files:preflight.files}),
+   discoverCandidates:async()=>{searches++;return {state:'candidates',requestId:4,anidbId:42,items:[]};},
+   previewCandidate:async()=>{},loadDetail:async()=>detail,submitCandidate:async()=>{throw Error('Unexpected download');}});
+ assert.equal((await process({requestId:4})).reason,'no_release_candidates');
+ assert.equal(consumed,1);assert.equal(searches,1);
+});
+
 test('an uncertain owned episode cannot block an independently missing episode or receive another grab', async () => {
   const selected = [], targets = [];
   const process = createAcquisitionRequestProcessor({
@@ -311,6 +345,21 @@ test('completed-season quality is independent of the three-preview page boundary
   }
   assert.deepEqual(picked, [{ pageSize: 3, guid: 'candidate-1' },
     { pageSize: 4, guid: 'candidate-1' }]);
+});
+
+test('likely registration cannot downgrade a completed pack across candidate pages',async()=>{
+ const picked=[];
+ const releases=[1,2,3,4].map(i=>({...candidate(i),title:`Example batch WEB ${i===4?'720p':'1080p'}`,seeders:20}));
+ const process=createAcquisitionRequestProcessor({readRequest:()=>request,requireReleasePolicy:true,
+   preferShokoPreview:true,preferRegisteredCorrespondence:true,
+   discoverCandidates:async()=>({state:'candidates',requestId:4,anidbId:42,releaseState:'completed',items:releases}),
+   previewCandidate:async({candidate:c})=>({...preflight,shokoPreview:'uncertain',episodeIds:[1001,1002],
+     files:[1,2].map(n=>({name:`Example - 0${n}.mkv`,size:1000,episodeIds:[1000+n]})),
+     correspondence:{files:[1,2].map(n=>({name:`Example - 0${n}.mkv`,size:1000,state:c.guid==='candidate-4'?'likely':'unknown'}))}}),
+   loadDetail:async()=>detail,submitCandidate:async({candidate:c})=>{picked.push(c.guid);return {state:'stopped_observed',attemptId:99};}});
+ let result=await process({requestId:4});
+ for(let turn=0;result.state==='held'&&turn<6;turn++)result=await process({requestId:4,candidateOffset:result.nextCandidateOffset,candidateFingerprint:result.nextCandidateFingerprint});
+ assertAttempt(result,99);assert.deepEqual(picked,['candidate-1']);
 });
 
 test('a slow candidate sweep keeps advancing through its finite candidate list', async () => {
