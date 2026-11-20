@@ -15,10 +15,10 @@ test('interactive search bounds queries and a custom phrase cannot become identi
     releaseQueries:async()=>['Another official name','Another alias','Third alias','Fourth alias'],pause:async()=>{},
     searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[{guid:query,indexerId:1,
       title:'Canonical Anime - 01',evidence:'unverified'}]};}});
-  assert.ok((await discover({requestId:12,interactive:true})).items.length<=3);
-  assert.ok(queries.length<=3);queries.length=0;
+  assert.ok((await discover({requestId:12,interactive:true})).items.length<=4);
+  assert.ok(queries.length<=4);queries.length=0;
   const result=await discover({requestId:12,interactive:true,query:'Canonical Anime 1080p'});
-  assert.deepEqual(queries,['Canonical Anime 1080p']);assert.equal(result.items[0].sourceQuery,undefined);
+  assert.ok(queries.includes('Canonical Anime 1080p'));assert.ok(queries.every(q=>q.endsWith(' 1080p')));assert.ok(queries.length<=4);assert.equal(result.items[0].sourceQuery,undefined);
   assert.equal((await discover({requestId:12,query:'untrusted'})).reason,'invalid_request');
 });
 
@@ -398,4 +398,34 @@ test('a long canonical title without a valid same-ID alias never searches', asyn
   assert.deepEqual(await discover({ requestId: 12 }),
     { state: 'held', reason: 'query_too_long' });
   assert.equal(searches, 0);
+});
+
+test('interactive filters apply before pagination and reuse the bounded provider window', async () => {
+  const calls=[];
+  const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>detail,pause:async()=>{},
+    searchReleases:async input=>{calls.push(input);return {state:'candidates',items:Array.from({length:120},(_,i)=>({indexerId:7,guid:String(i),title:`Canonical Anime - ${i+1} ${i<60?'720p':'1080p'}`,evidence:'unverified'}))};}});
+  const filters={quality:'bd1080',audio:'japanese'};
+  const first=await discover({requestId:12,interactive:true,filters});
+  assert.equal(first.items.length,50);assert.equal(first.items[0].guid,'60');assert.equal(first.nextOffset,50);
+  const second=await discover({requestId:12,interactive:true,filters,resultOffset:50});
+  assert.equal(second.items.length,10);assert.equal(second.nextOffset,null);assert.equal(calls.length,1);assert.equal(calls[0].limit,200);
+});
+
+test('a catalogue-year-only manual refinement searches both literal and yearless same-ID names',async()=>{
+ const queries=[];const discover=createRequestCandidateDiscovery({readRequest:()=>request,
+ loadDetail:async()=>({...detail,title:'Canonical Anime (2025)'}),pause:async()=>{},
+ searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[]};}});
+ await discover({requestId:12,interactive:true,query:'Canonical Anime 2025'});
+ assert.deepEqual(queries,['Canonical Anime 2025','Canonical Anime']);
+ queries.length=0;
+ await discover({requestId:12,interactive:true,query:'Unrelated Anime 2025'});
+ assert.deepEqual(queries,['Unrelated Anime 2025']);
+});
+
+test('manual group refinements search same-ID alternate names without losing the group',async()=>{
+ const queries=[];const discover=createRequestCandidateDiscovery({readRequest:()=>request,
+ loadDetail:async()=>({...detail,title:'Canonical Anime (2025)'}),releaseQueries:async()=>['Official English Title','Other Canonical Spelling'],pause:async()=>{},
+ searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[]};}});
+ await discover({requestId:12,interactive:true,query:'Canonical Anime Anime Time'});
+ assert.ok(queries.includes('Official English Title Anime Time'));assert.ok(queries.every(query=>query.endsWith(' Anime Time')));assert.ok(queries.length<=4);
 });

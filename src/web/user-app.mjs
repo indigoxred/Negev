@@ -48,7 +48,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
-  discoverCandidates, previewCandidate, probeRequestTargets, releaseSelection,
+  discoverCandidates, previewCandidate, probeRequestTargets, releaseSelection, releasePreviews,
   readImportActivity,
   listOperationalReview,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
@@ -911,7 +911,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return result.state === 'updated' ? result :
       reply.code(404).send({ error: 'Account unavailable' });
   });
-  const processRequest = async (body, requester, reply) => {
+  const processRequest = async (body, requester, reply, preview = false) => {
     if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey','releaseMode']) ||
         (body.releaseMode!==undefined && (!releaseSelection || !['auto','manual','auto_review'].includes(body.releaseMode)))) {
       return reply.code(400).send({ error: 'Invalid request' });
@@ -984,6 +984,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         state: 'held', reason: 'sonarr_identity_unmapped',
         error: 'This title cannot be safely checked against Anime Sonarr yet' });
     }
+    if(preview) {
+      if(!releasePreviews)return reply.code(503).send({error:'Release preview unavailable'});
+      const opened=await releasePreviews.open({...body,requesterId:requester.id});
+      return opened.state==='preview'?opened:reply.code(409).send(opened);
+    }
     const result = await submitRequest({ ...body, requesterId: requester.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });
     if (result.state === 'held' && Number.isSafeInteger(result.requestId)) {
@@ -1012,6 +1017,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     return reply.code(result.reason === 'invalid_request' ? 400 : 409).send(result);
   };
+  app.post('/api/release-previews', {preHandler:writeGuards,
+    config:{rateLimit:{max:20,timeWindow:'1 minute'}}},async(request,reply)=>{
+      reply.header('Cache-Control','no-store');
+      return processRequest(request.body,request.negevUser,reply,true);
+    });
   app.post('/api/requests', { preHandler: writeGuards,
     config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -1247,9 +1257,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   // User-facing discovery shares the existing preflight/coordinator. Receipts
   // never expose the configured indexer download URL or credentials.
   const releaseAccess=async(request,reply)=>{
-    const id=Number(request.params.id);
+    const isPreview=typeof request.params.previewId==='string';
+    const id=isPreview?releasePreviews?.access(request.params.previewId,request.negevUser.id):Number(request.params.id);
+    if(isPreview&&!id){reply.code(404).send({reason:'release_preview_expired',error:'Release preview expired; reopen Manual Pick'});return null;}
+    request.releaseSelector=isPreview?releasePreviews.selection:releaseSelection;
     if(!Number.isSafeInteger(id)||id<1) {reply.code(400).send({error:'Invalid request ID'});return null;}
-    const saved=readRequest?.(id);
+    const saved=isPreview?releasePreviews.readRequest(id):readRequest?.(id);
     if(!saved || (saved.requesterId!==request.negevUser.id&&request.negevUser.role!=='admin')) {
       reply.code(404).send({error:'Request not found'});return null;
     }
@@ -1269,7 +1282,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     ...(c.selection?{selection:publicSelection(c.selection)}:{}),
     ...(c.proposal?{proposal:{registered:publicSelection(c.proposal.registered),
       better:publicSelection(c.proposal.better),benefit:c.proposal.benefit}}:{})}:undefined;
-  app.get('/api/requests/:id/releases',{preHandler:requireUser,
+  for(const route of ['/api/requests/:id/releases','/api/release-previews/:previewId/releases']) app.get(route,{preHandler:requireUser,
     config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
     reply.header('Cache-Control','no-store');
     const id=await releaseAccess(request,reply);if(!id)return;
@@ -1282,15 +1295,15 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({error:'Use a search phrase between 2 and 120 characters'});
     }
     try {
-      const result=await releaseSelection.search(id,request.query.query,offset,filters);
+      const result=await request.releaseSelector.search(id,request.query.query,offset,filters);
       return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
-  app.get('/api/requests/:id/release-choice',{preHandler:requireUser},async(request,reply)=>{
+  for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.get(route,{preHandler:requireUser},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
-    return {state:'selection',control:publicControl(releaseSelection.snapshot(id)),context:await releaseSelection.context?.(id)};
+    return {state:'selection',control:publicControl(request.releaseSelector.snapshot(id)),context:await request.releaseSelector.context?.(id)};
   });
-  app.post('/api/requests/:id/release-choice',{preHandler:writeGuards,
+  for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.post(route,{preHandler:writeGuards,
     config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
     const b=request.body;
@@ -1303,14 +1316,15 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({error:'Invalid release selection'});
     }
     try {
-      const result=b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
+      const result=request.params.previewId?await releasePreviews.command(request.params.previewId,request.negevUser.id,b):b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
         b.action==='inspect'?await releaseSelection.inspect(id,b.token):
         b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision,b.preferFutureGroup??false):
         b.action==='preference'?await releaseSelection.setPreference(id,b.group,b.revision,b.audio):
         b.action==='auto'?await releaseSelection.auto(id,b.revision):
         releaseSelection.decide(id,b.action,b.revision);
       if(result?.state==='held') return reply.code(409).send(result);
-      return result?.control?{...result,control:publicControl(result.control),context:await releaseSelection.context?.(id)}:result;
+      if(request.params.previewId&&result?.state!=='updated'&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
+      return result?.control?{...result,control:publicControl(result.control),context:await request.releaseSelector.context?.(id)}:result;
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Diagnostic only: no Unknown observation may authorize acquisition.

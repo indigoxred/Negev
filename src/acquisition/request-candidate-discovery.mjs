@@ -2,6 +2,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { hasTargetEpisodeHint } from './release-preference.mjs';
+import { matchesReleaseFilters, validReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -18,7 +19,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
   }
   const queryCache = new Map();
   const discover = async ({ requestId, searchTargetEpisodeId = null,
-    searchTargetEpisodeIds = null, interactive = false, query = null, resultOffset = 0 }) => {
+    searchTargetEpisodeIds = null, interactive = false, query = null, resultOffset = 0, filters = null }) => {
+    if (filters !== null && (!interactive || !validReleaseFilters(filters))) return held('invalid_release_filters');
     if(!Number.isSafeInteger(resultOffset)||resultOffset<0||resultOffset>150||(!interactive&&resultOffset!==0))return held('invalid_request');
     if (typeof interactive !== 'boolean' || (query !== null && (!interactive ||
         typeof query !== 'string' || query.trim().length<2 || query.length>120 ||
@@ -88,8 +90,29 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     let queries = originalQueries.length <= 16 ? originalQueries :
       [...new Set([...canonicalTargets, ...titleQueries,
         ...primaryAliases, ...targeted])].slice(0, 16);
-    const interactiveTruncated=interactive&&!query&&queries.length>3;
-    if(interactive) queries=query?[query.trim()]:queries.slice(0,3);
+    const interactiveTruncated=interactive&&!query&&queries.length>4;
+    if(interactive) {
+      if(query) {
+        const phrase=query.trim();
+        // Same-ID names are retrieval hints only. Keep the user's extra terms
+        // (group, quality, etc.) while trying official alternate spellings.
+        const year=/\s+\(((?:19|20)\d{2})\)$/.exec(detail.title)?.[1];
+        const names=[...new Set(titleQueries.map(name=>name.replace(/\s+\((?:19|20)\d{2}\)$/,'')))];
+        const escape=value=>value.replace(/[.*+?^{}$()|[\]\\]/g,'\\$&');
+        let matched=null;
+        for(const name of [...names].sort((a,b)=>b.length-a.length)) {
+          const pattern=new RegExp('(^|\\s)'+escape(name)+'(?=\\s|$)','iu');
+          if(pattern.test(phrase)){matched={pattern};break;}
+        }
+        queries=[phrase];
+        if(matched) for(const name of names) {
+          let alternative=phrase.replace(matched.pattern,(_,space)=>space+name);
+          if(year) alternative=alternative.replace(new RegExp('\\s+\\(?'+year+'\\)?(?=\\s|$)'),'');
+          if(alternative.length>=2&&alternative.length<=120&&!queries.some(q=>q.toLocaleLowerCase('en')===alternative.toLocaleLowerCase('en')))queries.push(alternative);
+          if(queries.length===4)break;
+        }
+      } else queries=queries.slice(0,4);
+    }
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
@@ -97,14 +120,14 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     for (const [index, query] of queries.entries()) {
       let result;
       const queryTarget = targetByQuery.get(query);
-      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null,interactive?resultOffset+50:25]);
+      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null,interactive?200:25]);
       const saved = queryCache.get(cacheKey);
       try {
         if (saved && saved.until > now()) result = saved.result;
         else {
           if (index > 0) await pause(1_000);
           result = await searchReleases({ query,
-            ...(interactive?{limit:resultOffset+50}:{}),
+            ...(interactive?{limit:200}:{}),
             targetEpisodeNumber: queryTarget?.number ?? null });
         }
       }
@@ -124,7 +147,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // Preserve which bucket answered the exact missing-episode query. This
       // is ordering evidence only; stopped metainfo and identity checks still
       // decide whether a candidate can be submitted.
-      buckets.push(result.items.map((item) => ({ ...item,
+      buckets.push(result.items.filter(item=>filters===null||matchesReleaseFilters(item,filters)).map((item) => ({ ...item,
         ...(!interactive ? {sourceQuery: query} : {}),
         ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
@@ -151,7 +174,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact
     // episode hit must not displace every same-title alias result.
-    const combinedLimit=interactive?resultOffset+50:50;
+    const combinedLimit=interactive?200:50;
     for (let position = 0; position < combinedLimit && items.length < combinedLimit; position++) {
       let any = false;
       for (const bucket of buckets) {
@@ -172,7 +195,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       ...(interactiveTruncated?{searchIncomplete:true}:{}),
       items:items.slice(resultOffset,resultOffset+50), exhaustive: false,
-      ...(interactive?{nextOffset:items.length===combinedLimit&&resultOffset<150?resultOffset+50:null}:{}),
+      ...(interactive?{nextOffset:items.length>resultOffset+50&&resultOffset<150?resultOffset+50:null}:{}),
       ...(failedQueries.length > 0 ? {
         searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };

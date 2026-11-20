@@ -67,7 +67,6 @@ function finishIndex(byId) {
   for (const entry of byId.values()) {
     const romanized = [...entry.romanizedSynonyms]
       .filter((title) => title.length >= 16 && title.length <= 120 &&
-        title.length < entry.title.length &&
         (title.match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3)
       .sort((left, right) => left.length - right.length ||
         left.localeCompare(right));

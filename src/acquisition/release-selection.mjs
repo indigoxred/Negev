@@ -118,7 +118,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(!request||request.status!=='held') return held('request_missing');
     if(!request.episodeIds.length) return {state:'candidates',requestId:id,items:[],waitingFor:'first_episode'};
     let result;
-    try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,...(query?{query}:{})});}
+    try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,filters,...(query?{query}:{})});}
     catch {return held('release_search_unavailable');}
     if(result?.state!=='candidates') return result??held('release_search_unavailable');
     remember(id,request,result.releaseState);

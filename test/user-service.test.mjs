@@ -751,6 +751,21 @@ test('signed-in user searches AniDB and saves an exact held request across resta
       payload: {} });
     assert.equal(disabledHydration.statusCode, 503);
     assert.equal(methods.length, beforeHydration);
+    const unsaved = await service.app.inject({method:'POST',url:'/api/release-previews',
+      headers:auth(cookie,csrf),payload:{anidbId:1234,scope:'installment',requestKey:'preview-only'}});
+    assert.equal(unsaved.statusCode,200,unsaved.body);
+    const previewPath='/api/release-previews/'+unsaved.json().previewId;
+    const previewSearch=await service.app.inject({url:previewPath+'/releases?quality=all',headers:{cookie}});
+    assert.equal(previewSearch.statusCode,200,previewSearch.body);
+    assert.ok(previewSearch.json().items.length>0,previewSearch.body);
+    const previewControl=await service.app.inject({url:previewPath+'/release-choice',headers:{cookie}});
+    const previewInspection=await service.app.inject({method:'POST',url:previewPath+'/release-choice',headers:auth(cookie,csrf),
+      payload:{action:'inspect',revision:previewControl.json().control.revision,token:previewSearch.json().items[0].token}});
+    assert.equal(previewInspection.statusCode,200,previewInspection.body);
+    assert.equal(previewInspection.json().state,'preflight');
+    assert.equal(previewInspection.json().requestId,undefined,'unsaved inspection never masquerades as a real request');
+    const emptyHistory=await service.app.inject({url:'/api/requests',headers:{cookie}});
+    assert.equal(emptyHistory.json().items.length,0);
     const created = await service.app.inject({ method: 'POST', url: '/api/requests',
       headers: auth(cookie, csrf),
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'once' } });
@@ -785,7 +800,7 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.equal(inspected.json().registeredInAniDb, false);
     assert.equal(inspected.json().downloadStarted, false);
     assert.deepEqual(inspected.json().episodeIds, [1001]);
-    assert.equal(methods.filter((method) => method === 'GET /7/download').length, 1);
+    assert.equal(methods.filter((method) => method === 'GET /7/download').length, 2, 'preview and saved request inspect independently');
     showSecond = true;
     calendarDay = '2026-11-01';
     const airing = await service.pollAiringNextPage();

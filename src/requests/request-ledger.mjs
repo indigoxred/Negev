@@ -313,7 +313,7 @@ export function openRequestLedger(dbPath) {
       }
       return Boolean(otherActiveWatch.get(anidbId, requesterId));
     },
-    submit({ requesterId, requestKey, commandKey = null, intent, nowMs, releaseMode = 'auto' }) {
+    submit({ requesterId, requestKey, commandKey = null, intent, nowMs, releaseMode = 'auto', initialReleaseControl = null }) {
       if (!['auto','manual','auto_review'].includes(releaseMode)) throw new TypeError('Invalid release mode');
       if (!Number.isSafeInteger(requesterId) || requesterId <= 0 ||
           typeof requestKey !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(requestKey) ||
@@ -347,10 +347,15 @@ export function openRequestLedger(dbPath) {
         const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.title, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);
         const targetIds = [];
-        if (releaseMode !== 'auto' && item.episodeIds.length) {
+        if (initialReleaseControl === null && releaseMode !== 'auto' && item.episodeIds.length) {
           db.prepare('UPDATE requests SET release_control=? WHERE id=?').run(JSON.stringify({
             mode:releaseMode==='manual'?'manual':'auto',phase:'selecting',revision:1,
             ...(releaseMode==='auto_review'?{expiresMs:nowMs+300_000}:{}) }),requestId);
+        }
+        if (initialReleaseControl !== null) {
+          if (initialReleaseControl.selection?.preview?.episodeIds.some(id => !item.episodeIds.includes(id))) throw new TypeError('Selection target changed');
+          const savedControl = updateReleaseControl(db, requestId, 0, initialReleaseControl, nowMs);
+          if (savedControl.state !== 'updated') throw new TypeError('Invalid initial release selection');
         }
         for (const episodeId of item.episodeIds) {
           insertTarget.run(item.anidbId, episodeId, REASON);

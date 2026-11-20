@@ -46,6 +46,47 @@ test('includes a shorter romanized same-ID synonym in release queries', () => {
   assert.deepEqual(index.get(21).releaseQueries, ['A Different Prince']);
 });
 
+test('includes full same-ID romanized spellings regardless of relative title length', async () => {
+  const text = [
+    '30|1|x-jat|Watari-kun no xx ga Houkaisunzen',
+    '30|2|x-jat|Watari-kun no xx ga Houkai Sunzen',
+    '31|1|x-jat|Mahou Shoujo Madoka Magica',
+    '31|2|x-jat|Mahou Shoujo Madoka☆Magica',
+    '32|1|x-jat|Tensei Shitara Slime Datta Ken',
+    '32|2|x-jat|Tensei Shitara Slime Datta Ken.',
+  ].join('\n');
+  for (const index of [parseAniDbTitleDump(text), await parseAniDbTitleDumpAsync(text)]) {
+    assert.deepEqual(index.get(30).releaseQueries,
+      ['Watari-kun no xx ga Houkaisunzen', 'Watari-kun no xx ga Houkai Sunzen']);
+    assert.deepEqual(index.get(31).releaseQueries,
+      ['Mahou Shoujo Madoka Magica', 'Mahou Shoujo Madoka☆Magica']);
+    assert.deepEqual(index.get(32).releaseQueries,
+      ['Tensei Shitara Slime Datta Ken', 'Tensei Shitara Slime Datta Ken.']);
+  }
+});
+
+test('bounds release queries and excludes short aliases and fragments', () => {
+  const index = parseAniDbTitleDump([
+    '40|1|x-jat|Mahou Shoujo Madoka Magica',
+    '40|2|x-jat|Mahou Shoujo Madoka☆Magica',
+    '40|2|x-jat|Mahou Shoujo Madoka Magica.',
+    '40|2|x-jat|Mahou Shoujo Madoka Magica TV',
+    '40|4|en|Puella Magi Madoka Magica',
+    '40|4|en|Puella Magi Madoka Magica TV',
+    '40|3|x-jat|Mahou Shoujo Madoka',
+    '40|2|x-jat|Mahou Shoujo',
+    '40|2|x-jat|A B C',
+    '40|2|x-jat|Unreasonablylong Fragment',
+    `40|2|x-jat|${'Very long title '.repeat(10)}`,
+  ].join('\n'));
+  assert.deepEqual(index.get(40).releaseQueries, [
+    'Mahou Shoujo Madoka Magica',
+    'Mahou Shoujo Madoka☆Magica',
+    'Mahou Shoujo Madoka Magica.',
+    'Puella Magi Madoka Magica',
+  ]);
+});
+
 test('accepts live AniDB kana and title-card rows for search without using them as release queries', () => {
   const index = parseAniDbTitleDump([
     '10|1|x-jat|Main Title',
