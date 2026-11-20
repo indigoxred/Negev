@@ -10,7 +10,7 @@ async function fixture(run){
  const requests=openRequestLedger(dbPath);requests.submit({requesterId:1,requestKey:'watch',nowMs:100,
    intent:{state:'ready',anidbId:42,kind:'series',monitorFuture:true,episodeIds:[101,102]}});
  requests.updateReleasePreference(1,0,{group:'SubsPlease',audio:'japanese',knownEpisodeIds:[101],createdMs:100},100);
- let clock=1000,fail=false,preferred=false,allMissing=false,includeHistorical=false,many=false,preferredPatch={};const submitted=[];
+ let clock=1000,fail=false,preferred=false,allMissing=false,allAvailable=false,claimed=false,includeHistorical=false,many=false,preferredPatch={};const submitted=[];
  const candidate={guid:'other',indexerId:1,title:'[Other] Example - 02 WEB 1080p',size:1000,seeders:20,evidence:'unverified'};
  const preview={state:'preflight',requestId:1,anidbId:42,torrentHash:'a'.repeat(40),shokoPreview:'uncertain',episodeIds:[102],files:[{name:'Example - 02.mkv',size:1000,episodeIds:[102]}]};
  const detail={state:'details',anidbId:42,complete:true,total:2,kind:'series',title:'Example',restricted:false,
@@ -19,12 +19,13 @@ async function fixture(run){
    readReleaseControl:requests.getReleaseControl.bind(requests),checkPreferredRelease:requests.checkPreferredRelease.bind(requests),
    getPreferredFallback:requests.getPreferredFallback.bind(requests),closePreferredWaits:requests.closePreferredWaits.bind(requests),
    requireReleasePolicy:true,preferShokoPreview:true,preferRegisteredCorrespondence:true,
-   readPublicCoverage:async()=>({targetCount:2,verifiedTargets:allMissing?0:1,availableEpisodeIds:allMissing?[]:[101]}),
+   readPublicCoverage:async()=>({targetCount:2,verifiedTargets:allAvailable?2:allMissing?0:1,availableEpisodeIds:allAvailable?[101,102]:allMissing?[]:[101]}),
+   inspectCandidateTargets:async()=>({state:claimed?'skip_active':'eligible'}),
    discoverCandidates:async()=>fail?{state:'held',reason:'release_search_unavailable'}:{state:'candidates',requestId:1,anidbId:42,releaseState:'airing',
      items:many?[candidate,{...candidate,guid:'other2'},{...candidate,guid:'other3'},{...candidate,guid:'preferred',title:'[SubsPlease] Example - 02 WEB 720p'}]:includeHistorical?[candidate,{...candidate,guid:'historical',title:'[Other] Example WEB 1080p',seeders:10}]:preferred?[candidate,{...candidate,guid:'preferred',title:'[SubsPlease] Example - 02 WEB 1080p',...preferredPatch}]:[candidate]},
    previewCandidate:async({candidate:c})=>c.guid==='historical'?{...preview,episodeIds:[101],files:[{name:'Example - 01.mkv',size:1000,episodeIds:[101]}]}:{...preview,correspondence:{files:preview.files.map(f=>({...f,state:c.guid==='other'?'likely':'unknown'}))}},
-   loadDetail:async()=>detail,submitCandidate:async input=>{submitted.push(input);return {state:'stopped_observed',attemptId:77};}});
- try{await run({requests,make,submitted,setClock:v=>{clock=v},fail:()=>{fail=true},prefer:(patch={})=>{preferred=true;preferredPatch=patch},many:()=>{many=true},missing:()=>{allMissing=true},historical:()=>{allMissing=true;includeHistorical=true}});}
+   loadDetail:async()=>detail,submitCandidate:async input=>{submitted.push(input);claimed=true;return {state:'stopped_observed',attemptId:77};}});
+ try{await run({requests,make,submitted,setClock:v=>{clock=v},fail:()=>{fail=true},prefer:(patch={})=>{preferred=true;preferredPatch=patch},many:()=>{many=true},complete:()=>{allAvailable=true},missing:()=>{allMissing=true},historical:()=>{allMissing=true;includeHistorical=true}});}
  finally{requests.close();await rm(dir,{recursive:true,force:true});}
 }
 test('a new airing alternative waits once, then a restart can use its exact fallback during provider failure',()=>fixture(async({make,setClock,fail,submitted})=>{
@@ -55,4 +56,13 @@ test('stronger observed tiers survive the preview-page cursor and expiry reuses 
  assert.equal(second.reason,'preferred_group_wait');assert.equal(submitted.length,0);
  setClock(7_201_000);const expired=await make()({requestId:1,pass:3,candidateOffset:3,candidateFingerprint:first.nextCandidateFingerprint});
  assert.equal(expired.state,'stopped_observed');assert.equal(submitted[0].candidate.title.includes('1080p'),true);
+}));
+
+test('a preferred release arriving after the fallback cannot duplicate its active or playable episode across processor restart',()=>fixture(async({make,prefer,setClock,complete,submitted})=>{
+ const first=await make()({requestId:1});assert.equal(first.reason,'preferred_group_wait');
+ setClock(first.retryAtMs);assert.equal((await make()({requestId:1})).state,'stopped_observed');
+ prefer();assert.equal((await make()({requestId:1})).reason,'no_safe_release');
+ assert.equal(submitted.length,1,'active fallback owns the target before Plex publication');
+ complete();assert.equal((await make()({requestId:1})).reason,'request_fully_available');
+ assert.equal(submitted.length,1,'playable fallback is not upgraded when the preferred group arrives');
 }));

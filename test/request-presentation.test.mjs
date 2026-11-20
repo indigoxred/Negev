@@ -105,6 +105,16 @@ test('an Airing watch remains watching after all currently requested episodes ar
   });
 });
 
+test('an Airing request awaiting an upload does not describe an old playable handoff as an import',()=>{
+  const view=requestPresentation({...base,state:'saved',targetCount:7,waitingForRelease:true,
+    publicAvailability:'verified_recently',publicVerifiedTargets:6},'series',{monitorFuture:true});
+  assert.equal(view.stage,'Partly available');assert.equal(view.note,'Watching for a suitable release');
+  assert.equal(view.detail,'6 of 7 requested episodes playable in Plex.');
+  const downloading=requestPresentation({...base,state:'download_unverified',targetCount:7,
+    publicAvailability:'verified_recently',publicVerifiedTargets:6},'series',{monitorFuture:true});
+  assert.equal(downloading.note,'Checking download status');
+});
+
 test('a previously fulfilled request keeps its history when recent Plex proof expires', () => {
   assert.deepEqual(requestPresentation({ ...base, oneTimeAcquisitionComplete: true }, 'series'), {
     stage: 'Completed earlier',

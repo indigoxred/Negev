@@ -26,6 +26,8 @@ export function openRequestProgress(dbPath, { now = Date.now,
   const attempts = db.prepare(`SELECT a.id AS attempt_id,a.status,
       (SELECT COUNT(*) FROM acquisition_target_claims c
         WHERE c.attempt_id=a.id AND c.active=1) AS claimed_count,
+      (SELECT json_group_array(c.episode_id) FROM acquisition_target_claims c
+        WHERE c.attempt_id=a.id AND c.active=1) AS claimed_episode_ids,
       s.status AS start_status,h.status AS handoff_status,
       j.attempt_id AS rejected_id,x.attempt_id AS released_id,
       t.attempt_id AS retired_id
@@ -146,10 +148,12 @@ export function openRequestProgress(dbPath, { now = Date.now,
     return Boolean(oneTimeCompletion.get(requestId));
   };
   return {
-    read(requestId) {
+    read(requestId, { availableEpisodeIds = [] } = {}) {
       if (!Number.isSafeInteger(requestId) || requestId < 1) {
         throw new TypeError('Invalid request ID');
       }
+      if(!Array.isArray(availableEpisodeIds)||availableEpisodeIds.some(id=>!Number.isSafeInteger(id)||id<1))throw new TypeError('Invalid available episode IDs');
+      const available=new Set(availableEpisodeIds);
       const item = request.get(requestId);
       if (!item) return null;
       const rows = attempts.all(requestId);
@@ -159,39 +163,44 @@ export function openRequestProgress(dbPath, { now = Date.now,
         !row.rejected_id);
       const privateVerifiedTargets = active.reduce((sum, row) =>
         sum + (row.handoff_status ? row.claimed_count : 0), 0);
+      // Completed handoffs remain immutable history. Only attempts covering
+      // a still-unverified target describe what this request is doing now.
+      const pending=active.filter(row=>{const ids=JSON.parse(row.claimed_episode_ids);
+        return ids.length===0||ids.some(id=>!available.has(id));});
+      const pendingPrivateTargets=pending.reduce((sum,row)=>sum+(row.handoff_status?row.claimed_count:0),0);
       const interruptedCheck = interrupted(requestId);
       const rejectedNeedsReview = rows.some((row) => row.rejected_id && !row.retired_id);
       const ownerReviewPending = waitingForOwner(requestId);
       const reviewRequired = ownerReviewPending || interruptedCheck ||
         rejectedNeedsReview;
-      const identityState = active.some((row) => row.start_status)
+      const identityState = pending.some((row) => row.start_status)
         ? fileIdentityState(requestId) : null;
       let state = 'saved';
       if (rejectedNeedsReview) state = 'review_needed';
       else if (interruptedCheck) state = 'request_interrupted';
       else if (ownerReviewPending) state = 'owner_review_pending';
-      else if (privateVerifiedTargets > 0) {
+      else if (pendingPrivateTargets > 0) {
         state = privateVerifiedTargets >= item.target_count &&
-          active.some((row) => row.handoff_status !== 'prepared')
+          pending.some((row) => row.handoff_status !== 'prepared')
           ? 'import_unverified' :
           privateVerifiedTargets >= item.target_count
             ? 'private_copy_recorded' : 'partial_private_copy';
-      } else if (active.some((row) => row.start_status)) {
+      } else if (pending.some((row) => row.start_status)) {
         state = identityState === 'retrying' ? 'release_identity_unverified' :
           identityState === 'retiring' ? 'release_retirement_pending' :
             'download_unverified';
       }
-      else if (active.some((row) => row.status === 'torrent_observed')) {
+      else if (pending.some((row) => row.status === 'torrent_observed')) {
         state = 'torrent_stopped';
-      } else if (active.some((row) => row.status === 'dispatch_unknown')) {
+      } else if (pending.some((row) => row.status === 'dispatch_unknown')) {
         state = retryScheduled(requestId)
           ? 'release_check_retrying' : 'torrent_unverified';
-      } else if (active.length > 0) state = 'release_preparing';
-      const transfer = recentTransfer(requestId);
+      } else if (pending.length > 0) state = 'release_preparing';
+      const transfer = pending.length>0?recentTransfer(requestId):null;
       let connectionRetrying = false;
       let completionRetrying = false;
       let completionChecking = false;
-      const latestStarted = active.filter((row) => row.start_status).at(-1);
+      const latestStarted = pending.filter((row) => row.start_status).at(-1);
       if (latestStarted && hasCompletionChecks.get()) {
         activeCompletionCheck ??= db.prepare(`SELECT state,reason
           FROM ${completionTable} WHERE attempt_id=?`);
@@ -209,6 +218,8 @@ export function openRequestProgress(dbPath, { now = Date.now,
       return { state, targetCount: item.target_count,
         privateVerifiedTargets, activeAttempts: active.length,
         reviewRequired, publicAvailability: 'unverified',
+        ...(state==='saved'&&available.size<item.target_count&&hasAcquisitionChecks.get()&&
+          ['no_safe_release','no_release_candidates'].includes(activeRequestCheck?.get(requestId)?.reason)?{waitingForRelease:true}:{}),
         ...(transfer ? { transfer } : {}),
         ...(connectionRetrying ? { connectionRetrying } : {}),
         ...(completionRetrying ? { completionRetrying } : {}),

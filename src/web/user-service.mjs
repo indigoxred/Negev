@@ -684,7 +684,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const checkedMs = now();
         const positivesByTitle = new Map();
         return { ...page, items: page.items.map((item, index) => {
-          const local = progress.read(item.id);
           let coverage = null;
           if (plexObserver) {
             if (!positivesByTitle.has(item.anidbId)) {
@@ -697,9 +696,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                   anidbId: item.anidbId }) ?? [],
               });
             }
-            coverage = recentPublicCoverage({ episodeIds: item.episodeIds,
+            coverage = recentPublicCoverage({ episodeIds: item.episodeIds, includeIds:true,
               ...positivesByTitle.get(item.anidbId) });
           }
+          const local = progress.read(item.id,{availableEpisodeIds:coverage?.availableEpisodeIds??[]});
+          if(coverage){const {availableEpisodeIds,...publicCoverage}=coverage;coverage=publicCoverage;}
           return { ...item,
             preferredWait:requests.getPreferredWait(item.id,checkedMs),
             releaseSelection: (()=>{const c=requests.getReleaseControl(item.id,checkedMs);

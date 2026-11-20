@@ -41,7 +41,8 @@ jobs:
       - name: Test tagged source
         run: |
           pnpm install --frozen-lockfile
-          node --test --test-skip-pattern='browser completes successful login and registration submit transitions|title and library controls recover from pending and failed reads without duplicate writes|signed-in consumer routes render real shell with search, library and requests'
+          node --test --test-skip-pattern='browser completes successful login and registration submit transitions|title and library controls recover from pending and failed reads without duplicate writes|signed-in consumer routes render real shell with search, library and requests|release dialog preserves manual choice through polling and offers alternatives only in Auto search'
+          node --test test/browser-release-selection.test.mjs
           node --test test/browser-auth-submit.test.mjs
           node --test test/browser-consumer-recovery.test.mjs
           node --test test/browser-consumer-shell.test.mjs

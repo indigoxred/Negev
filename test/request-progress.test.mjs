@@ -136,6 +136,16 @@ test('request progress distinguishes private proof from public availability', as
     assert.deepEqual(progress.read(saved.requestId), { state: 'partial_private_copy',
       targetCount: 2, privateVerifiedTargets: 1, activeAttempts: 1,
       reviewRequired: false, publicAvailability: 'unverified' });
+    const acquisitionQueue=openAcquisitionRequestQueue(dbPath);
+    try {
+      const check=acquisitionQueue.claimNext({nowMs:206});
+      acquisitionQueue.recordResult({requestId:saved.requestId,pass:check.pass,state:'held',reason:'no_safe_release',checkedMs:206});
+      const remaining=progress.read(saved.requestId,{availableEpisodeIds:[1001]});
+      assert.equal(remaining.state,'saved','an already playable handoff cannot imply the next episode is being imported');
+      assert.equal(remaining.waitingForRelease,true);
+      assert.equal(progress.read(saved.requestId,{availableEpisodeIds:[1002]}).state,'partial_private_copy',
+        'equal public and private counts cannot hide a handoff for a different episode');
+    } finally {acquisitionQueue.close();}
     const secondCandidate = { indexerId: 7, guid: 'second' };
     const secondHash = 'c'.repeat(40);
     const second = acquisitions.reserve({ requestId: saved.requestId,
@@ -148,6 +158,8 @@ test('request progress distinguishes private proof from public availability', as
     acquisitions.recordTorrent({ attemptId: second.attemptId, hash: secondHash, nowMs: 211 });
     acquisitions.beginStart({ attemptId: second.attemptId, hash: secondHash,
       manifestDigest: 'd'.repeat(64), nowMs: 212 });
+    assert.equal(progress.read(saved.requestId,{availableEpisodeIds:[1001]}).state,'download_unverified',
+      'a new download remains visible independently of an older playable handoff');
     const secondCompletion = openCompletionQueue(dbPath);
     try {
       const check = secondCompletion.claimNext({ nowMs: 213 });

@@ -60,10 +60,10 @@ export function requestPresentation(progress, kind,
   const acquisition = (() => {
     switch (progress.state) {
       case 'saved': return { stage: watching && progress.targetCount === 0
-        ? 'Watching for the first episode' : 'Requested',
+        ? 'Watching for the first episode' : progress.waitingForRelease?'Watching for a suitable release':'Requested',
       detail: watching && progress.targetCount === 0
         ? 'No episode is included in this request yet.' :
-          'No download is confirmed in progress.', note: '' };
+          progress.waitingForRelease?'Negev will acquire it when a suitable release becomes available.':'No download is confirmed in progress.', note: '' };
       case 'owner_review_pending': return {
         stage: 'Awaiting owner review',
         detail: 'This saved request is not starting a new download yet.',
@@ -126,7 +126,7 @@ export function requestPresentation(progress, kind,
     detail: `${publicCount} of ${progress.targetCount} requested ${targetName} playable in Plex.`,
     note: attentionNote || (progress.oneTimeAcquisitionComplete === true
       ? `Completed earlier; the other ${targetName} are not confirmed playable recently.`
-      : progress.state === 'saved' ? '' :
+      : progress.state === 'saved' ? progress.waitingForRelease?acquisition.stage:'' :
         acquisition.stage === 'Downloading' ? acquisition.detail : acquisition.stage),
     group: attention ? 'attention' : watching ? 'watching' :
       progress.oneTimeAcquisitionComplete === true ? 'completed' : 'active',
