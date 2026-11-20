@@ -262,5 +262,6 @@ export function planTorrentTargets({ request, detail, prepared,
   if (plannedFiles.length === 0) return held('no_requested_video');
   return { state: 'planned_targets',
     episodeIds: [...targets].sort((a, b) => a - b), plannedFiles,
+    ...(packSequence?.sourceNumbers?{numberingEvidence:'complete_absolute_sequence'}:{}),
     ...(excludedVideoNames.length ? { excludedVideoNames } : {}) };
 }

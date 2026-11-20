@@ -130,9 +130,9 @@ export async function previewRequestCandidate({ requestId, candidate,
       return held('shoko_video_format_unsupported');
     }
   }
-  let shokoPreview;
+  let shokoPreview, shokoPreviewConflict;
   if (offlineLookup) {
-    const verdicts = [];
+    const verdicts = [], predictionOffsets = [];
     for (const file of plan.plannedFiles) {
       const filename = basename(file.name);
       if (!Array.isArray(file.episodeIds) || file.episodeIds.length !== 1 ||
@@ -149,9 +149,29 @@ export async function previewRequestCandidate({ requestId, candidate,
       const verdict = evaluateOfflinePreview(result, {
         animeId: request.anidbId, episodeIds: file.episodeIds, filename });
       if (verdict.state === 'rejected') {
-        return held('shoko_preview_wrong_identity');
+        // Offline Importer can subtract a prequel's Specials maximum from
+        // absolute regular numbering. Its filename-only guess is not file
+        // identity. Only an independently complete absolute pack can expose
+        // this as uncertain; different anime and invalid evidence still fail.
+        const predictedId=result.release?.CrossReferences?.[0]?.AnidbEpisodeID;
+        const predicted=detail.episodes.find(e=>e.id===predictedId&&e.type==='Episode');
+        const expected=detail.episodes.find(e=>e.id===file.episodeIds[0]&&e.type==='Episode');
+        const selfCheck=predicted?evaluateOfflinePreview(result,{
+          animeId:request.anidbId,episodeIds:[predicted.id],filename}):null;
+        if(plan.numberingEvidence!=='complete_absolute_sequence'||!verifiedIdentity||
+            !expected||selfCheck?.state!=='accepted'||predicted.number>=expected.number) {
+          return held('shoko_preview_wrong_identity');
+        }
+        predictionOffsets.push(predicted.number-expected.number);
+        verdicts.push('conflicting');
+      } else {
+        if(verdict.state==='accepted')predictionOffsets.push(0);
+        verdicts.push(verdict.state==='accepted'?'exact':'uncertain');
       }
-      verdicts.push(verdict.state === 'accepted' ? 'exact' : 'uncertain');
+    }
+    if(verdicts.includes('conflicting')) {
+      if(predictionOffsets.length<2||new Set(predictionOffsets).size!==1) return held('shoko_preview_wrong_identity');
+      shokoPreviewConflict='absolute_number_offset';
     }
     shokoPreview = verdicts.every((value) => value === 'exact')
       ? 'exact' : 'uncertain';
@@ -179,6 +199,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     ...(firstQuery === detail.title ? {} : { identityTitle: firstQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
     ...(shokoPreview ? { shokoPreview } : {}),
+    ...(shokoPreviewConflict ? { shokoPreviewConflict } : {}),
     ...(correspondence ? { correspondence } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
