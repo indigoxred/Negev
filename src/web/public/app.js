@@ -1,4 +1,4 @@
-import { createReleaseDialog, makeReleaseModePicker } from './release-dialog.mjs';
+import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager } from './search-pages.mjs';
@@ -688,7 +688,7 @@ async function loadRequestView(view, append = false, silent = false) {
       }
       if (state.releaseSearch) {
         const tools=element('div',undefined,'release-search-actions');
-        for(const [mode,label] of [['auto','Auto search'],['manual','Search releases']]) {
+        for(const [mode,label] of [['auto','Auto-Pick'],['manual','Manual Pick']]) {
           const search=element('button',label,'quiet');
           search.addEventListener('click',()=>{void releaseDialog.open({requestId:item.id,title:item.title??'Anime request',mode});});
           tools.append(search);
@@ -772,10 +772,16 @@ function renderRequestStatus(status, presentation) {
 }
 function requestItemPresentation(item) {
   if(item.status!=='cancelled'&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='manual') {
-    return {stage:'Choose a release',detail:'Open Search releases to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
+    return {stage:'Choose a release',detail:'Open Manual Pick to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
   }
   if(item.status!=='cancelled'&&item.releaseSelection?.phase==='proposal') {
-    return {stage:'Release choice ready',detail:'Open Auto search to review the better release.',note:'The registered option is used automatically after five minutes.',group:'active'};
+    return {stage:'Release choice ready',detail:'Open Auto-Pick to review the better release.',note:'The registered option is used automatically after five minutes.',group:'active'};
+  }
+  if(item.status!=='cancelled'&&item.preferredWait?.deadlineMs>Date.now()&&
+      !['active','queued'].includes(item.progress?.transfer?.transferState)) {
+    return {stage:`Waiting for ${item.preferredWait.group}`,
+      detail:`Until ${new Date(item.preferredWait.deadlineMs).toLocaleString()}`,
+      note:'Another release is available. Negev will use a suitable alternative if the preferred group does not arrive.',group:'active'};
   }
   return item.status === 'cancelled'
     ? { stage: 'Cancelled', detail: 'No further downloads or episode monitoring.',
@@ -2658,8 +2664,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       review.append(element('strong', 'Review your request'));
       const reviewSummary = element('p');
       review.append(reviewSummary);
-      const releasePicker=state.releaseSearch?makeReleaseModePicker(element):null;
-      if(releasePicker)review.append(releasePicker.element);
+      let releaseMode='auto_review';
+      const releasePicker=state.releaseSearch?{value:()=>releaseMode}:null;
       review.append(element('p',
         'Each selected installment becomes its own request. You can cancel a saved request in My Requests until processing starts.',
         'muted'));
@@ -2668,13 +2674,17 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       review.append(cancel);
       const submit = element('button', 'Select seasons', 'primary');
       submit.disabled = true;
+      const modeActions=state.releaseSearch?makeReleaseActions(element,{
+        onAuto:()=>{if(saving)return;releaseMode='auto_review';reviewing=true;submit.click();},
+        onManual:()=>{if(saving)return;releaseMode='manual';reviewing=true;submit.click();}}):null;
+      if(modeActions)submit.hidden=true;
       const feedback = element('p', '', 'muted request-feedback');
       feedback.setAttribute('role', 'status');
       const view = element('a', 'View in My Requests →',
         'text-link request-receipt-link');
       view.href = '#/requests';
       view.hidden = true;
-      action.append(chooser, review, submit, feedback, view);
+      action.append(chooser, review, ...(modeActions?[modeActions.element]:[]), submit, feedback, view);
       const rows = new Map();
       let saving = false;
       let reviewing = false;
@@ -2682,6 +2692,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         row.input.checked && row.status?.selectable && !row.requested);
       const refresh = () => {
         const selected = selectedRows();
+        closePopup.disabled=saving;
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
         const presentation = seasonTriggerPresentation([...rows.values()],
@@ -2710,6 +2721,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           if (row.input.disabled && !saving) row.input.checked = false;
         }
         submit.disabled = saving || selected.length === 0;
+        if(modeActions){modeActions.auto.disabled=submit.disabled;modeActions.manual.disabled=submit.disabled||selected.every(row=>row.status?.state==='upcoming');
+          modeActions.manual.title=selected.every(row=>row.status?.state==='upcoming')?'Manual picking starts when episodes are released.':'';}
         submit.textContent = saving ? 'Saving requests…' : reviewing ? 'Confirm request' :
           selected.length === 0 ? 'Select seasons' : selected.length > 1
             ? `Request ${selected.length} seasons` : selected[0].status.state === 'partial'
@@ -2845,6 +2858,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         review.hidden = true;
         refresh();
       });
+      action.addEventListener('cancel',event=>{if(saving)event.preventDefault();});
       submit.addEventListener('click', async () => {
         const selected = selectedRows();
         if (saving || selected.length === 0) return;
@@ -3039,8 +3053,25 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       ? `${data.title || item.title} · one film entry`
       : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
     requestReview.append(reviewSummary);
-    const filmReleasePicker=state.releaseSearch?makeReleaseModePicker(element):null;
-    if(filmReleasePicker)requestReview.append(filmReleasePicker.element);
+    let filmReleaseMode='auto_review';
+    const filmReleasePicker=state.releaseSearch?{value:()=>filmReleaseMode}:null;
+    const filmPopup=state.releaseSearch?element('dialog',undefined,'season-request-dialog release-request-submenu'):null;
+    let filmActions=null,filmClose=null;
+    const filmFeedback=element('p','','muted');filmFeedback.setAttribute('role','status');
+    if(filmPopup){
+      filmPopup.setAttribute('aria-label',data.kind==='movie'?'Request Movie':'Request Series');
+      openSeasonDialog=filmPopup;
+      const heading=element('div',undefined,'season-request-popup-heading');
+      const close=element('button','Cancel','quiet');filmClose=close;close.addEventListener('click',()=>{if(!requestSaving)filmPopup.close();});
+      heading.append(element('h2',data.kind==='movie'?'Request Movie':'Request Series'),close);
+      filmPopup.append(heading,element('p',data.title||item.title));
+      filmActions=makeReleaseActions(element,{
+        onAuto:()=>{if(requestSaving)return;filmReleaseMode='auto_review';reviewingRequest=true;button.click();},
+        onManual:()=>{if(requestSaving)return;filmReleaseMode='manual';reviewingRequest=true;button.click();}});
+      filmPopup.append(filmActions.element,filmFeedback);requestAction.append(filmPopup);
+      filmPopup.addEventListener('cancel',event=>{if(requestSaving)event.preventDefault();});
+      filmPopup.addEventListener('close',()=>{reviewingRequest=false;requestReview.hidden=true;if(!requestSaved){requestStatus.textContent='';refreshRequestAction();}});
+    }
     requestReview.append(element('p',
       'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
       'muted'));
@@ -3065,6 +3096,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       const checkingSelected = selectedInstallmentId === item.anidbId
         ? checkingCompleteSeries : selectedAvailability === 'checking';
       button.disabled = blocked || checkingSelected;
+      if(filmActions){filmActions.auto.disabled=button.disabled;filmActions.manual.disabled=button.disabled;}
       button.textContent = blocked ? 'Already available' :
         checkingSelected ? selectedInstallmentId === item.anidbId
           ? 'Checking availability…' : 'Checking selected installment…' :
@@ -3127,11 +3159,15 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       filmChoice.append(label);
       if (pager.nextPage !== null) filmChoice.append(element('p',
         'More film entries may be listed under Episode and Special options below.', 'muted'));
-      requestAction.append(filmChoice);
+      if(filmPopup)filmPopup.insertBefore(filmChoice,filmActions.element);else requestAction.append(filmChoice);
     }
     button.addEventListener('click', async () => {
       if (alreadyAvailable() || selectedAvailability === 'checking' ||
           requestSaving || requestSaved) return;
+      if(filmPopup&&!filmPopup.open){
+        if(filmChoice)filmChoice.hidden=false;
+        filmPopup.showModal();return;
+      }
       if (needsFilmChoice && !filmChoiceSelect.value) {
         filmChoice.hidden = false;
         button.textContent = 'Request selected film';
@@ -3153,6 +3189,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         return;
       }
       requestSaving = true;
+      if(filmActions){filmActions.auto.disabled=true;filmActions.manual.disabled=true;filmClose.disabled=true;filmFeedback.textContent='Saving request…';}
       if (installmentSelect) installmentSelect.disabled = true;
       if (filmChoiceSelect) filmChoiceSelect.disabled = true;
       button.disabled = true;
@@ -3176,7 +3213,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestReview.hidden = true;
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
-        if(saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId))void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());
+        filmPopup?.close();
+        if(saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());}
         viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'
@@ -3184,6 +3222,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         loadRequests();
       } catch (error) {
         const feedback = requestFailureMessage(error);
+        filmFeedback.textContent=feedback;if(filmClose)filmClose.disabled=false;
         requestStatus.textContent = feedback;
         message(feedback, true);
         requestSaving = false;

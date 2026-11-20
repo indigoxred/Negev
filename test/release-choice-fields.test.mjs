@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { releaseFacts, matchesReleaseFilters, validReleaseFilters } from '../src/web/public/release-choice-fields.mjs';
+const filters={quality:'bd1080',audio:'japanese'};
+test('quality default includes BD with or without a stated resolution and1080p+',()=>{
+ for(const title of ['[G] Show [BD]','[G] Show BD 720p','[G] Show BD 1080p','[G] Show WEB 1080p','[G] Show 1440p','[G] Show 2160p'])
+   assert.equal(matchesReleaseFilters({title},filters),true,title);
+ assert.equal(matchesReleaseFilters({title:'[G] Show WEB 720p'},filters),false);
+ assert.equal(matchesReleaseFilters({title:'[G] Show DVD 480p'},{...filters,quality:'all'}),true);
+});
+test('audio default is Japanese; dual and English dub have explicit filters',()=>{
+ assert.equal(matchesReleaseFilters({title:'[SubsPlease] Show1080p'},{...filters,quality:'all'}),true);
+ assert.equal(matchesReleaseFilters({title:'[G] Show 1080p English Dub'},filters),false);
+ assert.equal(matchesReleaseFilters({title:'[G] Show 1080p Dual Audio'},filters),false);
+ assert.equal(matchesReleaseFilters({title:'[G] Show 1080p Dual Audio'},{...filters,audio:'japanese_dual'}),true);
+ assert.equal(matchesReleaseFilters({title:'[G] Show 1080p English Dub'},{...filters,audio:'english'}),true);
+ assert.equal(matchesReleaseFilters({title:'[G] Show 1080p'},{...filters,audio:'english'}),false);
+});
+test('group hints recognize common prefixes and metadata-adjacent suffixes without treating quality as a group',()=>{
+ assert.equal(releaseFacts('[SubsPlease] Show - 07 [1080p]').group,'SubsPlease');
+ assert.equal(releaseFacts('Show S02E07 1080p CR WEB-DL AAC2.0 H.264-VARYG (Multi-Subs)').group,'VARYG');
+ assert.equal(releaseFacts('[1080p] Show [AAC]').group,null);
+ assert.equal(releaseFacts('[BD] Show [AABBCCDD]').group,null);
+});
+test('filter values are bounded enums and source is independent from resolution',()=>{
+ assert.equal(validReleaseFilters(filters),true);assert.equal(validReleaseFilters({...filters,audio:'anything'}),false);
+ assert.equal(releaseFacts('[G] Show BDRip 1920x1080').source,'BD');
+ assert.equal(releaseFacts('[G] Show BDRip 1920x1080').resolution,1080);
+ assert.equal(releaseFacts('[G] Show UHD 3840x2160').resolution,2160);
+});

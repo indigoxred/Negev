@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
-import { initializeReleaseControl, readReleaseControl, updateReleaseControl } from '../acquisition/release-control.mjs';
+import { initializeReleaseControl, readReleaseControl, updateReleaseControl, updateReleasePreference } from '../acquisition/release-control.mjs';
+import { checkPreferredRelease, getPreferredFallback, closePreferredWaits, getPreferredWait } from '../acquisition/preferred-release.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { hasStatedRegularEpisodes } from '../catalogue/stated-episode-count.mjs';
 
@@ -375,6 +376,15 @@ export function openRequestLedger(dbPath) {
         reason: row.reason, createdMs: row.created_ms } : null;
     },
     getReleaseControl(id,nowMs=Date.now()) { return readReleaseControl(db,id,nowMs); },
+    updateReleasePreference(id,revision,preference,nowMs=Date.now()) {
+      return transact(()=>updateReleasePreference(db,id,revision,preference,nowMs));
+    },
+    checkPreferredRelease(input) {
+      return transact(()=>checkPreferredRelease(db,readReleaseControl(db,input.requestId,input.nowMs).preference,input));
+    },
+    getPreferredFallback(id,episodeIds,nowMs,includePending=false) {return getPreferredFallback(db,id,episodeIds,nowMs,includePending);},
+    closePreferredWaits(id,episodeIds,nowMs) {return transact(()=>closePreferredWaits(db,id,episodeIds,nowMs));},
+    getPreferredWait(id,nowMs=Date.now()) {return getPreferredWait(db,id,readReleaseControl(db,id,nowMs).preference?.group,nowMs);},
     consumeReleaseChoice(id,revision) {
       return transact(()=>{
         const current=readReleaseControl(db,id,0);

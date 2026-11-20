@@ -1,3 +1,4 @@
+import { initializePreferredReleases, validReleasePreference } from './preferred-release.mjs';
 // Private request-local intent, not an alternative download pipeline. Call
 // reservationGate inside the acquisition transaction so a stale worker cannot
 // race a newly saved manual choice.
@@ -5,6 +6,7 @@ export function initializeReleaseControl(db) {
   if (!db.prepare('PRAGMA table_info(requests)').all().some(c => c.name === 'release_control')) {
     db.exec('ALTER TABLE requests ADD COLUMN release_control TEXT');
   }
+  initializePreferredReleases(db);
 }
 export function sameReleaseFiles(left,right) {
   const normalize=files=>{
@@ -25,6 +27,7 @@ export function readReleaseControl(db, id, nowMs) {
       ['proposal','selecting'].includes(control.phase)) {
     const next = {mode:'auto',phase:control.proposal ? 'chosen' : 'consumed',
       revision:control.revision+1,
+      ...(control.preference!==undefined?{preference:control.preference}:{}),
       ...(control.proposal ? {selection:control.proposal.registered} : {})};
     db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?')
       .run(JSON.stringify(next),id,raw);
@@ -36,6 +39,7 @@ export function updateReleaseControl(db,id,revision,next,nowMs) {
   if (!Number.isSafeInteger(id) || id<1 || !Number.isSafeInteger(revision) || revision<0 ||
       !Number.isSafeInteger(nowMs) || nowMs<0 || !['auto','manual'].includes(next?.mode) ||
       !['selecting','chosen','proposal','consumed'].includes(next?.phase) ||
+      (next.preference!==undefined&&!validReleasePreference(next.preference)) ||
       (next.phase==='chosen' && !validSelection(next.selection)) ||
       (next.phase==='proposal' && (!validSelection(next.proposal?.registered) ||
         !validSelection(next.proposal?.better))) ||
@@ -55,10 +59,22 @@ export function updateReleaseControl(db,id,revision,next,nowMs) {
           row.status!=='torrent_observed'||selectedTargets.includes(row.episode_id))) {
     return {state:'held',reason:'release_already_processing'};
   }
-  const value={...next,revision:revision+1};
+  const value={...next,...(next.preference===undefined&&current.preference!==undefined?{preference:current.preference}:{}),revision:revision+1};
   const changed=db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control IS ?')
     .run(JSON.stringify(value),id,row.release_control).changes;
   return changed ? {state:'updated',control:value} : {state:'held',reason:'stale_release_selection'};
+}
+export function updateReleasePreference(db,id,revision,preference,nowMs) {
+  if(!Number.isSafeInteger(id)||id<1||!Number.isSafeInteger(revision)||revision<0||
+      !Number.isSafeInteger(nowMs)||nowMs<0||!validReleasePreference(preference))return {state:'held',reason:'invalid_release_preference'};
+  const row=db.prepare('SELECT cancelled_ms,release_control FROM requests WHERE id=?').get(id);
+  if(!row||row.cancelled_ms!==null)return {state:'held',reason:'request_missing'};
+  const current=readReleaseControl(db,id,nowMs);
+  if(current.revision!==revision)return {state:'held',reason:'stale_release_selection'};
+  const control={...current,preference,revision:revision+1};
+  db.prepare('UPDATE requests SET release_control=? WHERE id=?').run(JSON.stringify(control),id);
+  if(preference===null)db.prepare('UPDATE preferred_release_waits SET closed_ms=? WHERE request_id=? AND closed_ms IS NULL AND first_seen_ms<=?').run(nowMs,id,nowMs);
+  return {state:'updated',control};
 }
 function validSelection(s) {
   return typeof s?.candidate?.guid==='string' && s.candidate.guid.length>0 &&

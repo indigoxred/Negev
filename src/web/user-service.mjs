@@ -536,6 +536,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     };
     const releaseSelection=discoverCandidates&&previewCandidate?createReleaseSelection({
       requests,discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
+      loadDetail:input=>loadCurrentDetail(input),
       wake:id=>acquisitionRuntime?.wakeRequest(id),now }):undefined;
     const readAiringDetail = ({ anidbId }) => collectAniDbDetail({ anidbId,
       loadPage: async ({ page }) => {
@@ -700,6 +701,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               ...positivesByTitle.get(item.anidbId) });
           }
           return { ...item,
+            preferredWait:requests.getPreferredWait(item.id,checkedMs),
             releaseSelection: (()=>{const c=requests.getReleaseControl(item.id,checkedMs);
               return ['selecting','proposal','chosen'].includes(c.phase)
                 ? {mode:c.mode,phase:c.phase,expiresMs:c.expiresMs??null}:null;})(),

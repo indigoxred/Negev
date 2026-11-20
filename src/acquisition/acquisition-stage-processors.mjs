@@ -222,6 +222,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         readRequest: (id) => requests.getRequest(id),
         readReleaseControl: requests.getReleaseControl?.bind(requests),
         consumeReleaseChoice: requests.consumeReleaseChoice?.bind(requests),
+        checkPreferredRelease: requests.checkPreferredRelease?.bind(requests),
+        getPreferredFallback: requests.getPreferredFallback?.bind(requests),
+        closePreferredWaits: requests.closePreferredWaits?.bind(requests),
         readChosenAttempt: input=>{
           const owned=acquisitions.getOwnedObservedCandidate?.(input);
           if(owned?.state!=='owned_observed')return null;

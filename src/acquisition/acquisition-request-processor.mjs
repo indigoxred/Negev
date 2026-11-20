@@ -7,6 +7,8 @@ import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { correspondenceLevel, publicRelease } from './release-selection.mjs';
 import { sameReleaseFiles } from './release-control.mjs';
+import { matchesPreferredGroup } from './preferred-release.mjs';
+import { matchesReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -21,6 +23,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles,
   readReleaseControl, consumeReleaseChoice, readChosenAttempt,
+  checkPreferredRelease, getPreferredFallback, closePreferredWaits,
   preferRegisteredCorrespondence = false,
   preferShokoPreview = false, requireReleasePolicy = false,
   maxPreflights = 3, now = Date.now } = {}) {
@@ -33,7 +36,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         typeof readRecoveredTargets !== 'function') ||
       (readRelatedTitles !== undefined &&
         typeof readRelatedTitles !== 'function') ||
-      [readReleaseControl,consumeReleaseChoice,readChosenAttempt].some(fn=>fn!==undefined&&typeof fn!=='function') ||
+      [readReleaseControl,consumeReleaseChoice,readChosenAttempt,checkPreferredRelease,getPreferredFallback,closePreferredWaits].some(fn=>fn!==undefined&&typeof fn!=='function') ||
       typeof preferRegisteredCorrespondence!=='boolean' ||
       typeof preferShokoPreview !== 'boolean' ||
       typeof requireReleasePolicy !== 'boolean' ||
@@ -124,7 +127,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
       }
     }
-    let found;
+    let found, expiredFallback;
     const missingIds = request.episodeIds.filter((id) =>
       !exactAvailable.has(id) && !uncertainOwned.has(id));
     if (missingIds.length === 0) return held('availability_unverified');
@@ -134,7 +137,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
       items:[{...pinned.candidate,evidence:'unverified'}]} : await discoverCandidates({ requestId, searchTargetEpisodeId,
       ...(missingIds.length > 1 && missingIds.length <= 10 ?
         { searchTargetEpisodeIds: missingIds } : {}) }); }
-    catch { return held('release_search_unavailable'); }
+    catch { found=held('release_search_unavailable'); }
+    if(!pinned&&control?.preference&&getPreferredFallback) {
+      expiredFallback=getPreferredFallback(requestId,missingIds,now());
+      if(expiredFallback){
+        const items=found?.state==='candidates'&&Array.isArray(found.items)?found.items:[];
+        found={...found,state:'candidates',requestId,anidbId:request.anidbId,releaseState:'airing',
+          items:[expiredFallback.candidate,...items.filter(c=>c.guid!==expiredFallback.candidate.guid||c.indexerId!==expiredFallback.candidate.indexerId)].slice(0,50)};
+        candidateOffset=0;candidateFingerprint=null;
+      }
+    }
     if (found?.state !== 'candidates') {
       return held(validReason(found?.reason) ? found.reason :
         'release_search_unavailable');
@@ -173,6 +185,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
       }
     }
     if (requireReleasePolicy) {
+      if(!pinned&&control?.preference){
+        const audio=control.preference.audio==='japanese'?'japanese_dual':control.preference.audio;
+        safeTitles=safeTitles.filter(item=>matchesReleaseFilters(item,{quality:'all',audio})).map(item=>{
+          const {selectionPolicy,...automatic}=item;
+          return audio==='english'?{...automatic,selectionPolicy:{allowEnglishDub:true}}:automatic;
+        });
+      }
       safeTitles = safeTitles.filter((item) => assessRelease(item).eligible);
     }
     if (safeTitles.length === 0) return { ...held('no_safe_release'),
@@ -182,7 +201,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Metainfo, ownership and exact file checks still decide safety.
     const candidates = [...new Map(safeTitles.map((item) =>
       [`${item.indexerId}:${item.guid}`, item])).values()].sort((a, b) => {
-      if (requireReleasePolicy) return compareReleases(a, b, { preferSeasonPack });
+      if(requireReleasePolicy){
+        if(!pinned&&control?.preference&&found.releaseState==='airing'&&
+          assessRelease(a).healthyPeers===assessRelease(b).healthyPeers&&
+          publicRelease(a).resolution===publicRelease(b).resolution&&
+          a.targetedEpisode===b.targetedEpisode){
+          const preferred=Number(matchesPreferredGroup(b,control.preference.group))-Number(matchesPreferredGroup(a,control.preference.group));
+          if(preferred)return preferred;
+        }
+        return compareReleases(a,b,{preferSeasonPack});
+      }
       const peers = (item) => Number.isSafeInteger(item.seeders) &&
         item.seeders >= 0 ? item.seeders : -1;
       if ((peers(a) > 0) !== (peers(b) > 0)) {
@@ -288,6 +316,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const offlineCache = new Map();
     let selected;
     let uncertainSelection;
+    let groupWait;
+    const deferredEpisodes=new Set();
+    const deferredCandidates=[];
     const start = consumed.length < ordered.length ? consumed.length : 0;
     let nextIndex = start;
     let freshReads = 0;
@@ -311,6 +342,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
       try { preview = await previewCandidate({ requestId, candidate,
         offlineCache }); }
       catch { freshReads++; transientFailure = true; continue; }
+      if(expiredFallback&&candidate.guid===expiredFallback.candidate.guid&&candidate.indexerId===expiredFallback.candidate.indexerId&& (preview?.state!=='preflight'||preview.torrentHash!==expiredFallback.preview.torrentHash||
+          !sameReleaseFiles(preview.files,expiredFallback.preview.files))){
+        if(preview?.state==='preflight'||['release_title_mismatch','shoko_preview_wrong_identity','invalid_metainfo'].includes(preview?.reason))
+          closePreferredWaits?.(requestId,expiredFallback.preview.episodeIds,now());
+        return held('release_preflight_unavailable');
+      }
       if(pinned && (preview?.state!=='preflight' ||
         preview.torrentHash!==pinned.preview.torrentHash ||
         !sameReleaseFiles(preview.files,pinned.preview.files) ||
@@ -363,7 +400,33 @@ export function createAcquisitionRequestProcessor({ readRequest,
           missingIds.some((id) => !preview.episodeIds.includes(id))) {
         continue;
       }
+      if(!pinned&&control?.preference&&checkPreferredRelease){
+        const durableAlternative=getPreferredFallback?.(requestId,preview.episodeIds,now(),true);
+        if(durableAlternative&&strongerRequiredTier(durableAlternative.candidate,candidate)){
+          const waiting=checkPreferredRelease({requestId,...durableAlternative,releaseState:found.releaseState,nowMs:now()});
+          if(waiting?.reason==='preferred_group_wait'){
+            groupWait={...waiting,retryAtMs:Math.min(groupWait?.retryAtMs??Infinity,waiting.retryAtMs)};
+            for(const id of durableAlternative.preview.episodeIds)deferredEpisodes.add(id);
+            continue;
+          }
+        }
+        // Waiting for a preferred group cannot authorize a lower-quality or
+        // unhealthy release for the same episode. Independent episodes still
+        // proceed through the bounded loop.
+        if(deferredCandidates.some(prior=>prior.episodeIds.some(id=>preview.episodeIds.includes(id))&&
+            strongerRequiredTier(prior.candidate,candidate)))continue;
+        const waiting=checkPreferredRelease({requestId,candidate,preview,
+          releaseState:found.releaseState,nowMs:now()});
+        if(waiting?.state==='held'){
+          if(waiting.reason!=='preferred_group_wait')return waiting;
+          groupWait={...waiting,retryAtMs:Math.min(groupWait?.retryAtMs??Infinity,waiting.retryAtMs)};
+          for(const id of preview.episodeIds)deferredEpisodes.add(id);
+          deferredCandidates.push({candidate,episodeIds:preview.episodeIds});
+          continue;
+        }
+      }
       if (!pinned && preferShokoPreview && !uncertainPackPhase &&
+          !(control?.preference&&found.releaseState==='airing'&&matchesPreferredGroup(candidate,control.preference.group))&&
           (preferRegisteredCorrespondence ? correspondenceLevel(preview)==='unknown' : preview.shokoPreview !== 'exact')) {
         uncertainSelection ??= { candidate, preview, index };
         continue;
@@ -394,6 +457,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
       selected = uncertainSelection;
       nextIndex = uncertainSelection.index + 1;
     }
+    if(!selected&&groupWait)return {...groupWait,
+      retryAtMs:transientFailure||nextIndex<ordered.length||missingIds.some(id=>!deferredEpisodes.has(id))?
+        Math.min(groupWait.retryAtMs,now()+60_000):groupWait.retryAtMs,
+      nextCandidateOffset:nextIndex<ordered.length?nextIndex:0,nextCandidateFingerprint:cursor};
     if (!selected && transientFailure) return { ...held('release_preflight_unavailable'),
       nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
       nextCandidateFingerprint: cursor };
@@ -450,6 +517,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         { searchQuery: selected.preview.searchQuery }) }); }
     catch { return held('submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
+      closePreferredWaits?.(requestId,selected.preview.episodeIds,now());
       if(pinned) consumeReleaseChoice?.(requestId,control.revision);
       // The attempt now owns its exact target. Keep the request's search
       // position moving so a Shoko hold for this episode cannot starve later

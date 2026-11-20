@@ -109,3 +109,24 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 .registration-unknown { color:var(--muted,#a9afb9); }
 .registration-confirmed { color:#8ee7b6; }
 .release-mode { display:flex; align-items:center; gap:.7rem; margin:.7rem 0; }
+.release-search-dialog .release-mode-actions{display:flex;gap:.6rem;margin:.5rem 0 .8rem}
+.release-search-dialog .release-search-actions{display:flex;gap:.6rem;align-items:end;flex-wrap:wrap;margin:.5rem 0}
+.release-search-actions label{display:flex;flex-direction:column;gap:.2rem;font-size:12px;color:var(--muted)}
+.release-search-actions select{min-height:36px;max-width:180px}
+.release-search-actions input{height:36px;min-width:160px}
+.release-search-dialog{width:min(1180px,96vw)!important;padding:18px!important}
+.release-row-main,.release-results-heading{display:grid;grid-template-columns:minmax(190px,2.6fr) minmax(75px,.8fr) 94px 76px 42px 100px 66px;gap:8px;align-items:center}
+.release-results-heading{font-size:11px;color:var(--muted);padding:6px 0;border-bottom:1px solid var(--line)}
+.release-entry.release-compact-row{padding:7px 0;margin:0;border:0;border-bottom:1px solid var(--line);border-radius:0;font-size:12px}
+.release-name{display:flex;align-items:center;gap:5px;min-width:0}
+.release-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;min-width:0}
+.release-registration{font-size:10px;white-space:nowrap}
+.release-pick{padding:5px 8px;min-height:28px;font-size:12px;margin:0!important}
+.release-file-evidence{font-size:11px;color:var(--muted);margin-top:2px}
+.release-file-evidence summary{cursor:pointer;text-align:right}
+.release-evidence-body{padding:5px 8px;overflow-wrap:anywhere;background:var(--surface)}
+.release-evidence-body p{font-size:11px!important;margin:3px 0!important}
+.release-prefer-future{display:flex;gap:.5rem;align-items:center;margin:.5rem 0;font-size:13px}
+.release-prefer-future[hidden],.release-search-actions[hidden]{display:none}
+@media(max-width:900px){.release-row-main,.release-results-heading{grid-template-columns:minmax(130px,2fr) 75px 82px 70px 35px 80px 55px;gap:5px}.release-search-dialog{padding:12px!important}}
+@media(max-width:650px){.release-results-heading{display:none}.release-row-main{grid-template-columns:repeat(5,minmax(0,1fr))}.release-name{grid-column:1/5}.release-pick{grid-column:5;grid-row:1}.release-group,.release-quality,.release-size,.release-seeds,.release-audio{grid-row:2;font-size:11px}.release-file-evidence summary{font-size:10px}.release-search-actions label{flex:1}.release-search-actions select{max-width:100%}}
