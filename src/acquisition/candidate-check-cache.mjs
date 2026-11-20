@@ -10,10 +10,10 @@ for (const reason of ['ambiguous_catalogue_number','ambiguous_movie_scope',
   'unsafe_or_unselected_file','video_budget_exceeded','conflicting_file_views',
   'invalid_piece_list','unsupported_torrent_version']) deterministic.add(reason);
 const fields = ['state', 'reason', 'requestId', 'anidbId', 'searchQuery', 'identityTitle',
-  'torrentHash', 'shokoPreview', 'correspondence', 'version', 'totalBytes',
+  'torrentHash', 'shokoPreview', 'shokoPreviewConflict', 'correspondence', 'version', 'totalBytes',
   'episodeIds', 'files', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
 const keyFor = ({ request, candidate }) => createHash('sha256').update(JSON.stringify([
-  'candidate-check-v1', request.id, request.anidbId, request.kind,
+  'candidate-check-v2', request.id, request.anidbId, request.kind,
   [...request.episodeIds].sort((a, b) => a - b), candidate.indexerId,
   request.title, candidate.guid, candidate.title, candidate.size,
   candidate.sourceQuery, candidate.targetEpisodeId,

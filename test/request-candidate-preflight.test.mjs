@@ -524,3 +524,28 @@ test('real metainfo path reads only Prowlarr and never submits the prepared form
   assert.equal(result.registeredInAniDb, false);
   assert.equal(JSON.stringify(result).includes('form'), false);
 });
+
+test('complete absolute packs treat a consistent same-anime preview shift as uncertain, never registered', async()=>{
+ for(const [count,start]of [[4,25],[6,101]]){
+  const episodes=Array.from({length:count},(_,i)=>({id:1001+i,number:i+1,type:'Episode',title:'Episode '+(i+1)}));
+  const files=episodes.map((ep,i)=>({name:`Example - ${start+i}.mkv`,size:1000}));
+  const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 2'},
+   readRequest:()=>({...request,episodeIds:episodes.map(e=>e.id)}),loadDetail:async()=>({...detail,total:count,episodes}),
+   prepare:async()=>({...prepared,totalBytes:count*1000,files}),
+   offlineLookup:async({filename})=>{const number=Number(/- (\d+)/.exec(filename)[1])-start+1-2;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,
+    ID:number>0?`offline://42-${1000+number}`:null,CrossReferences:number>0?[{AnidbAnimeID:42,AnidbEpisodeID:1000+number,PercentageStart:0,PercentageEnd:100}]:[]}};}});
+  assert.equal(result.state,'preflight',JSON.stringify(result));assert.equal(result.shokoPreview,'uncertain');assert.equal(result.shokoPreviewConflict,'absolute_number_offset');assert.equal(result.registeredInAniDb,false);
+  assert.deepEqual(result.files.map(f=>f.episodeIds),episodes.map(e=>[e.id]));
+ }
+});
+
+test('absolute preview conflicts still reject different anime, mixed shifts and invalid evidence',async()=>{
+ const episodes=Array.from({length:4},(_,i)=>({id:1001+i,number:i+1,type:'Episode',title:'Episode '+(i+1)}));
+ for(const mode of ['different_anime','mixed_shift','wrong_filename','unknown_episode','special_episode','single_prediction']){
+ const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 2'},
+  readRequest:()=>({...request,episodeIds:episodes.map(e=>e.id)}),loadDetail:async()=>({...detail,total:mode==='special_episode'?5:4,episodes:mode==='special_episode'?[...episodes,{id:2001,number:1,type:'Special',title:'Special'}]:episodes}),
+  prepare:async()=>({...prepared,totalBytes:4000,files:episodes.map((e,i)=>({name:`Example - ${25+i}.mkv`,size:1000}))}),
+  offlineLookup:async({filename})=>{const n=Number(/- (\d+)/.exec(filename)[1])-24;if(mode==='single_prediction'&&n<4)return{status:200,release:{CrossReferences:[]}};const id=mode==='unknown_episode'?9999:mode==='special_episode'?2001:1000+(mode==='mixed_shift'&&n===4?2:Math.max(1,n-2));const anime=mode==='different_anime'?43:42;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:mode==='wrong_filename'?'Other.mkv':filename,ID:`offline://${anime}-${id}`,CrossReferences:[{AnidbAnimeID:anime,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};}});
+ assert.equal(result.state,'held',mode);assert.equal(result.reason,'shoko_preview_wrong_identity',mode);
+ }
+});
