@@ -45,6 +45,23 @@ async function fixture(run) {
   }
 }
 
+test('live per-attempt ownership skips an add without saving a hold or blocking others', async () =>
+  fixture(async (ctx) => {
+    const { acquireAttemptOperation } = await import(
+      '../src/acquisition/attempt-operation-ownership.mjs');
+    const release = acquireAttemptOperation(ctx.acquisitions, ctx.ids[0].attemptId);
+    const queue = openStartQueue(ctx.dbPath, { acquisitions: ctx.acquisitions });
+    try {
+      const other = queue.claimNext({ nowMs: 1_000 });
+      assert.equal(other.attemptId, ctx.ids[1].attemptId);
+      assert.equal(queue.getResult(ctx.ids[0].attemptId), null);
+      queue.releaseOperation(other.attemptId);
+      release();
+      assert.equal(queue.claimNext({ nowMs: 1_001 }).attemptId,
+        ctx.ids[0].attemptId);
+    } finally { release(); queue.close(); }
+  }));
+
 test('one stopped torrent holds while later stopped torrents advance', async () =>
   fixture(async (ctx) => {
     const worker = createStartWorker({ queue: ctx.queue, now: () => 1_000,

@@ -105,6 +105,19 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
           targetEpisodeId: queryTarget.id } : {}) })));
     }
     if (successful === 0) return held('release_search_unavailable');
+    // Aggregate before applying the cap: a later bucket can correct evidence
+    // even when its copy would fall outside the first 50 visible releases.
+    const bestByCandidate = new Map();
+    const evidenceRank = (item) => item.targetedEpisode === true
+      ? item.targetEpisodeId !== undefined ? 3 : 2
+      : item.targetedEpisode === false ? 0 : 1;
+    for (const bucket of buckets) for (const item of bucket) {
+      const key = `${item.indexerId}:${item.guid}`;
+      const prior = bestByCandidate.get(key);
+      if (!prior || evidenceRank(item) > evidenceRank(prior)) {
+        bestByCandidate.set(key, item);
+      }
+    }
     const items = [];
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact
@@ -118,7 +131,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         const key = `${item.indexerId}:${item.guid}`;
         if (seenCandidates.has(key)) continue;
         seenCandidates.add(key);
-        items.push(item);
+        items.push(bestByCandidate.get(key));
         if (items.length === 50) break;
       }
       if (!any) break;

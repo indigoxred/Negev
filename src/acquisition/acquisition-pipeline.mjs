@@ -46,7 +46,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   try {
     queues.push(openAcquisitionRequestQueue(dbPath, {
       allowedAnidbIds, ownershipGate }));
-    queues.push(openStartQueue(dbPath));
+    queues.push(openStartQueue(dbPath, { acquisitions }));
     queues.push(openCompletionQueue(dbPath, { pureMode }));
     queues.push(openHandoffPublishQueue(dbPath, { pureMode }));
   } catch (error) {

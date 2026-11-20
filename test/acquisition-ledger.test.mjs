@@ -7,6 +7,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openStartQueue } from '../src/acquisition/start-queue.mjs';
+import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
+import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
 
 async function withLedger(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-attempts-'));
@@ -27,6 +29,47 @@ async function withLedger(run) {
 }
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
+
+test('prior correspondence needs the exact torrent, planned file and same-file episode proofs', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    const ledger = openAcquisitionLedger(dbPath);
+    const proofs = openFileProofLedger(dbPath, { positiveLifetimeMs: 1000, now: () => 500 });
+    const hash = 'a'.repeat(40);
+    const file = { name: 'show.mkv', size: 1000, episodeIds: [1001, 1002] };
+    try {
+      const attemptId = ledger.reserve({ requestId: firstId, candidate,
+        episodeIds: file.episodeIds, nowMs: 200 }).attemptId;
+      ledger.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+      ledger.recordFilePlan({ attemptId, hash, plannedFiles: [file], nowMs: 202 });
+      ledger.beginDispatch({ attemptId, nowMs: 203 });
+      ledger.recordTorrent({ attemptId, hash, nowMs: 204 });
+      const find = (changes = {}) => ledger.findPreviouslyVerifiedFile({
+        anidbId: 42, torrentHash: hash, file, ...changes });
+      assert.equal(find(), null);
+      for (const episodeId of file.episodeIds) proofs.observe({ anidbId: 42, episodeId,
+        proof: { fileId: 5, libraryId: 1, ratingKey: 2, partId: 3 }, checkedMs: 400 });
+      // Existing same-episode playback is not proof that this torrent arrived.
+      assert.equal(find(), null);
+      ledger.beginStart({ attemptId, hash, manifestDigest: 'b'.repeat(64), nowMs: 205 });
+      const moves = openPureMoveLedger(dbPath);
+      try {
+        const physical = { dev: '1', ino: '2', mtimeNs: '3' };
+        moves.recordIntent({ attemptId, torrentHash: hash,
+          stagingRoot: path.join(path.parse(dbPath).root, 'staging', hash),
+          holdingPath: path.join(path.parse(dbPath).root, 'holding',
+            `negev-${attemptId}-${hash.slice(0, 16)}`),
+          files: [{ ...file, ...physical }], nowMs: 206 });
+        moves.markPrepared({ attemptId, nowMs: 207 });
+        moves.beginPublish({ attemptId, nowMs: 208 });
+        moves.markPublished({ attemptId, nowMs: 209 });
+        assert.deepEqual(find(), { fileId: 5, size: 1000, physical });
+      } finally { moves.close(); }
+      assert.equal(find({ torrentHash: 'b'.repeat(40) }), null);
+      assert.equal(find({ anidbId: 43 }), null);
+      assert.equal(find({ file: { ...file, size: 999 } }), null);
+      assert.equal(find({ file: { ...file, name: 'other.mkv' } }), null);
+    } finally { proofs.close(); ledger.close(); }
+  }));
 
 test('an audited policy reset preserves history and permits a new inspection of the same release', async () =>
   withLedger(async ({ dbPath, firstId }) => {

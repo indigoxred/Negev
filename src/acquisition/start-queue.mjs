@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -13,7 +14,7 @@ const INTERRUPTED_RETRY_MS = 5 * 60_000;
 // One stopped torrent per explicit tick. Only a guarded start coordinator may
 // be supplied as processAttempt. A saved start intent excludes that attempt
 // forever; qBittorrent activity and completion need separate observations.
-export function openStartQueue(dbPath) {
+export function openStartQueue(dbPath, { acquisitions = null } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
     throw new TypeError('Durable start queue path required');
   }
@@ -56,7 +57,7 @@ export function openStartQueue(dbPath) {
       s.attempt_id IS NULL AND
       x.attempt_id IS NULL AND j.attempt_id IS NULL AND t.attempt_id IS NULL AND
       si.attempt_id IS NULL AND
-      (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
+      (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
     (attempt_id,version,state,reason,checked_ms,next_due_ms)
@@ -95,15 +96,30 @@ export function openStartQueue(dbPath) {
       throw error;
     }
   };
+  const operations = new Map();
+  const releaseOperation = (attemptId) => {
+    operations.get(attemptId)?.(); operations.delete(attemptId);
+  };
   return {
+    releaseOperation,
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid start clock');
       return transact(() => {
-        const row = next.get(nowMs);
-        if (!row) return { state: 'idle' };
-        claim.run(row.attemptId);
-        return { state: 'claimed', attemptId: row.attemptId,
-          version: check.get(row.attemptId).version };
+        let afterId = 0;
+        while (true) {
+          const row = next.get(nowMs, afterId);
+          if (!row) return { state: 'idle' };
+          afterId = row.attemptId;
+          const release = acquisitions ?
+            acquireAttemptOperation(acquisitions, row.attemptId) : () => {};
+          if (!release) continue;
+          try {
+            claim.run(row.attemptId);
+            operations.set(row.attemptId, release);
+            return { state: 'claimed', attemptId: row.attemptId,
+              version: check.get(row.attemptId).version };
+          } catch (error) { release(); throw error; }
+        }
       });
     },
     recordResult({ attemptId, version, state, reason = null, checkedMs }) {
@@ -171,7 +187,10 @@ export function openStartQueue(dbPath) {
         return { state: 'reviewed', resolved, held: remaining };
       });
     },
-    close() { db.close(); },
+    close() {
+      for (const attemptId of operations.keys()) releaseOperation(attemptId);
+      db.close();
+    },
   };
 }
 
@@ -186,8 +205,8 @@ export function createStartWorker({ queue, processAttempt, now = Date.now } = {}
     async runOnce() {
       if (busy) return held('start_in_progress');
       busy = true;
+      let claim;
       try {
-        let claim;
         try { claim = queue.claimNext({ nowMs: now() }); }
         catch { return held('queue_unavailable'); }
         if (claim.state === 'idle') return claim;
@@ -204,7 +223,10 @@ export function createStartWorker({ queue, processAttempt, now = Date.now } = {}
         } catch { return held('queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,
           result: state === 'held' ? held(reason) : { state } };
-      } finally { busy = false; }
+      } finally {
+        if (claim?.state === 'claimed') queue.releaseOperation?.(claim.attemptId);
+        busy = false;
+      }
     },
   };
 }

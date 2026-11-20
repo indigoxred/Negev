@@ -9,6 +9,46 @@ const detail = { state: 'details', anidbId: 1234, page: 1, total: 1,
   complete: true, nextPage: null,
   episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
 
+test('overlapping fuzzy queries preserve the later correct episode evidence', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => ({ ...request, episodeIds: [1001, 1002, 1003] }),
+    loadDetail: async () => ({ ...detail, total: 3,
+      episodes: [1, 2, 3].map((number) => ({ id: 1000 + number,
+        number, type: 'Episode', title: `Episode ${number}` })) }),
+    pause: async () => {},
+    searchReleases: async () => ({ state: 'candidates', items: [{
+      indexerId: 7, guid: 'overlapping', title: 'Canonical Anime - 03 1080p',
+      evidence: 'unverified' }] }),
+  });
+  const result = await discover({ requestId: 12,
+    searchTargetEpisodeIds: [1001, 1002, 1003] });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].targetedEpisode, true);
+  assert.equal(result.items[0].targetEpisodeId, 1003);
+  assert.equal(result.items[0].sourceQuery, 'Canonical Anime 03');
+});
+
+test('correct evidence beyond the visible cap upgrades an already visible release', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => ({ ...request, episodeIds: [1001, 1002] }),
+    loadDetail: async () => ({ ...detail, total: 2,
+      episodes: [1, 2].map((number) => ({ id: 1000 + number,
+        number, type: 'Episode', title: `Episode ${number}` })) }),
+    pause: async () => {},
+    searchReleases: async ({ query }) => ({ state: 'candidates',
+      items: Array.from({ length: 50 }, (_, index) => ({ indexerId: 7,
+        guid: query.endsWith('01') && index === 0 || query.endsWith('02') && index === 49
+          ? 'overlap' : `${query}:${index}`,
+        title: 'Canonical Anime - 02 1080p', evidence: 'unverified' })) }),
+  });
+  const result = await discover({ requestId: 12, searchTargetEpisodeIds: [1001, 1002] });
+  assert.equal(result.items.length, 50);
+  const item = result.items.find((item) => item.guid === 'overlap');
+  assert.equal(item.targetedEpisode, true);
+  assert.equal(item.targetEpisodeId, 1002);
+  assert.equal(item.sourceQuery, 'Canonical Anime 02');
+});
+
 test('marks a historically completed series for full-season preference', async () => {
   const discover = createRequestCandidateDiscovery({
     readRequest: () => request,

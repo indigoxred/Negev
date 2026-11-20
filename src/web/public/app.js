@@ -703,11 +703,20 @@ async function loadRequestView(view, append = false, silent = false) {
                   });
                   inspection.replaceChildren(element('p',
                     `Torrent file list: ${preview.files.length} video file(s). ` +
-                    'Episode identities are provisional. AniDB file registration is unverified. ' +
+                    'Episode identities are provisional. ' +
                     'No download has started.', 'muted'));
                   for (const file of preview.files) {
+                    const evidence = preview.correspondence?.files?.find((item) =>
+                      item.name === file.name);
+                    const label = evidence?.state === 'previously_verified'
+                      ? 'Previously verified exact file · AniDB correspondence'
+                      : evidence?.state === 'likely'
+                        ? 'Likely AniDB correspondence · advertised CRC32 and size'
+                        : evidence?.state === 'filename_prediction'
+                          ? 'Filename prediction only · AniDB registration unknown'
+                          : 'AniDB registration unknown';
                     inspection.append(element('p',
-                      `${file.name} → AniDB episode ${file.episodeIds.join(', ')}`));
+                      `${file.name} → AniDB episode ${file.episodeIds.join(', ')} · ${label}`));
                   }
                   for (const file of preview.subtitles) {
                     inspection.append(element('p', `${file.name} · subtitle`));

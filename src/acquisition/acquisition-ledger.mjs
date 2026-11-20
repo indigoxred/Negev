@@ -969,6 +969,45 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'start_unknown', sendNow: true };
       });
     },
+    findPreviouslyVerifiedFile({ anidbId, torrentHash, file } = {}) {
+      if (!validId(anidbId) || !validHash(torrentHash)) return null;
+      let plan;
+      try { plan = canonicalFilePlan([file]).files[0]; } catch { return null; }
+      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_availability_proofs'").get()) {
+        return null;
+      }
+      // A filename, current availability, or another torrent's proof alone is
+      // insufficient. All targets must have been proved against this one file.
+      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='pure_move_intents'").get()) {
+        return null;
+      }
+      const rows = db.prepare(`SELECT p.file_id AS fileId,f.file_size AS size,
+          m.manifest_json AS manifestJson
+        FROM acquisition_attempts a
+        JOIN pure_move_intents m ON m.attempt_id=a.id AND m.torrent_hash=a.torrent_hash
+          AND m.status IN ('published_observed','publish_unknown')
+        JOIN acquisition_file_plans f ON f.attempt_id=a.id
+        JOIN file_availability_proofs p ON p.anidb_id=a.anidb_id
+          AND p.episode_id IN (SELECT value FROM json_each(f.episode_key))
+        WHERE a.anidb_id=? AND a.torrent_hash=? AND f.file_name=?
+          AND f.file_size=? AND f.episode_key=? AND p.presentation='exact'
+        GROUP BY p.file_id,f.file_size,m.manifest_json
+        HAVING COUNT(DISTINCT p.episode_id)=? LIMIT 2`)
+        .all(anidbId, torrentHash.toLowerCase(), plan.name, plan.size,
+          JSON.stringify(plan.episodeIds), plan.episodeIds.length);
+      if (rows.length !== 1) return null;
+      try {
+        const manifest = JSON.parse(rows[0].manifestJson);
+        const physical = manifest.torrentHash === torrentHash.toLowerCase() &&
+          manifest.files.find((item) => item.name === plan.name && item.size === plan.size &&
+            JSON.stringify([...item.episodeIds].sort((a, b) => a - b)) ===
+              JSON.stringify(plan.episodeIds));
+        if (!physical || ['dev', 'ino', 'mtimeNs'].some((key) =>
+          typeof physical[key] !== 'string' || !/^\d+$/.test(physical[key]))) return null;
+        return { fileId: rows[0].fileId, size: rows[0].size, physical: {
+          dev: physical.dev, ino: physical.ino, mtimeNs: physical.mtimeNs } };
+      } catch { return null; }
+    },
     getStart(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid attempt ID');
       const row = findStart.get(attemptId);

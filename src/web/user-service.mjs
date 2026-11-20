@@ -85,6 +85,8 @@ import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
+import { createAniDbCorrespondence } from '../identity/anidb-correspondence.mjs';
+import { readPreviouslyVerifiedFile } from '../identity/previously-verified-file.mjs';
 import { readShokoVideoExtensions } from '../acquisition/shoko-video-extensions.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { readRelatedEvidence } from '../acquisition/read-related-evidence.mjs';
@@ -472,10 +474,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
       readArchive: () => readArchiveRelations({ anidbId }),
     });
+    const inspectCorrespondence = createAniDbCorrespondence({ fetchImpl, now,
+      readPreviouslyVerified: async ({ anidbId, torrentHash, file, signal }) => {
+        const prior = acquisitions.findPreviouslyVerifiedFile({ anidbId, torrentHash, file });
+        if (!prior) return null;
+        return readPreviouslyVerifiedFile({ prior, baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, shokoMount: plex?.shokoMount, fetchImpl, signal });
+      },
+    });
     const previewCandidate = prowlarr ? ({ requestId, candidate,
       offlineCache }) =>
       previewRequestCandidate({ requestId, candidate,
-        offlineCache,
+        offlineCache, inspectCorrespondence,
         offlineLookup: ({ filename }) => metadata.run(() => previewOfflineRelease({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           filename, fetchImpl })),
