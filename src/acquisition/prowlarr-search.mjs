@@ -7,7 +7,7 @@ import { compareReleases, hasTargetEpisodeHint } from './release-preference.mjs'
 // evidence that its video is registered in AniDB or safe to import.
 export async function searchReleaseCandidates({
   baseUrl, apiKey, query, indexerIds, trustedIndexerIds = [],
-  categories = [], limit = 25,
+  categories = [], limit = 25, extended = false,
   targetEpisodeNumber = null,
   includeProxyUrl = false,
   fetchImpl = fetch, timeoutMs = 20_000,
@@ -19,7 +19,7 @@ export async function searchReleaseCandidates({
       indexerIds.length === 0 || !validIds(trustedIndexerIds, 20) ||
       trustedIndexerIds.some((id) => !indexerIds.includes(id)) ||
       !validIds(categories, 20) ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
+      typeof extended!=='boolean'||!Number.isSafeInteger(limit) || limit < 1 || limit > (extended?200:50) ||
       (targetEpisodeNumber !== null && (!Number.isSafeInteger(targetEpisodeNumber) ||
         targetEpisodeNumber < 1 || targetEpisodeNumber > 9999))) {
     return { state: 'invalid_query' };
@@ -81,10 +81,10 @@ export async function searchReleaseCandidates({
       }
     }
     const selected = [];
-    for (let offset = 0; selected.length < limit; offset++) {
+    for (let position = 0; selected.length < limit; position++) {
       let added = false;
       for (const id of indexerIds) {
-        const item = byIndexer.get(id)[offset];
+        const item = byIndexer.get(id)[position];
         if (!item) continue;
         selected.push(item);
         added = true;

@@ -44,7 +44,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     }
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',()=>{if(active===dialog)active=null;dialog.remove();},{once:true});
-    let control,busy=false,version=0,expiryTimer=null;
+    let control,busy=false,version=0,expiryTimer=null,nextButton=null,lastQuery='';
+    const shown=new Set();
     dialog.addEventListener('close',()=>clearTimeout(expiryTimer),{once:true});
     const current=()=>dialog.isConnected&&active===dialog;
     const command=body=>api(`/api/requests/${requestId}/release-choice`,{method:'POST',body:JSON.stringify({...body,revision:control.revision})});
@@ -85,14 +86,22 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         ?'Choose a release below. This request will not start an automatic grab while you select.'
         :'Automatic acquisition is enabled. Search is read-only until you select a release.';
     };
-    const search=async()=>{
-      if(busy)return;buttons(true);const epoch=++version;status.textContent='Searching indexers…';results.replaceChildren();
+    const search=async(append=false,offset=0)=>{
+      if(busy)return;
+      const phrase=query.value.trim();
+      if(phrase!==lastQuery){append=false;offset=0;}lastQuery=phrase;
+      buttons(true);if(nextButton)nextButton.disabled=true;
+      const epoch=++version;status.textContent='Searching indexers…';
+      if(!append){results.replaceChildren();shown.clear();nextButton=null;}
       try{
-        const data=await api(`/api/requests/${requestId}/releases${query.value.trim()?`?query=${encodeURIComponent(query.value.trim())}`:''}`);
+        const params=new URLSearchParams();if(phrase)params.set('query',phrase);if(offset)params.set('offset',String(offset));
+        const data=await api(`/api/requests/${requestId}/releases${params.size?`?${params}`:''}`);
         if(!current()||epoch!==version)return;
+        nextButton?.remove();nextButton=null;
         status.textContent=data.waitingFor==='first_episode'?'No released episodes to search yet. This request watches for the first release.':
           data.items.length?`${data.items.length} matches · advertised information is provisional. Inspect files before selecting.`:'No matches returned. Refine the title or retry search.';
         for(const c of data.items) {
+          const key=`${c.indexerId}:${c.guid}`;if(shown.has(key))continue;shown.add(key);
           const entry=element('article',undefined,'release-entry');
           entry.append(element('strong',c.title));
           entry.append(element('p',`${c.group} · ${c.source} · ${c.resolution?`${c.resolution}p`:'Resolution unknown'} · ${(c.size/1_073_741_824).toFixed(2)} GiB · ${c.seeders??'?'} seeds · ${c.indexer}`,'muted'));
@@ -131,7 +140,11 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           });
           entry.append(inspect,grab,files);results.append(entry);
         }
-      }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);}
+        if(data.nextOffset!==null&&data.nextOffset!==undefined) {
+          nextButton=element('button','Show more releases','quiet');
+          nextButton.addEventListener('click',()=>{void search(true,data.nextOffset);});results.append(nextButton);
+        }
+      }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
     };
     const runAuto=async()=>{
       if(busy)return;buttons(true);version++;
@@ -145,7 +158,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         const data=await command({action:'auto'});control=data.control;if(current())showControl();onSaved();
       }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);}
     };
-    auto.addEventListener('click',runAuto);manual.addEventListener('click',search);
+    auto.addEventListener('click',runAuto);manual.addEventListener('click',()=>{void search();});
     query.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void search();}});
     try{await refresh();if(!current())return;showControl();if(control.phase==='proposal'||control.phase==='chosen')return;
       if(mode==='auto')await runAuto();else await search();

@@ -71,12 +71,12 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     }
     return found.preview;
   };
-  const search=async(id,query)=>{
+  const search=async(id,query,resultOffset=0)=>{
     const request=requests.getRequest(id);
     if(!request||request.status!=='held') return held('request_missing');
     if(!request.episodeIds.length) return {state:'candidates',requestId:id,items:[],waitingFor:'first_episode'};
     let result;
-    try {result=await discoverCandidates({requestId:id,interactive:true,...(query?{query}:{})});}
+    try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,...(query?{query}:{})});}
     catch {return held('release_search_unavailable');}
     if(result?.state!=='candidates') return result??held('release_search_unavailable');
     return {...result,items:result.items.map(c=>({...publicRelease(c),token:cache(id,c)}))};

@@ -18,10 +18,13 @@ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==und
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
 const selection={candidate,preview,registration:'unknown'};
-let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null;
+let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false;
 const api=async(url,options={})=>{
  if(url.endsWith('/release-choice')&&!options.method)return {control};
- if(url.includes('/releases'))return {state:'candidates',items:[candidate]};
+ if(url.includes('offset=50')&&!failedMore){failedMore=true;throw new Error('Temporary indexer outage');}
+ if(url.includes('/releases'))return url.includes('offset=50')
+   ?{state:'candidates',items:[{...candidate,guid:'two',title:'[Another] Example WEB 1080p',token:'second'}],nextOffset:null}
+   :{state:'candidates',items:[candidate],nextOffset:50};
  const body=JSON.parse(options.body);
  if(body.action==='inspect')return {state:'preflight',...preview};
  if(body.action==='begin')control={mode:body.mode,phase:'selecting',revision:control.revision+1};
@@ -38,6 +41,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const pickerDefaults=picker.value()==='auto_review';
  await dialog.open({requestId:1,title:'Example',mode:'manual'});
  const manualHasNoPrompt=!document.querySelector('dialog').textContent.includes('Grab better release')&&autoCalls===0;
+ click('Show more releases');await tick();
+ const recoveredPage=document.querySelectorAll('dialog .release-entry').length===1;
+ click('Show more releases');await tick();
+ const paged=document.querySelectorAll('dialog .release-entry').length===2;
  document.querySelector('#request-list').replaceChildren(element('p','Refreshed request card'));
  const survived=Boolean(document.querySelector('dialog[open] .release-entry'));
  click('Inspect files');await tick();
@@ -49,7 +56,9 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
  const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
  click('Use registered release');await tick();
- document.querySelector('#result').textContent=JSON.stringify({pickerDefaults,manualHasNoPrompt,survived,unknownGrey,coverage,saved,prompt,decision,autoCalls});
+ dialog.close();
+ const closed=!document.querySelector('dialog');
+ document.querySelector('#result').textContent=JSON.stringify({pickerDefaults,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,saved,prompt,decision,autoCalls,closed});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -58,6 +67,6 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{pickerDefaults:true,manualHasNoPrompt:true,survived:true,unknownGrey:true,coverage:true,saved:true,prompt:true,decision:'registered',autoCalls:1});
+      assert.deepEqual(result,{pickerDefaults:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,saved:true,prompt:true,decision:'registered',autoCalls:1,closed:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });

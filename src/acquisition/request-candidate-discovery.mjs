@@ -18,7 +18,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
   }
   const queryCache = new Map();
   const discover = async ({ requestId, searchTargetEpisodeId = null,
-    searchTargetEpisodeIds = null, interactive = false, query = null }) => {
+    searchTargetEpisodeIds = null, interactive = false, query = null, resultOffset = 0 }) => {
+    if(!Number.isSafeInteger(resultOffset)||resultOffset<0||resultOffset>150||(!interactive&&resultOffset!==0))return held('invalid_request');
     if (typeof interactive !== 'boolean' || (query !== null && (!interactive ||
         typeof query !== 'string' || query.trim().length<2 || query.length>120 ||
         /[\x00-\x1f\x7f]/.test(query)))) return held('invalid_request');
@@ -96,19 +97,20 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     for (const [index, query] of queries.entries()) {
       let result;
       const queryTarget = targetByQuery.get(query);
-      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null]);
+      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null,interactive?resultOffset+50:25]);
       const saved = queryCache.get(cacheKey);
       try {
         if (saved && saved.until > now()) result = saved.result;
         else {
           if (index > 0) await pause(1_000);
           result = await searchReleases({ query,
+            ...(interactive?{limit:resultOffset+50}:{}),
             targetEpisodeNumber: queryTarget?.number ?? null });
         }
       }
       catch { failedQueries.push(query); continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
-          result.items.length > 50 || result.items.some((item) =>
+          result.items.length > (interactive?200:50) || result.items.some((item) =>
             typeof item?.guid !== 'string' || !item.guid ||
             typeof item.title !== 'string' || !item.title || item.evidence !== 'unverified')) {
         failedQueries.push(query);
@@ -149,7 +151,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact
     // episode hit must not displace every same-title alias result.
-    for (let position = 0; position < 50 && items.length < 50; position++) {
+    const combinedLimit=interactive?resultOffset+50:50;
+    for (let position = 0; position < combinedLimit && items.length < combinedLimit; position++) {
       let any = false;
       for (const bucket of buckets) {
         const item = bucket[position];
@@ -159,7 +162,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         if (seenCandidates.has(key)) continue;
         seenCandidates.add(key);
         items.push(bestByCandidate.get(key));
-        if (items.length === 50) break;
+        if (items.length === combinedLimit) break;
       }
       if (!any) break;
     }
@@ -168,7 +171,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     }
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       ...(interactiveTruncated?{searchIncomplete:true}:{}),
-      items, exhaustive: false,
+      items:items.slice(resultOffset,resultOffset+50), exhaustive: false,
+      ...(interactive?{nextOffset:items.length===combinedLimit&&resultOffset<150?resultOffset+50:null}:{}),
       ...(failedQueries.length > 0 ? {
         searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };

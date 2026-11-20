@@ -27,6 +27,8 @@ test('members can search their own request, but not another user or adult title'
   assert.equal((await app.inject({url:'/api/requests/2/releases',headers})).statusCode,404);
   setAdmin();assert.equal((await app.inject({url:'/api/requests/3/releases',headers})).statusCode,403);
   assert.equal(calls.length,1);
+  assert.equal((await app.inject({url:'/api/requests/1/releases?offset=200',headers})).statusCode,400);
+  assert.equal((await app.inject({url:'/api/requests/1/releases?offset=50',headers})).statusCode,200);
 }));
 test('selection writes require CSRF and a valid revision, and provider failures are recoverable',()=>fixture(async({app,headers,selection})=>{
   assert.equal((await app.inject({method:'POST',url:'/api/requests/1/release-choice',headers:{cookie:headers.cookie,origin:headers.origin},payload:{action:'begin',mode:'manual',revision:1}})).statusCode,403);

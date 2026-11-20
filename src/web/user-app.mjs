@@ -1251,13 +1251,15 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     config:{rateLimit:{max:10,timeWindow:'1 minute'}}},async(request,reply)=>{
     reply.header('Cache-Control','no-store');
     const id=await releaseAccess(request,reply);if(!id)return;
-    if(Object.keys(request.query).some(k=>k!=='query') ||
+    const offset=request.query.offset===undefined?0:Number(request.query.offset);
+    if(Object.keys(request.query).some(k=>!['query','offset'].includes(k)) ||
+      !Number.isSafeInteger(offset)||![0,50,100,150].includes(offset)||
       request.query.query!==undefined&&(typeof request.query.query!=='string'||
       request.query.query.trim().length<2||request.query.query.length>120||/[\x00-\x1f\x7f]/.test(request.query.query))) {
       return reply.code(400).send({error:'Use a search phrase between 2 and 120 characters'});
     }
     try {
-      const result=await releaseSelection.search(id,request.query.query);
+      const result=await releaseSelection.search(id,request.query.query,offset);
       return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });

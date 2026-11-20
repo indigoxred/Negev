@@ -46,3 +46,4 @@
 - Fresh-context review found hash/file reservation race, lost pending manual mode, cross-page quality downgrade, incomplete-search downgrade and lost private ranking fields. Each was corrected with focused regressions.
 - Ruling: use 1080p before 720p even when the latter advertises Blu-ray, following the user’s current Airing standard; keep source preference within a resolution tier.
 - Exact already-owned choice recovery requires matching request, torrent hash and canonical file plan before returning future episodes to automatic acquisition.
+- Manual search pages through at most200 results in50-result pages, with refined queries, deduplication and retryable page failures. Automatic search retains its original50-candidate bound.

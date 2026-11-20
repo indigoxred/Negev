@@ -1,8 +1,38 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { searchReleaseCandidates } from '../src/acquisition/prowlarr-search.mjs';
+import { createRequestCandidateDiscovery } from '../src/acquisition/request-candidate-discovery.mjs';
 
 const config = { baseUrl: 'http://prowlarr.internal:9696', apiKey: 'synthetic-key', indexerIds: [7, 9] };
+
+test('manual search can inspect bounded additional result pages without changing the automatic cap',async()=>{
+ const rows=Array.from({length:120},(_,i)=>({guid:`release-${i}`,indexerId:i%2?9:7,
+   title:`Example ${i} 1080p`,size:1000,protocol:'torrent',seeders:20}));
+ const result=await searchReleaseCandidates({...config,query:'Example',limit:100,extended:true,
+   fetchImpl:async()=>Response.json(rows)});
+ assert.equal(result.items.length,100);assert.equal(result.items[50].guid,'release-50');
+ assert.equal((await searchReleaseCandidates({...config,query:'Example',limit:201,extended:true,
+   fetchImpl:async()=>{throw Error('must not search');}})).state,'invalid_query');
+});
+test('manual paging covers the combined alias union without skipping each query tail',async()=>{
+ const queryOrder=[];
+ const discover=createRequestCandidateDiscovery({readRequest:()=>({id:1,status:'held',anidbId:42,kind:'series',episodeIds:[101]}),
+   loadDetail:async()=>({state:'details',anidbId:42,page:1,total:1,complete:true,nextPage:null,title:'Example Anime',
+     kind:'series',restricted:false,episodes:[{id:101,type:'Episode',number:1,title:'First'}]}),
+   releaseQueries:async()=>['Other Official Name','Third Official Name'],pause:async()=>{},
+   searchReleases:({query,limit=25})=>{
+     if(!queryOrder.includes(query))queryOrder.push(query);
+     return searchReleaseCandidates({...config,query,limit,extended:limit>50,
+       fetchImpl:async()=>Response.json(Array.from({length:80},(_,i)=>({guid:`${query}:${i}`,indexerId:7,
+         title:`Example Anime ${i}`,size:1000,protocol:'torrent',seeders:20})))});
+   }});
+ const ids=[];for(const resultOffset of [0,50,100,150]) {
+   const page=await discover({requestId:1,interactive:true,resultOffset});assert.equal(page.state,'candidates',JSON.stringify(page));assert.equal(page.items.length,50);
+   ids.push(...page.items.map(c=>c.guid));
+ }
+ const expected=[];for(let i=0;expected.length<200;i++)for(const q of queryOrder){expected.push(`${q}:${i}`);if(expected.length===200)break;}
+ assert.deepEqual(ids,expected);assert.equal(new Set(ids).size,200);
+});
 
 test('trusted-filter indexer is preferred by identity while ordinary Nyaa remains eligible', async () => {
   const result = await searchReleaseCandidates({ ...config,
