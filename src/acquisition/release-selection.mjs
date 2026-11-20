@@ -4,15 +4,21 @@ import { assessRelease, compareReleases, hasSeasonPackHint } from './release-pre
 const held=reason=>({state:'held',reason});
 export function publicRelease(c) {
   const title=c.title;
+  const range=/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E|E)?\d{1,3}\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
+  const coordinate=/\bS\d{1,2}E(\d{1,3})(?:v\d+)?\b/i.exec(title)?.[1]??
+    /\s[-–]\s(\d{1,3})(?:v\d+)?(?=\s|$|[.\[(])/i.exec(title)?.[1];
+  const coverage=!range&&coordinate?`Episode ${Number(coordinate)} advertised; inspect file coverage`:
+    hasSeasonPackHint(c)||range?'Season pack advertised; inspect file coverage':'Inspect file coverage';
   const resolution=/\b1080p?\b|1920x1080/i.test(title)?1080:
     /\b720p?\b|1280x720/i.test(title)?720:/\b(?:480|576)p?\b/i.test(title)?480:null;
   return {guid:c.guid,indexerId:c.indexerId,title,size:c.size,seeders:c.seeders??null,
     evidence:'unverified',group:/^\[([^\]]{1,80})\]/.exec(title)?.[1]??'Not advertised',
     source:/\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title)?'Blu-ray':
       /\bDVD(?:rip)?\b/i.test(title)?'DVD':/\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title)?'WEB':'Not advertised',
-    resolution,coverage:hasSeasonPackHint(c)?'Season pack advertised; inspect file coverage':'Inspect file coverage',
+    resolution,coverage,
     indexer:typeof c.indexer==='string'?c.indexer.slice(0,120):`Indexer ${c.indexerId}`,
-    languageHints:/dual[ ._-]?audio/i.test(title)?'Dual audio advertised; subtitles unverified':
+    languageHints:/dual[ ._-]?audio|multi[ ._-]?audio|\bdual\b/i.test(title)?'Dual audio advertised; subtitles unverified':
+      /\b(?:english|eng)[ ._-]*dub(?:bed)?\b|\bdub[ ._-]*only\b/i.test(title)?'English dub advertised; Japanese audio not advertised':
       /(?:eng(?:lish)?[ ._-]?subs?|multi[ ._-]?subs?|subsplease|erai[ ._-]?raws)/i.test(title)?
         'English subtitle hint advertised; tracks unverified':'Languages not advertised',
     eligible:assessRelease(c).eligible,reason:assessRelease(c).reason};
@@ -63,11 +69,20 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
   const receipt=(id,token)=>{
     const value=receipts.get(token);return value?.requestId===id&&value.expiresMs>now()?value:null;
   };
-  const inspect=async(id,token)=>{
+  const inspect=async(id,token,knownCoverage)=>{
     const found=receipt(id,token);if(!found) return held('release_search_expired');
     if(!found.preview) {
       try {found.preview=await previewCandidate({requestId:id,candidate:found.candidate});}
       catch {return held('torrent_preflight_unavailable');}
+    }
+    if(found.preview?.state==='preflight') {
+      try {
+        const coverage=knownCoverage??await readPublicCoverage(requests.getRequest(id));
+        const available=new Set(coverage.availableEpisodeIds??[]);
+        const owned=new Set(coverage.uncertainEpisodeIds??[]);
+        found.preview={...found.preview,selectionStatus:found.preview.episodeIds.every(x=>available.has(x))?'already_available':
+          found.preview.episodeIds.some(x=>owned.has(x))?'owned_unverified':'eligible'};
+      } catch {found.preview={...found.preview,selectionStatus:'unchecked'};}
     }
     return found.preview;
   };
@@ -79,7 +94,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,...(query?{query}:{})});}
     catch {return held('release_search_unavailable');}
     if(result?.state!=='candidates') return result??held('release_search_unavailable');
-    return {...result,items:result.items.map(c=>({...publicRelease(c),token:cache(id,c)}))};
+    return {...result,items:[...result.items].sort(compareReleases).map(c=>({...publicRelease(c),token:cache(id,c)}))};
   };
   const begin=(id,mode,revision)=>{
     if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');
@@ -92,6 +107,8 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(!assessRelease(found.candidate).eligible) return held('release_not_eligible');
     const preview=await inspect(id,token);
     if(preview?.state!=='preflight') return preview??held('torrent_preflight_unavailable');
+    if(['already_available','owned_unverified'].includes(preview.selectionStatus))return held(
+      preview.selectionStatus==='already_available'?'target_already_available':'target_already_owned');
     if(!preview.episodeIds.length) return held('release_has_no_requested_episodes');
     const updated=save(id,revision,{mode:'manual',phase:'chosen',
       selection:{candidate:found.candidate,preview}});
@@ -113,7 +130,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       const inspected=[];
       for(const c of found.items.filter(c=>c.eligible).sort((a,b)=>compareReleases(
         receipt(id,a.token).candidate,receipt(id,b.token).candidate,{preferSeasonPack:preferPack})).slice(0,3)) {
-        const preview=await inspect(id,c.token);
+        const preview=await inspect(id,c.token,coverage);
         if(preview?.state!=='preflight'||preview.episodeIds.every(x=>available.has(x))||
           preview.episodeIds.some(x=>(coverage.uncertainEpisodeIds??[]).includes(x))) continue;
         if(preferPack&&request.episodeIds.some(x=>!available.has(x)&&!preview.episodeIds.includes(x))) continue;

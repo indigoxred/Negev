@@ -22,7 +22,9 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     release_search_expired:'These results expired. Search again before selecting.',
     release_title_mismatch:'This release does not safely match the requested installment.',
     related_title_unavailable:'Related installments could not be checked. Retry inspection.',
-    release_not_eligible:'This release does not meet the current release preferences.'}[e.reason]??e.message??'Could not complete release selection. Retry.');
+    release_not_eligible:'This release does not meet the current release preferences.',
+    target_already_available:'These episodes are already available. No new download is needed.',
+    target_already_owned:'These files are already owned and are being verified. No duplicate download will start.'}[e.reason]??e.message??'Could not complete release selection. Retry.');
   const open=async({requestId,title,mode='manual',next=null})=>{
     closeActive();
     const dialog=element('dialog',undefined,'release-search-dialog');active=dialog;
@@ -106,6 +108,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           entry.append(element('strong',c.title));
           entry.append(element('p',`${c.group} · ${c.source} · ${c.resolution?`${c.resolution}p`:'Resolution unknown'} · ${(c.size/1_073_741_824).toFixed(2)} GiB · ${c.seeders??'?'} seeds · ${c.indexer}`,'muted'));
           entry.append(element('p',`${c.coverage} · ${c.languageHints}`,'muted'));
+          if(!c.eligible)entry.append(element('p',({no_reported_seeders:'No reported seeders',english_dub_only:'English dub only · outside Japanese-audio preference',no_english_subtitles:'No English subtitles advertised',outside_quality_profile:'Outside the current quality profile'}[c.reason]??'Outside the current release preferences'),'muted'));
           const evidence=element('p','Registration unknown','registration-unknown');entry.append(evidence);
           const inspect=element('button','Inspect files'),grab=element('button','Grab this release','primary');grab.disabled=true;
           const files=element('details');files.append(element('summary','File coverage and registration evidence'));
@@ -124,7 +127,10 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
               for(const f of preview.filesToExclude??[])files.append(element('p',`${f.name} · excluded from this request`,'muted'));
               evidence.className=confirmed?'registration-confirmed':'registration-unknown';
               evidence.textContent=confirmed?'Previously verified exact AniDB files':'See per-file evidence · registration is not confirmed for this whole release';
-              grab.disabled=!c.eligible;files.open=true;
+              grab.disabled=!c.eligible||['already_available','owned_unverified'].includes(preview.selectionStatus);
+              if(preview.selectionStatus==='already_available')grab.textContent='Already available';
+              if(preview.selectionStatus==='owned_unverified')grab.textContent='Already owned · verification pending';
+              files.open=true;
             }catch(e){evidence.textContent=errorText(e);}finally{inspect.disabled=false;}
           });
           grab.addEventListener('click',async()=>{

@@ -8,6 +8,12 @@ test('public release metadata exposes hints, not proxy URLs or false language gu
  assert.equal(result.group,'Group');assert.equal(result.resolution,1080);assert.equal(result.source,'WEB');
  assert.match(result.languageHints,/advertised/i);assert.equal(JSON.stringify(result).includes('secret'),false);
 });
+test('season labels do not misdescribe individual release coverage or explicit dub language',()=>{
+ assert.match(publicRelease(candidate('[SubsPlease] Example S2 - 07 (1080p)')).coverage,/Episode 7 advertised/);
+ assert.match(publicRelease(candidate('[Yameii] Example - S02E05 [English Dub] [1080p]')).coverage,/Episode 5 advertised/);
+ assert.match(publicRelease(candidate('[Yameii] Example - S02E05 [English Dub] [1080p]')).languageHints,/English dub advertised/);
+ assert.match(publicRelease(candidate('[G] Example S02E01-E12 [1080p]')).coverage,/Season pack/);
+});
 test('unknown and filename-only registration stay unknown; mixed packs are not confirmed',()=>{
  assert.equal(correspondenceLevel(selection('Example 1080p','filename_prediction').preview),'unknown');
  const p=selection('Example 1080p','previously_verified').preview;

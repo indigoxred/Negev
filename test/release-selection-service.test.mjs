@@ -10,7 +10,7 @@ async function fixture(run) {
   const requests=openRequestLedger(path.join(dir,'state.sqlite'));
   const saved=requests.submit({requesterId:1,requestKey:'test',releaseMode:'manual',nowMs:100,
     intent:{state:'ready',anidbId:42,kind:'series',monitorFuture:false,episodeIds:[1,2]}});
-  let clock=100,wakes=0,providerFailure=false,incomplete=false;const inspected=[];
+  let clock=100,wakes=0,providerFailure=false,incomplete=false,available=[];const inspected=[];
   const items=['WEB','BD'].map((source,i)=>({guid:`release-${i}`,indexerId:1,title:`[Group] Example batch ${source} 1080p`,
     size:1000,seeders:20,evidence:'unverified',proxyUrl:'https://private/?apikey=secret'}));
   const previewCandidate=async({requestId,candidate})=>{inspected.push(candidate.guid);return {state:'preflight',requestId,anidbId:42,
@@ -20,16 +20,17 @@ async function fixture(run) {
   const make=()=>createReleaseSelection({requests,now:()=>clock,wake:()=>{wakes++;},previewCandidate,
     discoverCandidates:async()=>providerFailure?{state:'held',reason:'release_search_unavailable'}:
       {state:'candidates',requestId:saved.requestId,anidbId:42,releaseState:'completed',items,searchIncomplete:incomplete},
-    readPublicCoverage:async()=>({targetCount:2,verifiedTargets:0,availableEpisodeIds:[],uncertainEpisodeIds:[]})});
+    readPublicCoverage:async()=>({targetCount:2,verifiedTargets:available.length,availableEpisodeIds:available,uncertainEpisodeIds:[]})});
   try{await run({service:make(),requests,id:saved.requestId,advance:value=>{clock=value},
-    fail:()=>{providerFailure=true},wakes:()=>wakes,make,items,inspected,setIncomplete:()=>{incomplete=true}});}
+    fail:()=>{providerFailure=true},wakes:()=>wakes,make,items,inspected,setIncomplete:()=>{incomplete=true},setAvailable:ids=>{available=ids}});}
   finally{requests.close();await rm(dir,{recursive:true,force:true});}
 }
 test('manual search is read-only, has opaque receipts, and choosing pins the exact inspected torrent',()=>fixture(async({service,requests,id,wakes})=>{
   const result=await service.search(id);assert.equal(JSON.stringify(result).includes('secret'),false);assert.equal(wakes(),0);
   const before=service.snapshot(id);
-  const preview=await service.inspect(id,result.items[0].token);assert.equal(preview.torrentHash,'a'.repeat(40));
-  const chosen=await service.choose(id,result.items[0].token,before.revision);
+  const selected=result.items.find(c=>c.guid==='release-0');
+  const preview=await service.inspect(id,selected.token);assert.equal(preview.torrentHash,'a'.repeat(40));
+  const chosen=await service.choose(id,selected.token,before.revision);
   assert.equal(chosen.state,'updated');assert.equal(requests.getReleaseControl(id,100).selection.preview.torrentHash,'a'.repeat(40));
   assert.equal((await service.choose(id,result.items[1].token,before.revision)).reason,'stale_release_selection');
   assert.equal(wakes(),1);
@@ -61,4 +62,9 @@ test('Auto cannot pin a low-resolution release from an incomplete search',()=>fi
  items.forEach(c=>{c.title=c.title.replace('1080p','480p')});setIncomplete();
  const begun=service.begin(id,'auto',service.snapshot(id).revision);
  const result=await service.auto(id,begun.control.revision);assert.equal(result.control.phase,'consumed');
+}));
+test('manual inspection and selection cannot re-request exact already available episodes',()=>fixture(async({service,id,setAvailable,wakes})=>{
+ const result=await service.search(id);setAvailable([1,2]);
+ const preview=await service.inspect(id,result.items[0].token);assert.equal(preview.selectionStatus,'already_available');
+ assert.equal((await service.choose(id,result.items[0].token,1)).reason,'target_already_available');assert.equal(wakes(),0);
 }));
