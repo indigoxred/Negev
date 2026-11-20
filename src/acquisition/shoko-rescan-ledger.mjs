@@ -59,7 +59,9 @@ export function openShokoRescanLedger(dbPath) {
     WHERE NOT EXISTS (SELECT 1 FROM acquisition_retirements x WHERE x.attempt_id=a.id)
       AND p.updated_ms<=? AND (progress.attempt_id IS NULL OR
       (progress.status IN ('pending','review') AND progress.next_due_ms<=?))
-    GROUP BY a.id ORDER BY COALESCE(progress.next_due_ms,p.updated_ms),a.id LIMIT ?`);
+    GROUP BY a.id ORDER BY CASE WHEN ?=1 THEN CASE
+      WHEN progress.status='review' THEN 0 WHEN p.updated_ms>=? THEN 1
+      ELSE 2 END ELSE 0 END,COALESCE(progress.next_due_ms,p.updated_ms),a.id LIMIT ?`);
   const eligible = db.prepare(`SELECT p.manifest_json AS manifestJson
     FROM acquisition_attempts a
     JOIN pure_move_intents p ON p.attempt_id=a.id AND
@@ -132,11 +134,11 @@ export function openShokoRescanLedger(dbPath) {
       if (!validId(attemptId)) throw new TypeError('Invalid rescan attempt');
       return attemptStatus.get(attemptId)?.status ?? null;
     },
-    listDue({ nowMs, limit = 20 } = {}) {
-      if (!validTime(nowMs) || !Number.isSafeInteger(limit) ||
+    listDue({ nowMs, limit = 20, preferUrgent = false } = {}) {
+      if (!validTime(nowMs) || typeof preferUrgent !== 'boolean' || !Number.isSafeInteger(limit) ||
           limit < 1 || limit > 50) throw new TypeError('Invalid rescan page');
       return due.all(nowMs >= 300_000 ? nowMs - 300_000 : -1,
-        nowMs, limit).map((row) => {
+        nowMs, preferUrgent ? 1 : 0, Math.max(0,nowMs-86_400_000), limit).map((row) => {
         try {
           const manifest = JSON.parse(row.manifestJson);
           const videos = manifest?.files?.filter((file) =>
