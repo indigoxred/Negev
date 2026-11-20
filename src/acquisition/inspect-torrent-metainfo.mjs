@@ -109,8 +109,7 @@ function v1Files(info) {
       if (attribute !== undefined) {
         const attr = asBytes(attribute);
         if (attr?.length !== 1 || attr[0] !== 0x70 ||
-            !/^\.pad\/[1-9][0-9]*$/.test(fileName) ||
-            Number(fileName.slice(5)) !== size) {
+            !/^\.pad\/(?:0|[1-9][0-9]*)$/.test(fileName)) {
           throw new TypeError('Unsupported file attributes');
         }
         continue;

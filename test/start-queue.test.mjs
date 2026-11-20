@@ -340,3 +340,10 @@ test('journalled start processor and queue issue only one start intent', async (
     assert.equal(sends, 1);
     assert.equal(ctx.queue.getResult(ctx.ids[0].attemptId).state, 'start_unknown');
   }));
+
+
+test('stale-evidence start retries remain automatic after more than one check and migrate old due rows',async()=>fixture(async ctx=>{
+ let claim=ctx.queue.claimNext({nowMs:1000});ctx.queue.recordResult({attemptId:claim.attemptId,version:claim.version,state:'held',reason:'availability_evidence_stale',checkedMs:1001});assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,61001);
+ const db=new DatabaseSync(ctx.dbPath);db.prepare('UPDATE start_checks SET next_due_ms=1801001 WHERE attempt_id=?').run(claim.attemptId);db.close();ctx.reopen();assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,61001);
+ claim=ctx.queue.claimNext({nowMs:61002});ctx.queue.recordResult({attemptId:claim.attemptId,version:claim.version,state:'held',reason:'import_activity_unverified',checkedMs:61003});assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs,121003);
+}));

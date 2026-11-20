@@ -530,7 +530,9 @@ test('complete absolute packs treat a consistent same-anime preview shift as unc
   const episodes=Array.from({length:count},(_,i)=>({id:1001+i,number:i+1,type:'Episode',title:'Episode '+(i+1)}));
   const files=episodes.map((ep,i)=>({name:`Example - ${start+i}.mkv`,size:1000}));
   const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 2'},
-   readRequest:()=>({...request,episodeIds:episodes.map(e=>e.id)}),loadDetail:async()=>({...detail,total:count,episodes}),
+   readRequest:()=>({...request,episodeIds:episodes.map(e=>e.id)}),
+   readRelatedTitles:async({anidbId})=>({state:'related_titles',anidbId,items:anidbId===42?[{anidbId:43,title:'Earlier Example',relation:'prequel'}]:[]}),
+   loadDetail:async({anidbId})=>anidbId===42?({...detail,total:count,episodes}):({...detail,anidbId:43,title:'Earlier Example',total:start-1,episodes:Array.from({length:start-1},(_,i)=>({id:5001+i,number:i+1,type:'Episode',title:'Earlier '+(i+1)}))}),
    prepare:async()=>({...prepared,totalBytes:count*1000,files}),
    offlineLookup:async({filename})=>{const number=Number(/- (\d+)/.exec(filename)[1])-start+1-2;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,
     ID:number>0?`offline://42-${1000+number}`:null,CrossReferences:number>0?[{AnidbAnimeID:42,AnidbEpisodeID:1000+number,PercentageStart:0,PercentageEnd:100}]:[]}};}});
@@ -548,4 +550,16 @@ test('absolute preview conflicts still reject different anime, mixed shifts and 
   offlineLookup:async({filename})=>{const n=Number(/- (\d+)/.exec(filename)[1])-24;if(mode==='single_prediction'&&n<4)return{status:200,release:{CrossReferences:[]}};const id=mode==='unknown_episode'?9999:mode==='special_episode'?2001:1000+(mode==='mixed_shift'&&n===4?2:Math.max(1,n-2));const anime=mode==='different_anime'?43:42;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:mode==='wrong_filename'?'Other.mkv':filename,ID:`offline://${anime}-${id}`,CrossReferences:[{AnidbAnimeID:anime,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};}});
  assert.equal(result.state,'held',mode);assert.equal(result.reason,'shoko_preview_wrong_identity',mode);
  }
+});
+
+
+test('a first installment cannot infer an absolute offset from count and base title alone', async()=>{
+ const ids=Array.from({length:12},(_,i)=>1001+i);
+ const first={...detail,total:12,episodes:ids.map((id,i)=>({id,number:i+1,type:'Episode',title:'Episode '+(i+1)}))};
+ const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example 13-24 Complete Batch WEB 1080p',size:12000},
+ readRequest:()=>({...request,episodeIds:ids}),loadDetail:async()=>first,
+ readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:43,title:'Example Second Season',relation:'sequel'}]}),
+ prepare:async()=>({...prepared,totalBytes:12000,files:ids.map((_,i)=>({name:'Example - '+(13+i)+'.mkv',size:1000}))}),
+ offlineLookup:async()=>({status:200,release:{CrossReferences:[]}})});
+ assert.equal(result.state,'held');assert.equal(result.reason,'absolute_numbering_unverified');
 });

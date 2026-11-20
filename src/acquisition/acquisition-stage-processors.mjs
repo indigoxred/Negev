@@ -247,7 +247,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           if (ownership) return ownership;
           return submitMissingCandidate({ request, ...selected,
             releaseQueries, readEvidence, offlineLookup,
-            readRelatedTitles: relatedTitleReader,
+            readRelatedTitles: relatedTitleReader, loadDetail,
             ledger: acquisitions, firstTimePolicy,
             renewQbittorrent,
             publicLibraryIds: publicLibraryIds(request.kind), now,

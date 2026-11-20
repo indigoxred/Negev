@@ -501,3 +501,14 @@ test('one saved request advances through the bounded processor to one stopped to
         { state: 'pass_complete', pass: 1, results: [] });
     } finally { queue.close(); }
   }));
+
+
+test('final submission independently rejects an unsupported absolute offset before reservation or qbit I/O',async()=>withLedgers(async({request,ledger})=>{
+ const encode=v=>Buffer.isBuffer(v)?Buffer.concat([Buffer.from(v.length+':'),v]):typeof v==='string'?encode(Buffer.from(v)):typeof v==='number'?Buffer.from('i'+v+'e'):Array.isArray(v)?Buffer.concat([Buffer.from('l'),...v.map(encode),Buffer.from('e')]):Buffer.concat([Buffer.from('d'),...Object.keys(v).sort().flatMap(k=>[encode(k),encode(v[k])]),Buffer.from('e')]);
+ const info={files:[{length:1000,path:['Example - 13.mkv']},{length:1000,path:['Example - 14.mkv']}],name:'Example','piece length':16384,pieces:Buffer.alloc(20,1)};
+ const torrentBytes=encode({info}),chosen={...candidate,title:'Example 13-14 Complete Batch',size:2000};let providerCalls=0,qbitCalls=0;
+ const prowlarrFetch=async()=>++providerCalls===1?Response.json([{...chosen,protocol:'torrent',downloadUrl:proxy}]):new Response(torrentBytes,{headers:{"content-type":"application/x-bittorrent"}});
+ const result=await submitMissingCandidate({...options({request,ledger,readEvidence:async()=>{throw Error('must not reserve');},prowlarrFetch,qbittorrentFetch:async()=>{qbitCalls++;throw Error('must not add');}}),candidate:chosen,episodeIds:undefined,plannedFiles:undefined,
+ readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:43,title:'Example Second Season',relation:'sequel'}]}),loadDetail:async()=>({...baseDetail,page:1,nextPage:null}),offlineLookup:async()=>({status:200,release:{CrossReferences:[]}})});
+ assert.equal(result.state,'held');assert.equal(result.reason,'absolute_numbering_unverified');assert.equal(qbitCalls,0);assert.equal(ledger.getAttempt(1),null);
+}));

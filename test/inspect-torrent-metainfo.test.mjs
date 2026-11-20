@@ -32,7 +32,7 @@ test('omits genuine pad entries from the qBittorrent-visible file list', () => {
       { attr: 'p', length: 100, path: ['.pad', '100'] }] };
   assert.deepEqual(inspect(torrent(info)).files, [{ name: '01.mkv', size: 1000 }]);
   assert.equal(inspect(torrent({ ...info, files: [
-    info.files[0], { attr: 'p', length: 100, path: ['.pad', '101'] },
+    info.files[0], { attr: 'p', length: 100, path: ['.pad', 'not-a-pad'] },
   ] })).state, 'held');
   assert.deepEqual(inspect(torrent({ ...info, files: [
     info.files[0], { attr: Buffer.from([0xf0]), length: 100,
@@ -105,4 +105,20 @@ test('rejects traversal, unsafe names, mismatched pieces and excessive metainfo'
   assert.equal(inspect(torrent({ ...v1Info, pieces: Buffer.alloc(40) })).state, 'held');
   assert.equal(inspect(torrent({ ...v1Info, name: 'setup\\evil.mkv' })).state, 'held');
   assert.equal(inspect(new Uint8Array(2_000_001)).state, 'held');
+});
+
+
+test('accepts BEP47 padding indexed by ordinal without changing the raw info hash', () => {
+  const info = { name: 'Pack', 'piece length': 16384,
+    pieces: Buffer.alloc(40, 7), files: [
+      { length: 1000, path: ['Show - 01.mkv'] },
+      { attr: 'p', length: 15384, path: ['.pad', '0'] },
+      { length: 1200, path: ['Show - 02.mkv'] },
+      { attr: 'p', length: 15184, path: ['.pad', '1'] },
+    ] };
+  const result = inspect(torrent(info));
+  assert.equal(result.state, 'metainfo_checked');
+  assert.equal(result.hash, createHash('sha1').update(encode(info)).digest('hex'));
+  assert.deepEqual(result.files, [{name:'Show - 01.mkv',size:1000},{name:'Show - 02.mkv',size:1200}]);
+  assert.equal(result.totalBytes, 2200);
 });

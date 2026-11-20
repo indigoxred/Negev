@@ -290,3 +290,14 @@ test('availability User-link mode rejects malformed or cross-anime coverage', as
     assert.equal(result.state, 'unavailable');
   }
 });
+
+
+test('per-observation metadata reuse never caches file absence or leaks to another anime',async()=>{
+ const metadataCache=new Map();let localReads=0,metadataReads=0;
+ const fetchImpl=async url=>{if(url.pathname.endsWith('/Episode')){localReads++;return localReads===3?json(episode):new Response(null,{status:404});}metadataReads++;return json({ID:1001,AnimeID:42});};
+ for(let i=0;i<2;i++)assert.equal((await readShokoEpisodeFiles({...base,purpose:'first_time',metadataCache,fetchImpl})).state,'not_imported');
+ assert.equal(metadataReads,1);assert.equal(localReads,2);
+ assert.equal((await readShokoEpisodeFiles({...base,purpose:'first_time',metadataCache,fetchImpl})).files.length,1);
+ assert.equal((await readShokoEpisodeFiles({...base,anidbId:43,purpose:'first_time',metadataCache,fetchImpl})).state,'unavailable');
+ assert.equal(metadataReads,2);
+});

@@ -1142,3 +1142,12 @@ test('existing queue databases acquire the candidate position without losing che
       assert.equal(queue.claimNext({ nowMs: 101 }).requestId, 2);
     } finally { queue.close(); }
   }));
+
+
+test('self-stale and import-evidence retries are short and migrate existing long due rows',async()=>fixture(async dbPath=>{
+ for(const reason of ['availability_evidence_stale','import_activity_unverified']){
+  let q=openAcquisitionRequestQueue(dbPath);const claim=q.claimNext({nowMs:100});q.recordResult({requestId:claim.requestId,pass:claim.pass,state:'held',reason,checkedMs:101});assert.equal(q.getResult(claim.requestId).nextDueMs,60101);q.close();
+  const db=new DatabaseSync(dbPath);db.prepare('UPDATE acquisition_request_checks SET next_due_ms=1800101 WHERE request_id=?').run(claim.requestId);db.close();q=openAcquisitionRequestQueue(dbPath);assert.equal(q.getResult(claim.requestId).nextDueMs,60101);q.close();
+  const reset=new DatabaseSync(dbPath);reset.exec('DELETE FROM acquisition_request_checks');reset.close();
+ }
+}));

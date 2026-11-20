@@ -1,3 +1,4 @@
+import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
@@ -48,7 +49,7 @@ function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
-  readRelatedTitles, offlineLookup,
+  readRelatedTitles, offlineLookup, loadDetail,
   readEvidence, publicLibraryIds, ledger,
   renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
@@ -110,8 +111,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate, saveRoot: qbittorrent.saveRoot });
   if (prepared.state !== 'prepared_stopped') return prepared;
+  let related;
   if (readRelatedTitles) {
-    let related;
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
     catch { return held('related_title_unavailable'); }
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
@@ -145,16 +146,20 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     .sort((a, b) => a - b)) !== JSON.stringify(mappedByName.get(file.name)))) {
     return held('file_plan_mismatch');
   }
-  if (!verifiedIdentity) {
+  const absolute = mapped.numberingEvidence === 'complete_absolute_sequence';
+  const scope = absolute ? await verifyAbsoluteNumberingScope({ anidbId:request.anidbId,
+    offset:mapped.absoluteOffset, related, readRelatedTitles, loadDetail }) : null;
+  if (!verifiedIdentity || absolute && scope.state !== 'scope_confirmed') {
+    if (typeof offlineLookup !== 'function') return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
     for (const file of selectedFiles) {
       if (file.episodeIds.length !== 1) return held('release_title_mismatch');
       const filename = basename(file.name);
       let preview;
       try { preview = await offlineLookup({ filename }); }
-      catch { return held('release_title_mismatch'); }
+      catch { return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch'); }
       if (evaluateOfflinePreview(preview, { animeId: request.anidbId,
         episodeIds: file.episodeIds, filename }).state !== 'accepted') {
-        return held('release_title_mismatch');
+        return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
       }
     }
   }

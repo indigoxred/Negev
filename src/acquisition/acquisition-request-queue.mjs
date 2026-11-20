@@ -115,7 +115,8 @@ export function openAcquisitionRequestQueue(dbPath,
     db.exec(`UPDATE acquisition_request_checks SET
       next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
       WHERE state='held' AND reason IN ('metadata_reader_busy',
-        'provider_unavailable','release_preflight_unavailable') AND checked_ms IS NOT NULL
+        'provider_unavailable','release_preflight_unavailable',
+        'availability_evidence_stale','import_activity_unverified') AND checked_ms IS NOT NULL
         AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
     // Revisit one recent multi-episode Airing miss under the broader episode
     // query once. A settled empty watch retains its normal hourly cadence.
@@ -587,6 +588,7 @@ export function openAcquisitionRequestQueue(dbPath,
             'authentication_unavailable', 'release_search_incomplete',
             'import_quiet_window_unverified', 'torrent_hash_in_use',
             'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
+            'availability_evidence_stale', 'import_activity_unverified',
             'provider_unavailable','release_selection_pending',
             'release_choice_changed'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :

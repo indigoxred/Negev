@@ -13,11 +13,14 @@ export function releaseFacts(title = '') {
       /\b(?:480|576)p?\b|(?:640|720)x480/i.test(title) ? 480 : null;
   const numeric = Number(/\b(\d{3,4})p\b/i.exec(title)?.[1] ?? /\b\d{3,4}x(\d{3,4})\b/i.exec(title)?.[1] ?? 0);
   const resolution = Math.max(namedResolution ?? 0,numeric >= 240 && numeric <= 4320 ? numeric : 0) || null;
-  const dual = /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i.test(title);
-  const english = /\b(?:english|eng)[ ._-]*dub(?:bed)?\b|\bdub[ ._-]*only\b/i.test(title);
-  const other = /\b(?:russian|rus|french|german|spanish)[ ._-]*dub(?:bed)?\b/i.test(title);
-  const explicitJapanese = /\b(?:japanese|jpn)[ ._-]*(?:audio|dub)?\b/i.test(title);
-  const audio = dual ? 'dual' : english ? 'english' : other ? 'other' : explicitJapanese ? 'japanese' : 'unknown';
+  const languageTitle = title.replaceAll('_', ' ');
+  const dual = /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i.test(languageTitle);
+  const english = /\b(?:english|eng)[ ._-]*(?:dub(?:bed)?|audio)\b|\b(?:dub(?:bed)?|audio)[ ._-]*in[ ._-]+(?:english|eng)\b|\bdub[ ._-]*only\b/i.test(languageTitle);
+  const otherLanguage = '(?:russian|rus|french|german|spanish|italian|portuguese|hindi|tamil|telugu|ukrainian|korean|chinese)';
+  const other = new RegExp('\\b'+otherLanguage+'[ ._-]*(?:dub(?:bed)?|audio)\\b|\\b(?:dub(?:bed)?|audio)[ ._-]*in[ ._-]+'+otherLanguage+'\\b','i').test(languageTitle);
+  const explicitJapanese = /\b(?:japanese|jpn)[ ._-]*(?:audio|dub(?:bed)?)\b|\b(?:audio|dub(?:bed)?)[ ._-]*in[ ._-]+(?:japanese|jpn)\b/i.test(languageTitle);
+  const audio = other && !explicitJapanese ? 'other' :
+    (dual || english && explicitJapanese) ? 'dual' : english ? 'english' : explicitJapanese ? 'japanese' : 'unknown';
   const bracket = [...title.matchAll(/\[([^\]]{1,80})\]/g)].map(m => m[1].trim()).find(value =>
     !/^[a-f0-9]{8}$/i.test(value) &&
     !/^(?:\d{3,4}p|BD|Blu[ ._-]?ray|DVD|WEB|HEVC|AVC|AV1|x26[45]|H[ .]?26[45]|AAC|FLAC|OPUS|AC3|DTS|dual|multi|eng(?:lish)?|jpn|japanese|subs?|[0-9]+bit)(?:\b|[ ._-])/i.test(value));
@@ -26,6 +29,17 @@ export function releaseFacts(title = '') {
   return { source, resolution, group, audio,
     audioLabel: audio === 'dual' ? 'JP+EN*' : audio === 'english' ? 'EN dub*' :
       audio === 'japanese' ? 'JP*' : audio === 'other' ? 'Other*' : 'Not specified' };
+}
+// Shared explicit-language policy. Missing tags and burned-in subtitles remain
+// unknown hints, not a reason to reject an otherwise suitable release.
+export function releaseLanguageSuitability(title, { allowEnglishDub = false } = {}) {
+  title = (typeof title === 'string' ? title : '').replaceAll('_', ' ');
+  const facts = releaseFacts(title);
+  const noEnglish = /\b(?:no[ ._-]*(?:(?:eng|english)[ ._-]*)?(?:subs?|subtitles?)|unsubbed|raw[ ._-]*only)\b/i.test(title) ||
+    /\bsub[ ._-]*french\b/i.test(title) && !/\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?)\b/i.test(title);
+  const reason = noEnglish ? 'no_english_subtitles' : facts.audio === 'other'
+    ? 'incompatible_audio' : facts.audio === 'english' && !allowEnglishDub ? 'english_dub_only' : null;
+  return { eligible: reason === null, reason, audio: facts.audio };
 }
 export function matchesReleaseFilters(candidate, filters = DEFAULT_RELEASE_FILTERS) {
   if (!validReleaseFilters(filters)) return false;
@@ -39,5 +53,6 @@ export function matchesReleaseFilters(candidate, filters = DEFAULT_RELEASE_FILTE
     filters.audio === 'dual' ? facts.audio === 'dual' :
       filters.audio === 'japanese_dual' ? ['japanese','unknown','dual'].includes(facts.audio) :
         ['japanese','unknown'].includes(facts.audio);
-  return quality && audio;
+  return quality && audio && releaseLanguageSuitability(candidate?.title ?? '',
+    { allowEnglishDub: filters.audio === 'english' }).eligible;
 }

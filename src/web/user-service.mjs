@@ -1043,14 +1043,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ? [...plex.publicSections.episode, ...plex.publicSections.movie]
         : [...plex.publicSections.episode];
       return track((async () => {
-        const observation = await collectTargetScopedUncertain({ ...input,
+        const metadataCache = new Map();
+        const observation = await metadata.run(() => collectTargetScopedUncertain({ ...input,
         publicLibraryIds, now,
-        readEpisode: (target) => metadata.run(() =>
-          readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
-            apiKey: shokoApiKey, ...target, purpose: 'first_time', fetchImpl })),
-        probePublic: (target) => metadata.run(() =>
-          plexObserver.probeFirstTimeSections(target)),
-        });
+        readEpisode: (target) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, ...target, purpose: 'first_time', fetchImpl, metadataCache }),
+        probePublic: (target) => plexObserver.probeFirstTimeSections(target),
+        }));
+        if (observation?.state === 'busy') return { state: 'held', reason: 'metadata_reader_busy' };
         return refreshFirstTimeMetadata({ anidbId: input.anidbId,
           episodeIds: input.episodeIds, observation,
           pendingClaim: hydration.getActiveClaim(now()),
