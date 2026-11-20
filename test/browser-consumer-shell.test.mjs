@@ -271,9 +271,15 @@ async function inspectMobile(url, profile, width = 390) {
           const range=document.createRange();range.selectNodeContents(toggle);
           const css=getComputedStyle(toggle);
           return {width:b.width,height:b.height,accountLeft:account.getBoundingClientRect().left,
-            fits:range.getBoundingClientRect().width<=toggle.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)}; };
+            fits:range.getBoundingClientRect().width<=b.width-parseFloat(css.borderLeftWidth)-parseFloat(css.borderRightWidth)-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)}; };
         const on=measure();toggle.click();const off=measure();toggle.click();
-        return {on,off,restored:measure()}; })()`,
+        const restored=measure();const original=toggle.style.fontFamily;
+        const fontChecks=['serif','monospace','Arial'].map(font=>{
+          toggle.style.fontFamily=font;const before=measure();toggle.click();const after=measure();toggle.click();
+          return {font,stable:before.width===after.width&&before.height===after.height&&before.accountLeft===after.accountLeft,
+            fits:before.fits&&after.fits};
+        });toggle.style.fontFamily=original;
+        return {on,off,restored,fontChecks}; })()`,
     });
     const adultChoice = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const toggle = document.querySelector('#adult-toggle');
@@ -1354,6 +1360,7 @@ test('signed-in consumer routes render real shell with search, library and reque
           'Chinese toggle and adjacent Account position stay identical in both states');
         assert.deepEqual(view.toggleGeometry.on,view.toggleGeometry.restored);
         assert.equal(view.toggleGeometry.on.fits,true,'both toggle labels fit without clipping');
+        assert.ok(view.toggleGeometry.fontChecks.every(result=>result.stable&&result.fits),JSON.stringify(view.toggleGeometry.fontChecks));
         assert.deepEqual(view.synopsis,[
           {text:'No synopsis is available for this title yet.',expand:false},
           {text:'No synopsis is available for this title yet.',expand:false}]);
@@ -1498,6 +1505,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(desktopRelated.longSynopsis,mobile.longSynopsis);
       assert.deepEqual(desktopRelated.toggleGeometry.on,desktopRelated.toggleGeometry.off);
       assert.equal(desktopRelated.toggleGeometry.on.fits,true);
+      assert.ok(desktopRelated.toggleGeometry.fontChecks.every(result=>result.stable&&result.fits),JSON.stringify(desktopRelated.toggleGeometry.fontChecks));
       assert.deepEqual(desktopRelated.synopsis,mobile.synopsis);
       assert.equal(desktopRelated.franchise.before.count,
         desktopRelated.franchise.before.capacity,

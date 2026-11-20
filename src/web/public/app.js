@@ -288,7 +288,7 @@ function applyAdultVisibility() {
   toggle.title = toggle.disabled ? '18+ access is disabled for this account' :
     'Show or hide titles marked 18+';
   const chinese = byId('chinese-toggle');
-  chinese.textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
+  chinese.querySelector('span').textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
   chinese.setAttribute('aria-pressed', String(state.showChinese));
   chinese.title = 'Show or hide titles tagged Chinese production';
 }
