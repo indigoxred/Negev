@@ -82,6 +82,14 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
         db.exec(`ALTER TABLE ${checksTable} ADD COLUMN ${name} ${definition}`);
       }
     }
+    if (pureMode) {
+      // The mandatory media probe no longer runs. Revisit its saved holds
+      // through the ordinary worker; never scan unchanged bytes again.
+      db.exec(`UPDATE pure_move_completion_checks SET next_due_ms=0
+        WHERE state='held' AND reason IN
+        ('media_read_budget_exhausted','tracks_unavailable',
+         'subtitle_coverage_unverified')`);
+    }
     db.exec(`INSERT INTO ${cursorTable} VALUES (1,0,1) ON CONFLICT(id) DO NOTHING`);
   } catch (error) { db.close(); throw error; }
 

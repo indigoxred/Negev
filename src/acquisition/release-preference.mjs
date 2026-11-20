@@ -1,5 +1,5 @@
-// Search titles and tracker counts are hints only. A completed file still
-// needs its actual audio, subtitle and video tracks checked before import.
+// Search titles and tracker counts are hints for selection. Missing stream
+// tags do not disprove language suitability; Shoko identifies imported files.
 const has = (title, expression) => expression.test(title);
 export const hasSeasonPackHint = (candidate) => {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
