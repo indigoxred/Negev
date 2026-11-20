@@ -71,6 +71,10 @@ export function openAcquisitionRequestQueue(dbPath,
       search_policy_rechecked INTEGER NOT NULL DEFAULT 0
         CHECK(search_policy_rechecked IN (0,1,2))
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some(column => column.name === 'checked_release_revision')) {
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN checked_release_revision INTEGER NOT NULL DEFAULT 0');
+    }
     // Migration review can hold an unstarted request without cancelling the
     // user's request or changing an existing download. The row survives a
     // restart and new requests remain eligible by default.
@@ -164,9 +168,15 @@ export function openAcquisitionRequestQueue(dbPath,
   // An unfinished claim remains excluded after a crash. A one-time request
   // stops acquiring after exact public proof; its saved history remains.
   // Active Airing watches continue so later episodes can be added.
+  // A saved choice is new evidence, unlike an unchanged periodic search.
+  // Remember the revision at claim time so a choice saved during an active
+  // search is not swallowed by that search's eventual empty result.
+  const newChoice = `c.reason IN ('no_safe_release','no_release_candidates') AND
+    json_extract(r.release_control,'$.phase')='chosen' AND
+    json_extract(r.release_control,'$.revision')>c.checked_release_revision`;
   const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
-      COALESCE(c.candidate_offset,0) AS candidateOffset,
-      c.candidate_fingerprint AS candidateFingerprint FROM requests r
+      CASE WHEN ${newChoice} THEN 0 ELSE COALESCE(c.candidate_offset,0) END AS candidateOffset,
+      CASE WHEN ${newChoice} THEN NULL ELSE c.candidate_fingerprint END AS candidateFingerprint FROM requests r
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
@@ -175,7 +185,7 @@ export function openAcquisitionRequestQueue(dbPath,
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
         c.state='held' AND c.reason='request_fully_available')) AND
-      (c.request_id IS NULL OR (c.state IS NOT NULL AND (c.next_due_ms<=? OR
+      (c.request_id IS NULL OR (c.state IS NOT NULL AND (c.next_due_ms<=? OR (${newChoice}) OR
         c.scan_target_count IS NOT NULL AND c.scan_target_count<>(
           SELECT COUNT(*) FROM request_targets rt2 WHERE rt2.request_id=r.id))))
     ORDER BY r.id LIMIT 1`;
@@ -185,8 +195,8 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?) ON CONFLICT(request_id) DO UPDATE SET
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0)) ON CONFLICT(request_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
@@ -199,13 +209,21 @@ export function openAcquisitionRequestQueue(dbPath,
     scan_started_ms=CASE WHEN scan_scope IS NOT NULL AND scan_scope<>excluded.scan_scope
       THEN excluded.scan_started_ms
       ELSE COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms) END,
-    scan_scope=excluded.scan_scope,scan_target_count=excluded.scan_target_count`);
+    scan_scope=excluded.scan_scope,scan_target_count=excluded.scan_target_count,
+    checked_release_revision=COALESCE((SELECT json_extract(release_control,'$.revision')
+      FROM requests WHERE id=excluded.request_id),0),
+    candidate_offset=CASE WHEN reason IN ('no_safe_release','no_release_candidates')
+      AND COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests
+        WHERE id=excluded.request_id),0)>checked_release_revision THEN 0 ELSE candidate_offset END,
+    candidate_fingerprint=CASE WHEN reason IN ('no_safe_release','no_release_candidates')
+      AND COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests
+        WHERE id=excluded.request_id),0)>checked_release_revision THEN NULL ELSE candidate_fingerprint END`);
   const targetScope = db.prepare(`SELECT t.anidb_id,t.episode_id FROM targets t
     JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
   const claimRequest = (id, pass, nowMs) => {
     const targets = targetScope.all(id);
     return claim.run(id, pass, nowMs,
-      createHash('sha256').update(JSON.stringify(targets)).digest('hex'), targets.length);
+      createHash('sha256').update(JSON.stringify(targets)).digest('hex'), targets.length, id);
   };
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
