@@ -21,6 +21,39 @@ const preflight = { state: 'preflight', requestId: 4, anidbId: 42,
   torrentHash: 'a'.repeat(40), episodeIds: [1001],
   files: [{ name: 'Example - 01.mkv', size: 1000, episodeIds: [1001] }] };
 
+test('an incomplete search cannot silently choose a 720p fallback', async () => {
+  let submits = 0;
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, searchIncomplete: true,
+      items: [{ ...candidate(1), title: 'Example - 01 720p',
+        seeders: 12 }] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () => { submits++; },
+  });
+  const result = await process({ requestId: 4 });
+  assert.equal(result.state, 'held');
+  assert.equal(result.reason, 'release_search_incomplete');
+  assert.equal(submits, 0);
+});
+
+test('an incomplete alias search can use a strong verified 1080p result', async () => {
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true,
+    discoverCandidates: async () => ({ state: 'candidates',
+      requestId: 4, anidbId: 42, searchIncomplete: true,
+      items: [{ ...candidate(1), title: 'Example - 01 1080p',
+        seeders: 12 }] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async () =>
+      ({ state: 'stopped_observed', attemptId: 11 }),
+  });
+  assertAttempt(await process({ requestId: 4 }), 11);
+});
+
 test('a completed series selects a verified full-season plan before an episode', async () => {
   let selected;
   const process = createAcquisitionRequestProcessor({
@@ -826,6 +859,31 @@ test('an owned busy target yields to another episode without a second grab', asy
   });
   const first = await process({ requestId: 4 });
   assert.equal(first.reason, 'target_busy');
+  assert.equal(first.nextCandidateOffset, 1);
+  const second = await process({ requestId: 4,
+    candidateOffset: first.nextCandidateOffset,
+    candidateFingerprint: first.nextCandidateFingerprint });
+  assertAttempt(second, 12);
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2']);
+});
+
+test('an externally owned hash yields to a different release on the next turn', async () => {
+  const seen = [];
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [candidate(1), candidate(2)] }),
+    previewCandidate: async () => preflight,
+    loadDetail: async () => detail,
+    submitCandidate: async ({ candidate: item }) => {
+      seen.push(item.guid);
+      return item.guid === 'candidate-1'
+        ? { state: 'held', reason: 'candidate_hash_in_use' }
+        : { state: 'stopped_observed', attemptId: 12 };
+    },
+  });
+  const first = await process({ requestId: 4 });
+  assert.equal(first.reason, 'candidate_hash_in_use');
   assert.equal(first.nextCandidateOffset, 1);
   const second = await process({ requestId: 4,
     candidateOffset: first.nextCandidateOffset,

@@ -68,6 +68,30 @@ test('a new request gets a prompt first turn before older queued work without st
   await scheduler.stop();
 });
 
+test('a newly submitted request precedes restart backlog in the priority queue', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled',
+      resumedRequests: [1, 6, 8, 10] }),
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page' };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(87);
+  await timer.advance();
+  assert.deepEqual(calls, [87]);
+  await scheduler.stop();
+});
+
 test('a due saved candidate sweep gets prompt continuation turns while other stages still run', async () => {
   const timer = clock();
   const calls = [];
@@ -179,6 +203,36 @@ test('missing metadata gets a due retry without waiting for a full stage cycle',
   await scheduler.stop();
 });
 
+test('an observed download keeps its one-minute continuation during a live run', async () => {
+  const timer = clock();
+  const calls = [];
+  let nowMs = 0;
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page', results: priorityRequestId === 88 && nowMs === 0
+        ? [{ requestId: 88, state: 'stopped_observed', nextDueMs: 60_000 }] : [] };
+    },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => nowMs,
+    stepDelayMs: 120_000, setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer });
+  await scheduler.start();
+  scheduler.wakeRequest(88);
+  await timer.advance();
+  nowMs = 60_000;
+  await timer.advance();
+  nowMs = 61_000;
+  await timer.advance();
+  assert.deepEqual(calls, [88, 'completion', 88]);
+  await scheduler.stop();
+});
+
 test('restart restores a durable missing-metadata retry', async () => {
   const timer = clock();
   let nowMs = 0;
@@ -203,6 +257,31 @@ test('restart restores a durable missing-metadata retry', async () => {
   assert.deepEqual(calls, [9]);
   await scheduler.stop();
 });
+
+test('a due collision retry leads restart backlog and reaches its saved request', async () => {
+  const timer = clock();
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled',
+      resumedRequests: [1, 2, 3] }),
+    listMetadataRetries: () => [{ requestId: 88, nextDueMs: 10 }],
+    tickRequests: async ({ priorityRequestId } = {}) => {
+      calls.push(priorityRequestId);
+      return { state: 'page', results: [] };
+    },
+    tickCompletions: async () => ({ state: 'idle' }),
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline, now: () => 100,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  await timer.advance();
+  assert.deepEqual(calls, [88]);
+  await scheduler.stop();
+});
+
 
 test('one paced clock reconciles first and visits all four stages without overlap', async () => {
   const timer = clock();
@@ -247,6 +326,38 @@ test('completion and publication get a turn within one minute without overlappin
   assert.deepEqual(calls,
     ['completion', 'publish', 'start', 'request', 'completion']);
   await scheduler.stop();
+});
+
+test('a pending release search does not delay a completed transfer turn', async () => {
+  const timer = clock();
+  let releaseSearch;
+  let enteredSearch;
+  const searchStarted = new Promise((resolve) => { enteredSearch = resolve; });
+  const searchPending = new Promise((resolve) => { releaseSearch = resolve; });
+  const calls = [];
+  const pipeline = {
+    initialize: async () => ({ state: 'reconciled' }),
+    tickCompletions: async () => { calls.push('completion'); return { state: 'idle' }; },
+    tickPublish: async () => ({ state: 'idle' }),
+    tickStarts: async () => ({ state: 'idle' }),
+    tickRequests: async () => { enteredSearch(); await searchPending;
+      return { state: 'page', results: [] }; },
+    close: async () => {},
+  };
+  const scheduler = createPipelineScheduler({ pipeline,
+    setTimer: timer.setTimer, clearTimer: timer.clearTimer });
+  await scheduler.start();
+  for (let i = 0; i < 3; i++) await timer.advance();
+  const searchTurn = timer.advance();
+  await searchStarted;
+  try {
+    await timer.advance();
+    assert.deepEqual(calls, ['completion', 'completion']);
+  } finally {
+    releaseSearch();
+    await searchTurn;
+    await scheduler.stop();
+  }
 });
 
 test('shutdown drains an active stage and never starts another stage', async () => {

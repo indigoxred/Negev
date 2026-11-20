@@ -15,7 +15,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       typeof pause !== 'function') {
     throw new TypeError('Invalid request discovery configuration');
   }
-  return async ({ requestId, searchTargetEpisodeId = null }) => {
+  return async ({ requestId, searchTargetEpisodeId = null,
+    searchTargetEpisodeIds = null }) => {
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
     try { request = readRequest(requestId); } catch { return held('request_unavailable'); }
@@ -33,6 +34,15 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     if (typeof detail.restricted !== 'boolean') return held('restricted_or_unverified');
     const episodeIds = new Set(detail.episodes.map((episode) => episode.id));
     if (request.episodeIds.some((id) => !episodeIds.has(id))) return held('target_missing');
+    if (searchTargetEpisodeIds !== null &&
+        (!Array.isArray(searchTargetEpisodeIds) ||
+          searchTargetEpisodeIds.length < 1 || searchTargetEpisodeIds.length > 10 ||
+          new Set(searchTargetEpisodeIds).size !== searchTargetEpisodeIds.length)) {
+      return held('invalid_request');
+    }
+    const releaseState = inferReleaseState({
+      today: new Date().toISOString().slice(0, 10), ...detail,
+    }).state;
     let target = null;
     if (searchTargetEpisodeId !== null) {
       target = detail.episodes.find((episode) => episode.id === searchTargetEpisodeId);
@@ -47,22 +57,38 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     try { aliases = await releaseQueries({ anidbId: request.anidbId }); }
     catch { aliases = []; }
     const titleQueries = trustedReleaseQueries(detail.title, aliases);
-    const targeted = target ? trustedTargetedQueries(detail.title, aliases,
-      target.number) : [];
+    const targets = releaseState !== 'completed' && searchTargetEpisodeIds
+      ? searchTargetEpisodeIds.map((id) => detail.episodes.find((episode) =>
+        episode.id === id)) : target ? [target] : [];
+    if (targets.some((episode) => request.kind !== 'series' ||
+        !episode || !request.episodeIds.includes(episode.id) ||
+        episode.type !== 'Episode' ||
+        !Number.isSafeInteger(episode.number) || episode.number < 1)) {
+      return held('invalid_request');
+    }
+    const targetByQuery = new Map();
+    for (const episode of targets) {
+      for (const query of trustedTargetedQueries(detail.title, aliases,
+        episode.number)) targetByQuery.set(query, episode);
+    }
+    const targeted = [...targetByQuery.keys()];
     const queries = [...targeted, ...titleQueries];
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     let successful = 0;
+    const failedQueries = [];
     for (const [index, query] of queries.entries()) {
       if (index > 0) await pause(1_000);
       let result;
+      const queryTarget = targetByQuery.get(query);
       try { result = await searchReleases({ query,
-        targetEpisodeNumber: target && targeted.includes(query) ? target.number : null }); }
-      catch { continue; }
+        targetEpisodeNumber: queryTarget?.number ?? null }); }
+      catch { failedQueries.push(query); continue; }
       if (result?.state !== 'candidates' || !Array.isArray(result.items) ||
           result.items.length > 50 || result.items.some((item) =>
             typeof item?.guid !== 'string' || !item.guid ||
             typeof item.title !== 'string' || !item.title || item.evidence !== 'unverified')) {
+        failedQueries.push(query);
         continue;
       }
       successful++;
@@ -71,14 +97,27 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // decide whether a candidate can be submitted.
       buckets.push(result.items.map((item) => ({ ...item,
         sourceQuery: query,
-        ...(target && hasTargetEpisodeHint(item, target.number) ?
+        ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
-        ...(targeted.includes(query) ? {
-          ...(!hasTargetEpisodeHint(item, target.number) ?
+        ...(queryTarget ? {
+          ...(!hasTargetEpisodeHint(item, queryTarget.number) ?
             { targetedEpisode: false } : {}),
-          targetEpisodeId: target.id } : {}) })));
+          targetEpisodeId: queryTarget.id } : {}) })));
     }
     if (successful === 0) return held('release_search_unavailable');
+    // Aggregate before applying the cap: a later bucket can correct evidence
+    // even when its copy would fall outside the first 50 visible releases.
+    const bestByCandidate = new Map();
+    const evidenceRank = (item) => item.targetedEpisode === true
+      ? item.targetEpisodeId !== undefined ? 3 : 2
+      : item.targetedEpisode === false ? 0 : 1;
+    for (const bucket of buckets) for (const item of bucket) {
+      const key = `${item.indexerId}:${item.guid}`;
+      const prior = bestByCandidate.get(key);
+      if (!prior || evidenceRank(item) > evidenceRank(prior)) {
+        bestByCandidate.set(key, item);
+      }
+    }
     const items = [];
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact
@@ -92,16 +131,18 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         const key = `${item.indexerId}:${item.guid}`;
         if (seenCandidates.has(key)) continue;
         seenCandidates.add(key);
-        items.push(item);
+        items.push(bestByCandidate.get(key));
         if (items.length === 50) break;
       }
       if (!any) break;
     }
-    const releaseState = inferReleaseState({
-      today: new Date().toISOString().slice(0, 10), ...detail,
-    }).state;
+    if (items.length === 0 && failedQueries.length > 0) {
+      return held('release_search_incomplete');
+    }
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       items, exhaustive: false,
+      ...(failedQueries.length > 0 ? {
+        searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };
   };
 }

@@ -18,7 +18,7 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 export async function previewRequestCandidate({ requestId, candidate,
   readRequest, loadDetail, releaseQueries = async () => [],
   readRelatedTitles,
-  readVideoExtensions, offlineLookup, offlineCache,
+  readVideoExtensions, offlineLookup, offlineCache, inspectCorrespondence,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   prepare = prepareStoppedCandidate } = {}) {
   if (!validId(requestId) || typeof readRequest !== 'function' ||
@@ -27,6 +27,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
       (readVideoExtensions !== undefined && typeof readVideoExtensions !== 'function') ||
       (offlineLookup !== undefined && typeof offlineLookup !== 'function') ||
+      (inspectCorrespondence !== undefined && typeof inspectCorrespondence !== 'function') ||
       (offlineCache !== undefined && !(offlineCache instanceof Map)) ||
       typeof candidate?.guid !== 'string' || !candidate.guid ||
       candidate.guid.length > MAX_RELEASE_GUID_LENGTH || !validId(candidate.indexerId) ||
@@ -163,11 +164,22 @@ export async function previewRequestCandidate({ requestId, candidate,
       !['v1', 'v2', 'hybrid'].includes(prepared.version)) {
     return held('invalid_metainfo');
   }
+  let correspondence;
+  if (inspectCorrespondence) {
+    try {
+      correspondence = await inspectCorrespondence({ anidbId: request.anidbId,
+        torrentHash: prepared.expected.hash.toLowerCase(), files: plan.plannedFiles,
+        filenamePrediction: shokoPreview === 'exact' });
+    } catch { /* Enrichment is optional; a provider failure is not a rejection. */ }
+    correspondence ??= { state: 'unknown', files: plan.plannedFiles.map((file) =>
+      ({ name: file.name, size: file.size, state: 'unknown' })) };
+  }
   return { state: 'preflight', requestId, anidbId: request.anidbId,
     ...(searchQuery === canonicalQuery ? {} : { searchQuery }),
     ...(firstQuery === detail.title ? {} : { identityTitle: firstQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
     ...(shokoPreview ? { shokoPreview } : {}),
+    ...(correspondence ? { correspondence } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
     subtitles: prepared.files.filter((file) =>

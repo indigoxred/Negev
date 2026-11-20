@@ -65,7 +65,9 @@ export function openAcquisitionRequestQueue(dbPath,
       metadata_since_ms INTEGER CHECK(metadata_since_ms>=0),
       scan_started_ms INTEGER CHECK(scan_started_ms>=0),
       candidate_offset INTEGER NOT NULL DEFAULT 0 CHECK(candidate_offset BETWEEN 0 AND 50),
-      candidate_fingerprint TEXT
+      candidate_fingerprint TEXT,
+      search_policy_rechecked INTEGER NOT NULL DEFAULT 0
+        CHECK(search_policy_rechecked IN (0,1,2))
     ) STRICT`);
     // Migration review can hold an unstarted request without cancelling the
     // user's request or changing an existing download. The row survives a
@@ -96,6 +98,22 @@ export function openAcquisitionRequestQueue(dbPath,
       .some((column) => column.name === 'scan_started_ms')) {
       db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN scan_started_ms INTEGER CHECK(scan_started_ms>=0)');
     }
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some((column) => column.name === 'search_policy_rechecked')) {
+      db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN
+        search_policy_rechecked INTEGER NOT NULL DEFAULT 0
+        CHECK(search_policy_rechecked IN (0,1,2))`);
+    }
+    // Revisit one recent multi-episode Airing miss under the broader episode
+    // query once. A settled empty watch retains its normal hourly cadence.
+    const policyNowMs = Date.now();
+    db.prepare(`UPDATE acquisition_request_checks SET
+      next_due_ms=MIN(next_due_ms,?),search_policy_rechecked=1
+      WHERE state='held' AND reason='no_safe_release'
+        AND search_policy_rechecked=0 AND checked_ms>=?
+        AND request_id IN (SELECT request_id FROM request_targets
+          GROUP BY request_id HAVING COUNT(*) BETWEEN 2 AND 10)`)
+      .run(policyNowMs + 60_000, policyNowMs - 2 * 3_600_000);
     // Older releases imposed a 15-minute idle delay after a candidate scan
     // timed out. Keep its saved cursor and make the unfinished sweep eligible
     // on the normal short retry instead of waiting for that artificial pause.
@@ -115,6 +133,16 @@ export function openAcquisitionRequestQueue(dbPath,
     db.exec(`UPDATE acquisition_request_checks
       SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
       WHERE state='held' AND reason='import_quiet_window_unverified'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    // A hash already held by another qBittorrent owner is a candidate-level
+    // collision. Older builds saved a 30-minute request hold for this case.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='torrent_hash_in_use'
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='service_stopping'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
@@ -140,9 +168,11 @@ export function openAcquisitionRequestQueue(dbPath,
   // The same eligibility guards apply, and the ordinary cursor stays put.
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?')
     .replace('ORDER BY r.id LIMIT 1', `AND (c.request_id IS NULL OR
-      (c.state='held' AND (c.reason IN
-        ('shoko_metadata_missing','reconciled_observed_attempts') OR
-       (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL)))) LIMIT 1`));
+      (c.state='stopped_observed' OR (c.state='held' AND (c.reason IN
+        ('shoko_metadata_missing','reconciled_observed_attempts',
+         'torrent_hash_in_use','service_stopping') OR
+       (c.reason='no_safe_release' AND c.search_policy_rechecked=1) OR
+       (c.candidate_offset>0 AND c.candidate_fingerprint IS NOT NULL))))) LIMIT 1`));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms)
@@ -152,6 +182,8 @@ export function openAcquisitionRequestQueue(dbPath,
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,
     attempt_id=NULL,checked_ms=NULL,next_due_ms=NULL,
+    search_policy_rechecked=CASE WHEN search_policy_rechecked=1 THEN 2
+      ELSE search_policy_rechecked END,
     scan_started_ms=COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms)`);
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
@@ -189,7 +221,12 @@ export function openAcquisitionRequestQueue(dbPath,
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND ${cohortFilter}
-      c.state='held' AND c.reason='shoko_metadata_missing'
+      ((c.state='held' AND c.reason IN
+        ('shoko_metadata_missing','torrent_hash_in_use',
+         'reconciled_observed_attempts','service_stopping')) OR
+        (c.state='held' AND c.reason='no_safe_release' AND
+          c.search_policy_rechecked=1) OR
+        c.state='stopped_observed')
       AND c.next_due_ms IS NOT NULL
     ORDER BY c.next_due_ms,r.id LIMIT ?`);
   const advanceLegacyMetadata = db.prepare(`UPDATE acquisition_request_checks
@@ -221,7 +258,8 @@ export function openAcquisitionRequestQueue(dbPath,
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;
   const resumeObservedSql = `UPDATE acquisition_request_checks
-    SET reason='reconciled_observed_attempts',next_due_ms=?
+    SET reason='reconciled_observed_attempts',
+      next_due_ms=COALESCE(next_due_ms,?)
     WHERE request_id=? AND state='held'
       AND ((reason='interrupted_attempt_present' AND next_due_ms IS NULL)
         OR (reason='reconciled_observed_attempts' AND next_due_ms<=?))`;
@@ -520,14 +558,16 @@ export function openAcquisitionRequestQueue(dbPath,
       const nextDueMs = reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
-          reason === 'related_title_unavailable'
+          ['related_title_unavailable',
+            'release_search_unavailable'].includes(reason)
             ? checkedMs + RELATED_RETRY_MS :
           state === 'stopped_observed' ? checkedMs + 60_000 :
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +
           (['provider_http_403', 'authentication_backoff',
-            'authentication_unavailable',
-            'import_quiet_window_unverified'].includes(reason)
+            'authentication_unavailable', 'release_search_incomplete',
+            'import_quiet_window_unverified', 'torrent_hash_in_use',
+            'service_stopping'].includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
@@ -624,12 +664,13 @@ export function createAcquisitionPageWorker({ queue, processRequest,
             if (saved.state !== 'recorded') return { state: 'held',
               reason: 'queue_unavailable', results };
           } catch { return { state: 'held', reason: 'queue_unavailable', results }; }
-          const check = state === 'held' ? queue.getResult(next.requestId) : null;
+          const check = queue.getResult(next.requestId);
           const continuing = state === 'held' && check?.nextDueMs !== null &&
             check?.nextDueMs <= now() && (check?.candidateOffset > 0 ||
               reason?.startsWith('season_pack_'));
           results.push({ requestId: next.requestId, state,
-            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId } : {}),
+            ...(state === 'stopped_observed' ? { attemptId: outcome.attemptId,
+              nextDueMs: check?.nextDueMs } : {}),
             ...(reason === null ? {} : { reason }),
             ...(continuing ? { continuationDueMs: check.nextDueMs } : {}),
             ...(reason === 'shoko_metadata_missing' ?

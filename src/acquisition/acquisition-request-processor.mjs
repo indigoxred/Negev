@@ -1,7 +1,7 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
-import { assessRelease, compareReleases, hasSeasonPackHint,
+import { assessRelease, compareReleases, compareReleaseSuitability, hasSeasonPackHint,
   hasSingleEpisodeHint } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
@@ -91,7 +91,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
     const missingIds = request.episodeIds.filter((id) => !exactAvailable.has(id));
     const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
       missingIds[(pass - 1) % missingIds.length] : null;
-    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId }); }
+    try { found = await discoverCandidates({ requestId, searchTargetEpisodeId,
+      ...(missingIds.length > 1 && missingIds.length <= 10 ?
+        { searchTargetEpisodeIds: missingIds } : {}) }); }
     catch { return held('release_search_unavailable'); }
     if (found?.state !== 'candidates') {
       return held(validReason(found?.reason) ? found.reason :
@@ -165,7 +167,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
       [preferSeasonPack ? 'quality-policy-season-pack-v2' :
-        requireReleasePolicy ? 'quality-policy-v2' :
+        requireReleasePolicy ? 'quality-policy-v3' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
@@ -312,10 +314,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       }
       if (uncertainSelection && requireReleasePolicy &&
           !uncertainPackPhase) {
-        const uncertainQuality = assessRelease(uncertainSelection.candidate);
-        const exactQuality = assessRelease(candidate);
-        if (uncertainQuality.healthyPeers === exactQuality.healthyPeers &&
-            uncertainQuality.quality > exactQuality.quality) {
+        if (compareReleaseSuitability(uncertainSelection.candidate, candidate) < 0) {
           selected = uncertainSelection;
           nextIndex = uncertainSelection.index + 1;
           break;
@@ -330,10 +329,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           preview.shokoPreview === 'exact' && consumed.some((id) => {
             const prior = currentById.get(id);
             if (!prior) return false;
-            const priorQuality = assessRelease(prior);
-            const currentQuality = assessRelease(candidate);
-            return priorQuality.healthyPeers === currentQuality.healthyPeers &&
-              priorQuality.quality > currentQuality.quality;
+            return compareReleaseSuitability(prior, candidate) < 0;
           })) continue;
       selected = { candidate, preview };
       break;
@@ -356,6 +352,13 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (!selected) return { ...held('no_safe_release'),
       nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
       nextCandidateFingerprint: cursor };
+    // A failed alias/indexer query is not evidence that only a lower-quality
+    // fallback exists. Retry the complete bounded search before downgrading.
+    if (found.searchIncomplete === true &&
+        assessRelease(selected.candidate).quality < 3) {
+      return { ...held('release_search_incomplete'),
+        nextCandidateOffset: 0 };
+    }
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
     catch { return held('detail_unavailable'); }
@@ -408,6 +411,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
           outcome.reason === 'candidate_rejected' ||
           outcome.reason === 'candidate_retired' ||
           outcome.reason === 'candidate_released' ||
+          outcome.reason === 'candidate_hash_in_use' ||
           outcome.reason === 'target_busy' ||
           outcome.reason === 'uncertain_attempt_exhausted' ||
           outcome.reason === 'target_not_proven_missing' &&

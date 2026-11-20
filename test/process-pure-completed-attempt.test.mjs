@@ -42,22 +42,20 @@ test('a stopped exact manifest becomes one prepared move without a video hash', 
     episodeIds: [188804] }]);
 });
 
-test('passes selected adjacent subtitles to the media-track gate', async () => {
-  let inspected;
+test('preserves adjacent subtitles without opening a media-track probe', async () => {
+  let files;
   const result = await processPureCompletedAttempt({ ...inputs,
     stop: async () => ({ state: 'complete',
       files: [{ index: 0, name: 'Maquia.mkv', size: 3 }],
       subtitles: [{ index: 1, name: 'Maquia.en.srt', size: 20 }] }),
-    inspectTracks: async (input) => { inspected = input;
-      return { state: 'accepted', files: [{ name: 'Maquia.mkv' }] }; },
-    prepare: async () => ({ state: 'prepared' }),
+    inspectTracks: async () => { throw Error('must not read media'); },
+    prepare: async (input) => { files = input.files; return { state: 'prepared' }; },
   });
   assert.equal(result.state, 'handoff_prepared');
-  assert.deepEqual(inspected.subtitles,
-    [{ index: 1, name: 'Maquia.en.srt', size: 20 }]);
+  assert.deepEqual(files[1], { name: 'Maquia.en.srt', size: 20 });
 });
 
-test('a completed release lacking Japanese audio never enters the import move', async () => {
+test('unlabelled audio and burned-in subtitles cannot block the ordinary handoff', async () => {
   let prepared = false;
   let retired = false;
   const result = await processPureCompletedAttempt({ ...inputs,
@@ -73,10 +71,34 @@ test('a completed release lacking Japanese audio never enters the import move', 
       reason: 'japanese_audio_missing' }),
     retire: async () => { retired = true;
       return { state: 'retired_media' }; },
-    prepare: async () => { prepared = true; },
+    prepare: async () => { prepared = true; return { state: 'prepared' }; },
   });
-  assert.deepEqual(result, { state: 'held', reason: 'media_retired' });
-  assert.equal(retired, true);
+  assert.deepEqual(result, { state: 'handoff_prepared' });
+  assert.equal(retired, false);
+  assert.equal(prepared, true);
+});
+
+test('an exhausted optional media probe cannot block a completed transport stream', async () => {
+  const name = 'Example - 01.ts';
+  const result = await processPureCompletedAttempt({ ...inputs,
+    acquisitions: { ...inputs.acquisitions,
+      getFilePlan: () => [{ name, size: 3, episodeIds: [188804] }] },
+    stop: async () => ({ state: 'complete', files: [{ name, size: 3 }], subtitles: [] }),
+    inspectTracks: async () => ({ state: 'unverified', reason: 'media_read_budget_exhausted' }),
+    prepare: async () => ({ state: 'prepared' }),
+  });
+  assert.equal(result.state, 'handoff_prepared');
+});
+
+test('an unsupported file in a saved plan cannot reach the move even without media scanning', async () => {
+  let prepared = false;
+  const result = await processPureCompletedAttempt({ ...inputs,
+    acquisitions: { ...inputs.acquisitions,
+      getFilePlan: () => [{ name: 'Example.exe', size: 3, episodeIds: [188804] }] },
+    stop: async () => ({ state: 'complete', files: [{ name: 'Example.exe', size: 3 }], subtitles: [] }),
+    prepare: async () => { prepared = true; return { state: 'prepared' }; },
+  });
+  assert.equal(result.state, 'held');
   assert.equal(prepared, false);
 });
 

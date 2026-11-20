@@ -13,6 +13,41 @@ import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
 const intent = { state: 'ready', anidbId: 42, kind: 'series',
   episodeIds: [1001], monitorFuture: false };
 
+test('a recent multi-episode empty search is revisited once under a new query policy', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-search-policy-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const ledger = openRequestLedger(dbPath);
+  const nowMs = Date.now();
+  ledger.submit({ requesterId: 1, requestKey: 'multi', nowMs,
+    intent: { ...intent, episodeIds: [1001, 1002, 1003],
+      monitorFuture: true } });
+  ledger.close();
+  let queue = openAcquisitionRequestQueue(dbPath);
+  try {
+    const claim = queue.claimNext({ nowMs });
+    queue.recordResult({ requestId: 1, pass: claim.pass, state: 'held',
+      reason: 'no_safe_release', checkedMs: nowMs });
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 3_600_000);
+    queue.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    assert.ok(queue.getResult(1).nextDueMs <= nowMs + 70_000);
+    assert.deepEqual(queue.listMetadataRetries({ nowMs }),
+      [{ requestId: 1, nextDueMs: queue.getResult(1).nextDueMs }]);
+    const revisit = queue.claimNext({ nowMs: nowMs + 70_000,
+      priorityRequestId: 1 });
+    assert.equal(revisit.requestId, 1);
+    queue.recordResult({ requestId: 1, pass: revisit.pass, state: 'held',
+      reason: 'no_safe_release', checkedMs: nowMs + 70_000 });
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 70_000 + 3_600_000);
+    queue.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    assert.equal(queue.getResult(1).nextDueMs, nowMs + 70_000 + 3_600_000);
+  } finally {
+    queue.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('an interrupted watch resumes only when every saved attempt is observed and scoped',
   async () => fixture(async (dbPath) => {
     const acquisitions = openAcquisitionLedger(dbPath);
@@ -34,7 +69,8 @@ test('an interrupted watch resumes only when every saved attempt is observed and
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
       assert.equal(queue.getResult(1).nextDueMs, 200);
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 199 }), []);
-      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 200 }), [1]);
+      assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 260 }), [1]);
+      assert.equal(queue.getResult(1).nextDueMs, 200);
       assert.equal(queue.claimNext({ nowMs: 200, priorityRequestId: 1 }).requestId, 1);
       assert.deepEqual(queue.resumeObservedAttemptHolds({ nowMs: 201 }), []);
     } finally { db.close(); queue.close(); acquisitions.close(); }
@@ -126,6 +162,53 @@ test('startup brings legacy 30-minute metadata holds forward once',
     } finally { queue.close(); }
   }));
 
+test('a transient external torrent collision retries in one minute, including saved holds',
+  async () => fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'torrent_hash_in_use', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+    } finally { queue.close(); }
+    const old = new DatabaseSync(dbPath);
+    old.prepare(`UPDATE acquisition_request_checks SET next_due_ms=1800100
+      WHERE request_id=1`).run();
+    old.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 1, nextDueMs: 60_100 }]);
+      assert.equal(queue.claimNext({ nowMs: 60_100,
+        priorityRequestId: 1 }).requestId, 1);
+    }
+    finally { queue.close(); }
+  }));
+
+test('a request interrupted by service shutdown resumes promptly after restart',
+  async () => fixture(async (dbPath) => {
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: claim.requestId, pass: claim.pass,
+        state: 'held', reason: 'service_stopping', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+    } finally { queue.close(); }
+    const old = new DatabaseSync(dbPath);
+    old.prepare(`UPDATE acquisition_request_checks SET next_due_ms=1800100
+      WHERE request_id=1`).run();
+    old.close();
+    queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 1, nextDueMs: 60_100 }]);
+      assert.equal(queue.claimNext({ nowMs: 60_100,
+        priorityRequestId: 1 }).requestId, 1);
+    } finally { queue.close(); }
+  }));
+
 test('an unavailable related-title lookup retries within five minutes',
   async () => fixture(async (dbPath) => {
     let queue = openAcquisitionRequestQueue(dbPath);
@@ -142,6 +225,17 @@ test('an unavailable related-title lookup retries within five minutes',
     queue = openAcquisitionRequestQueue(dbPath);
     try {
       assert.equal(queue.getResult(1).nextDueMs, 300_100);
+    } finally { queue.close(); }
+  }));
+
+test('an incomplete provider search retries within one minute', async () =>
+  fixture(async (dbPath) => {
+    const queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      const claim = queue.claimNext({ nowMs: 100 });
+      queue.recordResult({ requestId: 1, pass: claim.pass,
+        state: 'held', reason: 'release_search_incomplete', checkedMs: 100 });
+      assert.equal(queue.getResult(1).nextDueMs, 60_100);
     } finally { queue.close(); }
   }));
 
@@ -759,14 +853,23 @@ test('held and failed requests are recorded while later requests continue', asyn
       assert.deepEqual(passes, [1, 1, 1]);
       assert.deepEqual(page.results.map((result) => result.state),
         ['held', 'held', 'stopped_observed']);
+      assert.equal(page.results.find((result) => result.requestId === 3).nextDueMs,
+        60_100);
       assert.deepEqual(queue.getResult(1), { requestId: 1, pass: 1, attemptId: null,
         state: 'held', reason: 'shoko_unrecognized', checkedMs: 100,
         nextDueMs: 1_800_100 });
       assert.deepEqual(queue.getResult(2), { requestId: 2, pass: 1, attemptId: null,
         state: 'held', reason: 'worker_unavailable', checkedMs: 100,
         nextDueMs: 1_800_100 });
+      assert.deepEqual(queue.listMetadataRetries({ nowMs: 1_000 }),
+        [{ requestId: 3, nextDueMs: 60_100 }]);
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 1, results: [] });
       assert.deepEqual(await worker.runOnce(), { state: 'pass_complete', pass: 2, results: [] });
+      const continuation = queue.claimNext({ nowMs: 60_100, priorityRequestId: 3 });
+      assert.equal(continuation.requestId, 3);
+      assert.equal(queue.recordResult({ requestId: 3, pass: continuation.pass,
+        state: 'stopped_observed', attemptId: 77, checkedMs: 60_100 }).state,
+      'recorded');
       assert.deepEqual(queue.claimNext({ nowMs: 1_800_100 }),
         { state: 'claimed', requestId: 1, pass: 3 });
       assert.equal(queue.getResult(3).attemptId, 77);

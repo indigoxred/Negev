@@ -8,6 +8,7 @@ import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { buildStoppedTorrentAddForm } from '../src/acquisition/qbittorrent-add-form.mjs';
 import { submitStoppedCandidate } from '../src/acquisition/submit-stopped-candidate.mjs';
+import { openStartQueue, createStartWorker } from '../src/acquisition/start-queue.mjs';
 
 const info = Buffer.from('d6:lengthi1000e4:name11:Example.mkv12:piece lengthi16384e6:pieces20:aaaaaaaaaaaaaaaaaaaae');
 const bytes = Buffer.concat([Buffer.from('d4:info'), info, Buffer.from('e')]);
@@ -67,13 +68,57 @@ async function withAttempt(run) {
   const ledger = openAcquisitionLedger(dbPath);
   const reserved = ledger.reserve({ requestId: request.requestId, candidate,
     episodeIds: [1001], nowMs: 200 });
-  try { await run({ ledger, attemptId: reserved.attemptId }); }
+  try { await run({ ledger, attemptId: reserved.attemptId, dbPath }); }
   finally { ledger.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
 }
 
 const options = { candidate, prepared, hostPath, baseUrl: 'http://qbittorrent.internal:8080/',
   sessionId: 'syntheticSID', nowMs: 201,
   inspectMounts: async () => mounts, realpathImpl: async () => hostPath };
+
+test('a paused real add owns its attempt until observed; recovery never saves a premature hold', async () =>
+  withAttempt(async ({ ledger, attemptId, dbPath }) => {
+    let enterAdd, finishAdd, added = false, addCalls = 0, starts = 0;
+    const entered = new Promise((resolve) => { enterAdd = resolve; });
+    const blocked = new Promise((resolve) => { finishAdd = resolve; });
+    const queue = openStartQueue(dbPath, { acquisitions: ledger });
+    const worker = createStartWorker({ queue, now: () => 300,
+      processAttempt: async () => { starts++; return { state: 'held', reason: 'synthetic_check' }; } });
+    const submission = submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async (url) => {
+        const endpoint = new URL(url).pathname;
+        if (endpoint.endsWith('/version')) return new Response('v5.3.0');
+        if (endpoint.endsWith('/add')) {
+          addCalls++; enterAdd(); await blocked; added = true; return new Response('Ok.');
+        }
+        if (endpoint.endsWith('/info') && !added) return Response.json([]);
+        return Response.json(endpoint.endsWith('/files') ? files :
+          endpoint.endsWith('/properties') ? { save_path: savePath, download_path: '' } : [torrent]);
+      } });
+    try {
+      await entered;
+      assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
+      assert.deepEqual(await worker.runOnce(), { state: 'idle' });
+      assert.equal(queue.getResult(attemptId), null);
+      const duplicate = await submitStoppedCandidate({ ...options, ledger, attemptId });
+      assert.equal(duplicate.reason, 'submission_in_progress');
+      finishAdd();
+      assert.equal((await submission).state, 'stopped_observed');
+      assert.equal((await worker.runOnce()).attemptId, attemptId);
+      assert.equal(starts, 1);
+      assert.equal(addCalls, 1);
+    } finally { finishAdd(); await submission; queue.close(); }
+  }));
+
+test('submission ownership is released on preflight failure', async () =>
+  withAttempt(async ({ ledger, attemptId }) => {
+    const first = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async () => { throw Error('offline'); } });
+    assert.equal(first.reason, 'provider_unavailable');
+    const again = await submitStoppedCandidate({ ...options, ledger, attemptId,
+      fetchImpl: async () => new Response('v4.0.0') });
+    assert.equal(again.reason, 'unsupported_qbittorrent_version');
+  }));
 
 test('portable stopped add uses configured path and local root gate without Docker socket', async () =>
   withAttempt(async ({ ledger, attemptId }) => {

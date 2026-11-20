@@ -73,6 +73,26 @@ test('pure completion uses separate cursor and checks alongside legacy queue', a
   });
 });
 
+test('upgrade wakes obsolete media-scan holds without changing legacy or unrelated retries', async () => {
+  await fixture(async (ctx) => {
+    const moves = openPureMoveLedger(ctx.dbPath);
+    let queue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+    try {
+      const claim = queue.claimNext({ nowMs: 1000 });
+      queue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+        state: 'held', reason: 'media_read_budget_exhausted', checkedMs: 1000 });
+      queue.close(); queue = null;
+      queue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+      assert.equal(queue.getResult(claim.attemptId).nextDueMs, 0);
+      assert.equal(queue.getResult(claim.attemptId).reason, 'media_read_budget_exhausted');
+      const retried = [];
+      for (let i = 0; i < 5; i++) retried.push(queue.claimNext({ nowMs: 1001 }));
+      assert.ok(retried.some(x => x.attemptId === claim.attemptId),
+        'the saved cursor must wrap fairly and pick the woken hold');
+    } finally { queue?.close(); moves.close(); }
+  });
+});
+
 test('pure completion retries an incomplete transfer within one minute', async () => {
   await fixture(async (ctx) => {
     const pureMoves = openPureMoveLedger(ctx.dbPath);

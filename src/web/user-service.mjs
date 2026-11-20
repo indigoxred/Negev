@@ -85,22 +85,25 @@ import { createRequestCandidateDiscovery } from
   '../acquisition/request-candidate-discovery.mjs';
 import { searchReleaseCandidates } from '../acquisition/prowlarr-search.mjs';
 import { previewRequestCandidate } from '../acquisition/request-candidate-preflight.mjs';
+import { createAniDbCorrespondence } from '../identity/anidb-correspondence.mjs';
+import { readPreviouslyVerifiedFile } from '../identity/previously-verified-file.mjs';
 import { readShokoVideoExtensions } from '../acquisition/shoko-video-extensions.mjs';
 import { previewOfflineRelease } from '../identity/shoko-offline-preview.mjs';
 import { readRelatedEvidence } from '../acquisition/read-related-evidence.mjs';
 import { createArchiveRelationReader } from '../acquisition/independent-archive-relations.mjs';
 import { prepareStoppedCandidate } from '../acquisition/prepare-stopped-candidate.mjs';
 import { probeTargetPresence } from '../acquisition/probe-target-presence.mjs';
-import { collectFirstTimeUncertain } from
-  '../acquisition/collect-first-time-uncertain.mjs';
+import { collectTargetScopedUncertain } from
+  '../acquisition/collect-target-scoped-uncertain.mjs';
+import { verifyCachedPositiveCoverage } from
+  '../acquisition/verify-cached-positive-coverage.mjs';
 import { refreshFirstTimeMetadata } from
   '../acquisition/refresh-first-time-metadata.mjs';
 import { openAcquisitionRuntime } from '../acquisition/acquisition-runtime.mjs';
 import { readShokoEpisodeFiles } from '../availability/shoko-episode-files.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 import { combineImportActivity } from '../availability/combined-import-activity.mjs';
-import { importFeedState, scopedImportFeedState,
-  observeImportQuietWindow } from
+import { importFeedState } from
   '../acquisition/import-quiet-window.mjs';
 
 const withinRoot = (root, candidate) => {
@@ -127,7 +130,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   plex = null, prowlarr = null, fetchImpl = fetch,
   onShokoReconciliationNeeded,
   readShokoConnectionState = () => ({ state: 'disconnected' }),
-  waitForImportQuiet = (ms, signal) => sleep(ms, undefined, { signal }),
   importFenceTrace,
   now = Date.now, today = () => new Date().toISOString().slice(0, 10) } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
@@ -183,7 +185,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       (onShokoReconciliationNeeded !== undefined &&
         typeof onShokoReconciliationNeeded !== 'function') ||
       typeof readShokoConnectionState !== 'function' ||
-      typeof waitForImportQuiet !== 'function' ||
       (importFenceTrace !== undefined &&
         typeof importFenceTrace !== 'function') ||
       (prowlarr !== null && (typeof prowlarr?.baseUrl !== 'string' ||
@@ -457,11 +458,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readRequest: (id) => requests.getRequest(id),
       loadDetail: (input) => loadCurrentDetail(input),
       releaseQueries,
-      searchReleases: ({ query, targetEpisodeNumber }) => metadata.run(() => searchReleaseCandidates({
+      searchReleases: ({ query, targetEpisodeNumber }) => searchReleaseCandidates({
         baseUrl: prowlarr.baseUrl, apiKey: prowlarr.apiKey,
         indexerIds: prowlarr.indexerIds,
         trustedIndexerIds: prowlarr.trustedIndexerIds ?? [],
-        includeProxyUrl: true, query, targetEpisodeNumber, fetchImpl })),
+        includeProxyUrl: true, query, targetEpisodeNumber, fetchImpl }),
     }) : undefined;
     // Preview, submission, and start must use identical relation evidence.
     // Shoko may not know an unowned season yet, while the AniDB archive does.
@@ -473,10 +474,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl })),
       readArchive: () => readArchiveRelations({ anidbId }),
     });
+    const inspectCorrespondence = createAniDbCorrespondence({ fetchImpl, now,
+      readPreviouslyVerified: async ({ anidbId, torrentHash, file, signal }) => {
+        const prior = acquisitions.findPreviouslyVerifiedFile({ anidbId, torrentHash, file });
+        if (!prior) return null;
+        return readPreviouslyVerifiedFile({ prior, baseUrl: shokoBaseUrl,
+          apiKey: shokoApiKey, shokoMount: plex?.shokoMount, fetchImpl, signal });
+      },
+    });
     const previewCandidate = prowlarr ? ({ requestId, candidate,
       offlineCache }) =>
       previewRequestCandidate({ requestId, candidate,
-        offlineCache,
+        offlineCache, inspectCorrespondence,
         offlineLookup: ({ filename }) => metadata.run(() => previewOfflineRelease({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           filename, fetchImpl })),
@@ -850,7 +859,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const observations = new Set();
     let stopping = false;
     let stopPromise;
-    const quietAbort = new AbortController();
     const track = (task) => {
       observations.add(task);
       void task.then(() => observations.delete(task), () => observations.delete(task));
@@ -931,14 +939,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       event: eventConsumer.getState(),
       arrival: eventConsumer.getArrivalState(),
     });
-    const readScopedImportFeed = (allowedPendingKeys) =>
-      scopedImportFeedState({ connection: readShokoConnectionState(),
-        snapshot: eventConsumer.getPendingSnapshot(), allowedPendingKeys,
-        allowUnreconciledFirstAttempt: true });
     const observeFirstTimeUncertain = (input) => {
       if (stopping) return Promise.resolve({ state: 'held',
         reason: 'service_stopping' });
-      if (!plexObserver || !readImportActivity) {
+      if (!plexObserver) {
         return Promise.resolve({ state: 'held',
           reason: 'first_time_observer_unconfigured' });
       }
@@ -946,21 +950,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ? [...plex.publicSections.episode, ...plex.publicSections.movie]
         : [...plex.publicSections.episode];
       return track((async () => {
-        const observation = await collectFirstTimeUncertain({ ...input,
+        const observation = await collectTargetScopedUncertain({ ...input,
         publicLibraryIds, now,
         readEpisode: (target) => metadata.run(() =>
           readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
             apiKey: shokoApiKey, ...target, purpose: 'first_time', fetchImpl })),
         probePublic: (target) => metadata.run(() =>
           plexObserver.probeFirstTimeSections(target)),
-        observeImport: (target) => observeImportQuietWindow({ ...target,
-          readActivity: (scope) => readImportActivity(true, scope),
-          readFeedState: readImportFeed,
-          readScopedFeedState: readScopedImportFeed,
-          wait: (ms) => waitForImportQuiet(ms, quietAbort.signal),
-          now, requireFingerprint: true, trace: importFenceTrace,
-        }),
-        readFeedState: readScopedImportFeed,
         });
         return refreshFirstTimeMetadata({ anidbId: input.anidbId,
           episodeIds: input.episodeIds, observation,
@@ -1118,15 +1114,23 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           firstTimePolicy: 'single_uncertain_attempt',
           observePublicTarget: (target) =>
             observeCurrentPublic(target, undefined, true),
-          readPublicCoverage: ({ anidbId, episodeIds }) => {
+          readPublicCoverage: async (request) => {
+            const { anidbId, episodeIds } = request;
             const checkedMs = now();
-            return recentPublicCoverage({ episodeIds, includeIds: true,
+            const cached = recentPublicCoverage({ episodeIds, includeIds: true,
               directIds: directAvailability.getRecentAvailableIds({
                 anidbId, nowMs: checkedMs }),
               titleIds: titleChecks?.getRecentAvailableIds({
                 anidbId, nowMs: checkedMs }) ?? [],
               fileIds: fileProofs?.getRecentAvailableIds({ anidbId }) ?? [],
             });
+            return verifyCachedPositiveCoverage({ request, cached,
+              readShoko: (target) => readShokoEpisodeFiles({
+                baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
+                ...target, purpose: 'availability', fetchImpl }),
+              readPublic: (target, shoko) =>
+                plexObserver.observeTarget(target, shoko,
+                  { includeProof: true }) });
           },
           discoverCandidates, previewCandidate, releaseQueries,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
@@ -1142,7 +1146,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       close() {
         if (!stopPromise) {
           stopping = true;
-          quietAbort.abort();
           stopPromise = (async () => {
             try { await app.close(); }
             finally {

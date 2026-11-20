@@ -11,8 +11,9 @@ import { recoverOrphanedHolding } from './orphaned-holding-recovery.mjs';
 const held = (reason) => ({ state: 'held', reason });
 
 // Source-only composition of the four existing durable queues. It exposes
-// explicit ticks, not a timer or HTTP route. Only one stage may run at a time
-// to bound concurrent media reads. A caller must supply guarded processors
+// explicit ticks, not a timer or HTTP route. Media stages serialize their
+// full-file reads; a request search has its own lane and cannot hold a
+// completed transfer behind remote indexer calls. A caller must supply guarded processors
 // and finish restart reconciliation before any tick can run.
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   recognitionRecoveries = null, shokoRescans = null,
@@ -45,7 +46,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   try {
     queues.push(openAcquisitionRequestQueue(dbPath, {
       allowedAnidbIds, ownershipGate }));
-    queues.push(openStartQueue(dbPath));
+    queues.push(openStartQueue(dbPath, { acquisitions }));
     queues.push(openCompletionQueue(dbPath, { pureMode }));
     queues.push(openHandoffPublishQueue(dbPath, { pureMode }));
   } catch (error) {
@@ -67,19 +68,19 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let recovery;
   let closed = false;
   let closing;
-  let running = false;
+  const running = { request: false, media: false };
   let holdingRecovered = false;
   let recoveryAfterId = 0;
-  const run = (worker) => {
+  const run = (worker, lane = 'media') => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
-    if (running) return Promise.resolve(held('pipeline_busy'));
-    running = true;
+    if (running[lane]) return Promise.resolve(held('pipeline_busy'));
+    running[lane] = true;
     const task = Promise.resolve().then(() => worker.runOnce());
     active.add(task);
     void task.finally(() => {
       active.delete(task);
-      running = false;
+      running[lane] = false;
     }).catch(() => {});
     return task;
   };
@@ -122,7 +123,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       const resumed = requestQueue.resumeObservedAttemptHolds({ nowMs: now() });
       return requestWorker.runOnce({ priorityRequestId:
         priorityRequestId ?? resumed[0] ?? null });
-    } }),
+    } }, 'request'),
     wakeHydratedTitle: (input) => closed ? [] :
       requestQueue.wakeHydratedTitle(input),
     listMetadataRetries: () => closed ? [] :

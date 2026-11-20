@@ -3,6 +3,7 @@ import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
+import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -33,7 +34,14 @@ async function exactPreparedTorrent(prepared, saveRoot) {
 // Server-only one-send boundary. Fresh local staging evidence is required
 // before each write. An uncertain POST is reconciled by exact stopped
 // observation, never retried.
-export async function submitStoppedCandidate({
+export async function submitStoppedCandidate(input) {
+  const release = acquireAttemptOperation(input?.ledger, input?.attemptId);
+  if (!release) return held('submission_in_progress');
+  try { return await submitOwnedCandidate(input); }
+  finally { release(); }
+}
+
+async function submitOwnedCandidate({
   ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot, plannedFileNames,
   baseUrl, sessionId, nowMs, fetchImpl = fetch, timeoutMs = 10_000,

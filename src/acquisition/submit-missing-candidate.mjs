@@ -8,6 +8,8 @@ import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } 
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
 import { basename } from 'node:path';
+import { readBoundedJson } from '../http/bounded-response.mjs';
+import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 
@@ -156,8 +158,46 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       }
     }
   }
+  // An old Arr or manual torrent may own this exact hash. Check before a
+  // durable target reservation so the request can inspect another candidate
+  // instead of holding its episode for a collision it cannot resolve.
+  const beforeReserve = expectedHash === undefined ? undefined : async () => {
+    let sid = qbittorrent.sessionId;
+    let fetchImpl = qbittorrent.fetchImpl;
+    let response;
+    const observeHash = async () => {
+      const url = new URL('/api/v2/torrents/info', qbittorrent.baseUrl);
+      url.searchParams.set('hashes', prepared.expected.hash);
+      return fetchImpl(url, { method: 'GET', redirect: 'manual',
+        headers: { Cookie: qbittorrentSessionCookie(sid),
+          Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+    };
+    try {
+      response = await observeHash();
+      if (response.status === 403 && renewQbittorrent) {
+        const renewed = await renewQbittorrent(sid);
+        if (renewed?.state !== 'authenticated' ||
+            typeof renewed.sessionId !== 'string' ||
+            typeof renewed.fetchImpl !== 'function') {
+          return held('authentication_unavailable');
+        }
+        sid = renewed.sessionId;
+        fetchImpl = renewed.fetchImpl;
+        response = await observeHash();
+      }
+      if (response.status === 403) return held('provider_http_403');
+      if (response.status !== 200) return held('provider_unavailable');
+      const existing = await readBoundedJson(response, 100_000);
+      if (!Array.isArray(existing) || existing.some((item) =>
+        item?.hash?.toLowerCase() !== prepared.expected.hash.toLowerCase())) {
+        return held('provider_unavailable');
+      }
+      if (existing.length) return held('candidate_hash_in_use');
+    } catch { return held('provider_unavailable'); }
+    return { state: 'ready' };
+  };
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
-    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now });
+    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   // Once the stopped torrent is recorded, start/completion workers own it.
   // Replaying its manifest here cannot make progress after it has downloaded,

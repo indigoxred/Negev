@@ -326,7 +326,7 @@ test('unverified interrupted request holds its claim while a later request advan
   }
 });
 
-test('closing the pipeline waits for an active request check before closing its journal', async () => {
+test('a completed transfer progresses while a request search is still running', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-drain-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -351,8 +351,7 @@ test('closing the pipeline waits for an active request check before closing its 
     await pipeline.initialize();
     const running = pipeline.tickRequests();
     await started;
-    assert.deepEqual(await pipeline.tickCompletions(),
-      { state: 'held', reason: 'pipeline_busy' });
+    assert.equal((await pipeline.tickCompletions()).state, 'pass_complete');
     let drained = false;
     const closing = pipeline.close().then(() => { drained = true; });
     await Promise.resolve();

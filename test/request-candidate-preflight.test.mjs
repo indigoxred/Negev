@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { previewRequestCandidate } from '../src/acquisition/request-candidate-preflight.mjs';
 import { createRequestCandidateDiscovery } from '../src/acquisition/request-candidate-discovery.mjs';
 import { prepareStoppedCandidate } from '../src/acquisition/prepare-stopped-candidate.mjs';
+import { createAniDbCorrespondence } from '../src/identity/anidb-correspondence.mjs';
+import { createAcquisitionRequestProcessor } from '../src/acquisition/acquisition-request-processor.mjs';
 
 const candidate = { guid: 'release-1', indexerId: 7,
   title: 'Example - 01', size: 1_000 };
@@ -18,6 +20,52 @@ const prepared = { state: 'prepared_stopped', expected: { hash: 'a'.repeat(40) }
   version: 'v1', totalBytes: 1_000,
   files: [{ name: 'Example - 01.mkv', size: 1_000 }],
   form: new FormData() };
+
+test('preflight exposes per-file correspondence without making it an acquisition gate', async () => {
+  for (const throws of [false, true]) {
+    let calls = 0;
+    const result = await previewRequestCandidate({ requestId: 4, candidate,
+      readRequest: () => request, loadDetail: async () => detail,
+      prepare: async () => prepared,
+      inspectCorrespondence: async ({ anidbId, torrentHash, files }) => {
+        calls++;
+        assert.equal(anidbId, 42);
+        assert.equal(torrentHash, 'a'.repeat(40));
+        assert.equal(files[0].episodeIds[0], 1001);
+        if (throws) throw Error('lookup unavailable');
+        return { state: 'likely', files: [{ name: files[0].name, state: 'likely' }] };
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.state, 'preflight');
+    assert.equal(result.registeredInAniDb, false);
+    assert.equal(result.correspondence.state, throws ? 'unknown' : 'likely');
+  }
+});
+
+test('an AniMap outage still permits normal automatic acquisition of an eligible release', async () => {
+  let submitted = 0;
+  const inspectCorrespondence = createAniDbCorrespondence({
+    fetchImpl: async () => new Response(null, { status: 429 }) });
+  const process = createAcquisitionRequestProcessor({
+    readRequest: () => request, requireReleasePolicy: true, preferShokoPreview: true,
+    loadDetail: async () => detail,
+    discoverCandidates: async () => ({ state: 'candidates', requestId: 4,
+      anidbId: 42, items: [{ ...candidate, title: 'Example - 01 1080p',
+        seeders: 10, evidence: 'unverified' }] }),
+    previewCandidate: (input) => previewRequestCandidate({ ...input,
+      readRequest: () => request, loadDetail: async () => detail,
+      prepare: async () => ({ ...prepared,
+        files: [{ ...prepared.files[0], name: 'Example - 01 [AABBCCDD].mkv' }] }),
+      inspectCorrespondence }),
+    submitCandidate: async ({ preflight }) => {
+      submitted++;
+      return { state: 'stopped_observed', attemptId: 11 };
+    },
+  });
+  assert.equal((await process({ requestId: 4 })).state, 'stopped_observed');
+  assert.equal(submitted, 1);
+});
 
 test('preflight returns only provisional file and target evidence', async () => {
   let preparedCalls = 0;

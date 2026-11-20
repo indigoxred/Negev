@@ -362,7 +362,7 @@ test('movie request stage uses both public Plex sections before stopped submissi
     if (endpoint === '/api/v2/app/version') return new Response('v5.3.0');
     if (endpoint.endsWith('/add')) return new Response('Ok.');
     if (endpoint.endsWith('/info') &&
-        qbCalls.filter((call) => call.endsWith('/info')).length === 1) {
+        qbCalls.filter((call) => call.endsWith('/info')).length <= 2) {
       return Response.json([]);
     }
     return Response.json(endpoint.endsWith('/files')

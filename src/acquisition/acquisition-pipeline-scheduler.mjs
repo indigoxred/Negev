@@ -22,10 +22,12 @@ export function createPipelineScheduler({ pipeline,
     throw new TypeError('Invalid pipeline scheduler');
   }
   let timer;
+  let scheduledDueMs;
   const stages = pipeline.tickRecovery
     ? ['tickCompletions', 'tickPublish', 'tickRecovery',
       'tickStarts', 'tickRequests'] : baseStages;
   let running;
+  let requestRunning;
   let initialization;
   let stopping;
   let started = false;
@@ -41,49 +43,74 @@ export function createPipelineScheduler({ pipeline,
   const freshRequests = [];
   const metadataRetries = new Map();
   let priorityServed = false;
+  const recordRequestResult = (result) => {
+    if (!Array.isArray(result?.results)) return;
+    for (const item of result.results) {
+      if (!Number.isSafeInteger(item?.requestId) || item.requestId < 1) continue;
+      if ((['shoko_metadata_missing', 'torrent_hash_in_use']
+        .includes(item.reason) || item.state === 'stopped_observed') &&
+          Number.isSafeInteger(item.nextDueMs) &&
+          item.nextDueMs >= 0 && metadataRetries.size < 32) {
+        metadataRetries.set(item.requestId, item.nextDueMs);
+      } else metadataRetries.delete(item.requestId);
+      if (Number.isSafeInteger(item.continuationDueMs) &&
+          item.continuationDueMs <= now() &&
+          !freshRequests.includes(item.requestId) && freshRequests.length < 32) {
+        freshRequests.push(item.requestId);
+      }
+    }
+    if (!closed && timer !== undefined) {
+      const metadataDue = metadataRetries.size > 0
+        ? Math.min(...metadataRetries.values()) : null;
+      const wantedDue = freshRequests.length > 0 && !priorityServed
+        ? now() + 1_000 : metadataDue;
+      if (wantedDue !== null && wantedDue < scheduledDueMs) {
+        clearTimer(timer);
+        schedule(Math.max(1_000, wantedDue - now()));
+      }
+    }
+  };
   const schedule = (delay) => {
     if (closed) return;
+    scheduledDueMs = now() + delay;
     timer = setTimer(() => {
       timer = undefined;
+      scheduledDueMs = undefined;
       running = tick().finally(() => { running = undefined; });
       return running;
     }, delay);
   };
   const tick = async () => {
     const dueMetadataId = [...metadataRetries].find(([, due]) => due <= now())?.[0];
-    const pendingId = freshRequests[0] ?? dueMetadataId;
-    const prioritized = pendingId !== undefined &&
+    const pendingId = dueMetadataId ?? freshRequests[0];
+    const prioritized = !requestRunning && pendingId !== undefined &&
       (!priorityServed || stages[stageIndex] === 'tickRequests');
     const stage = prioritized ? 'tickRequests' : stages[stageIndex];
     const priorityRequestId = prioritized ?
-      freshRequests.length > 0 ? freshRequests.shift() : dueMetadataId : null;
+      dueMetadataId ?? freshRequests.shift() : null;
     if (priorityRequestId !== null) metadataRetries.delete(priorityRequestId);
     const extraTurn = prioritized && stages[stageIndex] !== 'tickRequests';
     if (!extraTurn) stageIndex = (stageIndex + 1) % stages.length;
     priorityServed = extraTurn;
     activeStage = stage.slice(4).toLowerCase();
     let workerFailed = false;
-    try { lastResult = await pipeline[stage](priorityRequestId === null
-      ? undefined : { priorityRequestId }); }
-    catch { workerFailed = true;
-      lastResult = { state: 'held', reason: 'worker_unavailable' }; }
-    if (stage === 'tickRequests' && Array.isArray(lastResult?.results)) {
-      for (const item of lastResult.results) {
-        if (!Number.isSafeInteger(item?.requestId) || item.requestId < 1) continue;
-        if (item.reason === 'shoko_metadata_missing' &&
-            Number.isSafeInteger(item.nextDueMs) &&
-            item.nextDueMs >= 0 && metadataRetries.size < 32) {
-          metadataRetries.set(item.requestId, item.nextDueMs);
-        } else metadataRetries.delete(item.requestId);
-        // A bounded candidate page has more saved work due now. Give it a
-        // prompt extra turn, but interleave the normal stages between turns.
-        if (Number.isSafeInteger(item.continuationDueMs) &&
-            item.continuationDueMs <= now() &&
-            !freshRequests.includes(item.requestId) && freshRequests.length < 32) {
-          freshRequests.push(item.requestId);
-        }
+    try {
+      if (stage === 'tickRequests' && requestRunning) {
+        lastResult = { state: 'idle' };
+      } else if (stage === 'tickRequests') {
+        requestRunning = Promise.resolve().then(() => pipeline[stage](
+          priorityRequestId === null ? undefined : { priorityRequestId }))
+          .then((result) => { lastResult = result; recordRequestResult(result); })
+          .catch(() => { lastResult = { state: 'held',
+            reason: 'worker_unavailable' }; })
+          .finally(() => { requestRunning = undefined; });
+      } else {
+        lastResult = await pipeline[stage](priorityRequestId === null
+          ? undefined : { priorityRequestId });
       }
     }
+    catch { workerFailed = true;
+      lastResult = { state: 'held', reason: 'worker_unavailable' }; }
     lastStage = activeStage;
     activeStage = null;
     // Retry unresolved crash claims after a complete stage cycle. Their
@@ -162,9 +189,13 @@ export function createPipelineScheduler({ pipeline,
       if (!Number.isSafeInteger(requestId) || requestId < 1) {
         throw new TypeError('Invalid fresh request ID');
       }
-      if (closed || freshRequests.includes(requestId) ||
-          freshRequests.length >= 32) return;
-      freshRequests.push(requestId);
+      if (closed) return;
+      const queued = freshRequests.indexOf(requestId);
+      if (queued >= 0) freshRequests.splice(queued, 1);
+      else if (freshRequests.length >= 32) freshRequests.pop();
+      // A submitted request must lead restart-recovered backlog. Any displaced
+      // saved row remains durable and will be found by the ordinary cursor.
+      freshRequests.unshift(requestId);
       metadataRetries.delete(requestId);
       if (timer !== undefined && recoveryState.startsWith('waiting') &&
           !priorityServed) {
@@ -185,6 +216,7 @@ export function createPipelineScheduler({ pipeline,
         stopping = (async () => {
           if (initialization) await Promise.allSettled([initialization]);
           if (running) await Promise.allSettled([running]);
+          if (requestRunning) await Promise.allSettled([requestRunning]);
           await pipeline.close();
           stopped = true;
         })();

@@ -9,6 +9,46 @@ const detail = { state: 'details', anidbId: 1234, page: 1, total: 1,
   complete: true, nextPage: null,
   episodes: [{ id: 1001, number: 1, type: 'Episode', title: 'First' }] };
 
+test('overlapping fuzzy queries preserve the later correct episode evidence', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => ({ ...request, episodeIds: [1001, 1002, 1003] }),
+    loadDetail: async () => ({ ...detail, total: 3,
+      episodes: [1, 2, 3].map((number) => ({ id: 1000 + number,
+        number, type: 'Episode', title: `Episode ${number}` })) }),
+    pause: async () => {},
+    searchReleases: async () => ({ state: 'candidates', items: [{
+      indexerId: 7, guid: 'overlapping', title: 'Canonical Anime - 03 1080p',
+      evidence: 'unverified' }] }),
+  });
+  const result = await discover({ requestId: 12,
+    searchTargetEpisodeIds: [1001, 1002, 1003] });
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].targetedEpisode, true);
+  assert.equal(result.items[0].targetEpisodeId, 1003);
+  assert.equal(result.items[0].sourceQuery, 'Canonical Anime 03');
+});
+
+test('correct evidence beyond the visible cap upgrades an already visible release', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => ({ ...request, episodeIds: [1001, 1002] }),
+    loadDetail: async () => ({ ...detail, total: 2,
+      episodes: [1, 2].map((number) => ({ id: 1000 + number,
+        number, type: 'Episode', title: `Episode ${number}` })) }),
+    pause: async () => {},
+    searchReleases: async ({ query }) => ({ state: 'candidates',
+      items: Array.from({ length: 50 }, (_, index) => ({ indexerId: 7,
+        guid: query.endsWith('01') && index === 0 || query.endsWith('02') && index === 49
+          ? 'overlap' : `${query}:${index}`,
+        title: 'Canonical Anime - 02 1080p', evidence: 'unverified' })) }),
+  });
+  const result = await discover({ requestId: 12, searchTargetEpisodeIds: [1001, 1002] });
+  assert.equal(result.items.length, 50);
+  const item = result.items.find((item) => item.guid === 'overlap');
+  assert.equal(item.targetedEpisode, true);
+  assert.equal(item.targetEpisodeId, 1002);
+  assert.equal(item.sourceQuery, 'Canonical Anime 02');
+});
+
 test('marks a historically completed series for full-season preference', async () => {
   const discover = createRequestCandidateDiscovery({
     readRequest: () => request,
@@ -34,6 +74,36 @@ test('discovers candidates for an existing exact request without authorizing the
     exhaustive: false,
   });
   assert.deepEqual(queries, [{ query: 'Canonical Anime', targetEpisodeNumber: null }]);
+});
+
+test('a failed alias search marks a surviving candidate set incomplete', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async () => ['Official English'],
+    pause: async () => {},
+    searchReleases: async ({ query }) => query === 'Official English'
+      ? { state: 'unavailable' }
+      : { state: 'candidates', items: [{
+        indexerId: 7, guid: 'low-quality',
+        title: 'Canonical Anime - 01 720p',
+        evidence: 'unverified' }] },
+  });
+  const found = await discover({ requestId: 12 });
+  assert.equal(found.state, 'candidates');
+  assert.equal(found.searchIncomplete, true);
+  assert.deepEqual(found.failedQueries, ['Official English']);
+});
+
+test('an empty partial search reports provider uncertainty, not no releases', async () => {
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => request, loadDetail: async () => detail,
+    releaseQueries: async () => ['Official English'], pause: async () => {},
+    searchReleases: async ({ query }) => query === 'Official English'
+      ? { state: 'unavailable' } : { state: 'candidates', items: [] },
+  });
+  assert.deepEqual(await discover({ requestId: 12 }), {
+    state: 'held', reason: 'release_search_incomplete',
+  });
 });
 
 test('a catalogue year does not hide same-title Airing releases', async () => {
@@ -91,6 +161,34 @@ test('a missing episode search reaches older releases without losing title alias
   assert.equal(found.items.find((item) =>
     item.title.startsWith('Official English release')).sourceQuery,
   'Official English');
+});
+
+test('one airing search checks every bounded missing episode before reporting no releases', async () => {
+  const searches = [];
+  const multiRequest = { ...request, episodeIds: [1001, 1002, 1003] };
+  const multiDetail = { ...detail, total: 3, episodes: [
+    { id: 1001, number: 1, type: 'Episode', title: 'First' },
+    { id: 1002, number: 2, type: 'Episode', title: 'Second' },
+    { id: 1003, number: 3, type: 'Episode', title: 'Third' },
+  ] };
+  const discover = createRequestCandidateDiscovery({
+    readRequest: () => multiRequest, loadDetail: async () => multiDetail,
+    pause: async () => {},
+    searchReleases: async ({ query, targetEpisodeNumber }) => {
+      searches.push([query, targetEpisodeNumber]);
+      return { state: 'candidates', items: query === 'Canonical Anime 03'
+        ? [{ indexerId: 7, guid: 'third-episode',
+          title: 'Canonical Anime - 03 1080p', evidence: 'unverified' }] : [] };
+    },
+  });
+  const found = await discover({ requestId: 12,
+    searchTargetEpisodeIds: [1001, 1002, 1003] });
+  assert.equal(found.state, 'candidates', JSON.stringify(found));
+  assert.deepEqual(searches.slice(0, 3), [
+    ['Canonical Anime 01', 1], ['Canonical Anime 02', 2],
+    ['Canonical Anime 03', 3]]);
+  assert.equal(found.items[0].guid, 'third-episode');
+  assert.equal(found.items[0].targetEpisodeId, 1003);
 });
 
 test('a long official title searches its short main title for the exact episode', async () => {
