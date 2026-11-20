@@ -56,3 +56,18 @@ test('a failed public probe blocks the attempt', async () => {
   assert.deepEqual(result, { state: 'held',
     reason: 'public_probe_unverified' });
 });
+
+
+test('checks a 24 episode pack in bounded parallel reads without self-expiring', async () => {
+  let clock=1000,active=0,peak=0,scheduled=false;const pending=[];
+  const wait=()=>new Promise(resolve=>{pending.push({at:clock+1500,resolve});if(!scheduled){scheduled=true;setImmediate(()=>{clock=Math.min(...pending.map(x=>x.at));const ready=pending.filter(x=>x.at===clock);for(const x of ready)pending.splice(pending.indexOf(x),1);scheduled=false;for(const x of ready)x.resolve();});}});
+  const ids=Array.from({length:24},(_,i)=>1001+i);
+  const result=await collectTargetScopedUncertain(providers({episodeIds:ids,now:()=>clock,
+    readEpisode:async target=>{active++;peak=Math.max(peak,active);await wait();active--;return {state:'not_imported',...target};}}));
+  assert.equal(result.state,undefined,JSON.stringify(result));
+  assert.equal(result.shoko.state,'unimported_targets');
+  assert.ok(peak>1&&peak<=4,'bounded parallelism must replace serial scans');
+  assert.ok(clock-1000<30000);
+  const confirmed=await confirmMissingTargets({request:{id:1,status:'held',...scope,episodeIds:ids},episodeIds:ids,publicLibraryIds:[102],firstTimePolicy:'single_uncertain_attempt',readEvidence:async()=>result,now:()=>clock});
+  assert.equal(confirmed.state,'missing_confirmed');
+});

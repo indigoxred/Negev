@@ -36,7 +36,7 @@ const userCoverage = (refs) => {
 // identity checks retain the registered AniDB-file default. A missing local
 // episode never proves absence without catalogue and Import checks.
 export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeId,
-  purpose = 'registered', fetchImpl = fetch, timeoutMs = 10_000 }) {
+  purpose = 'registered', fetchImpl = fetch, timeoutMs = 10_000, metadataCache }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -45,13 +45,18 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       !validId(anidbId) || !validId(episodeId) ||
       !['registered', 'availability', 'first_time', 'handoff'].includes(purpose) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-      typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko episode observation');
+      typeof fetchImpl !== 'function' ||
+      (metadataCache !== undefined && !(metadataCache instanceof Map))) throw new TypeError('Invalid Shoko episode observation');
   const url = new URL(`/api/v3/Episode/AniDB/${episodeId}/Episode`, base);
   url.searchParams.set('includeFiles', 'true');
   url.searchParams.set('includeReleaseInfo', 'true');
   url.searchParams.set('includeXRefs', 'true');
   url.searchParams.set('includeAbsolutePaths', 'true');
+  const metadataKey = anidbId + ':' + episodeId;
   const exactMetadataExists = async () => {
+    // Only immutable positive AniDB identity is reused within one observation.
+    // Local file absence is always read again; failures are never cached.
+    if (metadataCache?.get(metadataKey) === true) return 'exists';
     try {
       const metadataUrl = new URL(`/api/v3/Episode/AniDB/${episodeId}`, base);
       const response = await fetchImpl(metadataUrl, { method: 'GET',
@@ -60,8 +65,9 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       if (response.status === 404) return 'missing';
       if (response.status !== 200) return 'unavailable';
       const metadata = await readBoundedJson(response, 100_000);
-      return metadata?.ID === episodeId && metadata.AnimeID === anidbId
-        ? 'exists' : 'unavailable';
+      if (metadata?.ID !== episodeId || metadata.AnimeID !== anidbId) return 'unavailable';
+      metadataCache?.set(metadataKey, true);
+      return 'exists';
     } catch { return 'unavailable'; }
   };
   let episode;

@@ -13,7 +13,7 @@ const fields = ['state', 'reason', 'requestId', 'anidbId', 'searchQuery', 'ident
   'torrentHash', 'shokoPreview', 'shokoPreviewConflict', 'correspondence', 'version', 'totalBytes',
   'episodeIds', 'files', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
 const keyFor = ({ request, candidate }) => createHash('sha256').update(JSON.stringify([
-  'candidate-check-v2', request.id, request.anidbId, request.kind,
+  'candidate-check-v3', request.id, request.anidbId, request.kind,
   [...request.episodeIds].sort((a, b) => a - b), candidate.indexerId,
   request.title, candidate.guid, candidate.title, candidate.size,
   candidate.sourceQuery, candidate.targetEpisodeId,

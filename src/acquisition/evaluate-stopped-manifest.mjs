@@ -32,7 +32,9 @@ export function isOptionalClip(name) {
   if (torrentFileKind(name) !== 'video') return false;
   if (/^Specials\//i.test(name)) return true;
   const stem = path.posix.basename(name, path.posix.extname(name));
-  return /(?:^|[ ._-])NC(?:OP|ED)(?:v\d+)?(?=$|[ ._-])/i.test(stem) &&
+  const standalone = /^(?:clean|creditless)[ ._-]+(?:opening|ending)(?:[ ._-]*[0-9]+)?$/i.test(stem) ||
+    /(?:^|[ ._-])(?:OP|ED)(?:[0-9]+)?(?:v[0-9]+)?(?=$|[ ._-]*\[)/i.test(stem);
+  return (standalone || /(?:^|[ ._-])NC(?:OP|ED)(?:v\d+)?(?=$|[ ._-])/i.test(stem)) &&
     !/[Ss]\d{1,3}[Ee]\d{1,4}|(?:^|[ ._-])[Ee]\d{1,4}(?=$|[ ._-])/i.test(stem);
 }
 

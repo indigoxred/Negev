@@ -1,3 +1,4 @@
+import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
@@ -103,8 +104,8 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
+  let related;
   if (readRelatedTitles) {
-    let related;
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
     catch { return held('related_title_unavailable'); }
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
@@ -175,6 +176,11 @@ export async function previewRequestCandidate({ requestId, candidate,
     }
     shokoPreview = verdicts.every((value) => value === 'exact')
       ? 'exact' : 'uncertain';
+  }
+  if (plan.numberingEvidence === 'complete_absolute_sequence' && shokoPreview !== 'exact') {
+    const scope = await verifyAbsoluteNumberingScope({ anidbId:request.anidbId,
+      offset:plan.absoluteOffset, related, readRelatedTitles, loadDetail });
+    if (scope.state !== 'scope_confirmed') return held('absolute_numbering_unverified');
   }
   if (!verifiedIdentity && shokoPreview !== 'exact') {
     return held('release_title_mismatch');

@@ -1,3 +1,4 @@
+import { releaseLanguageSuitability } from '../web/public/release-choice-fields.mjs';
 // Search titles and tracker counts are hints for selection. Missing stream
 // tags do not disprove language suitability; Shoko identifies imported files.
 const has = (title, expression) => expression.test(title);
@@ -33,15 +34,12 @@ export function assessRelease(candidate) {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
   const seeders = Number.isSafeInteger(candidate?.seeders) ?
     candidate.seeders : -1;
-  const dualAudio = has(title, /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i);
-  const dubOnly = has(title, /\b(?:english|eng)[ ._-]*dub(?:bed)?\b|\bdub[ ._-]*only\b/i) &&
-    !dualAudio;
-  const noEnglishSubtitles = has(title,
-    /\b(?:no[ ._-]*subtitles?|unsubbed|raw[ ._-]*only|sub[ ._-]*french)\b/i);
+  const language = releaseLanguageSuitability(title, {
+    allowEnglishDub: candidate?.selectionPolicy?.allowEnglishDub === true });
+  const dualAudio = language.audio === 'dual';
   const numericResolution=Number(/\b(\d{3,4})p\b/i.exec(title)?.[1]??/\b\d{3,4}x(\d{3,4})\b/i.exec(title)?.[1]??0);
   const fourK = has(title, /\b(?:2160p?|4k|uhd)\b/i)||numericResolution>=2160;
   const bluray = has(title, /\b(?:bd(?:rip|remux)?|blu[ ._-]*ray|bluray)\b/i);
-  const allowDub = candidate?.selectionPolicy?.allowEnglishDub === true;
   const allowUhd = candidate?.selectionPolicy?.allowUhd === true;
   const resolution = numericResolution>=240&&numericResolution<=4320?numericResolution:fourK ? 2160 : has(title, /\b1080p?\b|1920x1080/i) ? 1080 :
     has(title, /\b720p?\b|1280x720/i) ? 720 :
@@ -54,11 +52,10 @@ export function assessRelease(candidate) {
   const subtitleHint = has(title,
     /\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?|subbed|subsplease|erai[ ._-]*raws)\b/i);
   return {
-    eligible: seeders > 0 && (!dubOnly || allowDub) && !noEnglishSubtitles && (!fourK || allowUhd),
+    eligible: seeders > 0 && language.eligible && (!fourK || allowUhd),
     reason: seeders <= 0 ? 'no_reported_seeders' :
-      dubOnly && !allowDub ? 'english_dub_only' :
-        noEnglishSubtitles ? 'no_english_subtitles' :
-          fourK && !allowUhd ? 'outside_quality_profile' : null,
+      !language.eligible ? language.reason :
+        fourK && !allowUhd ? 'outside_quality_profile' : null,
     quality, seeders, healthyPeers: seeders >= 3,
     trusted: candidate?.trusted === true,
     subtitleHint, dualAudio, trackVerified: false,

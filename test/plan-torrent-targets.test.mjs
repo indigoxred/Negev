@@ -396,3 +396,11 @@ test('incomplete or contradictory AniDB detail cannot make a plan', () => {
   assert.equal(planTorrentTargets({ request, detail: { ...detail, restricted: true },
     prepared: pack }).state, 'planned_targets');
 });
+
+
+test('standalone labelled opening and ending extras do not reject an otherwise complete season',()=>{
+ const files=[1,2,3].map(n=>({name:'Show - 0'+n+'v2 [BD 1080p].mkv',size:1000}));
+ const extras=['Show - OP [BD 1080p].mkv','Show - ED [BD 1080p].mkv','Clean Opening.mkv','Clean Ending.mkv'].map(name=>({name,size:100}));
+ const result=planTorrentTargets({request,detail,prepared:{state:'prepared_stopped',files:[...files,...extras]},releaseTitle:'Show BD 1080p',trustedTitle:'Show'});
+ assert.equal(result.state,'planned_targets');assert.equal(result.plannedFiles.length,3);assert.equal(result.excludedVideoNames.length,4);
+});
