@@ -340,6 +340,9 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(previewOpens,1);
       const pendingPreviewKey=await evaluate("sessionStorage.getItem('negev-request-1-3-installment')");
       assert.ok(pendingPreviewKey);
+      // The dialog exists before its initial asynchronous search finishes.
+      // Wait for its controls, as a real user must, before clicking Save.
+      await until("[...document.querySelectorAll('dialog[open] button')].some(b=>b.textContent==='Save group'&&!b.disabled)");
       await evaluate("document.querySelector('dialog[open] .release-preference-editor').open=true;document.querySelector('dialog[open] [aria-label=\"Preferred release group\"]').value='Group';[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Save group').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Future release preference saved')");
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),pendingPreviewKey,'preview preference does not clear the pending request key');
