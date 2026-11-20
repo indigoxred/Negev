@@ -133,7 +133,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         nextButton?.remove();nextButton=null;updateContext(data);preferLabel.hidden=!confirmedAiring;
         if(!confirmedAiring)preferFuture.checked=false;
         status.textContent=data.waitingFor==='first_episode'?'No released episodes to search yet. This request watches for the first release.':
-          data.items.length?`${data.items.length} matching releases · audio and quality are advertised hints.`:'No matches returned. Refine the title or retry search.';
+          data.items.length?`${data.items.length} matching releases${data.filteredOut?` · ${data.filteredOut} excluded by filters`:''} · audio and quality are advertised hints.`:data.filteredOut?'Releases were found, but none match the selected quality and audio filters. Change filters or refine the search.':'No matches returned. Refine the title or retry search.';
         for(const c of data.items) {
           const key=`${c.indexerId}:${c.guid}`;if(shown.has(key))continue;shown.add(key);
           results.append(compactReleaseRow({candidate:c,element,

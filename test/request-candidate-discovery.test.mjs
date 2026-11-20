@@ -406,7 +406,7 @@ test('interactive filters apply before pagination and reuse the bounded provider
     searchReleases:async input=>{calls.push(input);return {state:'candidates',items:Array.from({length:120},(_,i)=>({indexerId:7,guid:String(i),title:`Canonical Anime - ${i+1} ${i<60?'720p':'1080p'}`,evidence:'unverified'}))};}});
   const filters={quality:'bd1080',audio:'japanese'};
   const first=await discover({requestId:12,interactive:true,filters});
-  assert.equal(first.items.length,50);assert.equal(first.items[0].guid,'60');assert.equal(first.nextOffset,50);
+  assert.equal(first.items.length,50);assert.equal(first.filteredOut,60);assert.equal(first.items[0].guid,'60');assert.equal(first.nextOffset,50);
   const second=await discover({requestId:12,interactive:true,filters,resultOffset:50});
   assert.equal(second.items.length,10);assert.equal(second.nextOffset,null);assert.equal(calls.length,1);assert.equal(calls[0].limit,200);
 });

@@ -115,6 +115,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     }
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
+    const rawKeys=new Set(),matchingKeys=new Set();
     let successful = 0;
     const failedQueries = [];
     for (const [index, query] of queries.entries()) {
@@ -140,6 +141,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         continue;
       }
       successful++;
+      for(const item of result.items){const key=`${item.indexerId}:${item.guid}`;rawKeys.add(key);if(filters===null||matchesReleaseFilters(item,filters))matchingKeys.add(key);}
       queryCache.set(cacheKey, { result, anidbId: request.anidbId,
         until: saved?.result === result ? saved.until :
           now() + (result.items.length ? 300_000 : 20_000) });
@@ -195,7 +197,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     return { state: 'candidates', requestId, anidbId: request.anidbId,
       ...(interactiveTruncated?{searchIncomplete:true}:{}),
       items:items.slice(resultOffset,resultOffset+50), exhaustive: false,
-      ...(interactive?{nextOffset:items.length>resultOffset+50&&resultOffset<150?resultOffset+50:null}:{}),
+      ...(interactive?{filteredOut:rawKeys.size-matchingKeys.size,nextOffset:items.length>resultOffset+50&&resultOffset<150?resultOffset+50:null}:{}),
       ...(failedQueries.length > 0 ? {
         searchIncomplete: true, failedQueries } : {}),
       ...(releaseState === 'unknown' ? {} : { releaseState }) };
