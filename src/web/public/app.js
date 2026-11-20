@@ -293,6 +293,9 @@ function renderRoute() {
   const page = route.page === 'admin' && state.user.role !== 'admin'
     ? 'discover' : route.page;
   const returning = state.routePage !== null && state.routePage !== page;
+  if (returning || page === 'title' && state.selected !== route.anidbId) {
+    dismissRequestDialogs();
+  }
   state.routePage = page;
   const browseDestination = browseReturnDestination(route);
   if (browseDestination) state.lastBrowseDestination = browseDestination;
@@ -400,10 +403,19 @@ async function api(url, options = {}) {
   return data;
 }
 const releaseDialog=createReleaseDialog({api,element,onSaved:()=>{void loadRequests();}});
+function dismissRequestDialogs() {
+  releaseDialog.close();
+  // Hiding an ancestor does not close a native modal: it still makes the
+  // newly visible page inert. Release the top layer before changing views.
+  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
+}
 async function openSavedReleaseRequests(saved,mode) {
   if(!state.releaseSearch)return;
+  const session = sessionResponses.current();
+  const route = location.hash;
   const jobs=saved.filter(item=>Number.isSafeInteger(item.requestId));
   const show=index=>{
+    if(!state.user || !sessionResponses.isCurrent(session) || location.hash!==route)return;
     const item=jobs[index];if(!item)return;
     void releaseDialog.open({requestId:item.requestId,title:item.title,
       mode:mode==='manual'?'manual':'auto',
@@ -413,7 +425,7 @@ async function openSavedReleaseRequests(saved,mode) {
 }
 function showSession(data) {
   if (state.user?.id !== data.user.id) {
-    releaseDialog.close();
+    dismissRequestDialogs();
     sessionResponses.invalidate();
     invalidateRequestResponses();
     reviewResponses.invalidate();
@@ -497,7 +509,7 @@ function clearWorkspace() {
   libraryResponses.invalidate();
   airingResponses.invalidate();
   seasonalResponses.invalidate();
-  releaseDialog.close();
+  dismissRequestDialogs();
   state.user = null;
   state.requestScope = 'mine';
   state.showAdult = true;
@@ -2948,7 +2960,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         view.hidden = saved.length === 0 && alreadyMonitored === 0;
         refresh();
         if (saved.length) loadRequests();
-        if(releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
+        if(isCurrentDetail()&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
       });
       if (checkingCompleteSeries && loadNextEpisodePage) {
         const continueCheck = element('button', 'Continue availability check', 'quiet');
@@ -3214,7 +3226,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         button.textContent = 'Requested';
         requestStatus.textContent = savedRequestMessage(saved);
         filmPopup?.close();
-        if(saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());}
+        if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title}],filmReleasePicker.value());}
         viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'

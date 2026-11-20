@@ -26,6 +26,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
     const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
+    let holdNextRequest = false;
+    let heldRequestResponse = null;
     let titleReads = 0;
     let firstTitleResponse = null;
     let detailPosts = 0;
@@ -111,6 +113,7 @@ test('title and library controls recover from pending and failed reads without d
       } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
+        if (holdNextRequest) { holdNextRequest = false; heldRequestResponse = response; return; }
         json(response,value.seasons?{items:[{anidbId:3,status:201,result:{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
       } else if(path === '/api/requests/123/release-choice') {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:value.action==='auto'?'consumed':'selecting',revision:control.revision+1};}
@@ -292,8 +295,26 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Auto-Pick')");
       assert.equal(await evaluate("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')"),true);
+      // Browser Back / a receipt link must not leave a hidden native modal
+      // keeping the Requests page inert (scrolling can still appear to work).
+      await evaluate("location.hash='#/requests'");
+      await until("!document.querySelector('#view-requests').hidden");
+      assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
+        'leaving a title closes its modal before hiding the title view');
+      await evaluate("location.hash='#/title/1'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Cancel').click()");
       assert.equal(submittedModes.length,0,'cancelling the submenu never submits a request');
+      await evaluate("location.hash='#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
+      await evaluate("location.hash='#/requests'");
+      await until("!document.querySelector('#view-requests').hidden");
+      assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
+        'the series chooser cannot leave Requests inert');
       await evaluate("location.hash='#/title/3'");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
@@ -305,7 +326,10 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('dialog[open] [aria-label=Quality]')");
       assert.deepEqual(submittedModes,['manual']);
       assert.equal(await evaluate("document.querySelector('dialog[open] [aria-label=Quality]').value"),'bd1080');
-      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
+      await evaluate("location.hash='#/requests'");
+      await until("!document.querySelector('#view-requests').hidden");
+      assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
+        'the body-mounted release picker also closes on navigation');
       await evaluate("location.hash='#/title/1'");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
@@ -324,6 +348,27 @@ test('title and library controls recover from pending and failed reads without d
         await until("!document.querySelector('dialog[open]')");
         assert.equal(await evaluate("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Requested')"),true,'pending and idempotent successful requests must finish the submenu');
       }
+      // Finish a genuine submission response after navigation, without
+      // re-opening an off-page popup or sending the request a second time.
+      filmResult = null;
+      await evaluate("location.hash='#/discover'");
+      await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash='#/title/1'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
+      holdNextRequest = true;
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      for (let attempt=0; attempt<80 && !heldRequestResponse; attempt++) await wait(100);
+      assert.ok(heldRequestResponse, 'submission is in flight');
+      const submissionsBeforeLeaving = submittedModes.length;
+      await evaluate("location.hash='#/requests'");
+      await until("!document.querySelector('#view-requests').hidden");
+      json(heldRequestResponse,{state:'saved',created:true,requestId:123});
+      heldRequestResponse = null;
+      await wait(100);
+      assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
+        'a late successful save cannot reopen a modal on Requests');
+      assert.equal(submittedModes.length,submissionsBeforeLeaving);
       const beforeReentry = titleReads;
       await evaluate("location.hash = '#/discover'");
       await until("!document.querySelector('#view-discover').hidden");
@@ -457,6 +502,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list').children.length"), 0);
       assert.equal(await evaluate("document.querySelector('#watch-list').children.length"), 0);
     } finally {
+      if (heldRequestResponse) json(heldRequestResponse,{state:'pending',intentId:901});
       if (firstTitleResponse) json(firstTitleResponse, { state: 'detail_pending',
         anidbId: 1 });
       if (heldDetailResponse) json(heldDetailResponse, { state: 'pending' });
