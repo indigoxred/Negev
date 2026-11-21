@@ -42,6 +42,7 @@ test('title and library controls recover from pending and failed reads without d
     let searchReads = 0;
     let requestReads = 0;
     let historyReads = 0;
+    let historyBarrier = null;
     let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
@@ -166,7 +167,7 @@ test('title and library controls recover from pending and failed reads without d
           return;
         }
         const history = url.searchParams.get('view') === 'history';
-        if (history) historyReads++;
+        if (history) { historyReads++; if(historyBarrier)await historyBarrier; }
         const older = url.searchParams.get('beforeId') === '7';
         if (history && older) olderRequestReads++;
         json(response, { items: history
@@ -528,19 +529,24 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
       assert.equal(await evaluate("getComputedStyle(document.querySelector('#request-list .request-transfer-fill')).animationName"), 'request-transfer-stripes');
-      const controls = await evaluate("(() => { const row=document.querySelector('[data-request-id=\"7\"]'); const cancel=[...row.querySelectorAll('.request-actions button')].find(x=>x.textContent==='Cancel request'); const more=row.querySelector('.request-more'); if(!cancel)return {cancel:false}; const a=cancel.getBoundingClientRect(),b=more.getBoundingClientRect(); more.open=true;row.querySelector('.request-technical').open=true;return {cancel:true,overlap:a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top}; })()");
+      const controls = await evaluate("(() => { const row=document.querySelector('[data-request-id=\"7\"]'); const cancel=[...row.querySelectorAll('.request-actions button')].find(x=>x.textContent==='Cancel request'); const more=row.querySelector('.request-more'); if(!cancel)return {cancel:false}; const a=cancel.getBoundingClientRect(),b=more.getBoundingClientRect(); more.open=true;row.querySelector('.request-technical').open=true;window.__requestCard=row;return {cancel:true,overlap:a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top}; })()");
       assert.deepEqual(controls,{cancel:true,overlap:false},'admin cancellation and Details have separate hit areas');
       const beforePoll=historyReads;
       await evaluate("document.dispatchEvent(new Event('visibilitychange'))");
       for(let n=0;n<80&&historyReads===beforePoll;n++)await wait(50);
-      await wait(150);
+      await until("!window.__requestCard.isConnected");
       assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open"),true,'poll preserves expanded card');
       assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-technical').open"),true,'poll preserves nested sections');
-      await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open=false");
+      let resumeHistory;
+      historyBarrier=new Promise(resolve=>{resumeHistory=resolve;});
+      await evaluate("window.__requestCard=document.querySelector('[data-request-id=\"7\"]')");
       const beforeClosedPoll=historyReads;
       await evaluate("document.dispatchEvent(new Event('visibilitychange'))");
       for(let n=0;n<80&&historyReads===beforeClosedPoll;n++)await wait(50);
-      await wait(150);
+      assert.ok(historyReads>beforeClosedPoll,'refresh must reach the held response');
+      await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open=false");
+      historyBarrier=null;resumeHistory();
+      await until("!window.__requestCard.isConnected");
       assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open"),false,'poll respects a section the user closed');
       transferBasisPoints=6250;
       await evaluate("document.querySelector('#refresh-requests').click()");
