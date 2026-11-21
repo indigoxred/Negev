@@ -80,7 +80,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  dialog.close();
  alternativeRegistration='confirmed';control={mode:'auto',phase:'selecting',revision:1};
  await dialog.open({requestId:1,title:'Verified example',mode:'auto'});
- const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified exact AniDB files');dialog.close();
+ const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified files');dialog.close();
  alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
  await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
  const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
@@ -164,7 +164,7 @@ const tick=()=>new Promise(r=>setTimeout(r,20));const until=async fn=>{for(let i
  const dialog=createReleaseDialog({api,element});await dialog.open({requestId:1,title:'Evidence Example'});
  await until(()=>document.querySelector('.release-compact-row .registration-likely'));
  const row=document.querySelector('.release-compact-row'),badge=row.querySelector('.release-registration');
- const likelyGreen=getComputedStyle(badge).color==='rgb(142, 231, 182)'&&getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)'&&badge.textContent==='Likely'&&badge.title.includes('not exact');
+ const likelyGreen=getComputedStyle(badge).color==='rgb(142, 231, 182)'&&getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)'&&badge.textContent==='Likely AniDB-listed file'&&badge.title.includes('not exact');
  const noDetailsNeeded=!row.querySelector('details').open&&row.textContent.includes('CRC32 and size');
  await until(()=>document.querySelectorAll('.release-compact-row')[1].querySelector('.registration-confirmed'));
  const rows=()=>[...document.querySelectorAll('.release-compact-row')];
@@ -223,6 +223,6 @@ test('release dialog preserves manual choice through polling and offers alternat
  const badge=row.querySelector('.registration-group');const initialGreen=row.classList.contains('release-anidb-match');const actualGreen=getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)';await start();await tick();outcomes.push({listed,initialGreen,actualGreen,afterFailure:row.classList.contains('release-anidb-match'),label:badge?.textContent??null,global:badge?.title.includes('globally')??false,enabled:!row.querySelector('.release-pick').disabled});row.remove();}
  document.querySelector('#result').textContent=JSON.stringify(outcomes);})();
  </script>`;
- const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'AniDB group',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'Group listed on AniDB (global)',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

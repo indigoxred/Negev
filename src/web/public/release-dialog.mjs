@@ -39,7 +39,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const modes=element('div',undefined,'release-mode-actions');modes.append(auto,manual);
     const makeFilter=(label,options)=>{const wrapper=element('label',label);const select=element('select');select.setAttribute('aria-label',label);
       for(const [value,text]of options){const option=element('option',text);option.value=value;select.append(option);}wrapper.append(select);actions.append(wrapper);return select;};
-    const quality=makeFilter('Quality',[['bd1080','BD / 1080p+'],['1080','1080p+'],['720','720p+'],['bd','BD only'],['all','All qualities']]);
+    const quality=makeFilter('Quality',[['bd1080','Blu-ray or 1080p+'],['1080','1080p+'],['720','720p+'],['bd','BD only'],['all','All qualities']]);
     const audio=makeFilter('Audio',[['japanese','Japanese'],['japanese_dual','Japanese + dual'],['dual','Dual audio'],['english','English dub']]);
     const packsLabel=element('label',undefined,'release-packs-only');packsLabel.hidden=true;
     const packsOnly=element('input');packsOnly.type='checkbox';packsOnly.checked=true;packsOnly.setAttribute('aria-label','Season packs only');
@@ -90,8 +90,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       const box=element('div',undefined,'release-entry');
       box.append(element('strong',selection.candidate.title));
       box.append(element('p',`${selection.candidate.source} · ${selection.candidate.resolution??'?'}p · ${selection.candidate.seeders??'?'} seeds · ${selection.preview.episodeIds.length} requested episode(s)`,'muted'));
-      box.append(element('p',selection.registration==='confirmed'?'Previously verified exact AniDB files':
-        selection.registration==='likely'?'Likely AniDB correspondence · CRC32 and size':'Registration unknown',selection.registration==='confirmed'?'registration-confirmed':selection.registration==='likely'?'registration-likely':'registration-unknown'));
+      box.append(element('p',selection.registration==='confirmed'?'Previously verified files':
+        selection.registration==='likely'?'Likely AniDB-listed files · CRC32 and size':'File registration unknown',selection.registration==='confirmed'?'registration-confirmed':selection.registration==='likely'?'registration-likely':'registration-unknown'));
       return box;
     };
     const receiptPreferences=()=>{

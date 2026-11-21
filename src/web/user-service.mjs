@@ -1,3 +1,4 @@
+import { cachedRegularCoverage } from './card-coverage.mjs';
 import { createReleasePreviews } from '../requests/release-previews.mjs';
 import { createReleaseWake, observedReleaseEpisodes } from '../acquisition/release-wake.mjs';
 import { createReleaseSelection } from '../acquisition/release-selection.mjs';
@@ -618,15 +619,18 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const publicPresenceForTitle = (anidbId, checkedMs) => {
       const ids = publicAvailableIdsForTitle(anidbId, checkedMs);
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
-        verifiedEpisodeCount: ids.size };
+        verifiedEpisodeCount: ids.size,
+        regularCoverage: ids.size?cachedRegularCoverage({index:rawDetailReader.cachedEpisodeIndex(anidbId,{includeSpecials:true}),verifiedIds:ids,asOf:today()}):undefined };
     };
     // Airing's "In library" preset must use the same current file evidence
     // as Negev's Library page. A short-lived title or direct check may inform
     // availability, but it does not place a title in the library catalogue.
     const libraryPresenceForTitle = (anidbId) => {
-      const count = fileProofs?.getRecentAvailableIds({ anidbId }).length ?? 0;
+      const ids=new Set(fileProofs?.getRecentAvailableIds({ anidbId })??[]);
+      const count=ids.size;
       return { state: count > 0 ? 'in_library' : 'unknown',
-        verifiedEpisodeCount: count };
+        verifiedEpisodeCount: count,
+        regularCoverage: cachedRegularCoverage({index:rawDetailReader.cachedEpisodeIndex(anidbId,{includeSpecials:true}),verifiedIds:ids,asOf:today()}) };
     };
     const cachedDisplayRelations = createCachedDisplayRelations({ now,
       read: ({ anidbId }) => readDisplayRelations({
@@ -785,6 +789,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             englishTitleFor(item.anidbId)));
           return { state: 'current_proofs',
             items: page.items.map((item, index) => ({ ...item,
+              regularCoverage:libraryPresenceForTitle(item.anidbId).regularCoverage,
               englishTitle: englishTitles[index],
               chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
               title: titleSource?.getTitle(item.anidbId) ??

@@ -21,6 +21,16 @@ const entries = [
  [17824,'Dungeon Meshi: Senshi no Cooking','Delicious in Dungeon: Senshi’s Cooking','https://cdn.myanimelist.net/images/anime/1711/142478l.jpg',12,0,['Fantasy','Comedy']],
  [18003,'A Very Long Unannounced Anime Title About Starting Another Journey with Friends','Preview airing anime · fictional fixture',null,12,8,['Adventure']],
 ].map(([anidbId,title,englishTitle,poster,total,verified,tags],i)=>({anidbId,title,englishTitle,poster,total,verified,tags,adult:false,type:total===1?'Movie':'TV Series',kind:total===1?'movie':'series',releaseStatus:anidbId===18003?'ONGOING':'FINISHED',rating:{source:'anilist',score:9.2-i*.17,votes:5000,members:800000-i*53000,checkedMs:stamp()},libraryPresence:present(verified),verifiedLibraryPresence:present(verified)}));
+// Fictional Airing examples use public poster art solely to exercise the layout.
+entries.push(...[entries[0],entries[1],entries[2]].map((base,i)=>({...base,
+ anidbId:19000+i,title:base.title+' · airing layout fixture',englishTitle:base.englishTitle+' · airing fixture',
+ total:12,verified:8,startYear:2026,startDate:'2026-10-01',catalogueSeason:'FALL',releaseStatus:'ONGOING',libraryPresence:present(8),verifiedLibraryPresence:present(8)})));
+for(const e of entries){const ongoing=e.releaseStatus==='ONGOING',aired=ongoing?8:e.total;
+ e.specialTotal=e.anidbId===17164?1:e.anidbId===15748?2:0;e.specialVerified=e.specialTotal?1:0;
+ e.regularCoverage={kind:e.kind,specialTotal:e.specialTotal,specialVerified:e.specialVerified,total:e.total,verified:e.verified,aired,verifiedAired:Math.min(e.verified,aired),upcoming:e.total-aired,undated:0};
+ e.libraryPresence.verifiedEpisodeCount=e.verified+e.specialVerified;e.verifiedLibraryPresence.verifiedEpisodeCount=e.verified+e.specialVerified;
+ e.libraryPresence.regularCoverage=e.regularCoverage;e.verifiedLibraryPresence.regularCoverage=e.regularCoverage;
+}
 const find = id => entries.find(e=>e.anidbId===Number(id));
 let requests,preferences,previews,sequence,errorSample;
 const progress = (state,total,count=0) => ({state,targetCount:total,publicAvailability:count?'verified_recently':'unverified',publicVerifiedTargets:count});
@@ -32,12 +42,18 @@ function reset(){preferences={mode:'library',trackedAnidbIds:[18003]};previews=n
  {id:5,requesterId:1,requesterName:'Owner',anidbId:18003,title:'Preview airing anime · fictional fixture',kind:'series',status:'held',episodeIds:Array.from({length:8},(_,i)=>1800301+i),monitorFuture:true,canCancel:true,progress:progress('saved',8,8)}];}
 reset();
 const descriptions={17164:'The Demon King has been defeated, and the hero’s party returns home. For the elven mage Frieren, ten years together passed in the blink of an eye. When she returns decades later, a farewell sends her on a new journey to understand the people she once travelled beside. With Fern and Stark at her side, everyday detours become memories worth keeping. This quiet adventure follows the traces of friendship, the passing of time, and the magic found in ordinary moments.',15748:'Hitori Gotoh dreams of playing guitar in a band, but meeting people is harder than learning a solo. When she joins Kessoku Band, rehearsals, live shows and awkward little victories begin to change her world.'};
-const details=e=>({...e,state:'details',restricted:false,requestsOpen:true,page:1,total:e.total,nextPage:null,episodeCount:e.total,monitorFuture:e.anidbId===18003,releaseState:e.anidbId===18003?'airing':'completed',...(e.anidbId===18003?{regularSchedule:{aired:8,upcoming:4,undated:0,verifiedAired:8,total:12,asOf:'2026-11-21',nextAirDate:'2026-11-28',nextEpisodeNumber:9}}:{}),regularSeason:{total:e.total,verified:e.verified},episodes:Array.from({length:e.total},(_,i)=>({id:e.anidbId*100+i+1,number:i+1,type:'Episode',...(e.anidbId===18003?{airDate:i<8?'2026-11-14':`2026-${i===8?'11-28':i===9?'12-05':i===10?'12-12':'12-19'}`}:{airDate:'2024-03-22'}),title:e.anidbId===17164?['The Journey’s End','It Didn’t Have to Be Magic','Killing Magic','The Land Where Souls Rest'][i%4]:`Episode ${i+1}`,availability:i<e.verified?'available':'unknown'}))});
-const display=e=>({...e,state:'display',restricted:false,startYear:2023,startDate:'2023-09-29',endDate:e.releaseStatus==='ONGOING'?null:'2024-03-22',episodeCount:e.total,description:descriptions[e.anidbId]??'A new journey, an unexpected friendship, and a world full of stories. Follow this installment as its characters find their own way forward.',season:'Autumn 2023',studio:e.anidbId===17164?'Madhouse':'Production studio',durationMinutes:24});
-function save(body){const e=find(body.anidbId)||entries[0],id=++sequence;requests.unshift({id,requesterId:1,requesterName:'Owner',...e,status:'held',episodeIds:body.episodeIds??details(e).episodes.filter(x=>x.availability!=='available').map(x=>x.id),monitorFuture:body.monitorFuture===true,watchClosed:false,canCancel:true,progress:progress('saved',(body.episodeIds??details(e).episodes.filter(x=>x.availability!=='available').map(x=>x.id)).length)});return {state:'held',requestId:id,created:true};}
+const details=e=>{
+ const ongoing=e.releaseStatus==='ONGOING';
+ const activeWatch=requests.find(r=>r.anidbId===e.anidbId&&r.monitorFuture&&!r.watchClosed&&r.status!=='cancelled');
+ const regular=Array.from({length:e.total},(_,i)=>({id:e.anidbId*100+i+1,number:i+1,type:'Episode',airDate:ongoing?(i<8?'2026-11-14':i===8?'2026-11-28':i===9?'2026-12-05':i===10?'2026-12-12':'2026-12-19'):'2024-03-22',title:e.anidbId===17164?['The Journey’s End','It Didn’t Have to Be Magic','Killing Magic','The Land Where Souls Rest'][i%4]:`Episode ${i+1}`,availability:i<e.verified?'available':'unknown'}));
+ const specials=Array.from({length:e.specialTotal??0},(_,i)=>({id:e.anidbId*100+80+i,number:i+1,type:'Special',title:'Bonus special '+(i+1),availability:i<e.specialVerified?'available':'unknown'}));
+ return {...e,state:'details',restricted:false,requestsOpen:true,futureEpisodesMonitored:Boolean(activeWatch),...(activeWatch?{activeWatchRequestId:activeWatch.id}:{}),page:1,total:regular.length+specials.length,nextPage:null,episodeCount:regular.length+specials.length,monitorFuture:ongoing,releaseState:ongoing?'airing':'completed',...(ongoing?{regularSchedule:{aired:8,upcoming:4,undated:0,verifiedAired:Math.min(e.verified,8),total:12,asOf:'2026-11-21',nextAirDate:'2026-11-28',nextEpisodeNumber:9}}:{}),regularSeason:{total:e.total,verified:e.verified},episodes:[...regular,...specials]};
+};
+const display=e=>({...e,state:'display',restricted:false,startYear:e.startYear??2023,startDate:e.startDate??'2023-09-29',endDate:e.releaseStatus==='ONGOING'?null:'2024-03-22',episodeCount:e.total,description:descriptions[e.anidbId]??'A new journey, an unexpected friendship, and a world full of stories. Follow this installment as its characters find their own way forward.',season:e.startYear===2026?'Autumn 2026':'Autumn 2023',studio:e.anidbId===17164?'Madhouse':'Production studio',durationMinutes:24});
+function save(body){const e=find(body.anidbId)||entries[0],id=++sequence;requests.unshift({id,requesterId:1,requesterName:'Owner',...e,status:'held',episodeIds:body.episodeIds??details(e).episodes.filter(x=>x.type==='Episode'&&x.availability!=='available').map(x=>x.id),monitorFuture:body.monitorFuture===true,watchClosed:false,canCancel:true,progress:progress('saved',(body.episodeIds??details(e).episodes.filter(x=>x.type==='Episode'&&x.availability!=='available').map(x=>x.id)).length)});return {state:'held',requestId:id,created:true};}
 function candidates(e){
  const variants=[['SubsPlease','WEB',1080,'japanese',true],['EMBER','BD',1080,'dual',true],['Judas','BD',720,'japanese',true],['Erai-raws','WEB',720,'japanese',false],['LostYears','WEB',1080,'english',false]];
- return variants.map(([group,source,resolution,audio,pack],i)=>({guid:'fixture-'+i,indexerId:1,title:'['+group+'] '+e.englishTitle+' - '+(pack?'01-'+String(e.total).padStart(2,'0')+' (Batch)':String(Math.min(e.verified+1,e.total)).padStart(2,'0'))+' ('+resolution+'p) ['+(source==='BD'?'BD':'WEB-DL')+'] ['+(audio==='dual'?'Dual Audio':audio==='english'?'English Dub':'Japanese Audio')+']',group,source,resolution,audio,audioLabel:audio==='dual'?'JP+EN*':audio==='english'?'EN dub*':'JP*',qualityLabel:source+' / '+resolution+'p',size:1073741824*(pack?e.total:1),seeders:128-i*21,indexer:'Preview indexer · fixture',coverage:pack?'Full '+e.total+'-episode pack advertised':'Single episode advertised',coverageKind:pack?'advertised_pack':'single_episode',languageHints:audio==='dual'?'Japanese + English audio · English subtitles':audio==='english'?'English dub':'Japanese audio · English subtitles',eligible:true,token:'fixture-token-'+i}));
+ return variants.map(([group,source,resolution,audio,pack],i)=>({guid:'fixture-'+i,indexerId:1,title:'['+group+'] '+e.englishTitle+' - '+(pack?'01-'+String(e.total).padStart(2,'0')+' (Batch)':String(Math.min(e.verified+1,e.total)).padStart(2,'0'))+' ('+resolution+'p) ['+(source==='BD'?'BD':'WEB-DL')+'] ['+(audio==='dual'?'Dual Audio':audio==='english'?'English Dub':'Japanese Audio')+']',group,source,resolution,audio,...(i===2?{groupRegistration:{state:'listed',scope:'global',groupId:12345,name:group}}:{}),audioLabel:audio==='dual'?'JP+EN*':audio==='english'?'EN dub*':'JP*',qualityLabel:source+' / '+resolution+'p',size:1073741824*(pack?e.total:1),seeders:128-i*21,indexer:'Preview indexer · fixture',coverage:pack?'Full '+e.total+'-episode pack advertised':'Single episode advertised',coverageKind:pack?'advertised_pack':'single_episode',languageHints:audio==='dual'?'Japanese + English audio · English subtitles':audio==='english'?'English dub':'Japanese audio · English subtitles',eligible:true,token:'fixture-token-'+i}));
 }
 function filterCandidates(e,params){return candidates(e).filter(c=>{
  const q=(params.get('query')??'').toLowerCase(),quality=params.get('quality')??'bd1080',audio=params.get('audio')??'japanese';
@@ -47,7 +63,7 @@ function filterCandidates(e,params){return candidates(e).filter(c=>{
  });}
 function inspection(e,token,body={}){
  const index=Number(token?.split('-').at(-1))||0,c=candidates(e)[index]??candidates(e)[0];
- const requested=(body.episodeIds??details(e).episodes.filter(x=>x.availability!=='available').map(x=>x.id));
+ const requested=(body.episodeIds??details(e).episodes.filter(x=>x.type==='Episode'&&x.availability!=='available').map(x=>x.id));
  const represented=c.coverageKind==='advertised_pack'?details(e).episodes:details(e).episodes.filter(x=>x.number===Math.min(e.verified+1,e.total));
  const files=represented.filter(x=>requested.includes(x.id)).map(x=>({name:e.englishTitle+' - '+String(x.number).padStart(2,'0')+'.mkv',size:1073741824,episodeIds:[x.id]}));
  const filesToExclude=represented.filter(x=>!requested.includes(x.id)).map(x=>({name:e.englishTitle+' - '+String(x.number).padStart(2,'0')+'.mkv',size:1073741824,episodeIds:[x.id]}));
@@ -73,7 +89,8 @@ export const server=createServer(async(req,res)=>{
    const afterRoot=screenshotRoot&&resolve(screenshotRoot,'../negev-visual-revision');
    const names=afterRoot?(await readdir(afterRoot)).filter(name=>screenshotName.test(name)).sort():[];
    const order=['desktop-discover.jpg','intermediate-discover.jpg','mobile-discover.jpg','desktop-title.jpg','mobile-title.jpg','desktop-request-scope.jpg','mobile-request-scope.jpg','desktop-release-picker.jpg','mobile-release-picker.jpg','desktop-request-receipt.jpg','desktop-auto-receipt.jpg','desktop-requests.jpg','mobile-requests.jpg','desktop-account.jpg','mobile-account.jpg','mobile-long-title.jpg','desktop-error-state.jpg'];names.sort((a,b)=>order.indexOf(a)-order.indexOf(b));
-   const pairs=names.map(name=>'<section><h2>'+escapeHtml(name.replace('.jpg','').replaceAll('-',' '))+'</h2><div class="preview-gallery-grid"><figure><figcaption>Before</figcaption><a href="/__preview/screens/'+name+'"><img src="/__preview/screens/'+name+'" alt="Before '+escapeHtml(name)+'" loading="lazy"></a></figure><figure><figcaption>Revised</figcaption><a href="/__preview/revised/'+name+'"><img src="/__preview/revised/'+name+'" alt="Revised '+escapeHtml(name)+'" loading="lazy"></a></figure></div></section>').join('');
+   const baselines=new Set(screenshotRoot?await readdir(screenshotRoot):[]);
+   const pairs=names.filter(name=>baselines.has(name)).map(name=>'<section><h2>'+escapeHtml(name.replace('.jpg','').replaceAll('-',' '))+'</h2><div class="preview-gallery-grid"><figure><figcaption>Before</figcaption><a href="/__preview/screens/'+name+'"><img src="/__preview/screens/'+name+'" alt="Before '+escapeHtml(name)+'" loading="lazy"></a></figure><figure><figcaption>Revised</figcaption><a href="/__preview/revised/'+name+'"><img src="/__preview/revised/'+name+'" alt="Revised '+escapeHtml(name)+'" loading="lazy"></a></figure></div></section>').join('');
    res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Negev · Before and after</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/__preview/gallery.css"></head><body><main class="preview-gallery"><p><a href="/#/discover">Open working preview →</a></p><h1>Before and after</h1><p class="muted">Same sample data and viewport sizes. Open an image for its full capture.</p>'+pairs+'</main></body></html>');
   }
   if(path.startsWith('/__preview/revised/')) {
@@ -98,15 +115,24 @@ export const server=createServer(async(req,res)=>{
   if(path==='/api/client-revision')return json({revision:'visual-preview'});
   if(path==='/api/admin/users')return json({state:'users',items:[{id:1,username:'Preview Owner',role:'admin',adultAllowed:true}]});
   if(path==='/api/seasons'||path==='/api/catalogue/search'){
-   let items=[...entries];const q=(url.searchParams.get('q')??'').toLowerCase(),tag=(url.searchParams.get('tags')??'').toLowerCase();
+   let items=[...entries];const q=(url.searchParams.get('q')??'').toLowerCase(),tag=(url.searchParams.get('tag')??url.searchParams.get('tags')??'').toLowerCase();
    if(q)items=items.filter(e=>`${e.title} ${e.englishTitle}`.toLowerCase().includes(q));
-   if(tag)items=items.filter(e=>e.tags.some(t=>tag.includes(t.toLowerCase())));
+   if(tag)items=items.filter(e=>tag.split(',').filter(Boolean).every(value=>e.tags.some(t=>t.toLowerCase()===value)));
+   const year=Number(url.searchParams.get('year')),season=url.searchParams.get('season');
+   if(year)items=items.filter(e=>(e.startYear??2023)===year);
+   if(season&&season!=='ALL')items=items.filter(e=>(e.catalogueSeason??'FALL')===season);
    const kind=url.searchParams.get('kind');if(kind&&kind!=='all')items=items.filter(e=>e.kind===kind);
    if(url.searchParams.get('status')==='ongoing')items=items.filter(e=>e.releaseStatus==='ONGOING');
-   if(url.searchParams.get('sort')==='title_asc')items.sort((a,b)=>a.title.localeCompare(b.title));
-   return json({state:path.endsWith('search')?'results':'ready',page:1,total:items.length,year:Number(url.searchParams.get('year')??2026),season:url.searchParams.get('season')??'FALL',sourceDate:'2026-11-21',availableTags:['Adventure','Comedy','Drama','Fantasy','Historical','Music','Mystery','Romance','Science fiction','Slice of life'],items,nextAfter:null,nextPage:null,catalogueSource:'development_fixture'});
+   const sort=url.searchParams.get('sort');
+   if(sort==='newest')items.sort((a,b)=>(b.startYear??2023)-(a.startYear??2023));
+   if(sort==='oldest')items.sort((a,b)=>(a.startYear??2023)-(b.startYear??2023));
+   if(sort==='title_asc')items.sort((a,b)=>a.title.localeCompare(b.title));
+   if(sort==='title_desc')items.sort((a,b)=>b.title.localeCompare(a.title));
+   if(sort==='score_desc')items.sort((a,b)=>b.rating.score-a.rating.score);
+   if(sort==='popular_desc')items.sort((a,b)=>b.rating.members-a.rating.members);
+   return json({state:path.endsWith('search')?'results':'ready',page:1,total:items.length,year:Number(url.searchParams.get('year')??2026),season:url.searchParams.get('season')??'FALL',sourceDate:'2026-11-21',availableTags:['Adventure','Comedy','Drama','Fantasy','Historical','Music','Mystery','Romance','Science fiction','Slice of life'],items,nextAfter:null,nextPage:null,catalogueSource:'development_fixture',orderState:sort==='score_desc'?'anilist_score':sort==='popular_desc'?'anilist_popular':undefined});
   }
-  if(path==='/api/library')return json({state:'current_proofs',items:entries.filter(e=>e.verified).map(e=>({...e,verifiedEpisodeCount:e.verified,lastVerifiedMs:stamp()})),nextAfterAnidbId:null});
+  if(path==='/api/library')return json({state:'current_proofs',items:entries.filter(e=>e.verified).map(e=>({...e,verifiedEpisodeCount:e.verified+e.specialVerified,lastVerifiedMs:stamp()})),nextAfterAnidbId:null});
   if(path==='/api/airing/preferences'){if(req.method==='PUT')preferences=body;return json(preferences);}
   if(path==='/api/airing')return json({state:'ready',week:'2026-W47',checkedMs:stamp(),items:[{...find(18003),scheduledDate:'2026-11-28',episodeNumber:'9'},{...find(17823),scheduledDate:'2026-11-22',episodeNumber:'10'}]});
   if(path==='/api/request-preparations')return json({items:[],nextBeforeId:null});

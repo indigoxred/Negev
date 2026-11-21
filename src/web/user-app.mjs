@@ -1,3 +1,4 @@
+import { validRegularCoverage } from './public/card-availability.mjs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
@@ -124,7 +125,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   // separate route budgets; login and registration retain peer throttling.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
   const assetNames = ['index.html', 'app.js', 'style.css', 'consumer.css',
-    'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+    'card-availability.mjs', 'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
@@ -327,6 +328,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       anidbId: item.anidbId, title: item.title,
       englishTitle: item.englishTitle ?? null,
       verifiedEpisodeCount: item.verifiedEpisodeCount,
+      ...(validRegularCoverage(item.regularCoverage)?{regularCoverage:item.regularCoverage}:{}),
       lastVerifiedMs: item.lastVerifiedMs,
     })), nextAfterAnidbId: page.nextAfterAnidbId };
   });

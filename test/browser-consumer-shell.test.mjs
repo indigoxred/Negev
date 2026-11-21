@@ -16,7 +16,7 @@ const assets = new Map([
   ['/style.css', ['style.css', 'text/css']],
   ['/consumer.css', ['consumer.css', 'text/css']],
   ...['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf'].map(name=>['/fonts/'+name,['fonts/'+name,'font/ttf']]),
-  ...['request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
@@ -260,7 +260,7 @@ async function inspectMobile(url, profile, width = 390) {
     await send('Page.navigate',{url:url.replace('#/discover','#/airing')});
     await wait(500);
     const airingDropdown=await send('Runtime.evaluate',{returnByValue:true,
-      expression:`(() => {const picker=document.querySelector('#airing-form .genre-picker');
+      expression:`(() => {const filters=document.querySelector('#airing-filters-toggle');if(filters.getAttribute('aria-expanded')!=='true')filters.click();const picker=document.querySelector('#airing-form .genre-picker');
         const visible=picker.getBoundingClientRect().height>0;
         picker.querySelector('summary').click();
         const search=picker.querySelector('input[type=search]');search.click();search.focus();
@@ -1552,12 +1552,12 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'english-library'));
       assert.match(englishLibrary, /<strong[^>]*>Garden of Words<\/strong>/);
       assert.match(library, /<div id="library-list" class="poster-grid"><div class="tracked-title"[^>]*><a class="poster-card"/);
-      assert.match(library, /1 verified item/);
+      assert.match(library, /In library · coverage unconfirmed/);
       const librarySearch = await dump(`${base}/#/library?q=Garden`,
         join(dir, 'library-search'), 'library');
       assert.match(librarySearch, /Search Negev’s Library/);
       assert.match(librarySearch, /The Garden of Words/);
-      assert.match(librarySearch, /class="presence available">In library/);
+      assert.match(librarySearch, /class="presence unknown">In library · coverage unconfirmed/);
       assert.match(librarySearch, /Pale Cocoon/);
       assert.match(librarySearch, /Not found in Negev’s verified library/);
       assert.match(librarySearch, /id="search-all-catalogue"[^>]*href="#\/discover\?q=Garden"/);
@@ -1573,14 +1573,14 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(airing, /id="airing-kind"/);
       assert.match(airing, /FX Senshi Kurumi-chan/);
       assert.match(airing, /★ 7\.8 · 3K members/);
-      assert.match(airing, /✓ In library/);
+      assert.match(airing, /In library · coverage unconfirmed/);
       assert.doesNotMatch(airing, /Psyren/);
       const season = await dump(`${base}/#/discover?year=2026&season=FALL`,
         join(dir, 'season'), 'season');
       assert.match(season, /Pale Cocoon/);
       assert.match(season, /The Garden of Words/);
       assert.match(season, /18\+/);
-      assert.match(season, /class="presence available">In library/);
+      assert.match(season, /class="presence unknown">In library · coverage unconfirmed/);
       const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
         join(dir, 'page-one'));
       assert.equal((pageOne.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,

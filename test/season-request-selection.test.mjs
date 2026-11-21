@@ -103,3 +103,17 @@ test('season review names each selected installment and partial completion', () 
     { title: 'Season Two', status: { state: 'partial' } },
   ]), 'Season One · request episodes not verified in Plex; Season Two · complete episodes not verified in Plex');
 });
+
+import {seasonSelectionScope} from '../src/web/public/season-request-selection.mjs';
+test('empty chooser explains how to continue and partial scope names skipped episode ranges',()=>{
+ assert.equal(seasonSelectionScope([]),'Select a season to continue.');
+ const detail={regularSeason:{total:28,verified:8},episodes:Array.from({length:28},(_,i)=>({type:'Episode',number:i+1,availability:i<8?'available':'unknown'}))};
+ assert.equal(seasonSelectionScope([{title:'Example',status:{state:'partial'},detail}]),'20 episodes to request. 8 already available episodes (1–8) will be skipped. Specials stay separate.');
+ const future=seasonSelectionScope([{title:'Future title',status:{state:'upcoming'},detail:{}}]);
+ assert.ok(!future.includes('available'));assert.match(future,/no released episodes/);
+});
+
+test('completed requests include undated regular episodes instead of reporting zero',()=>{
+ const detail={releaseState:'completed',regularSeason:{total:12,verified:4},regularSchedule:{total:12,aired:0,verifiedAired:0,upcoming:0,undated:12},episodes:[]};
+ assert.equal(seasonSelectionScope([{title:'Older title',status:{state:'partial'},detail}]),'8 episodes to request. 4 already available episodes will be skipped. Specials stay separate.');
+});

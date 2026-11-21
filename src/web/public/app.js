@@ -1,3 +1,4 @@
+import { catalogueAvailability } from './card-availability.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
@@ -14,7 +15,7 @@ import { titleAvailabilitySummary,
 import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
 import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs';
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
-  seasonSelectionSummary, seasonTriggerPresentation } from './season-request-selection.mjs';
+  seasonSelectionSummary, seasonSelectionScope, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
 import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
 import { hideChineseProduction } from './chinese-visibility.mjs';
@@ -60,7 +61,7 @@ let detailPollTimer = null;
 let trackingPrefsPromise = null;
 let trackingSaving = false;
 const genreSelections = { season: new Set(), airing: new Set() };
-const dropdownSelector = '#identity[open], .genre-picker[open]';
+const dropdownSelector = '#identity[open], #tracked-titles[open], .genre-picker[open]';
 document.querySelector('.skip-link')?.addEventListener('click', event => {
   event.preventDefault();
   byId('main-content').focus();
@@ -381,6 +382,7 @@ function renderRoute() {
     byId('search-results-section').hidden = page !== 'discover' || !searching;
     byId('library-search-section').hidden = page !== 'library' || !searching;
     byId('library-browse').hidden = page === 'library' && searching;
+    if(page==='library')byId('library-state').hidden=searching;
     if (page === 'library') byId('search-all-catalogue').href = searchRoute(route.query);
     else byId('search-verified-library').href = librarySearchRoute(route.query);
     if (route.query.length >= 2 &&
@@ -597,9 +599,7 @@ function showSession(data) {
   byId('request-scope').hidden = data.user.role !== 'admin';
   byId('requests-heading').textContent = data.user.role === 'admin'
     ? 'Requests' : 'My requests';
-  byId('requests-description').textContent = data.user.role === 'admin'
-    ? 'Follow every anime request. TV and movies stay in Seerr.'
-    : 'Follow your anime from request to ready to watch. TV and movies stay in Seerr.';
+  byId('requests-description').textContent = 'Follow your anime requests.';
   updateRequestScopeButtons();
   renderRoute();
 }
@@ -741,7 +741,7 @@ async function loadRequestView(view, append = false, silent = false) {
       row.dataset.requestId=String(item.id);
       row.dataset.recentPage = String(!append);
       row.append(posterImage(item));
-      const heading = element('div');
+      const heading = element('div',undefined,'request-heading');
       const targetCount = item.episodeIds.length;
       const requestedScope = item.kind === 'movie'
         ? targetCount === 1 ? 'Film requested' : `${targetCount} film parts requested`
@@ -887,8 +887,11 @@ function requestGroupRows(list, group, expandedGroups = new Set()) {
 }
 function renderRequestStatus(status, presentation) {
   status.className = `request-status status-${presentation.group}`;
-  status.replaceChildren(element('strong', presentation.stage, 'request-stage'),
-    element('span', presentation.detail, 'request-detail'));
+  let detail=presentation.detail,note=presentation.note;
+  if(presentation.stage==='Needs attention'&&note){detail=note;note='';}
+  if(presentation.stage==='Awaiting owner review'&&note){detail=note;note='';}
+  if(presentation.stage==='Downloading')detail=detail.replace(/^One release is [0-9.]+% downloaded\. /,'One release · ');
+  status.replaceChildren(element('strong', presentation.stage, 'request-stage'),element('span',detail,'request-detail'));
   if (Number.isFinite(presentation.progressPercent)) {
     const transfer = element('div', undefined, 'request-transfer-meter');
     const meter = element('div', undefined, 'request-transfer-progress');
@@ -905,7 +908,7 @@ function renderRequestStatus(status, presentation) {
       element('span', `${presentation.progressPercent}%`, 'request-transfer-percent'));
     status.append(transfer);
   }
-  if (presentation.note) status.append(element('span', presentation.note,
+  if (note&&note!==detail) status.append(element('span', note,
     'request-note'));
 }
 function requestItemPresentation(item) {
@@ -1089,9 +1092,10 @@ function discoveryCard(item, note, badge, available = false) {
   poster.addEventListener('load', () => frame.classList.add('has-poster'));
   frame.append(poster);
   const copy = element('span', undefined, 'poster-copy');
-  copy.append(titleLabel(item), element('small', note));
-  if (badge) copy.append(element('span', badge,
-    `badge ${available ? 'ready' : 'unknown'}`));
+  copy.append(titleLabel(item));if(note)copy.append(element('small',note));
+  const coverage=available?catalogueAvailability({state:'in_library',regularCoverage:item.regularCoverage??item.libraryPresence?.regularCoverage},item.releaseStatus):null;
+  if(badge){const label=element('span',coverage?.text??badge,`badge ${coverage?.state==='partial'?'partial':coverage?.state==='unknown'?'unknown':available?'ready':'unknown'}`);
+    if(coverage?.specialText)label.append(element('span',coverage.specialText,'special-coverage '+coverage.specialState));copy.append(label);}
   if (item.rating) {
     const members = new Intl.NumberFormat('en', { notation: 'compact',
       maximumFractionDigits: 1 }).format(item.rating.members);
@@ -1109,13 +1113,11 @@ function discoveryCard(item, note, badge, available = false) {
   state.searchItems.set(item.anidbId, entry);
   return card;
 }
-function publicPresenceBadge(presence) {
-  const available = presence?.state === 'in_library';
-  if (!available) return document.createDocumentFragment();
-  const count = presence?.verifiedEpisodeCount ?? 0;
-  return element('span',
-    'In library',
-    'presence available');
+function publicPresenceBadge(presence,item={}) {
+  const badge=catalogueAvailability(presence,item.releaseStatus);
+  if(!badge)return document.createDocumentFragment();
+  const label=element('span',badge.text,'presence '+badge.state);
+  if(badge.specialText)label.append(element('span',badge.specialText,'special-coverage '+badge.specialState));return label;
 }
 let libraryPageObserver = null;
 function stopLibraryPageObserver() {
@@ -1192,9 +1194,12 @@ async function loadLibrary(append = false, continuation = null) {
   const epoch = libraryResponses.invalidate();
   const userId = state.user?.id;
   const list = byId('library-list');
+  const notice=byId('library-state');
   if (!append) {
     list.className = 'poster-grid';
-    list.replaceChildren(element('p', 'Loading verified library titles…', 'muted'));
+    notice.textContent='Loading your library…';
+    list.querySelector('.library-page-marker')?.remove();
+    if(!list.querySelector('.poster-card'))list.replaceChildren();
     state.libraryAfter = null;
   }
   try {
@@ -1205,15 +1210,15 @@ async function loadLibrary(append = false, continuation = null) {
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (!append) list.replaceChildren();
     else continuation?.marker.remove();
-    state.libraryLoaded = true;
+    state.libraryLoaded = true;notice.replaceChildren();
     if (!append && page.items.length === 0) {
       list.append(element('p',
-        'No titles have a recent exact public Plex proof yet. This is not a claim that your library is empty.',
+        'Nothing is confirmed available here yet. Try searching the catalogue.',
         'empty-state'));
     }
     for (const item of page.items) {
       list.append(trackedCard(discoveryCard(item,
-        `${item.verifiedEpisodeCount} verified ${item.verifiedEpisodeCount === 1 ? 'item' : 'items'}`,
+        item.type||'',
         'In library', true), item));
     }
     state.libraryAfter = page.nextAfterAnidbId;
@@ -1222,9 +1227,10 @@ async function loadLibrary(append = false, continuation = null) {
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
-    if (!append) list.replaceChildren(element('p',
-      'Library verification is unavailable right now. No missing titles are assumed.',
-      'empty-state'));
+    if (!append) {
+      notice.replaceChildren(element('span', 'Your library could not be refreshed. '));
+      const retry=element('button','Retry','quiet');retry.type='button';retry.addEventListener('click',()=>loadLibrary());notice.append(retry);
+    }
     else continuation?.showError();
   }
 }
@@ -1373,7 +1379,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
       const copy = element('span', undefined, 'poster-copy');
       copy.append(titleLabel(item),
         element('small', item.type || 'Anime'),
-        publicPresenceBadge(item.libraryPresence));
+        publicPresenceBadge(item.libraryPresence,item));
       if (item.rating) {
         const members = new Intl.NumberFormat('en', { notation: 'compact',
           maximumFractionDigits: 1 }).format(item.rating.members);
@@ -1440,7 +1446,23 @@ byId('discover-filters-toggle')?.addEventListener('click', event => {
   if (parseConsumerRoute(location.hash).query?.length >= 2) location.hash = '#/discover';
   const expanded = byId('season-form').classList.toggle('filters-expanded');
   event.currentTarget.setAttribute('aria-expanded', String(expanded));
+  if(!expanded)for(const details of byId(event.currentTarget.id==='airing-filters-toggle'?'airing-form':'season-form').querySelectorAll('details[open]'))details.open=false;
 });
+byId('airing-filters-toggle').addEventListener('click', event => {
+  const expanded = byId('airing-form').classList.toggle('filters-expanded');
+  event.currentTarget.setAttribute('aria-expanded', String(expanded));
+});
+function renderAiringFilterChips() {
+  const active=byId('airing-active-filters');active.replaceChildren();
+  const {year,season,kind,tag}=airingFilters;
+  const labels=[year||null,season==='ALL'?null:season[0]+season.slice(1).toLowerCase(),kind==='all'?null:kind==='movies'?'Movies':'Series',...tag.split(',').filter(Boolean)].filter(Boolean);
+  for(const label of labels)active.append(element('span',String(label),'filter-chip'));
+  active.hidden=labels.length===0;
+  if(labels.length){const clear=element('button','Clear filters','text-link');clear.type='button';clear.addEventListener('click',()=>{
+    airingFilters={...airingFilters,year:0,season:'ALL',kind:'all',tag:''};
+    void loadCurrentAiring(sessionResponses.current(),airingResponses.invalidate(),state.user?.id);
+  });active.append(clear);}
+}
 let airingBrowseAfter = 0;
 async function loadCurrentAiring(session, epoch, userId, after = 0,
   continuation = null) {
@@ -1457,6 +1479,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   byId('airing-season').value = season;
   byId('airing-kind').value = kind;
   byId('airing-sort').value = sort;
+  renderAiringFilterChips();
   const params = new URLSearchParams({ year: String(year), season,
     status: 'ongoing', sort });
   if (kind !== 'all') params.set('kind', kind);
@@ -1500,7 +1523,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
       const available = item.libraryPresence?.state === 'in_library' && count > 0;
       if (state.airingPreferences?.mode === 'library' && !available) continue;
       const card = discoveryCard(item, item.type || 'Anime', available
-        ? `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`
+        ? 'In library'
         : null, available);
       list.append(trackedCard(card, item));
     }
@@ -1912,7 +1935,7 @@ byId('search-form').addEventListener('submit', async (event) => {
       const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
       copy.append(inLibrary && presence?.state !== 'in_library'
         ? element('span', 'Not found in Negev’s verified library', 'presence unknown')
-        : publicPresenceBadge(presence));
+        : publicPresenceBadge(presence,item));
       if (entry.adult === true) copy.append(
         element('span', '18+', 'badge partial adult-label'));
       button.append(tile, copy);
@@ -2080,6 +2103,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const titleBlock = element('div', undefined, 'detail-title-block');
   const trackDetail = makeTrackButton(item);
   trackDetail.classList.add('detail-track-action');
+  const trackingHelp=element('p','Tracking only changes your custom Airing list. Watching future episodes requests new downloads.','detail-tracking-help');trackingHelp.hidden=true;
+  trackDetail.title='Adds to or removes from your custom Airing list; does not start or stop downloads.';
   const detailActionRow = (...controls) => {
     // Preferences may finish loading before this asynchronously built row is
     // attached. Refresh its controls after mounting, without another API read.
@@ -2091,14 +2116,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       const existing = button.closest('.detail-action-row');
       if (existing && action.contains(existing)) {
         existing.querySelector('.track-toggle')?.remove();
-        existing.append(trackDetail);
+        existing.append(trackDetail,trackingHelp);
         return action;
       }
       button.replaceWith(row);
-      row.append(button, trackDetail);
+      row.append(button, trackDetail,trackingHelp);
       return action;
     }
-    row.append(...controls, trackDetail);
+    row.append(...controls, trackDetail,trackingHelp);
     return row;
   };
   titleBlock.append(titleLabel(item, { tag: 'h1', className: 'detail-title' }));
@@ -2295,6 +2320,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       state.detailHydrationQueued.delete(item.anidbId);
     }
     const pager = data.state === 'detail_pending' ? null : createEpisodePager(data);
+    trackingHelp.hidden=data.releaseState!=='airing';
     const notReleased = data.releaseState === 'upcoming';
     if (pager) {
       const sourceDetails = element('details', undefined, 'detail-meta detail-source');
@@ -2335,6 +2361,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           summary.append(element('span', 'Remaining availability unconfirmed', 'availability-note'));
         }
         summary.className = `presence ${headline.state}`;
+        const specials=pager.nextPage===null?pager.episodes.filter(episode=>episode.type==='Special'):null;
+        if(specials?.length){
+          const verified=specials.filter(episode=>episode.availability==='available').length;
+          summary.append(element('span',verified?`${verified}/${specials.length} Special${specials.length===1?'':'s'} available`:'Specials unconfirmed',
+            'special-coverage '+(verified===specials.length?'available':verified?'partial':'unknown')));
+        }
       };
       refreshAvailabilitySummary();
       panel.append(summary, evidence);
@@ -2890,13 +2922,14 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         onAuto:()=>{if(saving)return;releaseMode='auto_review';reviewing=true;submit.click();},
         onManual:()=>{if(saving)return;releaseMode='manual';reviewing=true;submit.click();}}):null;
       if(modeActions)submit.hidden=true;
+      const scopeHint=element('p','Select a season to continue.','request-scope-hint');scopeHint.setAttribute('role','status');
       const feedback = element('p', '', 'muted request-feedback');
       feedback.setAttribute('role', 'status');
       const view = element('a', 'View in My Requests →',
         'text-link request-receipt-link');
       view.href = '#/requests';
       view.hidden = true;
-      action.append(chooser, review, ...(modeActions?[modeActions.element]:[]), submit, feedback, view);
+      action.append(chooser, scopeHint, review, ...(modeActions?[modeActions.element]:[]), submit, feedback, view);
       const rows = new Map();
       let saving = false;
       let reviewing = false;
@@ -2904,6 +2937,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         row.input.checked && row.status?.selectable && !row.requested);
       const refresh = () => {
         const selected = selectedRows();
+        scopeHint.textContent=seasonSelectionScope(selected);
         closePopup.disabled=saving;
         const selectable = [...rows.values()].filter((row) =>
           row.status?.selectable && !row.requested);
@@ -2943,6 +2977,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         reviewSummary.textContent = seasonSelectionSummary(selected.map(row=>({...row,title:preferredDisplayTitle(row)})));
       };
       const updateRow = (row, detail) => {
+        row.detail=detail;
         if(detail?.state==='details' && (detail.originalTitle || detail.title)) {
           row.title=detail.originalTitle||detail.title;
           row.englishTitle=detail.englishTitle;
@@ -3040,6 +3075,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       syncSeasonRows = () => {
         for (const entry of family.items()) addRow(entry);
         syncSeasonLookup();
+        refresh();
       };
       syncSeasonRows();
       refreshRequestAction = () => {
