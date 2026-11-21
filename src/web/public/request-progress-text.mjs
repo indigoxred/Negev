@@ -139,3 +139,15 @@ export function requestPresentation(progress, kind,
   return { ...acquisition, group: attention ? 'attention' :
     watching ? 'watching' : 'active', ...measuredProgress };
 }
+
+// Request cards expose selection tools only while an actual choice is pending.
+export function requestNeedsReleaseChoice(item) {
+  if (item?.status === 'cancelled' ||
+      !['selecting', 'proposal'].includes(item?.releaseSelection?.phase)) return false;
+  const progress = item.progress;
+  if (progress?.oneTimeAcquisitionComplete === true ||
+      ['active', 'queued'].includes(progress?.transfer?.transferState)) return false;
+  return !(progress?.publicAvailability === 'verified_recently' &&
+    Number.isSafeInteger(progress.targetCount) && progress.targetCount > 0 &&
+    progress.publicVerifiedTargets === progress.targetCount);
+}

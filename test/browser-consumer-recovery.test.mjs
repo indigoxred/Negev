@@ -188,7 +188,7 @@ test('title and library controls recover from pending and failed reads without d
               'download_unverified', targetCount: 1,
               publicAvailability: proofReady ? 'verified_recently' : 'unverified',
               publicVerifiedTargets: proofReady ? 1 : 0,
-              ...(transferObservedMs === null ? {} : { transfer: {
+              ...(transferObservedMs === null || requestProposal ? {} : { transfer: {
                 progressBasisPoints: transferBasisPoints, etaSeconds: 120,
                 speedBytesPerSecond: 512, transferState: 'active',
                 observedMs: transferObservedMs } }) } }] : [],
@@ -530,6 +530,23 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
       assert.equal(await evaluate("getComputedStyle(document.querySelector('#request-list .request-transfer-fill')).animationName"), 'request-transfer-stripes');
+      const checkOwnerAlignment = async () => {
+        const geometry=await evaluate("(() => { const group=document.querySelector('#request-scope');const buttons=[...group.querySelectorAll('button')];const nodes=[group.querySelector('.toolbar-label'),...buttons];return {buttons:buttons.map(x=>({top:x.getBoundingClientRect().top,height:x.getBoundingClientRect().height})),textCentres:nodes.map(x=>{const range=document.createRange();range.selectNodeContents(x);const r=range.getBoundingClientRect();return r.top+r.height/2;})};})()");
+        assert.equal(geometry.buttons.length,2);
+        assert.ok(Math.abs(geometry.buttons[0].top-geometry.buttons[1].top)<0.5,'owner buttons share their top edge');
+        assert.deepEqual(geometry.buttons.map(x=>x.height),[36,36]);
+        assert.ok(Math.max(...geometry.textCentres)-Math.min(...geometry.textCentres)<2,'owner label and both button texts are centred');
+      };
+      for(const width of [1280,390]) {
+        await send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width===390});
+        await evaluate("document.querySelector('[data-request-scope=mine]').click()");
+        await checkOwnerAlignment();
+        await evaluate("document.querySelector('[data-request-scope=all]').click()");
+        await checkOwnerAlignment();
+      }
+      await send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+      await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='37.5'");
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-release-options')"),null,'download cards have no release-selection tools');
       assert.equal(await evaluate('innerWidth'),1280,'exercise the desktop overlap breakpoint');
       const controls = await evaluate("(() => { const row=document.querySelector('[data-request-id=\"7\"]'); const cancel=[...row.querySelectorAll('.request-actions button')].find(x=>x.textContent==='Cancel request'); const more=row.querySelector('.request-more'); if(!cancel)return {cancel:false}; const a=cancel.getBoundingClientRect(),b=more.getBoundingClientRect(); more.open=true;row.querySelector('.request-technical').open=true;window.__requestCard=row;return {cancel:true,overlap:a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top}; })()");
       assert.deepEqual(controls,{cancel:true,overlap:false},'admin cancellation and Details have separate hit areas');
@@ -556,9 +573,11 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-fill').style.width"),'62.5%');
       requestProposal=true;await evaluate("document.querySelector('#refresh-requests').click()");
       await until("document.querySelector('#request-list')?.textContent.includes('Release choice ready')");
+      assert.equal(await evaluate("document.querySelectorAll('[data-request-id=\"7\"] .request-release-options button').length"),2,'pending proposal retains Auto-Pick and Manual Pick');
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('registered option')"),false,'a request card must not call likely evidence registered');
       requestProposal=false;await evaluate("document.querySelector('#refresh-requests').click()");
       await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='62.5'");
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-release-options')"),null,'release tools disappear when selection is no longer pending');
       await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
         document.dispatchEvent(new Event('visibilitychange'))`);
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");

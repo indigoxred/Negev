@@ -80,3 +80,6 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 
 /* Multiple request actions need their own row above the disclosure. */
 @media(min-width:701px){.request-row:has(.request-actions>:nth-child(2))>.request-more{grid-row:2;align-self:start}}
+
+/* Keep the owner label and both selected/unselected buttons centred. */
+.request-scope{align-items:center}.request-scope>button{height:36px;box-sizing:border-box;align-self:center;margin:0}.request-scope>.toolbar-label{align-self:center}

@@ -4,7 +4,7 @@ import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager, observeCatalogueContinuation } from './search-pages.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
-import { requestPresentation } from './request-progress-text.mjs';
+import { requestPresentation, requestNeedsReleaseChoice } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch,
@@ -837,7 +837,8 @@ async function loadRequestView(view, append = false, silent = false) {
           'Cancellation is unavailable once release processing starts, even before a download begins.', 'muted'));
         details.append(cancellationInfo);
       }
-      if (state.releaseSearch) {
+      if (state.releaseSearch && requestNeedsReleaseChoice(item) &&
+          (state.user?.role === 'admin' || item.requesterId === state.user?.id)) {
         const tools=element('div',undefined,'release-search-actions');
         for(const [mode,label] of [['auto','Auto-Pick'],['manual','Manual Pick']]) {
           const search=element('button',label,'quiet');
@@ -988,7 +989,8 @@ async function refreshExpandedHistory() {
     for (const status of list.querySelectorAll('.request-status')) {
       const item = latest.get(status.negevRequest?.id);
       if (!item) continue;
-      if (status.negevRequest?.canCancel !== item.canCancel) {
+      if (status.negevRequest?.canCancel !== item.canCancel ||
+          requestNeedsReleaseChoice(status.negevRequest) !== requestNeedsReleaseChoice(item)) {
         void loadRequestView('history', false, true);
         return;
       }
