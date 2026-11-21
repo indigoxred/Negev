@@ -25,6 +25,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+    let monitoredTitle = false;let seasonResult=null;
     let previewPending=false;let previewExisting=false;let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
@@ -106,7 +107,7 @@ test('title and library controls recover from pending and failed reads without d
             description: 'The recovered catalogue summary.', tags: [] },
         recoveredDisplayReads === 1 ? 503 : 200);
       } else if (path === '/api/catalogue/3') {
-        json(response,{state:'details',anidbId:3,title:'Series example',kind:'series',restricted:false,page:1,total:1,nextPage:null,episodes:[{id:31,number:1,type:'Episode',title:'First episode',availability:'missing'}]});
+        json(response,{state:'details',anidbId:3,title:'Series example',kind:'series',restricted:false,page:1,total:1,nextPage:null,...(monitoredTitle?{futureEpisodesMonitored:true,activeWatchRequestId:123}:{}),episodes:[{id:31,number:1,type:'Episode',title:'First episode',availability:'missing'}]});
       } else if(path === '/api/catalogue/3/display') {
         json(response,{state:'display',anidbId:3,title:'Series example',type:'TV Series',description:'Series synopsis',tags:[]});
       } else if(path.endsWith('/related')) {json(response,{state:'related',items:[],nextPage:null});
@@ -122,7 +123,7 @@ test('title and library controls recover from pending and failed reads without d
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
         if (holdNextRequest) { holdNextRequest = false; heldRequestResponse = response; return; }
-        json(response,value.seasons?{items:[{anidbId:3,status:201,result:{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
+        json(response,value.seasons?{items:[{anidbId:3,status:201,result:seasonResult??{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
       } else if(path === '/api/requests/123/release-choice') {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:value.action==='auto'?'consumed':'selecting',revision:control.revision+1};}
         json(response,{state:'updated',control});
@@ -149,6 +150,10 @@ test('title and library controls recover from pending and failed reads without d
             : { state: 'unknown', verifiedEpisodeCount: 0 } }] });
       } else if (path === '/api/requests') {
         requestReads++;
+        if(url.searchParams.get('requestId')==='123'){
+          assert.equal(url.searchParams.get('view'),'all');
+          json(response,{items:[{id:123,anidbId:3,title:'Series example',kind:'series',episodeIds:[31],monitorFuture:true,watchClosed:false,progress:{state:'saved',targetCount:1,publicAvailability:'verified_recently',publicVerifiedTargets:1}}],nextBeforeId:null});return;
+        }
         if(url.searchParams.has('requestId')){
           json(response,{items:[{id:6,anidbId:2,title:'Older completed title',englishTitle:'Full English title',kind:'movie',episodeIds:[21],monitorFuture:false,watchClosed:false,
             progress:{state:'saved',targetCount:1,publicAvailability:'verified_recently',publicVerifiedTargets:1,oneTimeAcquisitionComplete:true}}],nextBeforeId:null});return;
@@ -548,6 +553,30 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-focus').hidden"),false);
       await evaluate("document.querySelector('#request-focus a').click()");
       await until("document.querySelector('#request-focus').hidden && document.querySelector('#request-list [data-request-id=\"7\"]')");
+      seasonResult={state:'pending',intentId:900};
+      await evaluate("location.hash = '#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open] input[type=checkbox]')");
+      await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      await until("document.querySelector('dialog[open] .request-feedback')?.textContent.includes('1 season requested')");
+      assert.equal(await evaluate("document.querySelector('dialog[open] .request-receipt-link').hidden"),false,
+        'preparation-only saves retain their generic Requests shortcut');
+      assert.equal(await evaluate("document.querySelector('dialog[open] .request-receipt-link').getAttribute('href')"),'#/requests');
+      await evaluate("document.querySelector('dialog[open] .request-receipt-link').click()");
+      await until("!document.querySelector('#view-requests').hidden");
+      seasonResult=null;
+      monitoredTitle = true;
+      await evaluate("location.hash = '#/title/3'");
+      await until("document.querySelector('.season-already-monitored')?.hidden === false");
+      assert.equal(await evaluate("document.querySelector('#detail .request-receipt-link:not([hidden])')?.getAttribute('href')"), '#/requests?requestId=123',
+        'a monitored title must link to its exact watch, not the empty Recent list');
+      await evaluate("document.querySelector('#detail .request-receipt-link:not([hidden])').click()");
+      await until("document.querySelector('#request-list [data-request-id=\"123\"]')?.textContent.includes('Series example')");
+      assert.equal(await evaluate("document.querySelector('#request-focus').hidden"), false);
+      await evaluate("document.querySelector('#request-focus a').click()");
+      await until("document.querySelector('#request-focus').hidden");
       holdWatchingRequests = true;
       await evaluate("location.hash = '#/library'");
       await until("!document.querySelector('#view-library').hidden");

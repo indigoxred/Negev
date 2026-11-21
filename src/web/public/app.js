@@ -2052,6 +2052,9 @@ function pendingTitleAction(item) {
       button.textContent = saved.reason === 'already_monitored'
         ? 'Future episodes already monitored' : 'Requested';
       status.textContent = savedRequestMessage(saved);
+      if (Number.isSafeInteger(saved.requestId) && saved.requestId > 0) {
+        viewRequest.href = requestRoute(saved.requestId);
+      }
       viewRequest.hidden = false;
       message(saved.reason === 'already_monitored'
         ? 'Future episodes are already monitored. View the existing request under My Requests.'
@@ -2263,7 +2266,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         if (data.activeWatchRequestId) {
           const existingRequest = element('a', 'View in My Requests →',
             'text-link request-receipt-link');
-          existingRequest.href = '#/requests';
+          existingRequest.href = requestRoute(data.activeWatchRequestId);
           panel.append(existingRequest);
         }
       } else {
@@ -2948,7 +2951,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           row.anidbId !== item.anidbId && row.status?.selectable &&
           !row.futureEpisodesMonitored && !row.requested);
         monitoredButton.hidden = !currentMonitored;
-        monitoredLink.hidden = !rows.get(item.anidbId)?.activeWatchRequestId;
+        const watchRequestId = rows.get(item.anidbId)?.activeWatchRequestId;
+        monitoredLink.hidden = !watchRequestId;
+        if (watchRequestId) monitoredLink.href = requestRoute(watchRequestId);
         availableButton.hidden = currentMonitored || !presentation.showAvailable;
         trigger.hidden = currentMonitored ? !otherRequestable && family.next() === null
           : !presentation.showTrigger;
@@ -3140,6 +3145,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         saving = true;
         refresh();
         const saved = [];
+        let savedRequestId = null;
         const releaseJobs = [];
         const failed = [];
         let alreadyMonitored = 0;
@@ -3157,6 +3163,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             if (!row) continue;
             const payload = itemResult.result ?? {};
             if (itemResult.status >= 200 && itemResult.status < 300) {
+              if (Number.isSafeInteger(payload.requestId) && payload.requestId > 0) {
+                savedRequestId ??= payload.requestId;
+              }
               requestKeys.saved({ userId: state.user.id, anidbId: row.anidbId });
               row.requested = true;
               if (payload.reason === 'already_monitored') {
@@ -3209,7 +3218,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             ? 'Anime requests for these titles are temporarily unavailable in Negev. Please try again later.'
             : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
             : 'Selected seasons are already available.';
-        view.hidden = saved.length === 0 && alreadyMonitored === 0;
+        view.hidden = savedRequestId === null && saved.length === 0;
+        view.href = savedRequestId !== null ? requestRoute(savedRequestId) : '#/requests';
         refresh();
         if (saved.length) loadRequests();
         if(isCurrentDetail()&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
@@ -3461,7 +3471,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           body:{anidbId:selectedInstallmentId,scope:selectedFilmId?'episodes':'installment',
             ...(selectedFilmId?{episodeIds:[selectedFilmId]}:{}),requestKey:requestKeys.pending(keyScope)},
           saved:result=>{requestKeys.saved(keyScope);requestSaved=true;reviewingRequest=false;requestReview.hidden=true;
-            button.textContent='Requested';button.disabled=true;requestStatus.textContent=savedRequestMessage(result);viewRequest.hidden=false;}}]);
+            button.textContent='Requested';button.disabled=true;requestStatus.textContent=savedRequestMessage(result);
+            if(Number.isSafeInteger(result.requestId)&&result.requestId>0)viewRequest.href=requestRoute(result.requestId);
+            viewRequest.hidden=false;}}]);
         return;
       }
       requestSaving = true;
@@ -3491,6 +3503,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         requestStatus.textContent = savedRequestMessage(saved);
         filmPopup?.close();
         if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle}],filmReleasePicker.value());}
+        if (Number.isSafeInteger(saved.requestId) && saved.requestId > 0) {
+          viewRequest.href = requestRoute(saved.requestId);
+        }
         viewRequest.hidden = false;
         message(saved.state === 'pending'
           ? 'Request saved. Follow it under My Requests.'
