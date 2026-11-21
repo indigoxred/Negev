@@ -187,3 +187,22 @@ const tick=()=>new Promise(r=>setTimeout(r,20));const until=async fn=>{for(let i
   assert.ok(result&&result!=='pending'&&!result.startsWith('ERROR'),result);assert.deepEqual(JSON.parse(result),{likelyGreen:true,noDetailsNeeded:true,verified:true,unknownGrey:true,mixedGrey:true,hiddenUntouched:true,serial:true,paced:true,readOnly:true,closedStops:true});
  }finally{socket?.close();if(child){child.kill();await closed;}rmSync(dir,{recursive:true,force:true});}
 });
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: Pick during inspection',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-pick-pending-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><pre id="result">pending</pre><script>${source}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ const tick=()=>new Promise(r=>setTimeout(r,20));
+ (async()=>{const outcomes=[];for(const state of ['success','failure','owned']){
+ let finish,start,busy=false,chosen=0,errors=[],selected=0;
+ const row=compactReleaseRow({candidate:{title:'[EMBER] Example (Batch) 1080p',eligible:true,size:1000,seeders:20},element,
+ inspect:()=>new Promise((resolve,reject)=>{finish=()=>state==='failure'?reject(Object.assign(Error('Temporary provider failure'),{reason:'torrent_preflight_unavailable'})):resolve({files:[{name:'01.mkv',size:1000,episodeIds:[1]}],episodeIds:[1],selectionStatus:state==='owned'?'already_available':'eligible'});}),
+ choose:async()=>{chosen++;return{requestId:42};},isCurrent:()=>true,isBusy:()=>busy,setBusy:v=>busy=v,onError:(e,opts)=>{errors.push(opts?.background===true?'background':'explicit');return e.message;},onSelected:()=>selected++,observeEvidence:(_el,inspect)=>start=inspect});
+ document.body.append(row);const pending=start();await tick();const button=row.querySelector('button');const enabled=!button.disabled;button.click();await tick();const acknowledged=button.textContent==='Checking…';finish();await pending;await tick();outcomes.push({state,enabled,acknowledged,chosen,selected,explicitError:errors.includes('explicit')});row.remove();
+ }document.querySelector('#result').textContent=JSON.stringify(outcomes);})().catch(e=>document.querySelector('#result').textContent='ERROR '+e.message);
+ </script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{state:'success',enabled:true,acknowledged:true,chosen:1,selected:1,explicitError:false},{state:'failure',enabled:true,acknowledged:true,chosen:0,selected:0,explicitError:true},{state:'owned',enabled:true,acknowledged:true,chosen:0,selected:0,explicitError:false}]);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

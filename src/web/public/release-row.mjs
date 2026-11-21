@@ -70,12 +70,12 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const metadata = () => element('p', `${c.indexer} · ${c.coverage} · ${c.languageHints}`, 'muted');
   body.append(metadata(), element('p', 'Expand to inspect file coverage and registration.', 'muted'));
   details.append(summary, body); entry.append(main, details);
-  let preview = null, task = null;
+  let preview = null, task = null, choosing = false;
   const canPick = () => c.eligible && !['already_available', 'owned_unverified'].includes(preview?.selectionStatus);
   const load = async (background = false) => {
     if (task) return task;
     task = (async () => {
-      badge.textContent = '…'; pick.disabled = true;
+      badge.textContent = '…'; if (!background) pick.disabled = true;
       try {
         preview = await inspect({ background });
         if (!isCurrent()) return false;
@@ -106,23 +106,23 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
           if (isBusy()) return;setBusy(true);retry.disabled = true;
           try { await load(); } finally { setBusy(false);retry.disabled = false; }
         });
-        body.replaceChildren(metadata(), element('p', onError(error, { background }), 'muted'));
+        body.replaceChildren(metadata(), element('p', onError(error, { background: background && !choosing }), 'muted'));
         if (!['release_search_expired','release_preview_expired'].includes(error.reason)) body.append(retry);
         task = null;return false;
-      } finally { pick.disabled = !canPick(); }
+      } finally { pick.disabled = choosing || !canPick(); }
     })();
     return task;
   };
   details.addEventListener('toggle', () => { if (details.open && !preview) void load(); });
   pick.addEventListener('click', async () => {
     if (isBusy()) return;
-    setBusy(true); pick.disabled = true; pick.textContent = 'Checking…';
+    choosing = true; setBusy(true); pick.disabled = true; pick.textContent = 'Checking…';
     try {
       if (!await load()) return;
       const selected = await choose();
       if (isCurrent()) onSelected(selected);
     } catch (error) { onError(error); }
-    finally { setBusy(false); pick.disabled = !canPick(); if (canPick()) pick.textContent = 'Pick'; }
+    finally { choosing = false; setBusy(false); pick.disabled = !canPick(); if (canPick()) pick.textContent = 'Pick'; }
   });
   observeEvidence(entry, () => isCurrent() ? load(true) : Promise.resolve(false));
   return entry;
