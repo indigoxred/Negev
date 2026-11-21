@@ -57,7 +57,7 @@ export function chooseReleaseProposal(selections) {
 // Candidate receipts are bounded and short-lived; the selected descriptor and
 // exact torrent hash are persisted in the request ledger before any worker wake.
 export function createReleaseSelection({requests,discoverCandidates,previewCandidate,
-  readPublicCoverage,loadDetail,wake=()=>{},now=Date.now}) {
+  readPublicCoverage,loadDetail,readGroupRegistry=async()=>null,wake=()=>{},now=Date.now}) {
   const receipts=new Map();
   const inFlight=new Map();
   const contexts=new Map();
@@ -124,6 +124,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const request=requests.getRequest(id);
     if(!request||request.status!=='held') return held('request_missing');
     if(!request.episodeIds.length) return {state:'candidates',requestId:id,items:[],waitingFor:'first_episode'};
+    const registryRead=Promise.resolve().then(()=>readGroupRegistry()).catch(()=>null);
     let result;
     try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,filters,...(query?{query}:{})});}
     catch {return held('release_search_unavailable');}
@@ -131,8 +132,12 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     remember(id,request,result.releaseState);
     const items=result.items.filter(c=>filters===null||matchesReleaseFilters(c,filters)).map(c=>filters===null?c:
       {...c,selectionPolicy:{allowUhd:true,allowEnglishDub:filters.audio==='english'}});
+    const registry=await registryRead;
+    const publicCandidate=c=>{const item=publicRelease(c);let groupRegistration=null;
+      try{groupRegistration=registry?.match(item.group)??null;}catch{/* Optional display evidence stays neutral. */}
+      return {...item,groupRegistration,token:cache(id,c)};};
     return {...result,...await context(id),
-      items:items.sort((a,b)=>compareReleases(a,b,{preferSeasonPack:request.kind==='series'&&result.releaseState==='completed'})).map(c=>({...publicRelease(c),token:cache(id,c)}))};
+      items:items.sort((a,b)=>compareReleases(a,b,{preferSeasonPack:request.kind==='series'&&result.releaseState==='completed'})).map(publicCandidate)};
   };
   const begin=(id,mode,revision)=>{
     if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');

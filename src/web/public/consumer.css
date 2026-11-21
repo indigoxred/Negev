@@ -114,7 +114,7 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 .release-entry p { margin:.4rem 0; }
 .release-entry button { margin:.3rem .5rem .3rem 0; }
 .registration-unknown { color:var(--muted,#a9afb9); }
-.registration-confirmed,.registration-likely,.release-anidb-match .release-name strong { color:#8ee7b6; }
+.registration-group,.registration-confirmed,.registration-likely,.release-anidb-match .release-name strong { color:#8ee7b6; }
 .release-mode { display:flex; align-items:center; gap:.7rem; margin:.7rem 0; }
 .release-search-dialog .release-mode-actions{display:flex;gap:.6rem;margin:.5rem 0 .8rem}
 .release-search-dialog .release-search-actions{display:flex;gap:.6rem;align-items:end;flex-wrap:wrap;margin:.5rem 0}

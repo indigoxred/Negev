@@ -10,19 +10,19 @@ async function fixture(run) {
   const requests=openRequestLedger(path.join(dir,'state.sqlite'));
   const saved=requests.submit({requesterId:1,requestKey:'test',releaseMode:'manual',nowMs:100,
     intent:{state:'ready',anidbId:42,kind:'series',monitorFuture:false,episodeIds:[1,2]}});
-  let clock=100,wakes=0,providerFailure=false,incomplete=false,available=[];const inspected=[];let inspectHook=async()=>null;
+  let clock=100,wakes=0,providerFailure=false,incomplete=false,available=[];const inspected=[];let inspectHook=async()=>null;let groupReader=async()=>null;
   const items=['WEB','BD'].map((source,i)=>({guid:`release-${i}`,indexerId:1,title:`[Group] Example batch ${source} 1080p`,
     size:1000,seeders:20,evidence:'unverified',proxyUrl:'https://private/?apikey=secret'}));
   const previewCandidate=async({requestId,candidate})=>{inspected.push(candidate.guid);const failure=await inspectHook();if(failure)return failure;return {state:'preflight',requestId,anidbId:42,
     torrentHash:(candidate.guid==='release-0'?'a':'b').repeat(40),episodeIds:[1,2],
     files:[{name:'a.mkv',size:500,episodeIds:[1]},{name:'b.mkv',size:500,episodeIds:[2]}],
     correspondence:{files:['a.mkv','b.mkv'].map(name=>({name,size:500,state:candidate.guid==='release-0'?'likely':'unknown'}))}};};
-  const make=()=>createReleaseSelection({requests,now:()=>clock,wake:()=>{wakes++;},previewCandidate,
+  const make=()=>createReleaseSelection({readGroupRegistry:()=>groupReader(),requests,now:()=>clock,wake:()=>{wakes++;},previewCandidate,
     discoverCandidates:async()=>providerFailure?{state:'held',reason:'release_search_unavailable'}:
       {state:'candidates',requestId:saved.requestId,anidbId:42,releaseState:'completed',items,searchIncomplete:incomplete},
     readPublicCoverage:async()=>({targetCount:2,verifiedTargets:available.length,availableEpisodeIds:available,uncertainEpisodeIds:[]})});
   try{await run({service:make(),requests,id:saved.requestId,advance:value=>{clock=value},
-    fail:()=>{providerFailure=true},wakes:()=>wakes,make,items,inspected,setInspectHook:fn=>inspectHook=fn,setIncomplete:()=>{incomplete=true},setAvailable:ids=>{available=ids}});}
+    fail:()=>{providerFailure=true},wakes:()=>wakes,make,items,inspected,setInspectHook:fn=>inspectHook=fn,setIncomplete:()=>{incomplete=true},setAvailable:ids=>{available=ids},setGroupReader:fn=>{groupReader=fn}});}
   finally{requests.close();await rm(dir,{recursive:true,force:true});}
 }
 test('manual search is read-only, has opaque receipts, and choosing pins the exact inspected torrent',()=>fixture(async({service,requests,id,wakes})=>{
@@ -89,4 +89,10 @@ test('simultaneous inspections share the pending lookup without saving a request
  const found=await x.service.search(x.id),token=found.items[0].token;
  const a=x.service.inspect(x.id,token),b=x.service.inspect(x.id,token);await Promise.resolve();release(null);
  assert.equal((await a).state,'preflight');assert.equal((await b).state,'preflight');assert.equal(x.inspected.length,1);assert.equal(x.wakes(),0);
+}));
+
+test('global group annotations are display-only and a provider failure leaves releases selectable',()=>fixture(async x=>{
+ let calls=0;x.setGroupReader(async()=>{calls++;return{match:name=>name==='Group'?{state:'listed',scope:'global',groupId:123,name:'Group'}:null}});
+ const found=await x.service.search(x.id);assert.equal(calls,1);assert.equal(found.items[0].groupRegistration.groupId,123);assert.equal(found.items[0].eligible,true);assert.equal(x.inspected.length,0);assert.equal(x.wakes(),0);
+ x.setGroupReader(async()=>{throw Error('unavailable')});const fallback=await x.service.search(x.id);assert.equal(fallback.state,'candidates');assert.equal(fallback.items[0].groupRegistration,null);assert.equal(fallback.items[0].eligible,true);
 }));
