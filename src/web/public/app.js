@@ -3218,8 +3218,8 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
             ? 'Anime requests for these titles are temporarily unavailable in Negev. Please try again later.'
             : failed.length ? `${failed.length} season${failed.length === 1 ? '' : 's'} could not be saved. Retry or open My Requests.`
             : 'Selected seasons are already available.';
-        view.hidden = savedRequestId === null;
-        if (savedRequestId !== null) view.href = requestRoute(savedRequestId);
+        view.hidden = savedRequestId === null && saved.length === 0;
+        view.href = savedRequestId !== null ? requestRoute(savedRequestId) : '#/requests';
         refresh();
         if (saved.length) loadRequests();
         if(isCurrentDetail()&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
