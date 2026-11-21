@@ -74,3 +74,6 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 .special-coverage{display:block;margin-top:2px;font-size:14px;line-height:1.45}.special-coverage.available{color:var(--success)}.special-coverage.partial{color:var(--warm)}.special-coverage.unknown{color:var(--muted)}
 @media(max-width:700px){.release-search-dialog{padding-inline:16px}.release-search-actions{gap:10px 8px}.release-search-actions label:first-child{flex:1.1 1 0}.release-search-actions label:nth-child(2){flex:1 1 0}.request-row .request-status{grid-row:2}.request-row .request-actions{grid-row:3}.request-row .request-more{grid-row:3;justify-self:end;align-self:center}.request-row .request-more[open]{grid-row:4;justify-self:stretch}.request-row:has(.request-actions>:nth-child(2)) .request-more{grid-row:4;justify-self:start}.request-row:has(.request-actions>:nth-child(2)) .request-more[open]{justify-self:stretch}.request-row>p{grid-column:1/-1;margin:0}}
 @media(max-width:700px){.release-search-dialog{padding-inline:12px}}
+
+/* Long torrent manifests remain readable inside the compact release picker. */
+.release-evidence-body{max-height:min(50vh,420px);overflow-y:auto;overscroll-behavior:contain}
