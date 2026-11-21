@@ -19,7 +19,7 @@ test('unknown and filename-only registration stay unknown; mixed packs are not c
  const p=selection('Example 1080p','previously_verified').preview;
  p.files.push({name:'b.mkv',size:100,episodeIds:[2]}); assert.notEqual(correspondenceLevel(p),'confirmed');
 });
-test('Auto offers a material source improvement but unattended defaults to the registered 1080p',()=>{
+test('Auto offers a material source improvement over a likely AniDB match without claiming exact proof',()=>{
  const registered=selection('[G] Example WEB 1080p','likely');
  const better=selection('[H] Example BD 1080p','unknown');
  const decision=chooseReleaseProposal([better,registered]);

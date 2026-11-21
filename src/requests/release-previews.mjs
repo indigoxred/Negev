@@ -58,16 +58,27 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     requests: adapter, now,
     wake: id => { if (!drafts.has(id)) wake(id); },
   });
+  const existingSubmission = (result, input) => {
+    if (result?.state !== 'held' || result.created !== false ||
+        !['awaiting_availability_evidence', 'already_monitored'].includes(result.reason) ||
+        !Number.isSafeInteger(result.requestId) || result.requestId < 1) return null;
+    const request = requests.getRequest(result.requestId);
+    if (!request || request.status === 'cancelled' ||
+        request.requesterId !== input.requesterId || request.anidbId !== input.anidbId) return null;
+    return { state: 'updated', requestId: request.id, created: false,
+      control: requests.getReleaseControl(request.id, now()) };
+  };
   const open = async input => {
     prune();
-    if (atCapacity(input.requesterId)) return held('release_preview_limit');
     const prepared = await prepare(input);
+    const existing = existingSubmission(prepared, input);
+    if (existing) return { state: 'existing', requestId: existing.requestId, created: false };
     if (prepared.state !== 'prepared') return prepared;
     prune();
     if (atCapacity(input.requesterId)) return held('release_preview_limit');
     const id = sequence--;
     const previewId = randomUUID();
-    const session = { id, input: { ...input }, expiresMs: now() + 600_000,
+    const session = { id, input: { ...input }, commandKey: prepared.submission.commandKey, expiresMs: now() + 600_000,
       control: { mode: 'manual', phase: 'selecting', revision: 1 },
       request: { ...prepared.submission.intent, id, requesterId: input.requesterId,
         status: 'held', watchClosed: false, preview: true } };
@@ -79,22 +90,38 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     const id = access(token, userId);
     if (!id) return held('release_preview_expired');
     const session = drafts.get(id);
-    if (session.committed) return session.committed;
+    if (session.committed) {
+      const saved = requests.getRequest(session.committed.requestId);
+      if (saved?.status === 'cancelled') return held('request_cancelled');
+      return existingSubmission({ state: 'held', reason: 'awaiting_availability_evidence',
+        requestId: session.committed.requestId, created: false }, session.input) ?? held('request_missing');
+    }
     if (session.pending) return session.pending;
     const before = session.control;
     const reject = result => { session.control = before; return result; };
     const run = async () => {
       const { action, revision } = body;
+      const commits = ['choose', 'auto', 'better', 'registered'].includes(action);
+      if (commits) {
+        // A parallel tab may have already saved this command or watch. Resolve
+        // that success before inspecting now-owned files or changing a draft.
+        const prepared = await prepare(session.input);
+        if (session.expiresMs <= now()) return reject(held('release_preview_expired'));
+        const existing = existingSubmission(prepared, session.input);
+        if (existing) return session.committed = existing;
+        if (prepared.state !== 'prepared') return reject(prepared);
+      }
       const result = action === 'begin' ? selection.begin(id, body.mode, revision) :
         action === 'inspect' ? await selection.inspect(id, body.token) :
         action === 'choose' ? await selection.choose(id, body.token, revision, body.preferFutureGroup ?? false) :
         action === 'auto' ? await selection.auto(id, revision) :
         action === 'preference' ? await selection.setPreference(id, body.group, revision, body.audio) :
         selection.decide(id, action, revision);
-      if (!['choose', 'auto', 'better', 'registered'].includes(action) ||
-          result?.state !== 'updated') return result;
+      if (!commits || result?.state !== 'updated') return result;
       if (session.expiresMs <= now()) return reject(held('release_preview_expired'));
       const prepared = await prepare(session.input);
+      const existing = existingSubmission(prepared, session.input);
+      if (existing) return session.committed = existing;
       if (prepared.state !== 'prepared') return reject(prepared);
       const control = session.control;
       const required = [...new Set([
@@ -109,6 +136,19 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       // owned coverage again immediately before the synchronous transaction.
       const coverage = await selectionOptions.readPublicCoverage({ ...session.request,
         episodeIds: prepared.submission.intent.episodeIds });
+      if (session.expiresMs <= now()) return reject(held('release_preview_expired'));
+      // Coverage may yield while a different tab commits the same command.
+      // Resolve durable identity before treating its new ownership as an error.
+      let duplicate = typeof session.commandKey === 'string' ? requests.findSubmission({
+        requesterId: userId, requestKey: session.input.requestKey, commandKey: session.commandKey }) : null;
+      if (!duplicate && session.input.scope === 'installment') {
+        const watch = requests.findActiveWatch?.({ requesterId: userId, anidbId: session.input.anidbId });
+        if (watch) duplicate = { state: 'held', reason: 'already_monitored', requestId: watch, created: false };
+      }
+      if (duplicate) {
+        const existing = existingSubmission(duplicate, session.input);
+        return existing ? session.committed = existing : reject(duplicate);
+      }
       const blocked = new Set([...(coverage.availableEpisodeIds ?? []),
         ...(coverage.uncertainEpisodeIds ?? [])]);
       if (required.some(id => blocked.has(id))) return reject(held('target_already_owned'));

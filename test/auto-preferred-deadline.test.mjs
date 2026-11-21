@@ -84,3 +84,10 @@ test('a fresh unsaved preview keeps its group preference through Auto-Pick commi
   assert.equal(requests.getReleaseControl(saved.requestId,start).preference.group,'SubsPlease');assert.equal(wakes,1);
  }finally{requests.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('repeated partial searches and restart do not extend the original fallback deadline',()=>fixture(async x=>{
+ x.lower();await x.auto();const initial=await x.worker()({requestId:x.id});assert.equal(initial.reason,'preferred_group_wait');assert.equal(initial.retryAtMs,start+7_200_000);
+ x.partial();for(const elapsed of [60_000,3_600_000,7_199_999]){x.setClock(start+elapsed);x.restart();const wait=await x.worker()({requestId:x.id});assert.equal(wait.reason,'preferred_group_wait');assert.equal(wait.retryAtMs,start+7_200_000);assert.equal(x.submitted.length,0);}
+ x.setClock(start+7_200_000);x.restart();assert.equal((await x.worker()({requestId:x.id})).state,'stopped_observed');assert.equal(x.submitted.length,1);
+ x.setClock(start+7_260_000);x.restart();await x.worker()({requestId:x.id});assert.equal(x.submitted.length,1);
+}));

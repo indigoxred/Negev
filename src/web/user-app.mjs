@@ -938,6 +938,14 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
             reason: 'idempotency_key_conflict' });
         }
         if (pending.state === 'resolved') {
+          if (preview) {
+            const saved = Number.isSafeInteger(pending.normalRequestId) ? readRequest?.(pending.normalRequestId) : null;
+            if (!saved || saved.requesterId !== requester.id || saved.anidbId !== body.anidbId) {
+              return reply.code(409).send({state:'held',reason:'request_missing'});
+            }
+            if (saved.status === 'cancelled') return reply.code(409).send({state:'held',reason:'request_cancelled'});
+            return reply.code(202).send({state:'existing',requestId:saved.id,created:false});
+          }
           return reply.code(202).send({ state: 'held',
             requestId: pending.normalRequestId });
         }
@@ -987,7 +995,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if(preview) {
       if(!releasePreviews)return reply.code(503).send({error:'Release preview unavailable'});
       const opened=await releasePreviews.open({...body,requesterId:requester.id});
-      return opened.state==='preview'?opened:reply.code(409).send(opened);
+      return ['preview','existing'].includes(opened.state)?opened:reply.code(409).send(opened);
     }
     const result = await submitRequest({ ...body, requesterId: requester.id });
     if (result.state === 'busy') return reply.code(503).send({ error: 'Catalogue busy; retry shortly' });

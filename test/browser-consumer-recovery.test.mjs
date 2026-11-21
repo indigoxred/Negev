@@ -25,7 +25,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
-    let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
+    let previewPending=false;let previewExisting=false;let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
     let titleReads = 0;
@@ -112,7 +112,7 @@ test('title and library controls recover from pending and failed reads without d
       } else if(path.endsWith('/related')) {json(response,{state:'related',items:[],nextPage:null});
       } else if(path === '/api/release-previews') {
         previewOpens++;let body='';for await(const chunk of request)body+=chunk;
-        json(response,{state:'preview',previewId:'preview-'+previewOpens});
+        json(response,previewPending?{state:'pending',intentId:900,created:false}:previewExisting?{state:'existing',requestId:123,created:false}:{state:'preview',previewId:'preview-'+previewOpens});
       } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/release-choice')) {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1};}
         json(response,{state:'updated',control,context:{confirmedAiring:true}});
@@ -352,6 +352,30 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('#view-requests').hidden");
       assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
         'the body-mounted release picker also closes on navigation');
+      previewExisting=true;
+      await evaluate("location.hash='#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open] input[type=checkbox]')");
+      await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
+      await until("document.querySelector('dialog[open]')?.textContent.includes('Request #123 already submitted')");
+      assert.equal(await evaluate("document.querySelector('dialog[open] a[href=\"#/requests?requestId=123\"]')?.textContent"),'View request');
+      assert.equal(await evaluate("document.querySelector('dialog[open] .release-mode-actions').hidden"),true);
+      assert.deepEqual(submittedModes,[],'existing preview success must not resubmit or begin another acquisition');
+      assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null,'existing success finishes the pending command key');
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
+      previewExisting=false;previewPending=true;
+      await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
+      await evaluate("location.hash='#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open] input[type=checkbox]')");
+      await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
+      await until("!document.querySelector('dialog[open]')");
+      assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null);
+      assert.deepEqual(submittedModes,[],'pending preparation does not open an invalid preview or submit again');previewPending=false;
       await evaluate("location.hash='#/title/1'");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
