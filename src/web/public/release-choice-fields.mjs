@@ -3,8 +3,23 @@
 export const DEFAULT_RELEASE_FILTERS = Object.freeze({ quality: 'bd1080', audio: 'japanese' });
 export function validReleaseFilters(value) {
   return value && ['bd1080','1080','720','bd','all'].includes(value.quality) &&
-    ['japanese','japanese_dual','dual','english'].includes(value.audio);
+    ['japanese','japanese_dual','dual','english'].includes(value.audio) &&
+    (value.packsOnly === undefined || typeof value.packsOnly === 'boolean');
 }
+// Advertised title coverage is separate from metainfo-checked episode coverage.
+export function releaseCoverageHint(title = '') {
+  title = typeof title === 'string' ? title.replaceAll('_',' ') : '';
+  const ranges=[...title.matchAll(/(?:^|[ ._(-])(?:S\d{1,2})?E?(\d{1,4})(?:v\d+)?\s*[-–]\s*(?:S\d{1,2})?E?(\d{1,4})(?:v\d+)?(?=$|[ ._\[\]()])/gi)];
+  if(ranges.some(m=>!/\bSeason\s*$/i.test(title.slice(0,m.index))&&Number(m[1])>0&&Number(m[2])>Number(m[1])&&Number(m[2])<=9999&&
+    !(Number(m[1])>=1900&&Number(m[2])<=2100)))return {kind:'advertised_pack'};
+  const coordinate=/(?:^|[ ._-])S\d{1,2}[ ._-]*E(\d{1,4})(?:v\d+)?(?=$|[ ._\[\]()])/i.exec(title)?.[1]??
+    /(?:^|[ ._-])E(?:pisode[ ._-]*)?(\d{1,4})(?:v\d+)?(?=$|[ ._\[\]()])/i.exec(title)?.[1]??
+    /\s[-–]\s(\d{1,4})(?:v\d+)?(?=$|[ ._\[\]()])/i.exec(title)?.[1];
+  if(coordinate&&Number(coordinate)>0)return {kind:'single_episode',episodeNumber:Number(coordinate)};
+  return /\b(?:complete(?:[ ._-]*season)?|season[ ._-]*\d{1,2}|batch|s\d{1,2})\b/i.test(title)
+    ? {kind:'advertised_pack'} : {kind:'unknown'};
+}
+
 export function releaseFacts(title = '') {
   const source = /\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title) ? 'BD' :
     /\bDVD(?:rip)?\b/i.test(title) ? 'DVD' : /\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title) ? 'WEB' : null;

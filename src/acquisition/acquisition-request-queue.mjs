@@ -172,7 +172,10 @@ export function openAcquisitionRequestQueue(dbPath,
   // Remember the revision at claim time so a choice saved during an active
   // search is not swallowed by that search's eventual empty result.
   const newChoice = `c.reason IN ('no_safe_release','no_release_candidates') AND
-    json_extract(r.release_control,'$.phase')='chosen' AND
+    (json_extract(r.release_control,'$.phase')='chosen' OR
+      (json_extract(r.release_control,'$.mode')='auto' AND
+       json_extract(r.release_control,'$.phase')='consumed' AND
+       json_extract(r.release_control,'$.selection') IS NULL)) AND
     json_extract(r.release_control,'$.revision')>c.checked_release_revision`;
   const nextSql = `SELECT r.id,r.anidb_id AS anidbId,
       CASE WHEN ${newChoice} THEN 0 ELSE COALESCE(c.candidate_offset,0) END AS candidateOffset,

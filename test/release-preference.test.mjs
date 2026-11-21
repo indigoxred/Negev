@@ -52,10 +52,10 @@ test('prefers healthy seeded and trusted Nyaa results within a quality tier', ()
   assert.equal(ordered[2].seeders, 1);
 });
 
-test('a healthy 720p release outranks a barely seeded BD 1080p release', () => {
+test('a seeded BD1080p stays ahead of720p despite different peer counts', () => {
   const ordered = [item('Show BD 1080p', 1),
     item('Show WEB 720p', 18)].sort(compareReleases);
-  assert.equal(ordered[0].title, 'Show WEB 720p');
+  assert.equal(ordered[0].title, 'Show BD 1080p');
 });
 
 test('a strong 1080p or 720p release outranks a more seeded 480p fallback', () => {
@@ -110,4 +110,22 @@ test('a spaced episode range remains a pack hint, not a single episode', () => {
   assert.equal(hasSeasonPackHint(pack), true);
   assert.equal(hasSingleEpisodeHint(pack), false);
   assert.equal(hasSingleEpisodeHint(item('[Group] Example - 01 (1080p)')), true);
+});
+
+test('resolution does not drop at the two-versus-three-seeder boundary',()=>{
+ for(const high of [item('Show WEB 1080p',2),item('Show BD 1080p',1)]) {
+  assert.equal([item('Show WEB 480p',300),item('Show WEB 720p',30),high].sort(compareReleases)[0],high);
+ }
+ assert.equal(assessRelease(item('Old Show DVD 480p',1)).eligible,true);
+});
+
+test('season-labelled single episodes are not packs, while multi-episode ranges remain pack hints',()=>{
+ for(const title of ['Show Season 2 S02E07 1080p','Show Season 2 - 07 [BD 1080p]','Show S02 E07 1080p']){
+  assert.equal(hasSeasonPackHint(item(title)),false,title);
+  assert.equal(hasSingleEpisodeHint(item(title)),true,title);
+ }
+ for(const title of ['Show S02E01-E12 1080p','Show 13-24 Complete Batch BD 1080p']){
+  assert.equal(hasSeasonPackHint(item(title)),true,title);
+  assert.equal(hasSingleEpisodeHint(item(title)),false,title);
+ }
 });

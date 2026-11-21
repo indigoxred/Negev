@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { assessRelease, compareReleases, hasSeasonPackHint } from './release-preference.mjs';
-import { releaseFacts, matchesReleaseFilters, validReleaseFilters, DEFAULT_RELEASE_FILTERS } from '../web/public/release-choice-fields.mjs';
+import { assessRelease, compareReleases } from './release-preference.mjs';
+import { releaseFacts, releaseCoverageHint, matchesReleaseFilters, validReleaseFilters, DEFAULT_RELEASE_FILTERS } from '../web/public/release-choice-fields.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { validPreferredGroup } from './preferred-release.mjs';
 
@@ -8,18 +8,14 @@ const held=reason=>({state:'held',reason});
 export function publicRelease(c) {
   const title=c.title;
   const facts=releaseFacts(title);
-  const range=/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E|E)?\d{1,3}\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
-  const coordinate=/\bS\d{1,2}E(\d{1,3})(?:v\d+)?\b/i.exec(title)?.[1]??
-    /\s[-–]\s(\d{1,3})(?:v\d+)?(?=\s|$|[.\[(])/i.exec(title)?.[1];
-  const coverage=!range&&coordinate?`Episode ${Number(coordinate)} advertised; inspect file coverage`:
-    hasSeasonPackHint(c)||range?'Season pack advertised; inspect file coverage':'Inspect file coverage';
-  const resolution=/\b1080p?\b|1920x1080/i.test(title)?1080:
-    /\b720p?\b|1280x720/i.test(title)?720:/\b(?:480|576)p?\b/i.test(title)?480:null;
+  const hint=releaseCoverageHint(title);
+  const coverage=hint.kind==='single_episode'?`Episode ${hint.episodeNumber} advertised; inspect file coverage`:
+    hint.kind==='advertised_pack'?'Season pack advertised; inspect file coverage':'Coverage unknown; inspect files';
   return {guid:c.guid,indexerId:c.indexerId,title,size:c.size,seeders:c.seeders??null,
     evidence:'unverified',group:facts.group??'Not advertised',
     source:/\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title)?'Blu-ray':
       /\bDVD(?:rip)?\b/i.test(title)?'DVD':/\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title)?'WEB':'Not advertised',
-    resolution:facts.resolution,coverage,audio:facts.audio,audioLabel:facts.audioLabel,
+    resolution:facts.resolution,coverage,coverageKind:hint.kind,audio:facts.audio,audioLabel:facts.audioLabel,
     qualityLabel:[facts.source,facts.resolution?`${facts.resolution}p`:null].filter(Boolean).join(' ')||'Not specified',
     indexer:typeof c.indexer==='string'?c.indexer.slice(0,120):`Indexer ${c.indexerId}`,
     languageHints:/dual[ ._-]?audio|multi[ ._-]?audio|\bdual\b/i.test(title)?'Dual audio advertised; subtitles unverified':
@@ -68,7 +64,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
   const snapshot=id=>requests.getReleaseControl(id,now());
   const save=(id,revision,next)=>requests.updateReleaseControl(id,revision,next,now());
   const remember=(id,request,releaseState)=>{
-    contexts.set(id,{confirmedAiring:request.kind==='series'&&request.monitorFuture&&!request.watchClosed&&releaseState==='airing',until:now()+300_000});
+    contexts.set(id,{completedSeries:request.kind==='series'&&releaseState==='completed',confirmedAiring:request.kind==='series'&&request.monitorFuture&&!request.watchClosed&&releaseState==='airing',until:now()+300_000});
     while(contexts.size>100)contexts.delete(contexts.keys().next().value);
   };
   const context=async id=>{
@@ -79,7 +75,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       catch{/* Preference controls stay hidden until metadata is known. */}
       remember(id,request,state);saved=contexts.get(id);
     }
-    return {confirmedAiring:saved.confirmedAiring,preferredGroup:snapshot(id).preference?.group??null};
+    return {completedSeries:saved.completedSeries,confirmedAiring:saved.confirmedAiring,preferredWait:request.preview?null:requests.getPreferredWait?.(id,now())??null,preferredGroup:snapshot(id).preference?.group??null};
   };
   const makePreference=(id,group,audio)=>{
     if(!validPreferredGroup(group))return null;
@@ -106,7 +102,11 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
         const coverage=knownCoverage??await readPublicCoverage(requests.getRequest(id));
         const available=new Set(coverage.availableEpisodeIds??[]);
         const owned=new Set(coverage.uncertainEpisodeIds??[]);
-        found.preview={...found.preview,selectionStatus:found.preview.episodeIds.every(x=>available.has(x))?'already_available':
+        const availableIds=new Set([...(coverage.availableEpisodeIds??[]),...(coverage.uncertainEpisodeIds??[])]);
+        const wanted=requests.getRequest(id).episodeIds.filter(id=>!availableIds.has(id));
+        const covered=wanted.filter(id=>found.preview.episodeIds.includes(id));
+        found.preview={...found.preview,coverage:{coveredEpisodeCount:covered.length,requestedEpisodeCount:wanted.length,
+          completeRequested:wanted.length>0&&covered.length===wanted.length},selectionStatus:found.preview.episodeIds.every(x=>available.has(x))?'already_available':
           found.preview.episodeIds.some(x=>owned.has(x))?'owned_unverified':'eligible'};
       } catch {found.preview={...found.preview,selectionStatus:'unchecked'};}
     }
@@ -125,7 +125,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const items=result.items.filter(c=>filters===null||matchesReleaseFilters(c,filters)).map(c=>filters===null?c:
       {...c,selectionPolicy:{allowUhd:true,allowEnglishDub:filters.audio==='english'}});
     return {...result,...await context(id),
-      items:items.sort(compareReleases).map(c=>({...publicRelease(c),token:cache(id,c)}))};
+      items:items.sort((a,b)=>compareReleases(a,b,{preferSeasonPack:request.kind==='series'&&result.releaseState==='completed'})).map(c=>({...publicRelease(c),token:cache(id,c)}))};
   };
   const begin=(id,mode,revision)=>{
     if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');
@@ -159,9 +159,16 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     try {
       const current=snapshot(id);
       if(current.revision!==revision || current.mode!=='auto'||current.phase!=='selecting') return held('stale_release_selection');
+      const request=requests.getRequest(id);
+      if(current.preference&&request.kind==='series'&&request.monitorFuture&&!request.watchClosed){
+        // The ordinary worker owns the persisted per-episode group deadline.
+        // Pinning an interactive alternative here would bypass that policy.
+        const updated=save(id,revision,{mode:'auto',phase:'consumed'});
+        if(updated.state==='updated')wake(id);
+        return updated;
+      }
       const found=await search(id,undefined,0,null);
       if(found.state!=='candidates') return found;
-      const request=requests.getRequest(id);
       const coverage=await readPublicCoverage(request);
       const available=new Set([...(coverage.availableEpisodeIds??[]),...(coverage.uncertainEpisodeIds??[])]);
       const preferPack=found.releaseState==='completed'&&request.kind==='series'&&request.episodeIds.filter(x=>!available.has(x)).length>1;

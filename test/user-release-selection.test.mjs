@@ -52,3 +52,11 @@ test('release filters and future preferences validate input and retain ownership
   assert.equal(calls.length,0);
   assert.equal((await post(1)).statusCode,200);assert.deepEqual(calls,[[1,'SubsPlease',1,'japanese']]);
 }));
+
+test('the public release route validates and forwards the optional pack checkbox',()=>fixture(async({app,headers,selection})=>{
+ const seen=[];selection.search=async(...args)=>{seen.push(args);return{state:'candidates',items:[]};};
+ for(const value of ['true','false'])assert.equal((await app.inject({url:'/api/requests/1/releases?packsOnly='+value,headers})).statusCode,200);
+ assert.deepEqual(seen.map(args=>args[3].packsOnly),[true,false]);
+ assert.equal((await app.inject({url:'/api/requests/1/releases?packsOnly=yes',headers})).statusCode,400);
+ assert.equal(seen.length,2);
+}));

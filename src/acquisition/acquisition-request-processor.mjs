@@ -1,7 +1,7 @@
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
-import { assessRelease, compareReleases, compareReleaseSuitability, hasSeasonPackHint,
+import { assessRelease, compareReleases, compareReleaseSuitability, compareReleaseRecognitionTier, hasSeasonPackHint,
   hasSingleEpisodeHint } from './release-preference.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
@@ -46,9 +46,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   return async ({ requestId, pass = 1, candidateOffset = 0,
     candidateFingerprint = null, scanStartedMs = null } = {}) => {
     const strongerRequiredTier=(a,b)=>preferRegisteredCorrespondence
-      ? (assessRelease(a).healthyPeers&&!assessRelease(b).healthyPeers ||
-        assessRelease(a).healthyPeers===assessRelease(b).healthyPeers&&
-        (publicRelease(a).resolution??0)>(publicRelease(b).resolution??0))
+      ? compareReleaseRecognitionTier(a,b)<0
       : compareReleaseSuitability(a,b)<0;
     if (!validId(requestId) || !validId(pass) ||
         (scanStartedMs !== null &&
@@ -234,18 +232,18 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // A saved v1 cursor may have consumed a strong release during a transient
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
-      [preferSeasonPack ? 'quality-policy-season-pack-v2' :
-        requireReleasePolicy ? 'quality-policy-v3' :
+      [preferSeasonPack ? 'quality-policy-season-pack-v3' :
+        requireReleasePolicy ? 'quality-policy-v4' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const fallbackFingerprint = preferSeasonPack ? createHash('sha256')
-      .update(JSON.stringify(['quality-policy-episode-fallback-v2',
+      .update(JSON.stringify(['quality-policy-episode-fallback-v3',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex') : null;
     const uncertainPackFingerprint = preferSeasonPack && preferShokoPreview ?
       createHash('sha256').update(JSON.stringify(
-        ['quality-policy-uncertain-pack-v2',
+        ['quality-policy-uncertain-pack-v3',
           ...[...request.episodeIds].sort((a, b) => a - b)]))
         .digest('hex') : null;
     const saved = typeof candidateFingerprint === 'string' &&
@@ -480,7 +478,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
       nextCandidateFingerprint: cursor };
     // A failed alias/indexer query is not evidence that only a lower-quality
     // fallback exists. Retry the complete bounded search before downgrading.
-    if (found.searchIncomplete === true &&
+    const exactExpiredFallback=expiredFallback&&
+      selected.candidate.guid===expiredFallback.candidate.guid&&
+      selected.candidate.indexerId===expiredFallback.candidate.indexerId&&
+      selected.preview.torrentHash===expiredFallback.preview.torrentHash&&
+      sameReleaseFiles(selected.preview.files,expiredFallback.preview.files);
+    if (found.searchIncomplete === true && !exactExpiredFallback &&
         (publicRelease(selected.candidate).resolution??0) < 1080) {
       return { ...held('release_search_incomplete'),
         nextCandidateOffset: 0 };

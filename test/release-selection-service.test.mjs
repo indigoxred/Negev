@@ -68,3 +68,9 @@ test('manual inspection and selection cannot re-request exact already available 
  const preview=await service.inspect(id,result.items[0].token);assert.equal(preview.selectionStatus,'already_available');
  assert.equal((await service.choose(id,result.items[0].token,1)).reason,'target_already_available');assert.equal(wakes(),0);
 }));
+
+test('inspection separates advertised packs from checked requested-episode coverage',()=>fixture(async({service,id})=>{
+ const result=await service.search(id);assert.equal(result.items[0].coverageKind,'advertised_pack');
+ const preview=await service.inspect(id,result.items[0].token);
+ assert.deepEqual(preview.coverage,{coveredEpisodeCount:2,requestedEpisodeCount:2,completeRequested:true});
+}));

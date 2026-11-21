@@ -1,22 +1,9 @@
-import { releaseLanguageSuitability } from '../web/public/release-choice-fields.mjs';
+import { releaseLanguageSuitability, releaseCoverageHint } from '../web/public/release-choice-fields.mjs';
 // Search titles and tracker counts are hints for selection. Missing stream
 // tags do not disprove language suitability; Shoko identifies imported files.
 const has = (title, expression) => expression.test(title);
-export const hasSeasonPackHint = (candidate) => {
-  const title = typeof candidate?.title === 'string' ? candidate.title : '';
-  return /\b(?:complete[ ._-]*season|season[ ._-]*\d{1,2}|batch|s\d{1,2})\b|\b0?1\s*[-–]\s*(?:1[0-9]|[2-9]\d?)\b/i.test(title);
-};
-
-// An explicit single-episode coordinate cannot cover a completed season.
-// Keep title-only and range-labelled releases eligible for metainfo review:
-// some older packs do not advertise "batch" or "season" in their title.
-export const hasSingleEpisodeHint = (candidate) => {
-  const title = typeof candidate?.title === 'string' ? candidate.title : '';
-  if (hasSeasonPackHint(candidate)) return false;
-  if (/\bS\d{1,2}E\d{1,3}\s*[-–]\s*(?:S\d{1,2}E)?\d{1,3}\b/i.test(title)) return false;
-  return /(?:^|[ ._-])S\d{1,2}E\d{1,3}(?:v\d+)?(?=$|[ ._\-[\(])/i.test(title) ||
-    /\s[-–]\s0*[1-9]\d{0,2}(?:v\d+)?(?=\s|$|[.\[(])/i.test(title);
-};
+export const hasSeasonPackHint = candidate => releaseCoverageHint(candidate?.title).kind === 'advertised_pack';
+export const hasSingleEpisodeHint = candidate => releaseCoverageHint(candidate?.title).kind === 'single_episode';
 
 export const hasTargetEpisodeHint = (candidate, number) => {
   if (!Number.isSafeInteger(number) || number < 1 || number > 9999) return false;
@@ -56,7 +43,7 @@ export function assessRelease(candidate) {
     reason: seeders <= 0 ? 'no_reported_seeders' :
       !language.eligible ? language.reason :
         fourK && !allowUhd ? 'outside_quality_profile' : null,
-    quality, seeders, healthyPeers: seeders >= 3,
+    quality, resolution, seeders, healthyPeers: seeders >= 3,
     trusted: candidate?.trusted === true,
     subtitleHint, dualAudio, trackVerified: false,
   };
@@ -68,18 +55,26 @@ export function compareReleaseSuitability(left, right) {
   const a = assessRelease(left);
   const b = assessRelease(right);
   if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
-  if (a.healthyPeers !== b.healthyPeers) {
-    return Number(b.healthyPeers) - Number(a.healthyPeers);
-  }
-  return b.quality - a.quality;
+  if (a.quality !== b.quality) return b.quality - a.quality;
+  return Number(b.healthyPeers) - Number(a.healthyPeers);
+}
+
+// Recognition and preferred-group ties cannot lower the resolution merely
+// because an indexer reports three peers instead of two. Source differences
+// remain eligible for the explicit better-release comparison.
+export function compareReleaseRecognitionTier(left, right) {
+  const a = assessRelease(left), b = assessRelease(right);
+  if (a.eligible !== b.eligible) return Number(b.eligible)-Number(a.eligible);
+  return b.resolution-a.resolution || Number(b.healthyPeers)-Number(a.healthyPeers);
 }
 
 export function compareReleases(left, right, { preferSeasonPack = false } = {}) {
   const a = assessRelease(left);
   const b = assessRelease(right);
   if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
-  if (preferSeasonPack && hasSeasonPackHint(left) !== hasSeasonPackHint(right)) {
-    return Number(hasSeasonPackHint(right)) - Number(hasSeasonPackHint(left));
+  if (preferSeasonPack) {
+    const rank=c=>hasSeasonPackHint(c)?0:hasSingleEpisodeHint(c)?2:1;
+    if(rank(left)!==rank(right))return rank(left)-rank(right);
   }
   if (left.targetedEpisode !== right.targetedEpisode && !preferSeasonPack) {
     return Number(right.targetedEpisode === true) -

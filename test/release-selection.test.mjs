@@ -41,3 +41,8 @@ test('different coverage does not produce a misleading better-release comparison
  const a=selection('Example WEB 1080p','likely');const b=selection('Example BD 1080p','unknown');
  b.preview.episodeIds=[2];assert.equal(chooseReleaseProposal([a,b]).better,undefined);
 });
+
+test('AniDB correspondence cannot demote a seeded1080p candidate across a peer threshold',()=>{
+ const high=selection('Show WEB 1080p','unknown',2),low=selection('Show WEB 480p','likely',3);
+ assert.equal(chooseReleaseProposal([low,high]).selection,high);
+});

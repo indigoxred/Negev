@@ -35,7 +35,9 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       const session = drafts.get(id);
       if (!session) return requests.updateReleaseControl(id, revision, next, time);
       if (session.control.revision !== revision) return held('stale_release_selection');
-      session.control = { ...next, revision: revision + 1 };
+      session.control = { ...next,
+        ...(next.preference===undefined&&session.control.preference!==undefined?{preference:session.control.preference}:{}),
+        revision: revision + 1 };
       return { state: 'updated', control: session.control };
     },
     updateReleasePreference(id, revision, preference, time) {
