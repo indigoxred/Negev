@@ -23,7 +23,7 @@ test('loads exact AniDB episode IDs including missing and unaired entries', asyn
   assert.equal(calls[0].init.redirect, 'manual');
   assert.equal(calls[1].init.redirect, 'manual');
   assert.deepEqual(result, {
-    state: 'details', anidbId: 1234, title: 'Example Anime', kind: 'series',
+    state: 'details', anidbId: 1234, title: 'Example Anime', kind: 'series', format: 'TV',
     airDate: '2026-10-01', endDate: null, episodeCount: 2, restricted: false,
     total: 2, page: 1, complete: true, nextPage: null,
     episodes: [
@@ -48,6 +48,7 @@ test('a partial movie episode page remains unrequestable', async () => {
       : { status: 200, text: async () => JSON.stringify({ Total: 2, List: [episode] }) },
   });
   assert.equal(result.kind, 'movie');
+  assert.equal(result.format, 'Movie');
   assert.equal(result.complete, false);
   assert.equal(result.nextPage, 2);
   assert.equal(result.requestable, false);

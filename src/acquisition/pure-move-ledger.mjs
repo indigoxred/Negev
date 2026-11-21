@@ -24,15 +24,16 @@ function canonical(input) {
   const files = [];
   for (const file of input.files) {
     const kind = torrentFileKind(file?.name);
-    if (!['video', 'subtitle'].includes(kind) || names.has(file.name.toLowerCase()) ||
+    if ((file.scope !== undefined && (file.scope !== 'bonus' || kind !== 'video' || !validId(file.anidbId) || !['ova','movie','special','extra'].includes(file.kind))) || !['video', 'subtitle'].includes(kind) || names.has(file.name.toLowerCase()) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
         !digits(file.dev) || !digits(file.ino) || !digits(file.mtimeNs) ||
         (kind === 'video' && (!Array.isArray(file.episodeIds) ||
           file.episodeIds.length < 1 || file.episodeIds.some((id) =>
             !validId(id) || episodes.has(id))))) return null;
     names.add(file.name.toLowerCase());
-    if (kind === 'video') for (const id of file.episodeIds) episodes.add(id);
+    if (kind === 'video' && file.scope !== 'bonus') for (const id of file.episodeIds) episodes.add(id);
     files.push({ name: file.name, size: file.size,
+      ...(file.scope === 'bonus' ? { scope:'bonus',anidbId:file.anidbId,kind:file.kind } : {}),
       ...(kind === 'video' ? { episodeIds: [...file.episodeIds] } : {}),
       dev: file.dev, ino: file.ino, mtimeNs: file.mtimeNs });
   }
@@ -120,6 +121,10 @@ export function openPureMoveLedger(dbPath) {
             a.expected_hash !== input.torrentHash ||
             start.get(input.attemptId)?.torrent_hash !== input.torrentHash ||
             input.nowMs < a.updated_ms) return held('start_intent_missing');
+        const selectedBonuses = evidence.manifest.files.filter(file=>file.scope==='bonus');
+        const savedBonuses = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_bonus_files'").get()
+          ? db.prepare('SELECT file_name,size,anidb_id,episode_id,kind FROM acquisition_bonus_files WHERE attempt_id=? AND excluded_before_start=0').all(input.attemptId) : [];
+        if(savedBonuses.length!==selectedBonuses.length || selectedBonuses.some(file=>!savedBonuses.some(saved=>saved.file_name===file.name && saved.size===file.size && saved.anidb_id===file.anidbId && saved.kind===file.kind && file.episodeIds.length===1 && saved.episode_id===file.episodeIds[0])))return held('bonus_plan_mismatch');
         const expected = claims.all(input.attemptId).map((row) => row.episode_id);
         if (expected.length !== evidence.episodes.size ||
             expected.some((id) => !evidence.episodes.has(id))) {
@@ -193,9 +198,9 @@ export function openPureMoveLedger(dbPath) {
         const manifest = JSON.parse(row.manifestJson);
         if (canonical(manifest)?.digest !== row.manifestDigest ||
             nowMs < row.updatedMs ||
-            files.length !== manifest.files.filter((file) => file.episodeIds).length ||
+            files.length !== manifest.files.filter((file) => file.episodeIds && file.scope !== 'bonus').length ||
             files.some((file) => !manifest.files.some((expected) =>
-              expected.episodeIds && expected.name === file.name))) {
+              expected.episodeIds && expected.scope !== 'bonus' && expected.name === file.name))) {
           return held('move_evidence_mismatch');
         }
         const prior = content.get(attemptId);

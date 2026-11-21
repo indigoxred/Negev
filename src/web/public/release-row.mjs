@@ -96,6 +96,10 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
           likely &&= ['previously_verified', 'likely'].includes(proof?.state);
           body.append(element('p', `${file.name} · AniDB episode ${file.episodeIds.join(', ')} · ${evidenceLabel(proof?.state)}`));
         }
+        if(preview.bonusFiles?.length){
+          body.append(element('p','Optional bonuses · separate from season coverage','muted'));
+          for(const file of preview.bonusFiles) body.append(element('p',file.name+' · '+file.kind+' · AniDB '+file.anidbId+' · filename prediction'));
+        }
         for (const file of preview.filesToExclude ?? []) body.append(element('p', `${file.name} · excluded`, 'muted'));
         summary.textContent = preview.coverage ? `Details · File coverage checked: ${preview.coverage.coveredEpisodeCount}/${preview.coverage.requestedEpisodeCount} requested episodes` : `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
         badge.className = `${confirmed ? 'registration-confirmed' : likely ? 'registration-likely' : 'registration-unknown'} release-registration`;

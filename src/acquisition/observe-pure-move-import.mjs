@@ -47,7 +47,7 @@ export async function observePureMoveImport({ move, target, shokoMount,
   }
   const manifestFiles = move.manifest?.files;
   const files = Array.isArray(manifestFiles) ? manifestFiles.filter((file) =>
-    Array.isArray(file.episodeIds)) : null;
+    Array.isArray(file.episodeIds) && file.scope !== 'bonus') : null;
   if (!validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||
       target.episodeIds.length < 1 || target.episodeIds.length > 100 ||
       target.episodeIds.some((id) => !validId(id)) ||

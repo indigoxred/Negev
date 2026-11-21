@@ -1,3 +1,4 @@
+import { createBonusPackLedger } from './bonus-pack-ledger.mjs';
 import { createHash } from 'node:crypto';
 import { releaseReservationGate } from './release-control.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -183,6 +184,8 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
+  let bonuses;
+  try { bonuses=createBonusPackLedger(db); } catch(error) { db.close();throw error; }
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
   const attemptForRequest = db.prepare(`SELECT 1 AS present
     FROM acquisition_attempts attempt
@@ -194,7 +197,9 @@ export function openAcquisitionLedger(dbPath) {
     JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
   const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
-  const busyTarget = db.prepare('SELECT attempt_id FROM acquisition_target_claims WHERE anidb_id=? AND episode_id=? AND active=1');
+  const busyTarget = db.prepare(`WITH target(aid,eid) AS (VALUES (?,?))
+    SELECT c.attempt_id FROM acquisition_target_claims c,target WHERE c.anidb_id=target.aid AND c.episode_id=target.eid AND c.active=1
+    UNION ALL SELECT b.attempt_id FROM acquisition_bonus_files b,target WHERE b.anidb_id=target.aid AND b.episode_id=target.eid AND b.active=1 LIMIT 1`);
   const historicalTarget = db.prepare(`SELECT claim.attempt_id
     FROM acquisition_target_claims claim
     LEFT JOIN acquisition_releases released ON released.attempt_id=claim.attempt_id
@@ -314,6 +319,7 @@ export function openAcquisitionLedger(dbPath) {
   }
 
   return {
+    ...bonuses,
     // A read-only preflight shortcut. An active claim blocks another release
     // for the same episode, but an unfinished claim for this exact candidate
     // must still reach the normal replay/reconciliation path.
@@ -438,6 +444,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         insertRelease.run(attemptId, nowMs);
         deactivateClaims.run(attemptId);
+        bonuses.deactivateBonuses(attemptId,nowMs);
         return { state: 'released_pre_dispatch' };
       });
     },
@@ -538,6 +545,7 @@ export function openAcquisitionLedger(dbPath) {
         insertRetirement.run(attemptId, normalizedHash, 'file_wrong_identity', nowMs);
         insertPrestartMismatchRetirement.run(attemptId, nowMs);
         deactivateClaims.run(attemptId);
+        bonuses.deactivateBonuses(attemptId,nowMs);
         touchAttempt.run(nowMs, attemptId);
         return { state: 'retired_prestart_mismatch' };
       });
@@ -604,6 +612,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         insertRetirement.run(attemptId, normalizedHash, 'file_wrong_identity', nowMs);
         deactivateClaims.run(attemptId);
+        bonuses.deactivateBonuses(attemptId,nowMs);
         touchAttempt.run(nowMs, attemptId);
         return { state: 'retired_rejected' };
       });
@@ -713,6 +722,7 @@ export function openAcquisitionLedger(dbPath) {
         }
         insertRetirement.run(attemptId, normalizedHash, 'stalled_download', nowMs);
         deactivateClaims.run(attemptId);
+        bonuses.deactivateBonuses(attemptId,nowMs);
         touchAttempt.run(nowMs, attemptId);
         return { state: 'retired_stalled' };
       });
@@ -833,6 +843,7 @@ export function openAcquisitionLedger(dbPath) {
         insertRetirement.run(attemptId, normalizedHash,
           'media_tracks_unsuitable', nowMs);
         deactivateClaims.run(attemptId);
+        bonuses.deactivateBonuses(attemptId,nowMs);
         touchAttempt.run(nowMs, attemptId);
         if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_request_checks'").get()) {
           db.prepare(`UPDATE acquisition_request_checks SET state='held',

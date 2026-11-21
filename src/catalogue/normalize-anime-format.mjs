@@ -1,0 +1,2 @@
+const formats=new Map([['tv','TV'],['tvseries','TV'],['movie','Movie'],['film','Movie'],['ova','OVA'],['oad','OVA'],['tvspecial','TV Special'],['tvshort','TV Short'],['tvshorts','TV Short'],['web','Web'],['webseries','Web'],['ona','Web']]);
+export function normalizeAnimeFormat(value){if(typeof value!=='string'||!value.trim()||value.length>100)return null;return formats.get(value.replace(/[ _-]/g,'').toLowerCase())??value.trim().toLowerCase();}

@@ -60,6 +60,8 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
       files.some((file) => !validName(file?.name) ||
         !['video', 'subtitle'].includes(torrentFileKind(file.name)) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||
+        (file.scope !== undefined && (file.scope !== 'bonus' || torrentFileKind(file.name) !== 'video' ||
+          !Number.isSafeInteger(file.anidbId) || file.anidbId < 1 || !['special','ova','movie','extra'].includes(file.kind))) ||
         (torrentFileKind(file.name) === 'video' &&
           (!Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
             file.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1)))) ||
@@ -103,6 +105,7 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
       }
       if (source && !within(roots[0], await realpath(cursor))) return held('unsafe_source');
       manifest.push({ name: file.name, size: file.size,
+        ...(file.scope === 'bonus' ? { scope:'bonus', anidbId:file.anidbId, kind:file.kind } : {}),
         ...(torrentFileKind(file.name) === 'video'
           ? { episodeIds: [...file.episodeIds] } : {}),
         dev: String(found.dev), ino: String(found.ino),

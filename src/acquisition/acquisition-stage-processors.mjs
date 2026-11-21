@@ -1,3 +1,5 @@
+import { processBonusImport } from './process-bonus-import.mjs';
+import { createBonusOwnershipReader } from './bonus-ownership.mjs';
 import { readShokoEpisodeMetadata } from './shoko-episode-metadata.mjs';
 import { createAcquisitionRequestProcessor } from './acquisition-request-processor.mjs';
 import { submitMissingCandidate } from './submit-missing-candidate.mjs';
@@ -40,7 +42,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyStagingRoot, realpathImpl,
   verifyShokoSource,
   readRelatedTitles,
-  ownershipGate = null,
+  ownershipGate = null, canAcquireRestrictedBonuses = () => false,
   shoko, shokoMount = null, shokoSourcePath = null,
   providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
@@ -113,6 +115,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   const readHandoffEpisode = ({ anidbId, episodeId }, fetchImpl = providerFetchImpl) =>
     readShokoEpisodeFiles({ baseUrl: shoko.baseUrl, apiKey: shoko.apiKey,
       anidbId, episodeId, purpose: 'handoff', fetchImpl });
+  const readBonusOwnership=createBonusOwnershipReader({readEpisode:target=>readShokoEpisodeFiles({baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,...target,purpose:'first_time',fetchImpl:providerFetchImpl})});
   const checkExisting = (verified, fetchImpl = providerFetchImpl) =>
     checkExistingShokoBatch({ verified,
       readEpisode: (target) => readHandoffEpisode(target, fetchImpl),
@@ -146,6 +149,13 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
     } catch { return null; }
   };
   return {
+    ...(pureMode && typeof observePublicTarget==='function' && typeof acquisitions.getBonusPlan==='function' ? {
+      processBonus:({item})=>processBonusImport({item,acquisitions,pureMoves,readEpisode:readHandoffEpisode,shokoMount,now,
+        verifyPublic:async input=>{
+          const observed=await observePublicTarget({anidbId:input.anidbId,episodeId:input.episodeId,kind:input.kind==='movie'?'movie':'series'});
+          return observed?.state==='available'&&observed.fileId===input.fileId?{...input,state:'playable'}:{state:'unknown'};
+        }})
+    }:{}),
     ...(shokoRescans ? { async processRescan({ item } = {}) {
       if (!pureMode || !await handoffMountReady()) {
         return held('rescan_unavailable');
@@ -247,7 +257,9 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           if (ownership) return ownership;
           return submitMissingCandidate({ request, ...selected,
             releaseQueries, readEvidence, offlineLookup,
-            readRelatedTitles: relatedTitleReader, loadDetail,
+            readRelatedTitles: relatedTitleReader, loadDetail: input=>loadDetail(input),
+            readVideoExtensions, readBonusOwnership: pureMode?readBonusOwnership:undefined,
+            allowRestrictedBonuses: canAcquireRestrictedBonuses(request)===true,
             ledger: acquisitions, firstTimePolicy,
             renewQbittorrent,
             publicLibraryIds: publicLibraryIds(request.kind), now,
@@ -278,7 +290,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
         readRelatedTitles: relatedTitleReader,
-        readVideoExtensions,
+        readVideoExtensions, readBonusOwnership,
         fetchImpl, renewQbittorrent, now });
     },
     async processCompletion({ attemptId, qbittorrent, fetchImpl,
@@ -313,7 +325,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           const request = requests.getRequest(attempt?.requestId);
           const move = pureMoves.getIntent(attemptId);
           const episodeIds = [...new Set(move?.manifest?.files
-            ?.flatMap((file) => file.episodeIds ?? []) ?? [])];
+            ?.filter(file=>file.scope!=='bonus').flatMap((file) => file.episodeIds ?? []) ?? [])];
           if (request?.anidbId && episodeIds.length > 0) {
             target = { anidbId: request.anidbId, episodeIds };
           }

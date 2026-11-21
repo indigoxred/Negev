@@ -885,3 +885,13 @@ test('only an observed stopped torrent can receive one durable start intent', as
       { state: 'held', reason: 'torrent_conflict' });
     } finally { ledger.close(); }
   }));
+
+test('an independently claimed pack bonus prevents another main request without entering the season targets',()=>withLedger(async({dbPath,firstId,thirdId})=>{
+ const ledger=openAcquisitionLedger(dbPath);try{
+  const reserved=ledger.reserve({requestId:firstId,candidate,episodeIds:[1001],nowMs:200});const attemptId=reserved.attemptId,hash='a'.repeat(40);
+  ledger.bindPreparedTorrent({attemptId,candidate,hash,nowMs:201});ledger.recordFilePlan({attemptId,hash,plannedFiles:[{name:'01.mkv',size:3,episodeIds:[1001]}],nowMs:202});
+  const bonus={name:'Extras/OVA.mkv',size:3,anidbId:42,episodeIds:[1004],kind:'special',evidence:'shoko_filename_prediction'};
+  assert.equal(ledger.recordBonusPlan({attemptId,hash,files:[bonus],nowMs:203}).state,'planned');assert.deepEqual(ledger.getAttempt(attemptId).episodeIds,[1001]);
+  assert.equal(ledger.reserve({requestId:thirdId,candidate:{indexerId:7,guid:'other'},episodeIds:[1004],nowMs:204}).reason,'target_busy');
+ }finally{ledger.close()}
+}));

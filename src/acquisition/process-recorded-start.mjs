@@ -11,7 +11,7 @@ const held = (reason) => ({ state: 'held', reason });
 export async function processRecordedStart({ attemptId, requests, acquisitions,
   stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
   verifyStagingRoot, realpathImpl, readEvidence,
-  readRelatedTitles, readVideoExtensions,
+  readRelatedTitles, readVideoExtensions, readBonusOwnership,
   publicLibraryIds, fetchImpl = fetch, renewQbittorrent, now = Date.now,
   start = startStoppedCandidate } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
@@ -37,7 +37,8 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     if (!attempt) return held('attempt_missing');
     intent = acquisitions.getStart(attemptId);
     if (intent) return { state: intent.status, sendNow: false };
-    plan = acquisitions.getFilePlan(attemptId);
+    const mainPlan=acquisitions.getFilePlan(attemptId);
+    plan=mainPlan?[...mainPlan,...(acquisitions.getBonusPlan?.(attemptId)??[])]:null;
   } catch { return held('attempt_unavailable'); }
   if (attempt.status === 'dispatch_unknown' && attempt.expectedHash) {
     // The indexer may no longer list the release after qBittorrent accepted
@@ -99,6 +100,6 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     saveRoot: qbitStagingRoot,
     baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
     readRequest: (id) => requests.getRequest(id), readEvidence,
-    readRelatedTitles, readVideoExtensions,
+    readRelatedTitles, readVideoExtensions, readBonusOwnership,
     publicLibraryIds, fetchImpl, renewQbittorrent, now });
 }

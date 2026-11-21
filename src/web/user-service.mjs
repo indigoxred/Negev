@@ -1,3 +1,4 @@
+import { createBonusOwnershipReader } from '../acquisition/bonus-ownership.mjs';
 import { cachedRegularCoverage } from './card-coverage.mjs';
 import { createReleasePreviews } from '../requests/release-previews.mjs';
 import { createReleaseWake, observedReleaseEpisodes } from '../acquisition/release-wake.mjs';
@@ -513,6 +514,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           apiKey: shokoApiKey, shokoMount: plex?.shokoMount, fetchImpl, signal });
       },
     });
+    const readBonusOwnership=createBonusOwnershipReader({readEpisode:target=>metadata.run(()=>readShokoEpisodeFiles({baseUrl:shokoBaseUrl,apiKey:shokoApiKey,...target,purpose:'first_time',fetchImpl}))});
+    const canAcquireRestrictedBonuses=request=>Number.isSafeInteger(request?.requesterId)&&accounts.getActiveUser({userId:request.requesterId})?.adultAllowed===true;
     const previewCandidate = prowlarr ? async ({ requestId, candidate,
       offlineCache }) => {
       const request = readSelectionRequest(requestId);
@@ -521,6 +524,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       if (saved) return { ...saved, cacheHit: true };
       const result = await previewRequestCandidate({ requestId, candidate,
         offlineCache, inspectCorrespondence,
+        readBonusOwnership: acquisition?.pureMode===true?readBonusOwnership:undefined,
+        allowRestrictedBonuses: canAcquireRestrictedBonuses(request),
         offlineLookup: ({ filename }) => metadata.run(() => previewOfflineRelease({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
           filename, fetchImpl })),
@@ -1206,7 +1211,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
-          allowedAnidbIds, ownershipGate,
+          allowedAnidbIds, ownershipGate, canAcquireRestrictedBonuses,
           readRelatedTitles,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },

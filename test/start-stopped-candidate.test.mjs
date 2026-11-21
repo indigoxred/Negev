@@ -20,7 +20,7 @@ const torrent = { hash, category: 'negev', save_path: expected.savePath,
 const files = [{ index: 0, name: 'Example.mkv', size: 1000, priority: 1, progress: 0 }];
 
 async function withObservedTorrent(run, { withPlan = true,
-  evidencePolicy = 'strict' } = {}) {
+  evidencePolicy = 'strict', bonusFiles = [] } = {}) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-start-'));
   const dbPath = path.join(dir, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -32,6 +32,7 @@ async function withObservedTorrent(run, { withPlan = true,
   ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
   if (withPlan) ledger.recordFilePlan({ attemptId: attempt.attemptId, hash,
     plannedFiles: [{ name: 'Example.mkv', size: 1000, episodeIds: [1001] }], nowMs: 201 });
+  if(bonusFiles.length)ledger.recordBonusPlan({attemptId:attempt.attemptId,hash,files:bonusFiles,nowMs:201});
   ledger.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
   ledger.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
   try { await run({ ledger, attemptId: attempt.attemptId,
@@ -643,3 +644,13 @@ test('cancellation during the final availability read still prevents start', asy
     assert.equal(reads, 2);
     assert.equal(posts, 0);
   }));
+
+test('a restarted stopped season starts once with independently journalled bonus files',async()=>{
+ const bonus={name:'Extras/Example OVA 1.mkv',size:50,anidbId:43,episodeIds:[2001],kind:'ova',evidence:'shoko_filename_prediction'};
+ await withObservedTorrent(async({ledger,attemptId,readRequest})=>{let starts=0;
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,readBonusOwnership:async()=>({state:'missing'}),fetchImpl:async(url)=>{const p=new URL(url).pathname;if(p.endsWith('/start')){starts++;return new Response('Ok.')}if(p.endsWith('/files'))return Response.json([...files,{index:1,name:bonus.name,size:50,priority:1,progress:0}]);if(p.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json([torrent]);}});
+ assert.equal(result.state,'start_unknown',JSON.stringify(result));assert.equal(starts,1);assert.deepEqual(ledger.getAttempt(attemptId).episodeIds,[1001]);
+ },{bonusFiles:[bonus]});
+});
+
+test('now-owned or uncertain bonuses are durably excluded before starting the main season',async()=>{for(const state of ['owned','uncertain']){const bonus={name:'Extras/Example OVA 1.mkv',size:50,anidbId:43,episodeIds:[2001],kind:'ova',evidence:'shoko_filename_prediction'};await withObservedTorrent(async({ledger,attemptId,readRequest})=>{let starts=0,priority=1;const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,readBonusOwnership:async()=>({state}),fetchImpl:async(url,init)=>{const p=new URL(url).pathname;if(p.endsWith('/start')){starts++;return new Response('Ok.')}if(p.endsWith('/filePrio')){assert.equal(init.body.get('id'),'1');priority=0;return new Response('Ok.')}if(p.endsWith('/files'))return Response.json([...files,{index:1,name:bonus.name,size:50,priority,progress:0}]);if(p.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json([torrent]);}});assert.equal(result.state,'start_unknown',JSON.stringify(result));assert.equal(starts,1);assert.equal(priority,0);assert.deepEqual(ledger.getBonusPlan(attemptId),[]);assert.deepEqual(ledger.getRecordedBonusPlan(attemptId).files,[]);assert.deepEqual(ledger.getFilePlan(attemptId),[{name:'Example.mkv',size:1000,episodeIds:[1001]}]);},{bonusFiles:[bonus]});}});

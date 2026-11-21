@@ -108,7 +108,7 @@ export function openShokoRescanLedger(dbPath) {
     if (!row) return false;
     try {
       return JSON.parse(row.manifestJson)?.files?.some((file) =>
-        file.name === fileName && Array.isArray(file.episodeIds)) === true;
+        file.name === fileName && file.scope !== 'bonus' && Array.isArray(file.episodeIds)) === true;
     } catch { return false; }
   };
   return {
@@ -142,7 +142,7 @@ export function openShokoRescanLedger(dbPath) {
         try {
           const manifest = JSON.parse(row.manifestJson);
           const videos = manifest?.files?.filter((file) =>
-            Array.isArray(file.episodeIds));
+            file.scope !== 'bonus' && Array.isArray(file.episodeIds));
           return videos?.length > 0 && videos.length <= 50 &&
             typeof manifest.torrentHash === 'string' &&
             /^[a-f0-9]{40}$/i.test(manifest.torrentHash) &&

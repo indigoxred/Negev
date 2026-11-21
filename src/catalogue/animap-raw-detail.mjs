@@ -54,7 +54,7 @@ function parseRecord(data, anidbId) {
   // An empty unreleased AniDB record can carry AniMap's Unix-epoch sentinel.
   const undatedEpoch = anime.startdate === '1970-01-01' &&
     anime.enddate == null && episodeCount === 0 && episodes.length === 0;
-  return { title, kind, restricted,
+  return { title, kind, restricted, format: anime.type,
     airDate: undatedEpoch ? null : anime.startdate ?? null,
     endDate: anime.enddate ?? null, episodeCount, episodes };
 }

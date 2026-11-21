@@ -22,7 +22,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
   verifyPlex, hydrateMetadata = null, readUnrecognized = null, readMetadata = null, nowMs } = {}) {
   const { attemptId, requestId, anidbId, publishedMs, manifest } = item ?? {};
   const videos = manifest?.files?.filter((file) =>
-    Array.isArray(file.episodeIds));
+    file.scope !== 'bonus' && Array.isArray(file.episodeIds));
   if (![attemptId, requestId, anidbId].every(validId) ||
       !Number.isSafeInteger(publishedMs) || publishedMs < 0 ||
       !Number.isSafeInteger(nowMs) || nowMs < publishedMs ||
