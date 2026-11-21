@@ -42,11 +42,11 @@ test('empty search has no further page', () => {
   assert.equal(pager.nextPage, null);
 });
 
-test('continuations start two screens ahead, once, with a bounded bottom-only lead', async () => {
+test('continuations start one screen ahead, once, with a bounded bottom-only lead', async () => {
   const { observeCatalogueContinuation } = await import('../src/web/public/search-pages.mjs');
   assert.equal(typeof observeCatalogueContinuation, 'function');
-  for (const [height, margin] of [[844, '0px 0px 1688px 0px'],
-    [900, '0px 0px 1800px 0px'], [8000, '0px 0px 2400px 0px']]) {
+  for (const [height, margin] of [[844, '0px 0px 844px 0px'],
+    [900, '0px 0px 900px 0px'], [8000, '0px 0px 1200px 0px']]) {
     let notify;
     let observed;
     let options;
@@ -84,4 +84,44 @@ test('discarded continuation observers cannot load after route or filter changes
   control.disconnect();
   notify([{ isIntersecting: true }]);
   assert.equal(loads, 0, 'a queued intersection must not revive an abandoned page');
+});
+
+test('successive markers cannot consume the catalogue without further downward scrolling',async()=>{
+ const {createCataloguePrefetchBudget}=await import('../src/web/public/search-pages.mjs');
+ const budget=createCataloguePrefetchBudget();
+ assert.equal(budget.claim(0,800),true);
+ for(let page=0;page<30;page++)assert.equal(budget.claim(0,800),false);
+ assert.equal(budget.claim(399,800),false);
+ assert.equal(budget.claim(400,800),true);
+ assert.equal(budget.claim(200,800),false);
+ assert.equal(budget.claim(400,800),false);
+ budget.reset();assert.equal(budget.claim(0,800),true);
+});
+test('catalogue reads share one flight, bounded bursts and a rolling minute budget',async()=>{
+ const {createCatalogueReadPacer}=await import('../src/web/public/search-pages.mjs');
+ let time=0;const seen=[];const pacer=createCatalogueReadPacer({now:()=>time,sleep:async ms=>{time+=ms;}});
+ await Promise.all(Array.from({length:13},(_,i)=>pacer.run(async()=>{seen.push(time);return i;})));
+ assert.deepEqual(seen.slice(0,3),[0,0,6000]);
+ for(let i=0;i<seen.length;i++)assert.ok(seen.filter(t=>t>=seen[i]&&t<seen[i]+60000).length<=10);
+ const before=seen.length;await assert.rejects(pacer.run(()=>{seen.push(time);},()=>false));assert.equal(seen.length,before);
+});
+test('catalogue cooldown honours Retry-After without automatic retrying a failed read',async()=>{
+ const {createCatalogueReadPacer}=await import('../src/web/public/search-pages.mjs');let time=0,reads=0;
+ const pacer=createCatalogueReadPacer({now:()=>time,sleep:async ms=>{time+=ms;}});
+ await assert.rejects(pacer.run(()=>{reads++;pacer.defer('90');throw Error('429');}));
+ assert.equal(reads,1);await pacer.run(()=>{reads++;});assert.equal(time,90000);assert.equal(reads,2);
+ pacer.defer(new Date(time+120000).toUTCString());await pacer.run(()=>{});assert.ok(time>=210000);
+});
+
+test('shared marker grants and scroll listeners stop stationary automatic chains',async()=>{
+ const {observeCatalogueContinuation,createCataloguePrefetchBudget}=await import('../src/web/public/search-pages.mjs');
+ const budget=createCataloguePrefetchBudget();let y=0,loads=0,listener=null,notify;
+ const events={addEventListener:(event,fn)=>{listener=fn;},removeEventListener:()=>{listener=null;}};
+ class Observer{constructor(fn){notify=fn;}observe(){}disconnect(){}}
+ const next=()=>observeCatalogueContinuation({},()=>{loads++;},800,Observer,{budget,events,readScrollY:()=>y});
+ next();notify([{isIntersecting:true}]);assert.equal(loads,1);
+ const control=next();notify([{isIntersecting:true}]);assert.equal(loads,1);
+ y=400;listener();assert.equal(loads,2);
+ next();notify([{isIntersecting:true}]);assert.equal(loads,2);
+ control.disconnect();
 });
