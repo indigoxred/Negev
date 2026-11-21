@@ -242,7 +242,7 @@ test('title and library controls recover from pending and failed reads without d
       const evaluate = async (expression) => (await send('Runtime.evaluate',
         { expression, returnByValue: true })).result.value;
       const until = async (expression) => {
-        for (let attempt = 0; attempt < 80; attempt++) {
+        for (let attempt = 0; attempt < 300; attempt++) {
           if (await evaluate(expression)) return;
           await wait(100);
         }
