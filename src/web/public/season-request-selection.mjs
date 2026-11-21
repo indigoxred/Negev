@@ -18,7 +18,7 @@ export function seasonTriggerPresentation(rows, currentAnidbId, hasMore) {
     triggerText: 'Watch future episodes' };
   if (current?.status?.state === 'partial') return {
     showAvailable: false, showTrigger: true,
-    triggerText: 'Complete season' };
+    triggerText: 'Request episodes' };
   if (current?.status?.state !== 'available') return {
     showAvailable: false, showTrigger: true,
     triggerText: 'Request series' };

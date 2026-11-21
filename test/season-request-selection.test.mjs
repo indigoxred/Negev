@@ -21,7 +21,7 @@ test('complete installment is already available while other seasons remain disco
 test('a partial installment offers completion while unverified installments offer a request', () => {
   const partial = { anidbId: 239, status: { state: 'partial', selectable: true } };
   assert.deepEqual(seasonTriggerPresentation([partial], 239, false), {
-    showAvailable: false, showTrigger: true, triggerText: 'Complete season' });
+    showAvailable: false, showTrigger: true, triggerText: 'Request episodes' });
   const unverified = { anidbId: 239, status: { state: 'unverified', selectable: true } };
   assert.deepEqual(seasonTriggerPresentation([unverified], 239, false), {
     showAvailable: false, showTrigger: true, triggerText: 'Request series' });

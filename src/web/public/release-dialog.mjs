@@ -94,18 +94,31 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         selection.registration==='likely'?'Likely AniDB correspondence · CRC32 and size':'Registration unknown',selection.registration==='confirmed'?'registration-confirmed':selection.registration==='likely'?'registration-likely':'registration-unknown'));
       return box;
     };
+    const receiptPreferences=()=>{
+      if(!confirmedAiring)return;
+      const preferences=element('details',undefined,'receipt-details receipt-preferences');
+      preferences.append(element('summary','Future release preference'));
+      preferLabel.hidden=control.phase!=='chosen';preferenceEditor.hidden=false;
+      preferences.append(preferLabel,preferenceEditor);results.append(preferences);
+    };
     const showControl=()=>{
       clearTimeout(expiryTimer);rowVersion++;evidenceQueue.clear();statusOwner=null;
+      const submitted = existing || control.phase === 'chosen' || control.phase === 'consumed';
+      dialog.classList.toggle('is-submitted', submitted);
+      modes.hidden = actions.hidden = submitted;
+      if(submitted) { preferLabel.hidden = preferenceEditor.hidden = true; }
+      else { dialog.insertBefore(preferLabel,status);dialog.insertBefore(preferenceEditor,status); }
       if(existing) {
         modes.hidden=actions.hidden=preferLabel.hidden=preferenceEditor.hidden=true;results.replaceChildren();
         status.textContent='Request #'+requestId+' already submitted';status.className='release-confirmation';
         results.append(element('p','Your existing request and release choice are preserved. No duplicate download was started.'));
         const view=element('a','View request','button primary');view.href='#/requests?requestId='+requestId;view.addEventListener('click',()=>dialog.close());results.append(view);
-        if(control?.selection)results.append(selectionSummary(control.selection));
-        return;
+        if(control?.selection){const details=element('details',undefined,'receipt-details');details.append(element('summary','Release details'),selectionSummary(control.selection));results.append(details);}
+        receiptPreferences();return;
       }
       setMode(control.mode);status.className='muted';
       results.replaceChildren();preferLabel.hidden=!(confirmedAiring&&control.phase==='chosen');
+      if(submitted) preferLabel.hidden=preferenceEditor.hidden=true;
       if(control.phase==='proposal') {
         expiryTimer=setTimeout(async()=>{
           if(!current())return;
@@ -129,8 +142,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         }
       } else if(control.phase==='chosen'||control.phase==='consumed'&&control.selection) {
         status.textContent=`Request #${requestId} submitted`;status.className='release-confirmation';
-        results.append(element('p',control.mode==='auto'?'Auto-Pick selected this release. Processing continues automatically.':'Exact release saved. Processing continues automatically; Negev will not substitute another release.'));
-        const view=element('a','View request','button primary');view.href=`#/requests?requestId=${requestId}`;view.addEventListener('click',()=>dialog.close());results.append(view,selectionSummary(control.selection));
+        results.append(element('p',control.selection.preview.episodeIds.length + (control.selection.preview.episodeIds.length === 1 ? ' episode requested · ' : ' episodes requested · ') + (control.mode==='auto'?'Auto-Pick':'Your exact release choice')));
+        const view=element('a','View request','button primary');view.href=`#/requests?requestId=${requestId}`;view.addEventListener('click',()=>dialog.close());results.append(view);const details=element('details',undefined,'receipt-details');details.append(element('summary','Release details'),selectionSummary(control.selection));results.append(details);
       } else status.textContent=control.mode==='manual'&&control.phase==='selecting'
         ?(requestId?'Choose a release below. This request will not start an automatic grab while you select.':'Choose a release below. Browsing and closing this window do not submit a request.')
         :requestId?'Request submitted. Automatic acquisition is enabled; view your request to follow its status.':'Browse releases below. Nothing is requested until you pick a release or choose Auto-Pick.';
@@ -141,6 +154,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           : 'For new episodes, wait up to two hours after a suitable alternative appears.','muted'));
       }
       if(requestId&&control.phase==='consumed'&&!control.selection){status.className='release-confirmation';const view=element('a','View request','button primary');view.href=`#/requests?requestId=${requestId}`;view.addEventListener('click',()=>dialog.close());results.append(view);}
+      if(submitted)receiptPreferences();
     };
     const search=async(append=false,offset=0)=>{
       if(busy||existing)return;

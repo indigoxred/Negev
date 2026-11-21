@@ -140,7 +140,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     .update(pages.join('\0')).digest('hex');
   assets.set('index.html', assets.get('index.html').replace('</head>',
     `  <meta name="negev-client-revision" content="${clientRevision}">\n</head>`));
-  const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
     'Cache-Control': 'no-store' };
   for (const name of assetNames) {
@@ -150,6 +150,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         : 'text/javascript; charset=utf-8';
     app.get(url, async (_request, reply) =>
       reply.headers(pageHeaders).type(contentType).send(assets.get(name)));
+  }
+  for (const name of ['wix-madefor-display-500.ttf', 'wix-madefor-text-400.ttf', 'wix-madefor-text-500.ttf', 'wix-madefor-text-600.ttf', 'OFL.txt']) {
+    const font = await readFile(new URL('./public/fonts/' + name, import.meta.url));
+    app.get('/fonts/' + name, async (_request, reply) => reply.headers(pageHeaders)
+      .type(name.endsWith('.ttf') ? 'font/ttf' : 'text/plain; charset=utf-8').send(font));
   }
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&

@@ -686,6 +686,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-security-policy'], /default-src 'none'/);
     assert.match(page.headers['content-security-policy'], /img-src 'self'/);
+    assert.match(page.headers['content-security-policy'], /font-src 'self'/);
+    for (const name of ['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf']) {
+      const font = await app.inject({method:'GET',url:'/fonts/'+name});
+      assert.equal(font.statusCode,200);assert.match(font.headers['content-type'],/font\/ttf/);
+      assert.equal(font.headers['x-content-type-options'],'nosniff');
+      assert.deepEqual(font.rawPayload,await readFile(new URL('../src/web/public/fonts/'+name,import.meta.url)));
+    }
     assert.match(page.body, /Negev/);
     assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);

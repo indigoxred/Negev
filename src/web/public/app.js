@@ -376,6 +376,7 @@ function renderRoute() {
     if (page === 'discover') byId('discover-query').value = route.query;
     if (page === 'library') byId('library-query').value = route.query;
     const searching = route.query.length >= 2;
+    if(page==='discover'){document.querySelector('.discover-workbench').dataset.searching=String(searching);byId('discover-clear-search').hidden=!searching;}
     byId('catalogue-browse').hidden = page === 'discover' && searching;
     byId('search-results-section').hidden = page !== 'discover' || !searching;
     byId('library-search-section').hidden = page !== 'library' || !searching;
@@ -583,11 +584,13 @@ function showSession(data) {
   byId('mobile-nav').hidden = false;
   byId('search-form').hidden = false;
   byId('identity').hidden = false;
+  byId('browse-preferences').hidden = false;
   byId('adult-toggle').hidden = false;
   byId('chinese-toggle').hidden = false;
   applyAdultVisibility();
   applyTitlePreference();
   byId('username').textContent = data.user.username;
+  byId('profile-initial').textContent = String(data.user.username).slice(0,1).toUpperCase();
   byId('invite').hidden = data.user.role !== 'admin';
   byId('admin-link').hidden = data.user.role !== 'admin';
   byId('admin-review').hidden = data.user.role !== 'admin';
@@ -667,6 +670,7 @@ function clearWorkspace() {
   byId('invite-code').textContent = '';
   byId('invite-code').hidden = true;
   byId('identity').hidden = true;
+  byId('browse-preferences').hidden = true;
   byId('adult-toggle').hidden = true;
   byId('chinese-toggle').hidden = true;
   byId('identity').open = false;
@@ -1110,7 +1114,7 @@ function publicPresenceBadge(presence) {
   if (!available) return document.createDocumentFragment();
   const count = presence?.verifiedEpisodeCount ?? 0;
   return element('span',
-    `✓ In library · ${count} verified ${count === 1 ? 'item' : 'items'}`,
+    'In library',
     'presence available');
 }
 let libraryPageObserver = null;
@@ -1285,6 +1289,15 @@ function renderGenres(prefix, availableTags, selected) {
   more.onclick = () => { expanded = true; render(); };
   render();
 }
+function catalogueReadError(notice, list) {
+  notice.className = 'catalogue-error';
+  const copy = element('span');
+  copy.append(element('strong', 'The catalogue could not be refreshed'),
+    element('p', list.querySelector('.poster-card') ? 'Your previous results are still shown.' : 'Try again to load titles.', 'muted'));
+  const retry = element('button', 'Retry', 'primary');
+  retry.addEventListener('click', () => byId('season-form').requestSubmit());
+  notice.replaceChildren(copy, retry);
+}
 async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   scoreRefresh = 0, continuation = null) {
   const append = continuation !== null;
@@ -1302,7 +1315,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     notice.textContent = year === 0 && season === 'ALL'
       ? 'Loading the anime catalogue…'
       : `Loading ${season === 'ALL' ? 'all seasons' : season.toLowerCase()} ${year || 'across all years'}…`;
-    list.replaceChildren();
+    notice.className = 'muted';
   }
   try {
     const params = new URLSearchParams({ year: String(year), season });
@@ -1315,11 +1328,11 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (page.state === 'unavailable') {
       if (append) continuation.showError();
-      else notice.textContent = 'Seasonal titles are unavailable right now. Search still works.';
+      else catalogueReadError(notice, list);
       return;
     }
     if (append) stopBrowsePageObserver('discover');
-    else renderGenres('season', page.availableTags ?? [], tag);
+    else { list.replaceChildren(); renderGenres('season', page.availableTags ?? [], tag); }
     if (!append) notice.textContent = page.state === 'stale'
       ? `Showing a saved catalogue from ${page.sourceDate}; source refresh is unavailable.`
       : page.state === 'partial'
@@ -1338,7 +1351,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
             ? `Catalogue updated ${page.sourceDate}. Ratings are loading; showing catalogue order for now.`
             : page.orderState === 'score_unavailable'
               ? `Catalogue updated ${page.sourceDate}. Ratings are unavailable; showing catalogue order.`
-            : `Catalogue updated ${page.sourceDate}${page.scorePending ? ' · Ratings updating' : ''}`;
+            : page.scorePending ? 'Ratings updating…' : '';
     if (!append) {
       const active = byId('discover-active-filters');
       if (active) {
@@ -1400,7 +1413,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
     if (append) continuation.showError();
-    else notice.textContent = 'Seasonal browsing is unavailable right now. Search still works.';
+    else catalogueReadError(notice, list);
   }
 }
 byId('season-form').addEventListener('submit', (event) => {
@@ -1424,6 +1437,7 @@ byId('season-form').addEventListener('submit', (event) => {
 byId('season-sort').addEventListener('change', () =>
   byId('season-form').requestSubmit());
 byId('discover-filters-toggle')?.addEventListener('click', event => {
+  if (parseConsumerRoute(location.hash).query?.length >= 2) location.hash = '#/discover';
   const expanded = byId('season-form').classList.toggle('filters-expanded');
   event.currentTarget.setAttribute('aria-expanded', String(expanded));
 });
@@ -2155,12 +2169,11 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     }
     const quickFacts = element('dl', undefined, 'detail-quickfacts');
     for (const [label, value] of [
-      ['Format', display.type], ['Status', display.releaseStatus],
       ['Season', display.season], ['Studio', display.studio],
       ['Runtime', display.durationMinutes ? `${display.durationMinutes} min` : null],
       ['First aired', display.startDate],
       ['Last aired', display.endDate],
-      ['Episodes listed', display.episodeCount],
+
     ]) {
       if (value === null || value === undefined || value === '') continue;
       const fact = element('div');
@@ -2302,6 +2315,9 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         data.libraryPresence.verifiedEpisodeCount > 0
         ? data.libraryPresence.verifiedEpisodeCount : 0;
       const summary = element('p');
+      const evidence = element('details', undefined, 'availability-evidence');
+      const evidenceText = element('p');
+      evidence.append(element('summary', 'Availability details'), evidenceText);
       refreshAvailabilitySummary = () => {
         const headline = titleAvailabilitySummary({ kind: data.kind,
           episodes: pager.episodes, nextPage: pager.nextPage,
@@ -2309,11 +2325,19 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           regularSchedule: data.regularSchedule,
           monitorFuture: data.monitorFuture,
           verifiedTitleItems: savedCount });
-        summary.textContent = headline.text;
+        evidenceText.textContent = headline.text;
+        const countMatch = headline.text.match(/(\d+) of (\d+) (aired )?regular episodes/);
+        summary.textContent = countMatch
+          ? countMatch[1] + ' of ' + countMatch[2] + (countMatch[3] ? ' aired episodes available' : ' episodes available')
+          : headline.text.startsWith('Already available') ? 'Already available'
+          : headline.text.split(' · ')[0];
+        if (countMatch && Number(countMatch[1]) < Number(countMatch[2])) {
+          summary.append(element('span', 'Remaining availability unconfirmed', 'availability-note'));
+        }
         summary.className = `presence ${headline.state}`;
       };
       refreshAvailabilitySummary();
-      panel.append(summary);
+      panel.append(summary, evidence);
       if (data.kind === 'series' && pager.nextPage !== null &&
           !data.regularSeason) {
         const refreshFullSeason = async (attempt) => {
@@ -2813,7 +2837,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       action.append(popupHeading);
       action.append(element('p', notReleased
         ? 'Choose one or more installments to watch for their release. Specials stay separate.'
-        : 'Choose one or more seasons or installments. Available seasons are already here; a partial season requests only episodes not verified in Plex. Specials stay separate.',
+        : 'Choose the installments to request. Available episodes are skipped; Specials stay separate.',
       'muted'));
       const chooser = element('details', undefined, 'season-request-chooser');
       chooser.open = true;
@@ -2914,7 +2938,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         submit.textContent = saving ? 'Saving requests…' : reviewing ? 'Confirm request' :
           selected.length === 0 ? 'Select seasons' : selected.length > 1
             ? `Request ${selected.length} seasons` : selected[0].status.state === 'partial'
-              ? 'Complete season' : selected[0].status.state === 'watching'
+              ? 'Request episodes' : selected[0].status.state === 'watching'
                 ? 'Watch future episodes' : 'Request season';
         reviewSummary.textContent = seasonSelectionSummary(selected.map(row=>({...row,title:preferredDisplayTitle(row)})));
       };

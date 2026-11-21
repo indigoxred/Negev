@@ -53,22 +53,33 @@ function inspection(e,token,body={}){
  const filesToExclude=represented.filter(x=>!requested.includes(x.id)).map(x=>({name:e.englishTitle+' - '+String(x.number).padStart(2,'0')+'.mkv',size:1073741824,episodeIds:[x.id]}));
  const episodeIds=files.flatMap(f=>f.episodeIds);return {state:'preflight',torrentHash:'a'.repeat(40),episodeIds,files,filesToExclude,correspondence:{files:files.map(f=>({...f,state:index===0?'previously_verified':index===1?'likely':'unknown'}))},coverage:{coveredEpisodeCount:episodeIds.length,requestedEpisodeCount:requested.length}};
 }
-const banner=`<aside class="fixture-banner" aria-label="Development preview"><strong>Preview · sample data</strong><span>Local memory only. No real requests or downloads.</span><a href="/#/title/17164">Title sample</a><a href="/#/title/15748">8/12 partial season</a><a href="/__preview/screens">Screenshots</a><a href="/__preview/reset">Reset</a><a href="/__preview/error">Next read error</a></aside>`;
+const banner=`<aside class="fixture-banner" aria-label="Development preview"><strong>Preview · sample data</strong><span>Local memory only. No real requests or downloads.</span><a href="/#/title/17164">Title sample</a><a href="/#/title/15748">8/12 partial season</a><a href="/__preview/comparison">Before / after</a><a href="/__preview/reset">Reset</a><a href="/__preview/error">Next read error</a></aside>`;
 const bannerCss=`.fixture-banner{display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:9px 16px;background:#30283e;color:#eee5ff;font:13px/1.4 system-ui;position:relative;z-index:5}.fixture-banner a{color:#dfc9ff;text-decoration:underline}.fixture-banner strong{font-size:12px;letter-spacing:.04em}@media(max-width:600px){.fixture-banner{gap:6px 12px;padding:7px 10px}.fixture-banner span,.fixture-banner a:nth-of-type(-n+3){display:none}}`;
 const screenshotRoot=process.env.NEGEV_PREVIEW_SHOTS?resolve(process.env.NEGEV_PREVIEW_SHOTS):null;
 const screenshotName=/^[a-z-]+\.jpg$/;
 const escapeHtml=value=>String(value).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const galleryCss='.preview-gallery{max-width:1440px;margin:auto;padding:24px;font:16px/1.5 system-ui;color:#ececf1}.preview-gallery a{color:#d5c2ff}.preview-gallery-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:24px}.preview-gallery figure{margin:0;min-width:0}.preview-gallery img{display:block;width:100%;height:260px;object-fit:contain;object-position:top;background:#121418;border:1px solid #333743;border-radius:10px}.preview-gallery figcaption{padding:8px 0}.preview-gallery h1{font-size:28px}.preview-gallery .muted{color:#b9bbc6}';
-const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
+const mime={'.ttf':'font/ttf','.txt':'text/plain; charset=utf-8','.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.mjs':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon'};
 export const server=createServer(async(req,res)=>{
  const url=new URL(req.url,'http://127.0.0.1:4318'),path=url.pathname;
  res.setHeader('Cache-Control','no-store');res.setHeader('X-Negev-Preview','fixture-only');
- res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' https://cdn.myanimelist.net; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+ res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' https://cdn.myanimelist.net; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
  const json=(data,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(data));};
  const redirect=where=>{res.writeHead(303,{Location:where});res.end();};
  try{
   if(path==='/__preview/reset'){reset();return redirect('/#/discover');}
   if(path==='/__preview/error'){errorSample=true;return redirect('/#/discover');}
+  if(path==='/__preview/comparison') {
+   const afterRoot=screenshotRoot&&resolve(screenshotRoot,'../negev-visual-revision');
+   const names=afterRoot?(await readdir(afterRoot)).filter(name=>screenshotName.test(name)).sort():[];
+   const order=['desktop-discover.jpg','intermediate-discover.jpg','mobile-discover.jpg','desktop-title.jpg','mobile-title.jpg','desktop-request-scope.jpg','mobile-request-scope.jpg','desktop-release-picker.jpg','mobile-release-picker.jpg','desktop-request-receipt.jpg','desktop-auto-receipt.jpg','desktop-requests.jpg','mobile-requests.jpg','desktop-account.jpg','mobile-account.jpg','mobile-long-title.jpg','desktop-error-state.jpg'];names.sort((a,b)=>order.indexOf(a)-order.indexOf(b));
+   const pairs=names.map(name=>'<section><h2>'+escapeHtml(name.replace('.jpg','').replaceAll('-',' '))+'</h2><div class="preview-gallery-grid"><figure><figcaption>Before</figcaption><a href="/__preview/screens/'+name+'"><img src="/__preview/screens/'+name+'" alt="Before '+escapeHtml(name)+'" loading="lazy"></a></figure><figure><figcaption>Revised</figcaption><a href="/__preview/revised/'+name+'"><img src="/__preview/revised/'+name+'" alt="Revised '+escapeHtml(name)+'" loading="lazy"></a></figure></div></section>').join('');
+   res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});return res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Negev · Before and after</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/__preview/gallery.css"></head><body><main class="preview-gallery"><p><a href="/#/discover">Open working preview →</a></p><h1>Before and after</h1><p class="muted">Same sample data and viewport sizes. Open an image for its full capture.</p>'+pairs+'</main></body></html>');
+  }
+  if(path.startsWith('/__preview/revised/')) {
+   const name=path.slice('/__preview/revised/'.length);if(!screenshotRoot||!screenshotName.test(name)){res.writeHead(404);return res.end();}
+   const bytes=await readFile(resolve(screenshotRoot,'../negev-visual-revision',name));res.writeHead(200,{'Content-Type':'image/jpeg'});return res.end(bytes);
+  }
   if(path==='/__preview/gallery.css'){res.writeHead(200,{'Content-Type':'text/css; charset=utf-8'});return res.end(galleryCss);}
   if(path==='/__preview/screens'||path==='/__preview/screens/'){
    let names=[];if(screenshotRoot)names=(await readdir(screenshotRoot,{withFileTypes:true})).filter(entry=>entry.isFile()&&screenshotName.test(entry.name)).map(entry=>entry.name).sort();

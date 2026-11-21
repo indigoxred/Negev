@@ -15,6 +15,7 @@ const assets = new Map([
   ['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
   ['/style.css', ['style.css', 'text/css']],
   ['/consumer.css', ['consumer.css', 'text/css']],
+  ...['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf'].map(name=>['/fonts/'+name,['fonts/'+name,'font/ttf']]),
   ...['request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
@@ -96,6 +97,14 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url });
     await wait(1200);
+    await send('Runtime.evaluate', {expression:'document.fonts.ready',awaitPromise:true});
+    await send('DOM.enable'); await send('CSS.enable');
+    const doc = await send('DOM.getDocument');
+    const typography = {};
+    for (const [key,selector] of [['heading','#view-discover h1'],['control','#discover-search-button']]) {
+      const node = await send('DOM.querySelector',{nodeId:doc.root.nodeId,selector});
+      typography[key]=(await send('CSS.getPlatformFontsForNode',{nodeId:node.nodeId})).fonts;
+    }
     const { result } = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({width: window.innerWidth,
         scrollWidth: document.documentElement.scrollWidth,
@@ -267,7 +276,7 @@ async function inspectMobile(url, profile, width = 390) {
         choice.click();return{visible,searchInside,checkboxInside,outside,escape};})()`});
     await send('Page.navigate',{url});await wait(300);
     const toggleGeometry = await send('Runtime.evaluate', { returnByValue: true,
-      expression: `(() => { const toggle = document.querySelector('#chinese-toggle');
+      expression: `(() => { document.querySelector('#identity').open=true; const toggle = document.querySelector('#chinese-toggle');
         const account = document.querySelector('#identity');
         const measure = () => { const b=toggle.getBoundingClientRect();
           const range=document.createRange();range.selectNodeContents(toggle);
@@ -658,7 +667,7 @@ async function inspectMobile(url, profile, width = 390) {
           expand:Boolean(document.querySelector('#detail .detail-description-toggle'))})`});
       synopsis.push(entry.result.value);
     }
-    return { ...result.value, dropdowns:dropdowns.result.value,airingDropdown:airingDropdown.result.value,longSynopsis:longSynopsis.result.value,
+    return { ...result.value, typography, dropdowns:dropdowns.result.value,airingDropdown:airingDropdown.result.value,longSynopsis:longSynopsis.result.value,
       toggleGeometry:toggleGeometry.result.value,synopsis,
       browseScroll: { first: browseFirst.result.value,
         after: browseScrolled.result.value, sorted: browseSorted.result.value,
@@ -723,7 +732,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       response.setHeader('Content-Security-Policy',
         `default-src 'none'; script-src 'self'${new URL(request.url, 'http://localhost')
           .searchParams.has('english') ? " 'unsafe-inline'" : ''}; ` +
-        "style-src 'self'; connect-src 'self'; img-src 'self'");
+        "style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'");
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
@@ -1351,7 +1360,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /★ 8.2/);
-      assert.match(browse, /<h1>Discover anime<\/h1>/);
+      assert.match(browse, /<h1>Discover<\/h1>/);
       assert.doesNotMatch(browse, /id="discover-shelves"/);
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
@@ -1374,6 +1383,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
+      assert.ok(mobile.typography.heading.some(f=>f.isCustomFont&&f.familyName.startsWith('Wix Madefor Display')&&f.glyphCount>0),JSON.stringify(mobile.typography));
+      assert.ok(mobile.typography.control.some(f=>f.isCustomFont&&f.familyName.startsWith('Wix Madefor Text')&&f.glyphCount>0),JSON.stringify(mobile.typography));
       assert.deepEqual(mobile.browseScroll, { first: 18,
         after: { cards: 25, first: 'Title 1', retry: false },
         sorted: { hash: '#/discover?year=2025&season=ALL&sort=title_asc',
@@ -1546,7 +1557,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         join(dir, 'library-search'), 'library');
       assert.match(librarySearch, /Search Negev’s Library/);
       assert.match(librarySearch, /The Garden of Words/);
-      assert.match(librarySearch, /✓ In library · 1 verified item/);
+      assert.match(librarySearch, /class="presence available">In library/);
       assert.match(librarySearch, /Pale Cocoon/);
       assert.match(librarySearch, /Not found in Negev’s verified library/);
       assert.match(librarySearch, /id="search-all-catalogue"[^>]*href="#\/discover\?q=Garden"/);
@@ -1569,7 +1580,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(season, /Pale Cocoon/);
       assert.match(season, /The Garden of Words/);
       assert.match(season, /18\+/);
-      assert.match(season, /✓ In library · 1 verified item/);
+      assert.match(season, /class="presence available">In library/);
       const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
         join(dir, 'page-one'));
       assert.equal((pageOne.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
@@ -1583,7 +1594,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
       assert.match(detail, /A quiet archive and a lost world/);
-      assert.match(detail, /Episodes listed/);
+      assert.match(detail, /Catalogue details/);
       assert.match(detail, /class="detail-main"/,
         'title synopsis and aliases share a compact column beside the facts');
       assert.match(detail, /Back to Discover/);
