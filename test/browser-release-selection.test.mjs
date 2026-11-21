@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 const browser=[process.env.NEGEV_TEST_BROWSER,'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','/usr/bin/google-chrome','/usr/bin/chromium'].filter(Boolean).find(existsSync);
 const source=['release-choice-fields.mjs','release-row.mjs','release-dialog.mjs'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8').replace(/^import .*;$/gm,'').replaceAll('export ','')).join('\n');
-const css=readFileSync(new URL('../src/web/public/consumer.css',import.meta.url),'utf8');
+const css=['style.css','consumer.css'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8')).join('\n');
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search',
   {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
     const dir=mkdtempSync(join(tmpdir(),'negev-release-browser-'));
@@ -63,7 +63,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
 
  const unknownGrey=document.querySelector('.release-entry .registration-unknown')!==null;
  const coverage=document.querySelector('dialog').textContent.includes('AniDB episode 1');
- const compact=document.querySelector('.release-compact-row').getBoundingClientRect().height<160;
+ const compact=document.querySelector('.release-row-main').getBoundingClientRect().height<120;
  const defaults=document.querySelector('[aria-label=Quality]').value==='bd1080'&&document.querySelector('[aria-label=Audio]').value==='japanese';
  document.querySelector('[aria-label="Prefer this release group for future episodes"]').checked=true;
  click('Pick');await tick();

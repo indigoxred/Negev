@@ -223,6 +223,8 @@ async function inspectMobile(url, profile, width = 390) {
         const accountInside = account.open;
         document.querySelector('main').click();
         const accountOutside = !account.open;
+        const filters = document.querySelector('#discover-filters-toggle');
+        if (getComputedStyle(filters).display !== 'none' && filters.getAttribute('aria-expanded') !== 'true') filters.click();
         const picker = document.querySelector('#season-form .genre-picker');
         picker.open = true;
         const search = picker.querySelector('input[type=search]');
@@ -384,6 +386,8 @@ async function inspectMobile(url, profile, width = 390) {
     }
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/42') });
     await wait(700);
+    const seriesRelated = await send('Runtime.evaluate', { returnByValue: true,
+      expression: "[...document.querySelectorAll('#detail .related-presence')].map(node => node.textContent)" });
     const seasonPopup = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const dialog = document.querySelector('.season-request-dialog');
         const trigger = document.querySelector('.season-request-trigger');
@@ -673,6 +677,7 @@ async function inspectMobile(url, profile, width = 390) {
       franchise: { before: franchiseBefore.result.value,
         ...franchiseAfter.result.value },
       seasonPopup: seasonPopup.result.value,
+      seriesRelated: seriesRelated.result.value,
       requestReview: requestReview.result.value,
       requestOwnedSelection: requestOwnedSelection.result.value,
       requestSelection: requestSelection.result.value,
@@ -1346,7 +1351,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /★ 8.2/);
-      assert.match(browse, /<h1>Browse anime\.<\/h1>/);
+      assert.match(browse, /<h1>Discover anime<\/h1>/);
       assert.doesNotMatch(browse, /id="discover-shelves"/);
       assert.match(browse, /The Garden of Words/);
       const mobile = await inspectMobile(`${base}/#/discover`, join(dir, 'mobile'));
@@ -1413,7 +1418,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.franchise.moreVisible, false,
         'More disappears after all cached relations are visible');
       assert.deepEqual(mobile.seasonPopup, { button: 'Watch future episodes', closed: true,
-        opened: true, centered: true, heading: 'Request Series', close: 'Close' });
+        opened: true, centered: true, heading: 'Request series', close: 'Close' });
       assert.deepEqual(mobile.requestReview, { button: 'Confirm request',
         reviewVisible: true,
         summary: 'Example Season Two · request episodes not verified in Plex; Partly available season · complete episodes not verified in Plex' });
@@ -1500,6 +1505,12 @@ test('signed-in consumer routes render real shell with search, library and reque
       const desktopRelated = await inspectMobile(`${base}/#/discover`,
         join(dir, 'related-desktop'), 1200);
       assert.equal(desktopRelated.franchise.posterCards, 7);
+      assert.match(desktopRelated.franchise.listed, /Available · 1\/1/,
+        'a related film shows availability after the mounted row is observed');
+      assert.ok(desktopRelated.seriesRelated.includes('Available · 2/2'),
+        'a related complete season shows availability in the mounted desktop row');
+      assert.ok(desktopRelated.seriesRelated.includes('Partial · 1/2'),
+        'a related partial season shows availability in the mounted desktop row');
       assert.deepEqual(desktopRelated.dropdowns,mobile.dropdowns);
       assert.deepEqual(desktopRelated.airingDropdown,mobile.airingDropdown);
       assert.deepEqual(desktopRelated.longSynopsis,mobile.longSynopsis);
@@ -1510,9 +1521,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(desktopRelated.franchise.before.count,
         desktopRelated.franchise.before.capacity,
         'initial desktop view fills its first row');
-      assert.equal(desktopRelated.franchise.before.visible, false,
-        'More is absent when the related titles fit in one row');
-      assert.equal(desktopRelated.franchise.firstRowCount, 7);
+      assert.equal(desktopRelated.franchise.before.visible,
+        desktopRelated.franchise.posterCards > desktopRelated.franchise.before.capacity,
+        'More appears only when related titles overflow the current row');
+      assert.equal(desktopRelated.franchise.firstRowCount,
+        Math.min(7, desktopRelated.franchise.before.capacity));
       assert.equal(desktopRelated.franchise.titleAlignment, true);
       assert.ok(desktopRelated.franchise.right <= 1200,
         'related anime stay within the desktop page width');
@@ -1542,7 +1555,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(catalogueSearch,
         /id="search-verified-library"[^>]*href="#\/library\?q=Garden"/);
       const airing = await dump(`${base}/#/airing`, join(dir, 'airing'), 'airing');
-      assert.match(airing, /<h1>Airing anime<\/h1>/);
+      assert.match(airing, /<h1>Airing<\/h1>/);
       assert.doesNotMatch(airing, /Ongoing this season/);
       assert.match(airing, /id="airing-sort"/);
       assert.match(airing, /id="airing-view-mode"/);
@@ -1569,11 +1582,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       const detail = await dump(`${base}/#/title/4158`, join(dir, 'detail'), 'detail');
       assert.match(detail, /Request film/);
       assert.match(detail, /Pale Cocoon/);
-      assert.match(detail,
-        /class="related-presence available"[^>]*>Available · 1\/1</,
-        'a related film shows availability on title open');
       assert.match(detail, /A quiet archive and a lost world/);
-      assert.match(detail, /Listed episodes/);
+      assert.match(detail, /Episodes listed/);
       assert.match(detail, /class="detail-main"/,
         'title synopsis and aliases share a compact column beside the facts');
       assert.match(detail, /Back to Discover/);
@@ -1589,13 +1599,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         /class="detail-title"[^>]*>Chainsaw Man the Movie: Reze Arc<\/h1>/);
       const seriesDetail = await dump(`${base}/#/title/42`,
         join(dir, 'series-detail'));
-      assert.match(seriesDetail, /Choose seasons or installments/);
-      assert.match(seriesDetail,
-        /class="related-presence available"[^>]*>Available · 2\/2</,
-        'a related completed season shows its own availability on title open');
-      assert.match(seriesDetail,
-        /class="related-presence partial"[^>]*>Partial · 1\/2</,
-        'a related partial season shows its own availability on title open');
+      assert.match(seriesDetail, /Choose seasons/);
+
       assert.doesNotMatch(seriesDetail, /Check season availability/);
       assert.match(seriesDetail, /Check selected episode/);
       assert.doesNotMatch(seriesDetail, /Detailed availability recheck/);

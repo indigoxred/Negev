@@ -10,6 +10,7 @@
   <script src="/app.js" type="module"></script>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
   <header class="topbar">
     <a class="brand" href="#/discover"><span class="brand-mark">N</span><span>Negev</span></a>
     <nav id="main-nav" class="desktop-nav" aria-label="Main" hidden>
@@ -38,7 +39,7 @@
   </header>
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <p id="invite-code" class="invite-code" hidden></p>
-  <main>
+  <main id="main-content" tabindex="-1">
     <section id="session-loading" class="session-loading" role="status" aria-live="polite">
       <p id="session-loading-text">Checking your session…</p>
       <button id="session-retry" type="button" hidden>Retry session check</button>
@@ -66,14 +67,15 @@
     </section>
     <div id="workspace" hidden>
       <section id="view-discover" class="page-view">
-        <header class="page-head"><p class="eyebrow">Discover</p><h1>Browse anime.</h1>
-          <p>Search the catalogue or browse any season. Series and films can be requested from their title pages.</p></header>
+        <header class="page-head"><p class="eyebrow">Your next watch</p><h1>Discover anime</h1>
+          <p>Find a new favourite. Make room for an old one.</p></header>
         <section id="search-results-section" class="section" hidden><div class="section-head"><h2 id="results-title">Search the catalogue</h2>
-          <p>Search by name to see series and films.</p></div>
+          <p>Find series and films by any known title.</p></div>
           <div id="results" class="results poster-grid"><p class="muted">Search by title to begin.</p></div>
           <p><a id="search-verified-library" class="text-link" href="#/library">Check these titles in Negev’s Library →</a></p>
         </section>
-        <section class="section" aria-label="Catalogue filters and titles">
+        <section id="catalogue-browse" class="section" aria-label="Catalogue filters and titles">
+          <button id="discover-filters-toggle" class="filters-toggle" type="button" aria-expanded="false" aria-controls="season-form">Filters &amp; sort</button>
           <form id="season-form" class="season-controls">
             <label>Year <select id="season-year" name="year"><option value="0">All years</option></select></label>
             <label>Season <select id="season-name" name="season">
@@ -101,17 +103,18 @@
             </details>
             <button type="submit">Browse</button>
             <label class="discover-search">Search anime
-              <input id="discover-query" type="search" minlength="2" maxlength="120" placeholder="Find a title…" autocomplete="off">
+              <input id="discover-query" type="search" minlength="2" maxlength="120" placeholder="Search by title…" autocomplete="off">
             </label>
             <button id="discover-search-button" type="button">Search</button>
           </form>
+          <div id="discover-active-filters" class="active-filters" aria-label="Active filters" hidden></div>
           <p id="season-state" class="muted" role="status"></p>
           <div id="season-list" class="poster-grid"></div>
         </section>
       </section>
       <section id="view-airing" class="page-view" hidden>
-        <header class="page-head"><p class="eyebrow">Current releases</p><h1>Airing anime</h1>
-          <p>Follow new episodes for shows you care about. Browse the full catalogue in Discover.</p></header>
+        <header class="page-head"><p class="eyebrow">Keep up with your favourites</p><h1>Airing</h1>
+          <p>This season, on your schedule.</p></header>
         <div class="airing-tracker-controls">
           <label for="airing-view-mode">Track shows
             <select id="airing-view-mode" aria-label="Track shows">
@@ -168,10 +171,10 @@
         </section>
       </section>
       <section id="view-library" class="page-view" hidden>
-        <header class="page-head"><p class="eyebrow">On this server</p><h1>Negev’s Library</h1>
-          <p>Shows and films with recently verified playable files in Plex, including owner imports. Use the search at the top to check a title.</p></header>
+        <header class="page-head"><p class="eyebrow">Ready when you are</p><h1>Your library</h1>
+          <p>Anime you can watch here, including owner imports.</p></header>
         <div class="library-controls">
-          <button id="refresh-library" class="quiet" type="button">Refresh verified titles</button>
+          <button id="refresh-library" class="quiet" type="button">Refresh library</button>
           <label class="inline-search">Search Negev’s Library
             <input id="library-query" type="search" minlength="2" maxlength="120" placeholder="Find a title…" autocomplete="off">
           </label>
@@ -188,8 +191,9 @@
       </section>
       <section id="view-requests" class="page-view" hidden>
         <p id="request-focus" hidden></p>
-        <header class="page-head"><p class="eyebrow">Your activity</p><h1 id="requests-heading">My requests</h1>
-          <p id="requests-description">See your anime requests here. TV and regular movie requests remain in Seerr.</p></header>
+        <header class="page-head requests-page-head"><h1 id="requests-heading">My requests</h1>
+          <p id="requests-description">Follow your anime from request to ready to watch.</p><button id="refresh-requests" class="quiet" type="button">Refresh</button></header>
+        <div class="request-toolbar">
         <div id="request-scope" class="request-scope" aria-label="Request owners" hidden>
           <button type="button" data-request-scope="all" aria-pressed="true">All requests</button>
           <button type="button" data-request-scope="mine" aria-pressed="false">Mine</button>
@@ -198,8 +202,8 @@
           <button type="button" data-request-tab="history" aria-selected="true">Recent requests</button>
           <button type="button" data-request-tab="watching" aria-selected="false">Watching</button>
         </div>
-        <section id="request-history" aria-labelledby="history-title"><div class="section-head"><h2 id="history-title">Your requests</h2><button id="refresh-requests" class="quiet" type="button">Refresh</button></div>
-          <p class="muted">Recent requests are grouped below. Show older requests to continue through your history.</p>
+        </div>
+        <section id="request-history" aria-labelledby="history-title"><h2 id="history-title" class="sr-only">Your requests</h2>
           <div id="preparing-list" class="request-list"></div>
           <button id="more-preparations" type="button" hidden>Show older preparations</button>
           <div id="request-list" class="request-list"><p class="muted">Loading requests…</p></div>
