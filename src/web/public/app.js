@@ -458,6 +458,19 @@ async function openPreviewReleaseRequests(jobs) {
     try{
       const preview=await api('/api/release-previews',{method:'POST',body:JSON.stringify(item.body)});
       if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
+      if(preview.state==='pending') {
+        item.saved(preview);refreshTrackingAfterRequest();void loadRequests();
+        message(savedRequestMessage(preview));
+        if(index+1<jobs.length)void show(index+1);
+        return;
+      }
+      if(preview.state==='existing') {
+        item.saved(preview);refreshTrackingAfterRequest();void loadRequests();
+        void releaseDialog.open({requestId:preview.requestId,title:preferredDisplayTitle(item),existing:true,
+          next:index+1<jobs.length?()=>{void show(index+1);}:null});
+        return;
+      }
+      if(preview.state!=='preview'||typeof preview.previewId!=='string')throw new Error(preview.reason??'Release preview unavailable');
       while(releasePreviewSaved.size>=100)releasePreviewSaved.delete(releasePreviewSaved.keys().next().value);
       const previewUserId=state.user.id;
       releasePreviewSaved.set(preview.previewId,result=>{

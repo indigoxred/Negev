@@ -26,7 +26,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     release_not_eligible:'This release does not meet the current release preferences.',
     target_already_available:'These episodes are already available. No new download is needed.',
     target_already_owned:'These files are already owned and are being verified. No duplicate download will start.'}[e.reason]??e.message??'Could not complete release selection. Retry.');
-  const open=async({requestId=null,previewId=null,title,mode='manual',next=null})=>{
+  const open=async({requestId=null,previewId=null,title,mode='manual',next=null,existing=false})=>{
     closeActive();
     const dialog=element('dialog',undefined,'release-search-dialog');active=dialog;
     dialog.setAttribute('aria-label',`Release selection · ${title}`);
@@ -72,7 +72,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     dialog.addEventListener('close',()=>clearTimeout(expiryTimer),{once:true});
     const current=()=>dialog.isConnected&&active===dialog;
     const basePath=()=>requestId?`/api/requests/${requestId}`:`/api/release-previews/${previewId}`;
-    const accept=data=>{if(data.state==='updated'&&Number.isSafeInteger(data.requestId)&&data.requestId>0)requestId=data.requestId;return data;};
+    const accept=data=>{if(data.created===false&&data.state==='updated')existing=true;if(data.state==='updated'&&Number.isSafeInteger(data.requestId)&&data.requestId>0)requestId=data.requestId;return data;};
     const saved=data=>{if(Number.isSafeInteger(requestId)&&requestId>0)onSaved({...data,requestId,previewId});};
     const command=async body=>accept(await api(`${basePath()}/release-choice`,{method:'POST',body:JSON.stringify({...body,revision:control.revision})}));
     const setMode=value=>{auto.className=value==='auto'?'primary':'quiet';manual.className=value==='manual'?'primary':'quiet';auto.setAttribute('aria-pressed',String(value==='auto'));manual.setAttribute('aria-pressed',String(value==='manual'));};
@@ -94,6 +94,14 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     };
     const showControl=()=>{
       clearTimeout(expiryTimer);
+      if(existing) {
+        modes.hidden=actions.hidden=preferLabel.hidden=preferenceEditor.hidden=true;results.replaceChildren();
+        status.textContent='Request #'+requestId+' already submitted';status.className='release-confirmation';
+        results.append(element('p','Your existing request and release choice are preserved. No duplicate download was started.'));
+        const view=element('a','View request','button primary');view.href='#/requests?requestId='+requestId;view.addEventListener('click',()=>dialog.close());results.append(view);
+        if(control?.selection)results.append(selectionSummary(control.selection));
+        return;
+      }
       setMode(control.mode);status.className='muted';
       results.replaceChildren();preferLabel.hidden=!(confirmedAiring&&control.phase==='chosen');
       if(control.phase==='proposal') {
@@ -101,11 +109,15 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           if(!current())return;
           try{await refresh();if(current())showControl();}catch{}
         },Math.max(1000,Math.min(300_000,control.expiresMs-Date.now()+250)));
-        status.textContent='There’s a better release available. It is potentially unlisted in AniDB and might remain unrecognized in Shoko and require manual review. Grab it anyway?';
+        const evidence=control.proposal.registered.registration;
+        const alternative=evidence==='confirmed'?{heading:'Previously verified alternative:',action:'Use verified release',fallback:'the previously verified release'}:
+          evidence==='likely'?{heading:'Likely AniDB match:',action:'Use likely match',fallback:'the likely match'}:
+            {heading:'Alternative release:',action:'Use alternative release',fallback:'the alternative release'};
+        status.textContent='There’s a better release available, but its AniDB correspondence is unknown. Shoko may leave it unrecognized and require manual review. Grab it anyway?';
         results.append(element('p',control.proposal.benefit));
-        results.append(selectionSummary(control.proposal.better),element('p','Registered alternative:'),selectionSummary(control.proposal.registered));
-        results.append(element('p','If unanswered, Negev uses the registered release after five minutes.','muted'));
-        for(const [action,label] of [['better','Grab better release'],['registered','Use registered release']]) {
+        results.append(selectionSummary(control.proposal.better),element('p',alternative.heading),selectionSummary(control.proposal.registered));
+        results.append(element('p','If unanswered, Negev uses '+alternative.fallback+' after five minutes.','muted'));
+        for(const [action,label] of [['better','Grab better release'],['registered',alternative.action]]) {
           const button=element('button',label,action==='better'?'primary':'');
           button.addEventListener('click',async()=>{
             if(busy)return;buttons(true);button.disabled=true;
@@ -129,7 +141,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       if(requestId&&control.phase==='consumed'&&!control.selection){status.className='release-confirmation';const view=element('a','View request','button primary');view.href=`#/requests?requestId=${requestId}`;view.addEventListener('click',()=>dialog.close());results.append(view);}
     };
     const search=async(append=false,offset=0)=>{
-      if(busy)return;
+      if(busy||existing)return;
       const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value,completedSeries&&packsOnly.checked]);
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
       buttons(true);if(nextButton)nextButton.disabled=true;
@@ -166,7 +178,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
     };
     const runAuto=async()=>{
-      if(busy)return;buttons(true);version++;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
+      if(busy||existing)return;buttons(true);version++;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
       try{
         await refresh();
         if(control.phase==='proposal'){showControl();return;}
@@ -178,7 +190,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);}
     };
     const savePreference=async group=>{
-      if(busy)return;buttons(true);
+      if(busy||existing)return;buttons(true);
       try{await refresh();const data=await command({action:'preference',group,audio:audio.value==='english'?'english':audio.value==='dual'?'dual':'japanese'});
         control=data.control;updateContext(data.context);preferFuture.checked=Boolean(control.preference?.group);status.textContent=group?'Future release preference saved.':'Future release preference cleared.';saved(data);}
       catch(error){status.textContent=errorText(error);}finally{buttons(false);}
@@ -194,7 +206,12 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     auto.addEventListener('click',runAuto);manual.addEventListener('click',()=>{void search();});searchButton.addEventListener('click',()=>{void search();});
     packsOnly.addEventListener('change',()=>{void search();});quality.addEventListener('change',()=>{void search();});audio.addEventListener('change',()=>{void search();});
     query.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void search();}});
-    try{await refresh();if(!current())return;showControl();if(control.phase==='proposal'||control.phase==='chosen')return;
+    if(existing) {
+      showControl();
+      try{await refresh();if(current())showControl();}catch{/* The durable save already succeeded; optional details may be retried later. */}
+      return;
+    }
+    try{await refresh();if(!current())return;showControl();if(existing||control.phase==='proposal'||control.phase==='chosen')return;
       if(mode==='auto')await runAuto();else await search();
     }catch(e){if(current())status.textContent=errorText(e);}
   };

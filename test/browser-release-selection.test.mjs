@@ -19,9 +19,10 @@ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==und
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
 const selection={candidate,preview,registration:'unknown'};
-let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false;let searchUrls=[];
+let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[];
 let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false,preferredFlag=false;
 const api=async(url,options={})=>{
+ if(url.endsWith('/release-choice')&&!options.method&&holdExistingRead)return new Promise((resolve,reject)=>{releaseExistingRead={resolve,reject};});
  if(url.endsWith('/release-choice')&&!options.method)return {control,context:{completedSeries:completedMode,confirmedAiring:!completedMode,...(delegatedMode?{preferredGroup:'SubsPlease',preferredWait:{group:'SubsPlease',deadlineMs:Date.now()+7200000}}:{})}};
  if(url.includes('offset=50')&&!failedMore){failedMore=true;throw new Error('Temporary indexer outage');}
  if(url.includes('/releases'))searchUrls.push(url);
@@ -34,7 +35,7 @@ const api=async(url,options={})=>{
  if(body.action==='begin')control={mode:body.mode,phase:'selecting',revision:control.revision+1};
  if(body.action==='choose'){preferredFlag ||=body.preferFutureGroup===true;chooseCalls++;control={mode:'manual',phase:'chosen',revision:control.revision+1,selection};}
  if(body.action==='auto'&&delegatedMode)return {state:'updated',control:{mode:'auto',phase:'consumed',revision:control.revision+1,preference:{group:'SubsPlease'}},context:{confirmedAiring:true,preferredGroup:'SubsPlease',preferredWait:{group:'SubsPlease',deadlineMs:Date.now()+7200000}}};
- if(body.action==='auto'){autoCalls++;control={mode:'auto',phase:'proposal',revision:control.revision+1,expiresMs:Date.now()+300000,proposal:{registered:{...selection,registration:'likely'},better:{...selection,candidate:{...candidate,title:'[Better] Example BD 1080p',source:'Blu-ray'}},benefit:'Blu-ray source'}};}
+ if(body.action==='auto'){autoCalls++;control={mode:'auto',phase:'proposal',revision:control.revision+1,expiresMs:Date.now()+300000,proposal:{registered:{...selection,registration:alternativeRegistration},better:{...selection,candidate:{...candidate,title:'[Better] Example BD 1080p',source:'Blu-ray'}},benefit:'Blu-ray source'}};}
  if(['better','registered'].includes(body.action)){decision=body.action;control={mode:'auto',phase:'chosen',revision:control.revision+1,selection};}
  return {state:'updated',control,...(url.includes('/release-previews/')&&body.action==='choose'?{requestId:42}:{})};
 };
@@ -64,10 +65,24 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const savedLink=document.querySelector('dialog a[href="#/requests?requestId=1"]')?.textContent==='View request';
  click('Close');control={mode:'auto',phase:'selecting',revision:10};
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
- const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
- click('Use registered release');await tick();
+ const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use likely match')&&!document.querySelector('dialog').textContent.toLowerCase().includes('registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
+ click('Use likely match');await tick();
  const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&document.querySelector('dialog').textContent.includes('Auto-Pick selected this release');
  dialog.close();
+ alternativeRegistration='confirmed';control={mode:'auto',phase:'selecting',revision:1};
+ await dialog.open({requestId:1,title:'Verified example',mode:'auto'});
+ const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified exact AniDB files');dialog.close();
+ alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
+ await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
+ const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
+ const beforeRepeat={autoCalls,chooseCalls};control={mode:'manual',phase:'chosen',revision:22,selection};
+ await dialog.open({requestId:1,title:'Existing request',mode:'auto',existing:true});
+ const existingSuccess=document.querySelector('dialog').textContent.includes('Request #1 already submitted')&&document.querySelector('dialog a[href="#/requests?requestId=1"]')&&document.querySelector('dialog').textContent.includes('[Group] Example WEB 1080p')&&document.querySelector('dialog .release-mode-actions').hidden&&beforeRepeat.autoCalls===autoCalls&&beforeRepeat.chooseCalls===chooseCalls;
+ dialog.close();holdExistingRead=true;
+ const slowOpen=dialog.open({requestId:1,title:'Existing slow request',existing:true});await tick();
+ const existingLoadingSafe=document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden&&document.querySelector('dialog').textContent.includes('Request #1 already submitted');
+ releaseExistingRead.reject(Error('Read temporarily unavailable'));await slowOpen;
+ const existingReadRecovery=document.querySelector('dialog').textContent.includes('Request #1 already submitted')&&Boolean(document.querySelector('dialog a[href="#/requests?requestId=1"]'));holdExistingRead=false;dialog.close();
  const closed=!document.querySelector('dialog');
  control={mode:'manual',phase:'selecting',revision:1};
  const draftDialog=createReleaseDialog({api,element,onSaved:data=>{previewSaved=data;}});
@@ -94,7 +109,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  await dialog.open({requestId:1,title:'Airing Example',mode:'auto'});
  const groupFeedback=document.querySelector('dialog').textContent.includes('Preferred group: SubsPlease')&&document.querySelector('dialog').textContent.includes('Until ');
  dialog.close();
- document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
+ document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -103,6 +118,6 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,decision:'registered',autoCalls:1,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
+      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:3,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });
