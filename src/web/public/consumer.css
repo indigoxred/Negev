@@ -83,3 +83,12 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 
 /* Keep the owner label and both selected/unselected buttons centred. */
 .request-scope{align-items:center}.request-scope>button{height:36px;box-sizing:border-box;align-self:center;margin:0}.request-scope>.toolbar-label{align-self:center}
+
+/* Submitting/searching a request is an action, unlike the picker's view tabs. */
+.release-mode-actions.release-request-actions{gap:12px;flex-wrap:wrap;border-bottom:0}
+.release-request-actions>button{flex:0 1 auto;min-width:132px;min-height:44px;padding:10px 20px;border:1px solid var(--line);border-radius:999px;background:var(--surface2);color:var(--text);font-weight:500;box-shadow:none}
+.release-request-actions>button.primary{background:var(--accent);border-color:var(--accent);color:#211b31;box-shadow:none}
+.release-request-actions>button:hover{background:#303742;border-color:#657080}
+.release-request-actions>button.primary:hover{background:#ccbcff;border-color:#ccbcff;color:#211b31}
+.release-request-actions>button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+@media(max-width:700px){.release-request-actions>button{flex:1 1 132px}}

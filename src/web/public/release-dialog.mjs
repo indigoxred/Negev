@@ -1,7 +1,7 @@
 import { compactReleaseRow, createVisibleReleaseInspectionQueue } from './release-row.mjs';
 import { releaseFacts, DEFAULT_RELEASE_FILTERS } from './release-choice-fields.mjs';
 export function makeReleaseActions(element,{onAuto,onManual}) {
-  const container=element('div',undefined,'release-mode-actions');
+  const container=element('div',undefined,'release-mode-actions release-request-actions');
   const auto=element('button','Auto-Pick','primary');
   const manual=element('button','Manual Pick');
   auto.type=manual.type='button';auto.addEventListener('click',onAuto);manual.addEventListener('click',onManual);
