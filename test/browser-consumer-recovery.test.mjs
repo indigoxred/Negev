@@ -315,6 +315,18 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Auto-Pick')");
       assert.equal(await evaluate("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')"),true);
+      for(const width of [1280,390]) {
+        await send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:width===390});
+        const actionStyles=await evaluate("(() => {const actions=document.querySelector('dialog[open] .release-request-actions');if(!actions)return null;const bounds=actions.getBoundingClientRect();return {divider:getComputedStyle(actions).borderBottomWidth,buttons:[...actions.querySelectorAll('button')].map(button=>{const style=getComputedStyle(button),r=button.getBoundingClientRect();return {label:button.textContent,height:r.height,border:parseFloat(style.borderTopWidth),radius:parseFloat(style.borderTopLeftRadius),background:style.backgroundColor,colour:style.color,inside:r.left>=bounds.left-1&&r.right<=bounds.right+1};})};})()");
+        assert.ok(actionStyles,'entry actions have their own button styling');
+        assert.equal(actionStyles.divider,'0px');
+        assert.deepEqual(actionStyles.buttons.map(x=>x.label),['Auto-Pick','Manual Pick']);
+        for(const button of actionStyles.buttons){assert.ok(button.height>=44);assert.ok(button.border>=1);assert.ok(button.radius>=12);assert.notEqual(button.background,'rgba(0, 0, 0, 0)');assert.ok(button.inside);}
+        assert.notEqual(actionStyles.buttons[0].background,actionStyles.buttons[1].background,'primary action has a distinct fill');
+        assert.notEqual(actionStyles.buttons[0].background,actionStyles.buttons[0].colour,'primary label remains readable');
+      }
+      await send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
+
       // Browser Back / a receipt link must not leave a hidden native modal
       // keeping the Requests page inert (scrolling can still appear to work).
       await evaluate("location.hash='#/requests'");
