@@ -1159,13 +1159,14 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({ error: 'Invalid cancellation' });
     }
     const existing = readRequest(requestId);
-    if (!existing || existing.requesterId !== request.negevUser.id) {
+    if (!existing || (existing.requesterId !== request.negevUser.id &&
+        request.negevUser.role !== 'admin')) {
       return reply.code(404).send({ error: 'Request not found' });
     }
     if (typeof cancelRequest !== 'function') {
       return reply.code(503).send({ error: 'Cancellation unavailable' });
     }
-    const result = cancelRequest({ requesterId: request.negevUser.id,
+    const result = cancelRequest({ requesterId: existing.requesterId,
       requestId, nowMs: now() });
     if (result.state === 'cancelled') return result;
     return reply.code(result.reason === 'request_not_found' ? 404 : 409).send({

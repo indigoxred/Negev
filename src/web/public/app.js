@@ -713,6 +713,11 @@ async function refreshSession() {
     return false;
   }
 }
+function expandedRequestDetails(list) {
+  return new Map([...list.querySelectorAll('.request-row[data-request-id]')]
+    .map(row => [row.dataset.requestId,
+      new Set([...row.querySelectorAll('details[open]')].map(details => details.className))]));
+}
 async function loadRequestView(view, append = false, silent = false) {
   if (!state.user) return;
   const session = sessionResponses.current();
@@ -723,6 +728,7 @@ async function loadRequestView(view, append = false, silent = false) {
   const watching = view === 'watching';
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
+  const priorDetails = !append && !silent ? expandedRequestDetails(list) : null;
   const expandedGroups = silent && !watching && !append
     ? new Set([...list.querySelectorAll('details.request-group[open]')]
       .map((group) => group.dataset.requestGroup)) : new Set();
@@ -739,6 +745,8 @@ async function loadRequestView(view, append = false, silent = false) {
     if (!sessionResponses.isCurrent(session) ||
         !responseEpoch.isCurrent(listRequest) || state.user?.id !== userId ||
         state.requestScope !== scope) return;
+    // Read at commit time: respect sections toggled while the poll was pending.
+    const openDetails = append ? new Map() : silent ? expandedRequestDetails(list) : priorDetails;
     if (!append) {
       list.replaceChildren();
       state.nextBeforeId[view] = null;
@@ -807,7 +815,7 @@ async function loadRequestView(view, append = false, silent = false) {
           actions.append(control);
         }
       } else if (item.status === 'held' && item.canCancel !== false &&
-          item.requesterId === state.user?.id) {
+          (item.requesterId === state.user?.id || state.user?.role === 'admin')) {
         const cancel = element('button', 'Cancel request', 'quiet');
         cancel.type = 'button';
         cancel.addEventListener('click', async () => {
@@ -844,6 +852,10 @@ async function loadRequestView(view, append = false, silent = false) {
         const more = element('details', undefined, 'request-more');
         more.append(element('summary', 'Details & options'), details);
         row.append(more);
+      }
+      const expanded = openDetails?.get(String(item.id));
+      if (expanded) for (const section of row.querySelectorAll('details')) {
+        section.open = expanded.has(section.className);
       }
       if (watching) list.append(row);
       else requestGroupRows(list, presentation.group, expandedGroups).append(row);
