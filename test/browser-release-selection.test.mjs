@@ -87,6 +87,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  control={mode:'manual',phase:'selecting',revision:1};inspectionFailure='release_search_expired';
  await dialog.open({requestId:1,title:'Expired results',mode:'manual'});document.querySelector('dialog .release-file-evidence').open=true;await tick();
  const expiredInspectionNoRetry=![...document.querySelectorAll('dialog button')].some(b=>b.textContent==='Retry inspection')&&document.querySelector('dialog').textContent.includes('Search again');dialog.close();
+ control={mode:'auto',phase:'consumed',revision:20};
+ await dialog.open({requestId:1,title:'Reopened manual search',mode:'manual'});
+ if(document.querySelector('dialog').classList.contains('is-submitted')||document.querySelector('dialog .release-mode-actions').hidden||document.querySelector('dialog').getBoundingClientRect().width<600)throw Error('A reopened search must restore the wide picker and visible mode controls');
+ dialog.close();
  const beforeRepeat={autoCalls,chooseCalls};control={mode:'manual',phase:'chosen',revision:22,selection};
  await dialog.open({requestId:1,title:'Existing request',mode:'auto',existing:true});
  const existingSuccess=document.querySelector('dialog').textContent.includes('Request #1 already submitted')&&document.querySelector('dialog a[href="#/requests?requestId=1"]')&&document.querySelector('dialog').textContent.includes('[Group] Example WEB 1080p')&&document.querySelector('dialog .release-mode-actions').hidden&&beforeRepeat.autoCalls===autoCalls&&beforeRepeat.chooseCalls===chooseCalls;
