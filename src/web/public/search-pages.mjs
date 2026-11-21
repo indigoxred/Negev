@@ -49,6 +49,7 @@ export function observeCatalogueContinuation(marker, load, viewportHeight,
   const intentEvents = ['wheel', 'touchmove', 'keydown', 'pointerdown'];
   const intent = event => {
     if (!active || event?.isTrusted !== true) return;
+    if (event.type === 'wheel' && event.deltaY <= 0) return;
     if (event.type === 'keydown' && !['ArrowDown', 'PageDown', 'End', ' '].includes(event.key)) return;
     budget?.noteIntent();
   };
@@ -74,6 +75,7 @@ export function createCataloguePrefetchBudget() {
   return {
     reset() { last = null; intent = used = 0; },
     noteIntent() { intent++; },
+    consume(scrollY) { last = Math.max(0, Number.isFinite(scrollY) ? scrollY : 0); used = intent; },
     claim(scrollY, height) {
       const position = Math.max(0, Number.isFinite(scrollY) ? scrollY : 0);
       const advance = Math.max(120, Math.min(400, height / 2));

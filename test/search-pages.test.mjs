@@ -137,3 +137,11 @@ test('queued obsolete reads and pending flights cannot consume catalogue slots',
  let time=0,current=true;const delayed=createCatalogueReadPacer({now:()=>time,sleep:async ms=>{time+=ms;current=false;}});
  await delayed.run(()=>{});await delayed.run(()=>{});await assert.rejects(delayed.run(()=>{throw Error('must not reach network');},()=>current),/superseded/);
 });
+
+test('manual page and retry consume their click intent instead of chaining another page',async()=>{
+ const {createCataloguePrefetchBudget}=await import('../src/web/public/search-pages.mjs');const budget=createCataloguePrefetchBudget();
+ budget.claim(0,800);budget.noteIntent();budget.consume(600);
+ assert.equal(budget.claim(1000,800),false,'append anchoring must not spend the manual click again');
+ budget.noteIntent();assert.equal(budget.claim(1000,800),true);
+ budget.reset();budget.noteIntent();budget.consume(0);assert.equal(budget.claim(800,800),false,'manual loading also consumes the initial warm-up grant');
+});

@@ -130,7 +130,7 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `document.querySelectorAll('#library-list .poster-card').length`,
     });
     await send('Runtime.evaluate', { expression: "location.hash = '#/library?q=Garden'" });
-    await wait(500);
+    await wait(500); await settled();
     await send('Runtime.evaluate', { expression: "location.hash = '#/library'" });
     await wait(800); await settled();
     await send('Runtime.evaluate', { expression:
@@ -169,7 +169,7 @@ async function inspectMobile(url, profile, width = 390) {
         retry: Boolean(document.querySelector('#season-list + .browse-page-marker button'))})`,
     });
     await send('Runtime.evaluate', { expression: "location.hash = '#/requests'" });
-    await wait(300);
+    await wait(300); await settled();
     await send('Runtime.evaluate', { expression:
       "location.hash = '#/discover?year=2025&season=ALL'" });
     await wait(800); await settled();
@@ -247,7 +247,7 @@ async function inspectMobile(url, profile, width = 390) {
       document.querySelector('#airing-form').requestSubmit();
     })()` });
     await send('Page.navigate', { url });
-    await wait(300);
+    await wait(300); await settled();
     const tagBrowse = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const picker = document.querySelector('#season-form .genre-picker');
         picker.open = true;
@@ -310,7 +310,7 @@ async function inspectMobile(url, profile, width = 390) {
       })()`,
     });
     await send('Page.navigate',{url:url.replace('#/discover','#/airing')});
-    await wait(500);
+    await wait(500); await settled();
     const airingDropdown=await send('Runtime.evaluate',{returnByValue:true,
       expression:`(() => {const filters=document.querySelector('#airing-filters-toggle');if(filters.getAttribute('aria-expanded')!=='true')filters.click();const picker=document.querySelector('#airing-form .genre-picker');
         const visible=picker.getBoundingClientRect().height>0;
@@ -326,7 +326,7 @@ async function inspectMobile(url, profile, width = 390) {
         search.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
         const escape=!picker.open&&document.activeElement===picker.querySelector('summary');
         choice.click();return{visible,searchInside,checkboxInside,outside,escape};})()`});
-    await send('Page.navigate',{url});await wait(300);
+    await send('Page.navigate',{url});await wait(300); await settled();
     const toggleGeometry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { document.querySelector('#identity').open=true; const toggle = document.querySelector('#chinese-toggle');
         const account = document.querySelector('#identity');
@@ -412,7 +412,7 @@ async function inspectMobile(url, profile, width = 390) {
           capacity: getComputedStyle(list).gridTemplateColumns.split(' ').length};
         if (!button.hidden) button.click(); return before; })()`,
     });
-    await wait(300);
+    await wait(300); await settled();
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const cards = [...document.querySelectorAll('.related-list .related-card')];
         const firstTop = cards[0]?.getBoundingClientRect().top;
@@ -613,7 +613,7 @@ async function inspectMobile(url, profile, width = 390) {
         action?.querySelector('.primary')?.click();
         return { saving: action?.querySelector('.primary')?.textContent }; })()`,
     });
-    await wait(300);
+    await wait(300); await settled();
     const unlistedFilmSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
         return { button: action?.querySelector('.primary')?.textContent,
@@ -677,7 +677,7 @@ async function inspectMobile(url, profile, width = 390) {
       await wait(800); await settled();
       await send('Runtime.evaluate', { expression:
         `document.querySelector('#detail .detail-action-row [data-track-id]')?.click()` });
-      await wait(300);
+      await wait(300); await settled();
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
         expression: `document.querySelector('#detail .detail-action-row [data-track-id]')?.textContent`,
       });
@@ -703,7 +703,7 @@ async function inspectMobile(url, profile, width = 390) {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'library'; mode.dispatchEvent(new Event('change'));
       })()` });
-      await wait(300);
+      await wait(300); await settled();
     }
     const synopsis = [];
     for (const id of [8,9]) {

@@ -1175,6 +1175,7 @@ function appendLibraryPageMarker(list) {
     retry.type = 'button';
     retry.addEventListener('click', () => {
       if (retry.disabled || !current()) return;
+      prefetchBudgets.library.consume(window.scrollY);
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadLibrary(true, continuation);
@@ -1191,7 +1192,7 @@ function appendLibraryPageMarker(list) {
     void loadLibrary(true, continuation); epoch = libraryResponses.current();
   };
   const manual = element('button', 'Load more titles', 'text-link');
-  manual.type = 'button'; manual.addEventListener('click', start); marker.append(manual);
+  manual.type = 'button'; manual.addEventListener('click', () => { prefetchBudgets.library.consume(window.scrollY); start(); }); marker.append(manual);
   const observer = observeCatalogueContinuation(marker, start, window.innerHeight,
     undefined, { budget: prefetchBudgets.library });
   libraryPageObserver = observer;
@@ -1222,6 +1223,7 @@ function appendBrowsePageMarker(view, list, loadPage) {
     retry.type = 'button';
     retry.addEventListener('click', () => {
       if (retry.disabled || !current()) return;
+      prefetchBudgets[view].consume(window.scrollY);
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadPage(continuation);
@@ -1236,7 +1238,7 @@ function appendBrowsePageMarker(view, list, loadPage) {
     void loadPage(continuation); epoch = responses.current();
   };
   const manual = element('button', 'Load more titles', 'text-link');
-  manual.type = 'button'; manual.addEventListener('click', start); marker.append(manual);
+  manual.type = 'button'; manual.addEventListener('click', () => { prefetchBudgets[view].consume(window.scrollY); start(); }); marker.append(manual);
   const observer = observeCatalogueContinuation(marker, start, window.innerHeight,
     undefined, { budget: prefetchBudgets[view] });
   browsePageObservers[view] = { observer, marker };
