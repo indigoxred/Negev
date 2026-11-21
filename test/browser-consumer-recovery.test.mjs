@@ -374,7 +374,9 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('dialog[open] input[type=checkbox]')");
       await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
-      await until("!document.querySelector('dialog[open]')");
+      // The season dialog closes before the asynchronous preview response arrives.
+      // Wait for the pending response to finish saving, not the earlier close.
+      await until("!document.querySelector('dialog[open]') && sessionStorage.getItem('negev-request-1-3-installment') === null");
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null);
       assert.deepEqual(submittedModes,[],'pending preparation does not open an invalid preview or submit again');previewPending=false;
       await evaluate("location.hash='#/title/1'");
