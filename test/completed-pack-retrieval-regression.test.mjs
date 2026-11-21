@@ -39,4 +39,3 @@ test('punctuation-neutral same-ID retrieval finds an unlabelled pack without wea
  const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>detail,pause:async()=>{},searchReleases:async({query})=>({state:'candidates',items:[...Array.from({length:48},(_,i)=>({indexerId:1,guid:`single-${i}`,title:`Canonical - A Long Subtitle - ${i+1} (1080p)`,seeders:5,evidence:'unverified'})),...(query==='Canonical A Long Subtitle'?[{indexerId:1,guid:'unlabelled-pack',title:'[WEB] Canonical - A Long Subtitle [1080p][HEVC]',seeders:3,evidence:'unverified'}]:[])]})});
  const found=await discover({requestId:1});assert.equal(found.items[0].guid,'unlabelled-pack');
 });
-
