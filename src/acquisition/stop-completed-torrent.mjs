@@ -9,7 +9,7 @@ const held = (reason) => ({ state: 'held', reason });
 // tick re-observes the exact saved hash before doing anything else.
 export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
   fetchImpl = fetch, observe = observeTorrentCompletion,
-  renewQbittorrent } = {}) {
+  renewQbittorrent, onTransfer } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -19,6 +19,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
       expected?.category !== 'negev' ||
       typeof expected.savePath !== 'string' || !expected.savePath.startsWith('/') ||
       typeof fetchImpl !== 'function' || typeof observe !== 'function' ||
+      (onTransfer !== undefined && typeof onTransfer !== 'function') ||
       (renewQbittorrent !== undefined && typeof renewQbittorrent !== 'function')) {
     throw new TypeError('Invalid qBittorrent stop configuration');
   }
@@ -26,7 +27,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
   let activeFetch = fetchImpl;
   let renewedOnce = false;
   const input = () => ({ baseUrl, sessionId: activeSessionId,
-    expected, fetchImpl: activeFetch });
+    expected, fetchImpl: activeFetch, ...(onTransfer?{onTransfer}:{}) });
   const renewSession = async () => {
     if (!renewQbittorrent || renewedOnce) return held('provider_http_403');
     renewedOnce = true;

@@ -71,9 +71,13 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
       mount?.state !== 'mounted_handoff_roots') return held('handoff_mount_unavailable');
   const expected = { hash: attempt.torrentHash, category: 'negev',
     savePath: stagingSavePath(attempt.torrentHash, { saveRoot: qbitStagingRoot }) };
+  let transfer = null;
   const completed = await stop({ baseUrl: qbittorrent.baseUrl,
-    sessionId: qbittorrent.sessionId, expected, fetchImpl, renewQbittorrent });
-  if (completed?.state !== 'complete') return completed ?? held('torrent_unavailable');
+    sessionId: qbittorrent.sessionId, expected, fetchImpl, renewQbittorrent,
+    onTransfer: snapshot => { transfer = snapshot; } });
+  if (completed?.state !== 'complete') return completed?.state === 'held' &&
+    completed.reason === 'incomplete' && transfer ? { ...completed, transfer } :
+    completed ?? held('torrent_unavailable');
   if (!Array.isArray(completed.files) || completed.files.length !== plan.length ||
       completed.files.some((file) => !planned.has(file.name) ||
         (planned.get(file.name).size !== undefined &&

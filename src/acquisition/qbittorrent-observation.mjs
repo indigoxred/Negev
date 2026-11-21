@@ -90,7 +90,7 @@ export async function observeTorrentCompletion({
     before.auto_tmm === false && after.auto_tmm === false &&
     before.force_start === false && after.force_start === false;
   if (sameOwner && onTransfer &&
-      ['downloading', 'forcedDL', 'stalledDL', 'queuedDL', 'pausedDL'].includes(after.state) &&
+      ['downloading', 'forcedDL', 'stalledDL', 'queuedDL', 'pausedDL', 'stoppedDL'].includes(after.state) &&
       Number.isFinite(after.progress) && after.progress >= 0 && after.progress < 1 &&
       Number.isSafeInteger(after.amount_left) && after.amount_left >= 0) {
     const eta = Number.isSafeInteger(after.eta) && after.eta > 0 &&

@@ -5,7 +5,7 @@ const evidenceLabel = state => state === 'previously_verified' ? 'Previously ver
     state === 'filename_prediction' ? 'Filename prediction only · registration unknown' : 'Registration unknown';
 
 export function compactReleaseRow({ candidate: c, element, inspect, choose,
-  isCurrent, isBusy, setBusy, onError, onSelected }) {
+  isCurrent, isBusy, setBusy, onError, onSelected, onInspected = () => {} }) {
   const facts = releaseFacts(c.title);
   const entry = element('article', undefined, 'release-entry release-compact-row');
   const main = element('div', undefined, 'release-row-main');
@@ -52,9 +52,19 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         badge.setAttribute('aria-label', badge.title);
         if (preview.selectionStatus === 'already_available') pick.textContent = 'Available';
         if (preview.selectionStatus === 'owned_unverified') pick.textContent = 'Owned';
+        onInspected();
         return canPick();
       } catch (error) {
-        badge.textContent = '?'; body.replaceChildren(metadata(), element('p', onError(error), 'muted')); task = null; return false;
+        if (!isCurrent()) return false;
+        preview = null; badge.textContent = '?';
+        const retry = element('button', 'Retry inspection', 'quiet');retry.type = 'button';
+        retry.addEventListener('click', async () => {
+          if (isBusy()) return;setBusy(true);retry.disabled = true;
+          try { await load(); } finally { setBusy(false);retry.disabled = false; }
+        });
+        body.replaceChildren(metadata(), element('p', onError(error), 'muted'));
+        if (!['release_search_expired','release_preview_expired'].includes(error.reason)) body.append(retry);
+        task = null;return false;
       } finally { pick.disabled = !canPick(); }
     })();
     return task;

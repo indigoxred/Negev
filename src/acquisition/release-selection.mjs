@@ -94,8 +94,15 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
   const inspect=async(id,token,knownCoverage)=>{
     const found=receipt(id,token);if(!found) return held('release_search_expired');
     if(!found.preview) {
-      try {found.preview=await previewCandidate({requestId:id,candidate:found.candidate});}
-      catch {return held('torrent_preflight_unavailable');}
+      // Share only the in-flight read and successful identity evidence. A
+      // temporary provider/busy result must not poison this receipt's retry.
+      found.pending??=Promise.resolve().then(()=>previewCandidate({requestId:id,candidate:found.candidate}));
+      try {
+        const checked=await found.pending;
+        if(checked?.state!=='preflight')return checked??held('torrent_preflight_unavailable');
+        found.preview=checked;
+      } catch {return held('torrent_preflight_unavailable');}
+      finally {found.pending=null;}
     }
     if(found.preview?.state==='preflight') {
       try {
