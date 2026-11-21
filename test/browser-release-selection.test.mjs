@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync,readFileSync,mkdtempSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,6 +15,7 @@ test('release dialog preserves manual choice through polling and offers alternat
     try{
       const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><div id="request-list"></div><pre id="result">pending</pre><script>
 ${source}
+window.IntersectionObserver=undefined; // Explicit Details fallback; the next fixture uses native visibility.
 const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
@@ -135,4 +136,54 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
       assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: AniDB evidence visibility',
+ {skip:browser?false:'No Chrome or Edge browser installed'},async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-registration-browser-'));let child,socket,closed;const wait=ms=>new Promise(r=>setTimeout(r,ms));
+ try{
+  const html=`<!doctype html><meta charset="utf-8"><style>${css} dialog{max-height:430px;overflow:auto}.release-compact-row{min-height:110px}</style><pre id="result">pending</pre><script>
+${source}
+const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+const base={guid:'one',indexerId:1,title:'[Group] Example 1080p',size:1000,seeders:20,indexer:'Test',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true};
+const items=['likely','previously_verified','unknown','mixed',...Array.from({length:10},(_,i)=>'hidden'+i)].map((state,i)=>({...base,guid:state,title:'[Group] '+state+' 1080p',token:state}));
+let inspected=[],inspectedAt=[],commands=[],inFlight=0,maxInFlight=0;
+const api=async(url,options={})=>{
+ if(!options.method&&url.endsWith('/release-choice'))return{control:{mode:'manual',phase:'selecting',revision:1},context:{}};
+ if(url.includes('/releases'))return{state:'candidates',items,nextOffset:null};
+ const body=url.includes('/release-inspection?')?{action:'inspect',token:new URL(url,'http://local').searchParams.get('token')}:JSON.parse(options.body);commands.push(body.action);if(body.action!=='inspect')throw Error('Browsing attempted a mutation');
+ inspected.push(body.token);inspectedAt.push(performance.now());inFlight++;maxInFlight=Math.max(maxInFlight,inFlight);await new Promise(r=>setTimeout(r,10));inFlight--;
+ const files=[{name:'01.mkv',size:1000,episodeIds:[1]}];if(body.token==='mixed')files.push({name:'02.mkv',size:2000,episodeIds:[2]});
+ return{state:'preflight',episodeIds:[1],files,correspondence:{files:files.map((f,i)=>({...f,state:body.token==='mixed'?(i?'unknown':'likely'):body.token==='likely'||body.token==='previously_verified'?body.token:'unknown'}))}};
+};
+const tick=()=>new Promise(r=>setTimeout(r,20));const until=async fn=>{for(let i=0;i<400;i++){if(fn())return;await tick();}throw Error('Timed out waiting for visible evidence '+JSON.stringify({inspected,rows:[...document.querySelectorAll('.release-compact-row')].slice(0,4).map(e=>({text:e.textContent,rect:e.getBoundingClientRect().toJSON()})),dialog:document.querySelector('dialog').getBoundingClientRect().toJSON()}));};
+(async()=>{
+ const dialog=createReleaseDialog({api,element});await dialog.open({requestId:1,title:'Evidence Example'});
+ await until(()=>document.querySelector('.release-compact-row .registration-likely'));
+ const row=document.querySelector('.release-compact-row'),badge=row.querySelector('.release-registration');
+ const likelyGreen=getComputedStyle(badge).color==='rgb(142, 231, 182)'&&getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)'&&badge.textContent==='Likely'&&badge.title.includes('not exact');
+ const noDetailsNeeded=!row.querySelector('details').open&&row.textContent.includes('CRC32 and size');
+ await until(()=>document.querySelectorAll('.release-compact-row')[1].querySelector('.registration-confirmed'));
+ const rows=()=>[...document.querySelectorAll('.release-compact-row')];
+ const verified=rows()[1].querySelector('.registration-confirmed')!==null;
+ const hiddenUntouched=!inspected.includes('hidden9');
+ rows()[3].scrollIntoView();await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await until(()=>rows()[3].textContent.includes('AniDB episode'));
+ const unknownGrey=rows()[2].querySelector('.registration-unknown')!==null&&!rows()[2].classList.contains('release-anidb-match');
+ const mixedGrey=!rows()[3].classList.contains('release-anidb-match')&&rows()[3].querySelector('.registration-unknown')!==null;
+ dialog.close();await tick();const before=inspected.length;await tick();await tick();const closedStops=inspected.length===before;
+ document.querySelector('#result').textContent=JSON.stringify({likelyGreen,noDetailsNeeded,verified,unknownGrey,mixedGrey,hiddenUntouched,serial:maxInFlight===1,paced:inspectedAt.slice(1).every((t,i)=>t-inspectedAt[i]>=1000),readOnly:commands.every(x=>x==='inspect'),closedStops});
+})().catch(e=>document.querySelector('#result').textContent='ERROR '+e.message);
+</script>`;
+  const file=join(dir,'test.html');writeFileSync(file,html);
+  child=spawn(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox','--remote-debugging-port=0','--user-data-dir='+join(dir,'profile'),pathToFileURL(file).href],{stdio:'ignore',windowsHide:true});
+  closed=new Promise(r=>child.once('close',r));let port;
+  for(let i=0;i<80;i++){try{port=Number(readFileSync(join(dir,'profile','DevToolsActivePort'),'utf8').split('\n')[0]);break;}catch{await wait(100);}}
+  assert.ok(port,'Browser debugging port unavailable');
+  const pages=await(await fetch('http://127.0.0.1:'+port+'/json/list')).json();socket=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);
+  await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true});});
+  let nextId=0;const pending=new Map();socket.addEventListener('message',e=>{const m=JSON.parse(e.data),p=pending.get(m.id);if(!p)return;pending.delete(m.id);m.error?p.reject(Error(m.error.message)):p.resolve(m.result);});
+  const send=(method,params={})=>new Promise((resolve,reject)=>{const id=++nextId;pending.set(id,{resolve,reject});socket.send(JSON.stringify({id,method,params}));});
+  let result='pending';for(let i=0;i<250;i++){result=(await send('Runtime.evaluate',{expression:"document.querySelector('#result')?.textContent",returnByValue:true})).result.value;if(result&&result!=='pending')break;await wait(100);}
+  assert.ok(result&&result!=='pending'&&!result.startsWith('ERROR'),result);assert.deepEqual(JSON.parse(result),{likelyGreen:true,noDetailsNeeded:true,verified:true,unknownGrey:true,mixedGrey:true,hiddenUntouched:true,serial:true,paced:true,readOnly:true,closedStops:true});
+ }finally{socket?.close();if(child){child.kill();await closed;}rmSync(dir,{recursive:true,force:true});}
 });

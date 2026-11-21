@@ -5,7 +5,7 @@ import { buildUserApp } from '../src/web/user-app.mjs';
 async function fixture(run) {
   let role='member',adultAllowed=false;const calls=[];
   const user=()=>({id:7,username:'member',role,adultAllowed,sessionVersion:1});
-  const accounts={authenticate:async()=>user(),getSessionUser:()=>user(),registerInvite:async()=>null,
+  const accounts={authenticate:async()=>user(),getSessionUser:({userId,version})=>userId===7&&version===1?user():null,registerInvite:async()=>null,
     createInvite:()=>null,revokeSessions:()=>false};
   const selection={snapshot:()=>({mode:'manual',phase:'selecting',revision:1}),
     search:async(id,query)=>{calls.push([id,query]);return {state:'candidates',items:[]};},
@@ -59,4 +59,15 @@ test('the public release route validates and forwards the optional pack checkbox
  assert.deepEqual(seen.map(args=>args[3].packsOnly),[true,false]);
  assert.equal((await app.inject({url:'/api/requests/1/releases?packsOnly=yes',headers})).statusCode,400);
  assert.equal(seen.length,2);
+}));
+
+test('read-only evidence checks preserve ownership and the explicit selection rate budget',()=>fixture(async({app,headers,selection,setAdmin})=>{
+ const url='/api/requests/1/release-inspection?token=receipt';
+ assert.equal((await app.inject({url})).statusCode,401);
+ assert.equal((await app.inject({url:'/api/requests/2/release-inspection?token=receipt',headers})).statusCode,404);
+ setAdmin();assert.equal((await app.inject({url:'/api/requests/3/release-inspection?token=receipt',headers})).statusCode,403);
+ for(const query of ['','token=','token='+ 'a'.repeat(65),'token=x&extra=yes'])assert.equal((await app.inject({url:'/api/requests/1/release-inspection'+(query?'?'+query:''),headers})).statusCode,400);
+ for(let i=0;i<35;i++)assert.equal((await app.inject({url,headers:{cookie:headers.cookie}})).statusCode,200);
+ assert.equal((await app.inject({method:'POST',url:'/api/requests/1/release-choice',headers,payload:{action:'choose',revision:1,token:'receipt'}})).statusCode,200);
+ selection.inspect=async()=>{throw Error('private-provider-secret');};const failed=await app.inject({url,headers});assert.equal(failed.statusCode,503);assert.equal(failed.body.includes('private-provider'),false);
 }));
