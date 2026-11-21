@@ -1,3 +1,4 @@
+import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { createHash } from 'node:crypto';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
@@ -17,7 +18,7 @@ export async function startStoppedCandidate({
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
-  readRelatedTitles, readVideoExtensions,
+  readRelatedTitles, readVideoExtensions, readBonusOwnership,
   now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 }) {
   let base;
@@ -59,8 +60,9 @@ export async function startStoppedCandidate({
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
+  let bonusFiles=ledger.getBonusPlan?.(attemptId)??[];
+  let extensions;
   if (readVideoExtensions) {
-    let extensions;
     try { extensions = await readVideoExtensions(); }
     catch { return held('shoko_settings_unavailable'); }
     if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
@@ -77,6 +79,20 @@ export async function startStoppedCandidate({
       fileNames: plannedFiles.map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return checked;
   }
+  if(bonusFiles.length){
+    const supported=extensions?bonusFiles.filter(file=>acceptsShokoVideo(file.name,extensions)):bonusFiles;
+    const refreshed=await refreshBonusOwnership({files:supported,readOwnership:readBonusOwnership});
+    const kept=new Set(refreshed.files.map(file=>file.name));
+    const exclude=bonusFiles.filter(file=>!kept.has(file.name));
+    if(exclude.length){
+      if(typeof ledger.excludeUnstartedBonuses!=='function')return held('bonus_exclusion_unavailable');
+      const saved=ledger.excludeUnstartedBonuses({attemptId,names:exclude.map(file=>file.name),nowMs:now()});
+      if(saved.state!=='excluded')return saved;
+    }
+    bonusFiles=ledger.getBonusPlan(attemptId);
+  }
+  const selectedFiles=[...plannedFiles,...bonusFiles];
+  const plannedFileNames=selectedFiles.map(file=>file.name);
   let activeSessionId = sessionId;
   let activeFetch = fetchImpl;
   const renewSession = async () => {
@@ -98,13 +114,18 @@ export async function startStoppedCandidate({
   };
   let manifest = await observeStoppedManifest({ baseUrl,
     sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-    timeoutMs, saveRoot });
+    timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true });
   if (manifest.reason === 'provider_http_403') {
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     manifest = await observeStoppedManifest({ baseUrl,
       sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-      timeoutMs, saveRoot });
+      timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true });
+  }
+  if(manifest.state==='manifest_needs_exclusions'){
+    const body=new URLSearchParams({hash:expected.hash,id:manifest.passive.map(file=>String(file.index)).join('|'),priority:'0'});
+    try{await activeFetch(new URL('/api/v2/torrents/filePrio',base),{method:'POST',headers:{Cookie:qbittorrentSessionCookie(activeSessionId)},body,redirect:'manual',signal:AbortSignal.timeout(timeoutMs)});}catch{/* Exact re-observation decides whether exclusion succeeded. */}
+    manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames});
   }
   if (manifest.state !== 'manifest_safe') return manifest;
   let manifestAtMs;
@@ -115,7 +136,7 @@ export async function startStoppedCandidate({
   }
   const sorted = (files) => files.map((file) => [file.name, file.size])
     .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
-  if (JSON.stringify(sorted(manifest.videos)) !== JSON.stringify(sorted(plannedFiles))) {
+  if (JSON.stringify(sorted(manifest.videos)) !== JSON.stringify(sorted(selectedFiles))) {
     return held('file_plan_mismatch');
   }
   let paths;

@@ -476,3 +476,9 @@ test('a held request does not block a later synthetic request-to-publish chain',
   }
 });
 
+
+test('pending bonuses resume from the completion clock without holding the media lane',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-bonus-clock-'));const dbPath=path.join(dir,'state.sqlite');const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath),handoffs=openHandoffLedger(dbPath);let calls=0,finish;const wait=new Promise(r=>finish=r);
+ const pipeline=openAcquisitionPipeline({dbPath,acquisitions:{...acquisitions,listPendingBonuses:()=>[{attemptId:8,name:'Extras/OVA.mkv'}]},qbBaseUrl,sessionGate:authorizedSession,processRequest:async()=>{},processStart:async()=>{},processCompletion:async()=>{},processPublish:async()=>{},processBonus:async()=>{calls++;await wait;return {state:'bonus_waiting'}},now:()=>100});
+ try{await pipeline.initialize();await pipeline.tickCompletions();assert.equal(calls,1);await pipeline.tickCompletions();assert.equal(calls,1,'one active bonus observation only');finish();await pipeline.close();}finally{finish();await pipeline.close();handoffs.close();acquisitions.close();requests.close();await rm(dir,{recursive:true,force:true});}
+});

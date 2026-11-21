@@ -62,6 +62,13 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
       attempt.episodeIds.some((id) => !targetIds.has(id))) {
     return held('target_coverage_mismatch');
   }
+  const bonuses=acquisitions.getBonusPlan?.(attemptId)??[];
+  if(!Array.isArray(bonuses)||bonuses.length>20)return held('invalid_bonus_plan');
+  for(const file of bonuses){
+    if(torrentFileKind(file?.name)!=='video'||planned.has(file.name)||!Number.isSafeInteger(file.size)||file.size<1||!Number.isSafeInteger(file.anidbId)||file.anidbId<1||!['special','ova','movie','extra'].includes(file.kind)||!Array.isArray(file.episodeIds)||file.episodeIds.length!==1||!Number.isSafeInteger(file.episodeIds[0])||file.episodeIds[0]<1)return held('invalid_bonus_plan');
+    planned.set(file.name,{...file,scope:'bonus'});
+  }
+  const selectedCount=plan.length+bonuses.length;
   let staging, mount;
   try {
     [staging, mount] = await Promise.all([verifyStagingRoot(),
@@ -78,11 +85,11 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   if (completed?.state !== 'complete') return completed?.state === 'held' &&
     completed.reason === 'incomplete' && transfer ? { ...completed, transfer } :
     completed ?? held('torrent_unavailable');
-  if (!Array.isArray(completed.files) || completed.files.length !== plan.length ||
+  if (!Array.isArray(completed.files) || completed.files.length !== selectedCount ||
       completed.files.some((file) => !planned.has(file.name) ||
         (planned.get(file.name).size !== undefined &&
           planned.get(file.name).size !== file.size)) ||
-      new Set(completed.files.map((file) => file.name)).size !== plan.length ||
+      new Set(completed.files.map((file) => file.name)).size !== selectedCount ||
       !Array.isArray(completed.subtitles) || completed.subtitles.length > 50) {
     return held('manifest_or_budget_mismatch');
   }
@@ -90,7 +97,8 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   // cannot establish missing audio or burned-in subtitles. Shoko owns content
   // hashing/identification; this path checks ownership, completion and files.
   const files = [...completed.files.map((file) => ({ name: file.name,
-    size: file.size, episodeIds: [...planned.get(file.name).episodeIds] })),
+    size: file.size, episodeIds: [...planned.get(file.name).episodeIds],
+    ...(planned.get(file.name).scope==='bonus'?{scope:'bonus',anidbId:planned.get(file.name).anidbId,kind:planned.get(file.name).kind}:{}) })),
   ...completed.subtitles.map((file) => ({ name: file.name, size: file.size }))];
   const result = await prepare({ attemptId, torrentHash: attempt.torrentHash,
     stagingRoot: path.join(stagingHostPath, attempt.torrentHash),

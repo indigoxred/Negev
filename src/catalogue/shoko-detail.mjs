@@ -69,7 +69,7 @@ export async function loadAniDbDetail({
     return { state: 'unavailable' };
   }
   return {
-    state: 'details', anidbId, title: anime.Title, kind,
+    state: 'details', anidbId, title: anime.Title, kind, format: anime.Type,
     airDate: anime.AirDate ?? null, endDate: anime.EndDate ?? null,
     episodeCount: anime.EpisodeCount ?? null, restricted: anime.Restricted ?? null,
     total: data.Total, page,

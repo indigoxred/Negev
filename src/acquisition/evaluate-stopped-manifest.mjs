@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isPackBonusVideo } from './pack-bonus-name.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 const STOPPED_STATES = new Set(['stoppedDL', 'pausedDL']);
@@ -76,7 +77,7 @@ export function evaluateStoppedManifest({ torrent, files, expected,
     names.add(file.name.toLowerCase());
     if (file.priority === 0) continue;
     const item = { index: file.index, name: file.name, size: file.size };
-    if (kind === 'video' && planned && !planned.has(file.name) && isOptionalClip(file.name)) {
+    if (kind === 'video' && planned && !planned.has(file.name) && (isOptionalClip(file.name) || isPackBonusVideo(file.name))) {
       if (!allowSelectedPassive) return held('unexpected_selected_file');
       passive.push(item);
     } else if (kind === 'video') videos.push(item);

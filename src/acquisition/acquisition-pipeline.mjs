@@ -18,7 +18,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   recognitionRecoveries = null, shokoRescans = null,
   processRequest, processStart, processCompletion, processPublish,
-  processRecovery, processRescan,
+  processRecovery, processRescan, processBonus,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now, pureMode = false,
   requestPageLimit = 3 } = {}) {
@@ -68,7 +68,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let recovery;
   let closed = false;
   let closing;
-  const running = { request: false, media: false };
+  const running = { request: false, media: false, bonus: false };
+  const bonusWorker=typeof processBonus==='function'&&typeof acquisitions.listPendingBonuses==='function'?{runOnce:async()=>{const item=acquisitions.listPendingBonuses({nowMs:now(),limit:1})[0];return item?processBonus({item}):{state:'idle'};}}:null;
   let holdingRecovered = false;
   let recoveryAfterId = 0;
   let preferRecognitionRecovery = false;
@@ -175,6 +176,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       },
     }) } : {}),
     tickCompletions: () => run({ runOnce: async () => {
+      if(bonusWorker)void run(bonusWorker,'bonus').catch(()=>{});
       const result = await completionWorker.runOnce();
       if (result?.result?.reason === 'media_retired' &&
           Number.isSafeInteger(result.attemptId)) {

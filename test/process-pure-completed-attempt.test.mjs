@@ -133,3 +133,9 @@ test('completion forwards session renewal to the exact stop gate', async () => {
   assert.equal(forwarded, true);
   assert.deepEqual(result, { state: 'held', reason: 'provider_http_403' });
 });
+
+test('main and bonus videos share one move but retain independent identities',async()=>{
+ const bonus={name:'Extras/Film.mkv',size:4,anidbId:43,episodeIds:[2001],kind:'movie',evidence:'shoko_filename_prediction'};let moved;
+ const result=await processPureCompletedAttempt({...inputs,acquisitions:{...inputs.acquisitions,getBonusPlan:()=>[bonus]},stop:async()=>({state:'complete',files:[{name:'Maquia.mkv',size:3},{name:bonus.name,size:4}],subtitles:[]}),prepare:async input=>{moved=input.files;return {state:'prepared'}}});
+ assert.equal(result.state,'handoff_prepared',JSON.stringify(result));assert.deepEqual(moved[1],{name:bonus.name,size:4,episodeIds:[2001],scope:'bonus',anidbId:43,kind:'movie'});
+});

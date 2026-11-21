@@ -53,6 +53,7 @@ export function createBonusPackLedger(db) {
     checked_ms INTEGER NOT NULL CHECK(checked_ms>=0),
     created_ms INTEGER NOT NULL CHECK(created_ms>=0),
     progress_stage INTEGER NOT NULL DEFAULT 0 CHECK(progress_stage BETWEEN 0 AND 3),
+    excluded_before_start INTEGER NOT NULL DEFAULT 0 CHECK(excluded_before_start IN (0,1)),
     PRIMARY KEY(attempt_id,file_name),
     CHECK(status NOT IN ('identified','playable') OR shoko_file_id IS NOT NULL),
     CHECK(active=0 OR status NOT IN ('playable','skipped'))
@@ -66,6 +67,9 @@ export function createBonusPackLedger(db) {
     result_json TEXT NOT NULL,
     created_ms INTEGER NOT NULL CHECK(created_ms>=0)
   ) STRICT`);
+  if(!db.prepare('PRAGMA table_info(acquisition_bonus_files)').all().some(c=>c.name==='excluded_before_start')) {
+    db.exec('ALTER TABLE acquisition_bonus_files ADD COLUMN excluded_before_start INTEGER NOT NULL DEFAULT 0 CHECK(excluded_before_start IN (0,1))');
+  }
   const transaction = (run) => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = run(); db.exec('COMMIT'); return result; }
@@ -77,7 +81,25 @@ export function createBonusPackLedger(db) {
   const terminated = (id) => ['acquisition_retirements', 'acquisition_rejections',
     'acquisition_prestart_mismatch_retirements'].some((table) => hasTable(table) &&
       db.prepare(`SELECT 1 FROM ${table} WHERE attempt_id=?`).get(id));
+  const currentPlan=(attemptId)=>{
+    const header=db.prepare('SELECT result_json FROM acquisition_bonus_plans WHERE attempt_id=?').get(attemptId);
+    if(!header)return null;
+    const initial=JSON.parse(header.result_json),all=rows.all(attemptId);
+    return {...initial,files:all.filter(f=>!f.excluded_before_start).map(canonicalRow),
+      skipped:[...initial.skipped,...all.filter(f=>f.excluded_before_start).map(f=>({name:f.file_name,reason:f.reason}))]};
+  };
   return {
+    excludeUnstartedBonuses({attemptId,names,nowMs}) {
+      if(!validId(attemptId)||!validTime(nowMs)||!Array.isArray(names)||names.length>20||new Set(names).size!==names.length||names.some(n=>typeof n!=='string'||!n))throw new TypeError('Invalid bonus exclusion');
+      return transaction(()=>{
+        const parent=attempt.get(attemptId);
+        if(!parent||!['reserved','dispatch_unknown','torrent_observed'].includes(parent.status)||terminated(attemptId)||db.prepare('SELECT 1 FROM acquisition_starts WHERE attempt_id=?').get(attemptId))return held('bonus_exclusion_closed');
+        const all=rows.all(attemptId);
+        if(names.some(name=>!all.some(row=>row.file_name===name))||all.some(row=>names.includes(row.file_name)&&row.checked_ms>nowMs))return held('bonus_exclusion_conflict');
+        for(const name of names)db.prepare("UPDATE acquisition_bonus_files SET excluded_before_start=1,status='skipped',active=0,reason='ownership_changed_before_start',checked_ms=?,next_check_ms=? WHERE attempt_id=? AND file_name=?").run(nowMs,nowMs,attemptId,name);
+        return {state:'excluded'};
+      });
+    },
     recordBonusPlan({ attemptId, hash, files, nowMs }) {
       if (!validId(attemptId) || !validTime(nowMs) || typeof hash !== 'string' ||
           !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash)) throw new TypeError('Invalid bonus plan');
@@ -90,7 +112,7 @@ export function createBonusPackLedger(db) {
         const existing = db.prepare('SELECT * FROM acquisition_bonus_plans WHERE attempt_id=?').get(attemptId);
         if (existing) return existing.torrent_hash === normalizedHash &&
           existing.input_json === JSON.stringify(canonical)
-          ? JSON.parse(existing.result_json) : held('bonus_plan_conflict');
+          ? currentPlan(attemptId) : held('bonus_plan_conflict');
         if (parent.status !== 'reserved' || terminated(attemptId) ||
             db.prepare('SELECT 1 FROM acquisition_starts WHERE attempt_id=?').get(attemptId)) return held('dispatch_already_begun');
         const main = db.prepare('SELECT * FROM acquisition_file_plans WHERE attempt_id=?').all(attemptId);
@@ -118,9 +140,13 @@ export function createBonusPackLedger(db) {
         return result;
       });
     },
+    getRecordedBonusPlan(attemptId) {
+      if(!validId(attemptId))throw new TypeError('Invalid bonus attempt');
+      return currentPlan(attemptId);
+    },
     getBonusPlan(attemptId) {
       if (!validId(attemptId)) throw new TypeError('Invalid bonus attempt');
-      return rows.all(attemptId).map(canonicalRow);
+      return rows.all(attemptId).filter(row=>!row.excluded_before_start).map(canonicalRow);
     },
     listPendingBonuses({ nowMs, limit = 5 }) {
       if (!validTime(nowMs) || !validId(limit) || limit > 100) throw new TypeError('Invalid bonus check');

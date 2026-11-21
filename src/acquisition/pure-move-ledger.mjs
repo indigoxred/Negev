@@ -123,7 +123,7 @@ export function openPureMoveLedger(dbPath) {
             input.nowMs < a.updated_ms) return held('start_intent_missing');
         const selectedBonuses = evidence.manifest.files.filter(file=>file.scope==='bonus');
         const savedBonuses = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='acquisition_bonus_files'").get()
-          ? db.prepare('SELECT file_name,size,anidb_id,episode_id,kind FROM acquisition_bonus_files WHERE attempt_id=?').all(input.attemptId) : [];
+          ? db.prepare('SELECT file_name,size,anidb_id,episode_id,kind FROM acquisition_bonus_files WHERE attempt_id=? AND excluded_before_start=0').all(input.attemptId) : [];
         if(savedBonuses.length!==selectedBonuses.length || selectedBonuses.some(file=>!savedBonuses.some(saved=>saved.file_name===file.name && saved.size===file.size && saved.anidb_id===file.anidbId && saved.kind===file.kind && file.episodeIds.length===1 && saved.episode_id===file.episodeIds[0])))return held('bonus_plan_mismatch');
         const expected = claims.all(input.attemptId).map((row) => row.episode_id);
         if (expected.length !== evidence.episodes.size ||

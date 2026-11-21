@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { isPackBonusVideo } from './pack-bonus-name.mjs';
 export { isPackBonusVideo } from './pack-bonus-name.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
@@ -38,10 +39,15 @@ export async function planPackBonuses({ request, detail, files, related,
   videoExtensions } = {}) {
   if (!Array.isArray(files)) throw new TypeError('Invalid pack files');
   const mainFiles = [], optional = [], bonusFiles = [], skippedBonuses = [];
+  if (detail?.episodes?.some(e=>e.type!=='Episode' && request?.episodeIds?.includes(e.id))) {
+    return { mainFiles: [...files], bonusFiles, skippedBonuses };
+  }
   for (const file of files) {
     if (isPackBonusVideo(file?.name)) optional.push(file);
     else mainFiles.push(file);
   }
+  const selectedTargets = new Set();
+  let selectedBytes=mainFiles.filter(f=>torrentFileKind(f.name)==='video').reduce((sum,f)=>sum+f.size,0);
   const skip = (file, reason) => skippedBonuses.push({ name: file.name, size: file.size, reason });
   const deadline = Date.now() + 10_000;
   const expired = Symbol('deadline');
@@ -65,25 +71,18 @@ export async function planPackBonuses({ request, detail, files, related,
   if (validId(request?.anidbId)) details.set(request.anidbId, detail);
   async function ownDetail(anidbId) {
     if (details.has(anidbId)) return details.get(anidbId);
-    let first;
     const collected = await collectAniDbDetail({ anidbId, loadPage: async (args) => {
       const page = await read(() => loadDetail(args));
-      if (args.page === 1) first = page;
-      else if ((page?.format ?? null) !== (first?.format ?? null) ||
-          (page?.type ?? null) !== (first?.type ?? null)) return { state: 'invalid_detail_evidence' };
       return page;
     } });
-    const result = { ...collected,
-      ...(first?.format !== undefined ? { format: first.format } : {}),
-      ...(first?.type !== undefined ? { type: first.type } : {}) };
+    const result = collected;
     details.set(anidbId, result);
     return result;
   }
   for (const [index, file] of optional.entries()) {
     if (index >= 20) { skip(file, 'bonus_limit'); continue; }
     if (stopped || Date.now() >= deadline) { skip(file, 'bonus_deadline'); continue; }
-    if (!validId(request?.anidbId) || typeof offlineLookup !== 'function' ||
-        typeof loadDetail !== 'function' || typeof readOwnership !== 'function') {
+    if (!validId(request?.anidbId) || typeof offlineLookup !== 'function') {
       skip(file, 'bonus_provider_unavailable'); continue;
     }
     if (!Number.isSafeInteger(file.size) || file.size < 1) {
@@ -103,6 +102,10 @@ export async function planPackBonuses({ request, detail, files, related,
     }).state !== 'accepted') {
       skip(file, 'bonus_identity_unproven'); continue;
     }
+    if(anidbId===request.anidbId&&request.episodeIds?.includes(episodeId)&&detail?.episodes?.some(e=>e.id===episodeId&&e.type==='Episode')){mainFiles.push(file);continue;}
+    if(typeof loadDetail!=='function'||typeof readOwnership!=='function'){skip(file,'bonus_provider_unavailable');continue;}
+    const targetKey=anidbId+':'+episodeId;
+    if(selectedTargets.has(targetKey)){skip(file,'bonus_duplicate_target');continue;}
     const sameSeries = anidbId === request.anidbId;
     if (!sameSeries && (related?.state !== 'related_titles' ||
         related.anidbId !== request.anidbId || !Array.isArray(related.items) ||
@@ -119,10 +122,21 @@ export async function planPackBonuses({ request, detail, files, related,
     const ownership = await read(() => readOwnership({ anidbId, episodeId }));
     if (ownership === expired) { skip(file, 'bonus_deadline'); continue; }
     if (ownership?.state !== 'missing') { skip(file, 'bonus_ownership_unproven'); continue; }
+    selectedTargets.add(targetKey);
     bonusFiles.push({ name: file.name, size: file.size, anidbId,
       episodeIds: [episodeId], kind, evidence: 'shoko_filename_prediction' });
   }
-  return { mainFiles, bonusFiles, skippedBonuses };
+  // Main identity may have been recovered from a bonus-looking name above.
+  // Allocate optional slots only after the complete main/subtitle set is known.
+  let slots=Math.max(0,100-mainFiles.filter(f=>['video','subtitle'].includes(torrentFileKind(f.name))).length);
+  selectedBytes=mainFiles.filter(f=>torrentFileKind(f.name)==='video').reduce((sum,f)=>sum+f.size,0);
+  const bounded=[];
+  for(const file of bonusFiles){
+    if(slots===0){skip(file,'bonus_file_limit');continue;}
+    if(!Number.isSafeInteger(selectedBytes+file.size)||selectedBytes+file.size>64*1024**3){skip(file,'bonus_byte_budget');continue;}
+    bounded.push(file);slots--;selectedBytes+=file.size;
+  }
+  return { mainFiles, bonusFiles:bounded, skippedBonuses };
 }
 
 

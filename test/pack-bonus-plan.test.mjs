@@ -137,9 +137,9 @@ test('bounds optional work to twenty files, coalesces metadata and checks sequen
   const result = await planPackBonuses(options({
     files: [file('Example.S01E01.mkv'), ...Array.from({ length: 23 }, (_, n) => file(`OVA/bonus${n}.mkv`))],
     offlineLookup: async ({ filename }) => { active++; peak = Math.max(peak, active);
-      await Promise.resolve(); active--; return preview(filename, 43, 2001); },
-    loadDetail: async () => { loads++; return detailFor(43, [episode(2001, 'Episode')], { format: 'OVA' }); },
-    readOwnership: async (identity) => { assert.deepEqual(identity, { anidbId: 43, episodeId: 2001 }); return { state: 'missing' }; },
+      await Promise.resolve(); active--; return preview(filename, 43, 2001+Number(/bonus(\d+)/.exec(filename)[1])); },
+    loadDetail: async () => { loads++; return detailFor(43, Array.from({length:23},(_,i)=>({...episode(2001+i,'Episode'),number:i+1})), { format: 'OVA' }); },
+    readOwnership: async (identity) => { assert.equal(identity.anidbId,43);assert.ok(identity.episodeId>=2001&&identity.episodeId<2021); return { state: 'missing' }; },
   }));
   assert.equal(peak, 1);
   assert.equal(loads, 1);
@@ -200,3 +200,12 @@ test('pure filename helper is independently importable and preserves video and p
     assert.equal(classify(name), false, name);
   }
 });
+
+test('duplicate predictions and extras over the existing pack byte budget are skipped independently',async()=>{
+ const duplicate=await planPackBonuses(options({files:[file('Example.S01E01.mkv'),file('Extras/one.mkv'),file('Extras/two.mkv')]}));
+ assert.equal(duplicate.bonusFiles.length,1);assert.equal(duplicate.skippedBonuses[0].reason,'bonus_duplicate_target');
+ const bounded=await planPackBonuses(options({files:[{name:'Example.S01E01.mkv',size:64*1024**3-50},file('Extras/one.mkv')]}));assert.equal(bounded.bonusFiles.length,0);assert.equal(bounded.skippedBonuses[0].reason,'bonus_byte_budget');
+});
+
+test('exact requested regular OVA files remain main episodes despite bonus-looking names',async()=>{const episodes=[episode(1001,'Episode'),{...episode(1002,'Episode'),number:2}],main=detailFor(42,episodes,{format:'OVA'});const files=[file('Example OVA 01.mkv'),file('Example OVA 02.mkv')];const result=await planPackBonuses(options({request:{anidbId:42,episodeIds:[1001,1002]},detail:main,files,offlineLookup:async({filename})=>preview(filename,42,filename.includes('01')?1001:1002)}));assert.deepEqual(result.mainFiles,files);assert.equal(result.bonusFiles.length,0);assert.equal(result.skippedBonuses.length,0);});
+test('bonuses cannot exceed the combined one-hundred-file move boundary',async()=>{const videos=Array.from({length:50},(_,i)=>file('Example.S01E'+(i+1)+'.mkv')),subs=Array.from({length:50},(_,i)=>file('Subtitles/'+i+'.ass'));const result=await planPackBonuses(options({files:[...videos,...subs,file('Extras/one.mkv')]}));assert.equal(result.bonusFiles.length,0);assert.equal(result.skippedBonuses[0].reason,'bonus_file_limit');assert.equal(result.mainFiles.length,100);});

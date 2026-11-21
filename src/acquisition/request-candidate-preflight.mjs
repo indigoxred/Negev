@@ -9,6 +9,7 @@ import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
 import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
 import { basename } from 'node:path';
+import { planPackBonuses } from './pack-bonus-plan.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -20,6 +21,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   readRequest, loadDetail, releaseQueries = async () => [],
   readRelatedTitles,
   readVideoExtensions, offlineLookup, offlineCache, inspectCorrespondence,
+  readBonusOwnership, allowRestrictedBonuses = false,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   prepare = prepareStoppedCandidate } = {}) {
   if (!validId(requestId) || typeof readRequest !== 'function' ||
@@ -104,17 +106,28 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
+  let extensions;
+  if (readVideoExtensions) {
+    try { extensions = await readVideoExtensions(); } catch { return held('shoko_settings_unavailable'); }
+    if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
+  }
   let related;
   if (readRelatedTitles) {
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
     catch { return held('related_title_unavailable'); }
+  }
+  const bonus = await planPackBonuses({ request, detail, files: prepared.files, related,
+    offlineLookup, loadDetail, readOwnership: readBonusOwnership,
+    allowRestricted: allowRestrictedBonuses, videoExtensions: extensions });
+  const mainPrepared = { ...prepared, files: bonus.mainFiles };
+  if (readRelatedTitles) {
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
       requestedTitle: detail.title, related, releaseTitle: candidate.title,
-      fileNames: prepared.files.filter((file) =>
+      fileNames: mainPrepared.files.filter((file) =>
         torrentFileKind(file.name) === 'video').map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return checked;
   }
-  const plan = planTorrentTargets({ request, detail, prepared,
+  const plan = planTorrentTargets({ request, detail, prepared: mainPrepared,
     releaseTitle: candidate.title, trustedTitle: firstQuery });
   if (plan.state !== 'planned_targets') return plan;
   if (candidate.targetEpisodeId !== undefined &&
@@ -122,10 +135,6 @@ export async function previewRequestCandidate({ requestId, candidate,
     return held('targeted_result_wrong_episode');
   }
   if (readVideoExtensions) {
-    let extensions;
-    try { extensions = await readVideoExtensions(); }
-    catch { return held('shoko_settings_unavailable'); }
-    if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
     if (plan.plannedFiles.some((file) =>
       !acceptsShokoVideo(file.name, extensions))) {
       return held('shoko_video_format_unsupported');
@@ -209,12 +218,15 @@ export async function previewRequestCandidate({ requestId, candidate,
     ...(correspondence ? { correspondence } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
+    ...(bonus.bonusFiles.length || bonus.skippedBonuses.length ?
+      { bonusFiles: bonus.bonusFiles, skippedBonuses: bonus.skippedBonuses } : {}),
     subtitles: prepared.files.filter((file) =>
       torrentFileKind(file.name) === 'subtitle').map((file) => ({
       name: file.name, size: file.size })),
     filesToExclude: prepared.files.filter((file) =>
       torrentFileKind(file.name) === 'passive' ||
-      plan.excludedVideoNames?.includes(file.name)).map((file) => ({
+      plan.excludedVideoNames?.includes(file.name) ||
+      bonus.skippedBonuses.some(b=>b.name===file.name)).map((file) => ({
       name: file.name, size: file.size })),
     registeredInAniDb: false, downloadStarted: false };
 }

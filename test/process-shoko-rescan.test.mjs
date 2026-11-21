@@ -379,3 +379,9 @@ test('missing path or metadata for one pack member cannot starve later recovery'
  await processShokoRescan({...options,nowMs:360100});assert.ok(calls.includes(82));
  }
 });
+
+test('a pending bonus cannot keep an otherwise linked main pack in rescan',async()=>{
+ const saved=witness();const withBonus={...manifest,files:[...manifest.files,{name:'Extras/OVA.mkv',size:5,scope:'bonus',anidbId:43,kind:'ova',episodeIds:[2001]}]};
+ const result=await processShokoRescan({item:{...item,manifest:withBonus},ledger:saved.ledger,importRoot,shokoMount,nowMs:400000,readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>{const i=manifest.files.findIndex(f=>sourcePath.endsWith(f.name));assert.notEqual(i,-1,'bonus must have its own observer');const f=manifest.files[i];return [linked(80+i,f.episodeIds[0],f.size,sourcePath)]},rescan:async()=>{throw Error('no rescan needed')},verifyPlex:async({episodeId})=>({state:'available',fileId:episodeId+69})});
+ assert.equal(result.state,'linked',JSON.stringify(result));assert.equal(saved.completion(),'done');
+});

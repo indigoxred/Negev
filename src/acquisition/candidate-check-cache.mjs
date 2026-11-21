@@ -11,9 +11,9 @@ for (const reason of ['ambiguous_catalogue_number','ambiguous_movie_scope',
   'invalid_piece_list','unsupported_torrent_version']) deterministic.add(reason);
 const fields = ['state', 'reason', 'requestId', 'anidbId', 'searchQuery', 'identityTitle',
   'torrentHash', 'shokoPreview', 'shokoPreviewConflict', 'correspondence', 'version', 'totalBytes',
-  'episodeIds', 'files', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
+  'episodeIds', 'files', 'bonusFiles', 'skippedBonuses', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
 const keyFor = ({ request, candidate }) => createHash('sha256').update(JSON.stringify([
-  'candidate-check-v3', request.id, request.anidbId, request.kind,
+  'candidate-check-v4-bonuses', request.id, request.anidbId, request.kind,
   [...request.episodeIds].sort((a, b) => a - b), candidate.indexerId,
   request.title, candidate.guid, candidate.title, candidate.size,
   candidate.sourceQuery, candidate.targetEpisodeId,

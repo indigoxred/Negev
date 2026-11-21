@@ -1,3 +1,4 @@
+import {normalizeAnimeFormat} from './normalize-anime-format.mjs';
 // Assemble Shoko's cached AniDB episode pages without claiming that a
 // partial or changing catalogue is complete.
 export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
@@ -8,6 +9,7 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
   const ids = new Set();
   const invalid = { state: 'invalid_detail_evidence' };
   let first;
+  let format;
   for (let page = 1; page <= maxPages; page++) {
     let result;
     try { result = await loadPage({ anidbId, page }); }
@@ -21,12 +23,14 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
         !['movie', 'series'].includes(result.kind) ||
         typeof result.title !== 'string' || !result.title.trim()) return invalid;
     if (!first) first = result;
+    const currentFormat=normalizeAnimeFormat(result.format??result.type);
+    if(format&&currentFormat&&format!==currentFormat)return invalid;
+    format??=currentFormat;
     if (result.total !== first.total || result.title !== first.title || result.kind !== first.kind ||
         (result.airDate ?? null) !== (first.airDate ?? null) ||
         (result.endDate ?? null) !== (first.endDate ?? null) ||
         (result.episodeCount ?? null) !== (first.episodeCount ?? null) ||
-        (result.restricted ?? null) !== (first.restricted ?? null) ||
-        (result.format ?? null) !== (first.format ?? null)) {
+        (result.restricted ?? null) !== (first.restricted ?? null)) {
       return invalid;
     }
     for (const episode of result.episodes) {
@@ -45,7 +49,7 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
     if (result.nextPage === null) {
       if (episodes.length !== result.total) return invalid;
       return { state: 'details', anidbId, title: first.title, kind: first.kind,
-        ...(typeof first.format === 'string' && first.format.length<=100 ? {format:first.format} : {}),
+        ...(format?{format}:{}),
         airDate: first.airDate ?? null, endDate: first.endDate ?? null,
         episodeCount: first.episodeCount ?? null, restricted: first.restricted ?? null,
         total: first.total, page: 1, complete: true, nextPage: null,

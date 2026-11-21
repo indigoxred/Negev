@@ -9,6 +9,8 @@ import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } 
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
 import { basename } from 'node:path';
+import { planPackBonuses } from './pack-bonus-plan.mjs';
+import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
@@ -49,7 +51,8 @@ function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
 // This prepares and submits only a stopped torrent. No bytes enter Shoko here.
 export async function submitMissingCandidate({ request, candidate, detail, episodeIds,
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
-  readRelatedTitles, offlineLookup, loadDetail,
+  readRelatedTitles, offlineLookup, loadDetail, readVideoExtensions, readBonusOwnership,
+  allowRestrictedBonuses = false,
   readEvidence, publicLibraryIds, ledger,
   renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
@@ -115,9 +118,16 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if (readRelatedTitles) {
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
     catch { return held('related_title_unavailable'); }
+  }
+  let extensions;
+  if(readVideoExtensions){try{extensions=await readVideoExtensions()}catch{/* Main extension checks remain at start. */}}
+  const bonus = await planPackBonuses({request,detail,files:prepared.files,related,offlineLookup,
+    loadDetail,readOwnership:readBonusOwnership,allowRestricted:allowRestrictedBonuses,videoExtensions:extensions});
+  const mainPrepared={...prepared,files:bonus.mainFiles};
+  if(readRelatedTitles){
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
       requestedTitle: detail.title, related, releaseTitle: candidate.title,
-      fileNames: prepared.files.filter((file) =>
+      fileNames: mainPrepared.files.filter((file) =>
         torrentFileKind(file.name) === 'video').map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return checked;
   }
@@ -128,17 +138,17 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const allowOptionalClips = !detail.episodes.some((episode) =>
     episode.type === 'Special' && request.episodeIds.includes(episode.id));
   if ((episodeIds !== undefined || plannedFiles !== undefined) &&
-      !exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips)) {
+      !exactFilePlan(mainPrepared, plannedFiles, episodeIds, allowOptionalClips)) {
     return held('file_plan_mismatch');
   }
   // Re-derive the episode map even when a caller supplies a reviewed plan.
   // The final server boundary cannot trust stale or forged preflight fields.
-  const mapped = planTorrentTargets({ request, detail, prepared,
+  const mapped = planTorrentTargets({ request, detail, prepared:mainPrepared,
     releaseTitle: candidate.title, trustedTitle: identityQuery });
   if (mapped.state !== 'planned_targets') return mapped;
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;
-  if (!exactFilePlan(prepared, selectedFiles, selectedEpisodeIds,
+  if (!exactFilePlan(mainPrepared, selectedFiles, selectedEpisodeIds,
     allowOptionalClips)) return held('file_plan_mismatch');
   const mappedByName = new Map(mapped.plannedFiles.map((file) =>
     [file.name, file.episodeIds]));
@@ -235,7 +245,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const plan = ledger.recordFilePlan({ attemptId: reserved.attemptId,
     hash: prepared.expected.hash, plannedFiles: selectedFiles, nowMs });
   if (plan.state !== 'planned') return plan;
+  let selectedBonuses = ledger.getRecordedBonusPlan?.(reserved.attemptId);
+  if (!selectedBonuses && typeof ledger.recordBonusPlan === 'function') {
+    const fresh=await refreshBonusOwnership({files:bonus.bonusFiles,readOwnership:readBonusOwnership});
+    selectedBonuses=ledger.recordBonusPlan({attemptId:reserved.attemptId,hash:prepared.expected.hash,files:fresh.files,nowMs:now()});
+  }
+  if(selectedBonuses?.state==='held')return selectedBonuses;
+  const bonusFiles=selectedBonuses?.files??[];
   return submitStoppedCandidate({ ...activeQbittorrent, ledger,
     attemptId: reserved.attemptId, candidate, prepared, nowMs,
-    plannedFileNames: selectedFiles.map((file) => file.name) });
+    plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name) });
 }
