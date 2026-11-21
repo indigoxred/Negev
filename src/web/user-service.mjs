@@ -35,6 +35,7 @@ import { createAniDbDisplayReader } from '../catalogue/anidb-display-reader.mjs'
 import { createAniMapRawDetailReader } from '../catalogue/animap-raw-detail.mjs';
 import { createFastDetailReader } from '../catalogue/fast-detail-reader.mjs';
 import { createAniDbMapFactsReader } from '../catalogue/anidb-map-facts.mjs';
+import { createAniDbGroupReader } from '../catalogue/anidb-group-reader.mjs';
 import { mergeDisplayFacts } from '../catalogue/merge-display-facts.mjs';
 import { createKnownTitleResolver } from '../catalogue/known-title-resolver.mjs';
 import { searchAniDbTitles } from '../catalogue/shoko-search.mjs';
@@ -249,6 +250,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       apiKey: shokoApiKey, fetchImpl, now });
     const displayReader = createAniDbDisplayReader({ fetchImpl, now });
     const mapFacts = createAniDbMapFactsReader({ fetchImpl, now });
+    const groupRegistry = createAniDbGroupReader({ fetchImpl, now });
+    const readGroupRegistry = () => groupRegistry.read();
     const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
     const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
     scoreCache = openMappedScoreCache({ dbPath, fetchImpl, now });
@@ -551,11 +554,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         readPublic:(target,shoko)=>plexObserver.observeTarget(target,shoko,{includeProof:true}) });
     };
     const releaseSelection=discoverCandidates&&previewCandidate?createReleaseSelection({
-      requests,discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
+      requests,discoverCandidates,previewCandidate,readGroupRegistry,readPublicCoverage:readRequestCoverage,
       loadDetail:input=>loadCurrentDetail(input),
       wake:id=>acquisitionRuntime?.wakeRequest(id),now }):undefined;
     releasePreviews = releaseSelection ? createReleasePreviews({requests,prepare:preparePreview,now,
-      selectionOptions:{discoverCandidates,previewCandidate,readPublicCoverage:readRequestCoverage,
+      selectionOptions:{discoverCandidates,previewCandidate,readGroupRegistry,readPublicCoverage:readRequestCoverage,
         loadDetail:input=>loadCurrentDetail(input)},
       wake:id=>acquisitionRuntime?.wakeRequest(id),
       onCommitted: result=>autoTrackSavedAiringRequest({result,requesterId:result.requesterId,

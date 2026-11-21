@@ -206,3 +206,20 @@ test('release dialog preserves manual choice through polling and offers alternat
  const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{state:'success',enabled:true,acknowledged:true,chosen:1,selected:1,explicitError:false},{state:'failure',enabled:true,acknowledged:true,chosen:0,selected:0,explicitError:true},{state:'owned',enabled:true,acknowledged:true,chosen:0,selected:0,explicitError:false}]);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: global group indicator',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-global-group-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ const tick=()=>new Promise(r=>setTimeout(r,20));
+ (async()=>{const outcomes=[];for(const listed of [true,false]){let start;
+ const row=compactReleaseRow({candidate:{title:'[EMBER] Example Batch 1080p',eligible:true,size:1000,groupRegistration:listed?{state:'listed',scope:'global',groupId:16037,name:'EMBER'}:null},element,
+ inspect:async()=>{throw Error('File provider unavailable')},choose:async()=>{throw Error('Must not select')},isCurrent:()=>true,isBusy:()=>false,setBusy:()=>{},onError:e=>e.message,onSelected:()=>{},observeEvidence:(_el,fn)=>start=fn});document.body.append(row);
+ const badge=row.querySelector('.registration-group');const initialGreen=row.classList.contains('release-anidb-match');const actualGreen=getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)';await start();await tick();outcomes.push({listed,initialGreen,actualGreen,afterFailure:row.classList.contains('release-anidb-match'),label:badge?.textContent??null,global:badge?.title.includes('globally')??false,enabled:!row.querySelector('.release-pick').disabled});row.remove();}
+ document.querySelector('#result').textContent=JSON.stringify(outcomes);})();
+ </script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'AniDB group',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

@@ -56,7 +56,16 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const title = element('strong', c.title); title.title = c.title;
   const badge = element('span', '?', 'registration-unknown release-registration');
   badge.title = 'Registration unknown'; badge.setAttribute('aria-label', badge.title);
-  name.append(title, badge);
+  const listedGroup = c.groupRegistration?.state === 'listed' && c.groupRegistration.scope === 'global' &&
+    Number.isSafeInteger(c.groupRegistration.groupId) && c.groupRegistration.groupId > 0;
+  name.append(title);
+  if (listedGroup) {
+    const groupBadge = element('span', 'AniDB group', 'registration-group release-registration');
+    groupBadge.title = 'Group listed globally on AniDB via AniMap. This does not verify its association with this show or the exact release files.';
+    groupBadge.setAttribute('aria-label', groupBadge.title); name.append(groupBadge);
+    entry.classList.add('release-anidb-match');
+  }
+  name.append(badge);
   const group = element('span', facts.group ?? '—', 'release-group'); group.title = c.group;
   const quality = element('span', c.qualityLabel ?? ([facts.source, facts.resolution ? `${facts.resolution}p` : ''].filter(Boolean).join(' ') || '—'), 'release-quality');
   const size = element('span', c.size >= 1_073_741_824 ? `${(c.size / 1_073_741_824).toFixed(2)} GiB` : `${Math.round(c.size / 1_048_576)} MiB`, 'release-size');
@@ -67,7 +76,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const details = element('details', undefined, 'release-file-evidence');
   const summary = element('summary', c.coverageKind==='advertised_pack'?'Details · Pack advertised':c.coverageKind==='unknown'?'Details · Coverage unknown':'Details');
   const body = element('div', undefined, 'release-evidence-body');
-  const metadata = () => element('p', `${c.indexer} · ${c.coverage} · ${c.languageHints}`, 'muted');
+  const metadata = () => element('p', `${c.indexer} · ${c.coverage} · ${c.languageHints}${listedGroup ? ' · Group listed globally on AniDB: ' + c.groupRegistration.name : ''}`, 'muted');
   body.append(metadata(), element('p', 'Expand to inspect file coverage and registration.', 'muted'));
   details.append(summary, body); entry.append(main, details);
   let preview = null, task = null, choosing = false;
@@ -90,7 +99,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         for (const file of preview.filesToExclude ?? []) body.append(element('p', `${file.name} · excluded`, 'muted'));
         summary.textContent = preview.coverage ? `Details · File coverage checked: ${preview.coverage.coveredEpisodeCount}/${preview.coverage.requestedEpisodeCount} requested episodes` : `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
         badge.className = `${confirmed ? 'registration-confirmed' : likely ? 'registration-likely' : 'registration-unknown'} release-registration`;
-        entry.classList.toggle('release-anidb-match', confirmed || likely);
+        entry.classList.toggle('release-anidb-match', listedGroup || confirmed || likely);
         badge.textContent = confirmed ? 'Verified' : likely ? 'Likely' : '?';
         badge.title = confirmed ? 'Previously verified exact AniDB files' : likely ? 'Likely CRC32-and-size correspondence; not exact verification' : 'Registration unknown';
         badge.setAttribute('aria-label', badge.title);
@@ -100,7 +109,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         return canPick();
       } catch (error) {
         if (!isCurrent()) return false;
-        preview = null; badge.textContent = '?';badge.className = 'registration-unknown release-registration';entry.classList.remove('release-anidb-match');
+        preview = null; badge.textContent = '?';badge.className = 'registration-unknown release-registration';entry.classList.toggle('release-anidb-match', listedGroup);
         const retry = element('button', 'Retry inspection', 'quiet');retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (isBusy()) return;setBusy(true);retry.disabled = true;
