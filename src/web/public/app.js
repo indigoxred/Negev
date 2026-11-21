@@ -1265,7 +1265,7 @@ async function loadLibrary(append = false, continuation = null) {
     const page = await api(`/api/library${suffix}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && libraryResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (!append) list.replaceChildren();
     else continuation?.marker.remove();
     state.libraryLoaded = true;notice.replaceChildren();
@@ -1285,7 +1285,7 @@ async function loadLibrary(append = false, continuation = null) {
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (!append) {
       notice.replaceChildren(element('span', 'Your library could not be refreshed. '));
       const retry=element('button','Retry','quiet');retry.type='button';retry.addEventListener('click',()=>loadLibrary());notice.append(retry);
@@ -1392,7 +1392,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && seasonalResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (page.state === 'unavailable') {
       if (append) continuation.showError();
       else catalogueReadError(notice, list);
@@ -1479,7 +1479,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (append) continuation.showError();
     else catalogueReadError(notice, list);
   }
@@ -1552,7 +1552,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
     const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && airingResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (continuation && location.hash !== route)) return;
+        location.hash !== route) return;
     if (page.state === 'unavailable') {
       if (continuation) continuation.showError();
       else notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
@@ -1611,7 +1611,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (continuation && location.hash !== route)) return;
+        location.hash !== route) return;
     if (continuation) continuation.showError();
     else notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
   }
