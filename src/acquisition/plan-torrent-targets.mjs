@@ -30,6 +30,36 @@ export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
   });
 };
 
+
+// Retrieval only: a catalogue year may follow explicit season labels in a
+// release name. This never establishes identity without independent previews.
+export function matchesSeasonLabelledTitle(releaseTitle, ...titles) {
+  const tokens = (value) => typeof value === 'string'
+    ? value.normalize('NFKC').toLocaleLowerCase('en')
+      .replace(/&/g, ' and ').replace(/×/g, ' x ')
+      .match(/[\p{L}\p{N}]+/gu) ?? [] : [];
+  const release = tokens(typeof releaseTitle === 'string' ?
+    releaseTitle.replace(/^\s*\[[^\]\r\n]{1,120}\]\s*(?=\S)/u, '') : releaseTitle);
+  return titles.some((title) => {
+    if (typeof title !== 'string' || !/\((?:19|20)\d{2}\)\s*$/u.test(title)) return false;
+    const key = tokens(title);
+    const year = key.pop();
+    if (key.join('').length < 2 || !key.every((word, index) => release[index] === word)) return false;
+    let index = key.length;
+    const seasons = [];
+    while (index < release.length) {
+      const tag = /^s(\d{1,3})$/u.exec(release[index]);
+      const season = tag ? Number(tag[1]) : release[index] === 'season' &&
+        /^\d{1,3}$/u.test(release[index + 1] ?? '') ? Number(release[index + 1]) : null;
+      if (season === null) break;
+      if (season < 1 || season > 99) return false;
+      seasons.push(season);
+      index += tag ? 1 : 2;
+    }
+    return seasons.length > 0 && new Set(seasons).size === 1 && release[index] === year;
+  });
+}
+
 function episodeNumbers(name) {
   const stem = path.posix.basename(name, path.posix.extname(name));
   if (/(?<!\d)\d{1,4}\s*(?:\+|&|\band\b)\s*\d{1,4}(?!\d)/iu.test(stem)) return null;
@@ -144,7 +174,7 @@ function completePackNumbers(files, wantedNumbers, { allowAbsolute = false } = {
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
 // only a stopped candidate reservation; it never proves registered video bytes.
 export function planTorrentTargets({ request, detail, prepared,
-  releaseTitle, trustedTitle } = {}) {
+  releaseTitle, trustedTitle, allowTitleMetadataVariation = false } = {}) {
   if (!Number.isSafeInteger(request?.id) || request.id < 1 ||
       request.status !== 'held' ||
       !['series', 'movie'].includes(request.kind) ||
@@ -160,7 +190,8 @@ export function planTorrentTargets({ request, detail, prepared,
       prepared.files.length > 500) return held('invalid_planning_evidence');
   const requested = new Set(request.episodeIds);
   const titleMatched = matchesTrustedReleaseTitle(releaseTitle,
-    trustedTitle, detail.title);
+    trustedTitle, detail.title) || allowTitleMetadataVariation === true &&
+    matchesSeasonLabelledTitle(releaseTitle, trustedTitle, detail.title);
   if ((trustedTitle !== undefined || releaseTitle !== undefined) &&
       !titleMatched) {
     return held('release_title_mismatch');

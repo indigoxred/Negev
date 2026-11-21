@@ -8,7 +8,7 @@ import { invitedAccountValidation } from '../auth/account-ledger.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
-import { validReleaseFilters } from './public/release-choice-fields.mjs';
+import { validReleaseFilters, DEFAULT_RELEASE_FILTERS } from './public/release-choice-fields.mjs';
 
 const safeImportReasons = new Set(['incomplete_import_baseline',
   'invalid_sidecar_evidence', 'invalid_import_file',
@@ -1302,7 +1302,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control','no-store');
     const id=await releaseAccess(request,reply);if(!id)return;
     const offset=request.query.offset===undefined?0:Number(request.query.offset);
-    const filters={quality:request.query.quality??'bd1080',audio:request.query.audio??'japanese',
+    const filters={quality:request.query.quality??DEFAULT_RELEASE_FILTERS.quality,audio:request.query.audio??DEFAULT_RELEASE_FILTERS.audio,
       ...(request.query.packsOnly===undefined?{}:{packsOnly:request.query.packsOnly==='true'})};
     if(!validReleaseFilters(filters)||(request.query.packsOnly!==undefined&&!['true','false'].includes(request.query.packsOnly))||Object.keys(request.query).some(k=>!['query','offset','quality','audio','packsOnly'].includes(k)) ||
       !Number.isSafeInteger(offset)||![0,50,100,150].includes(offset)||

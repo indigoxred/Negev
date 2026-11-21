@@ -2,7 +2,7 @@ import { catalogueAvailability } from './card-availability.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
-import { createSearchPager } from './search-pages.mjs';
+import { createSearchPager, observeCatalogueContinuation } from './search-pages.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
@@ -328,11 +328,19 @@ function posterImage(item, className = '') {
 function renderRoute() {
   if (!state.user) return;
   const route = parseConsumerRoute(location.hash);
+  const previousRoute = renderedHash === null ? null : parseConsumerRoute(renderedHash);
+  const librarySearchCleared = route.page === 'library' && route.query.length < 2 &&
+    previousRoute?.page === 'library' && previousRoute.query.length >= 2;
   if (renderedHash !== location.hash) {
     message('');
     for (const menu of document.querySelectorAll(dropdownSelector)) menu.open = false;
     pendingScrollRestore = { hash: location.hash, y: routePositions.get(location.hash) ?? 0 };
     renderedHash = location.hash;
+    stopLibraryPageObserver();
+    stopBrowsePageObserver('discover');
+    stopBrowsePageObserver('airing');
+    state.seasonalRouteKey = null;
+    state.airingLoaded = false;
   }
   const page = route.page === 'admin' && state.user.role !== 'admin'
     ? 'discover' : route.page;
@@ -398,7 +406,7 @@ function renderRoute() {
       void loadSeasonal(choice);
     }
   } else if (page === 'library' && route.query.length < 2 &&
-      (returning || !state.libraryLoaded)) {
+      (returning || librarySearchCleared || !state.libraryLoaded)) {
     void loadLibrary();
   } else if (page === 'requests' && (returning || focusChanged)) {
     const focus = byId('request-focus');
@@ -537,6 +545,9 @@ function showSession(data) {
     detailResponses.invalidate();
     if (detailPollTimer !== null) clearTimeout(detailPollTimer);
     detailPollTimer = null;
+    stopLibraryPageObserver();
+    stopBrowsePageObserver('discover');
+    stopBrowsePageObserver('airing');
     libraryResponses.invalidate();
     airingResponses.invalidate();
     seasonalResponses.invalidate();
@@ -612,6 +623,8 @@ function clearWorkspace() {
     delete byId(id).dataset.complete;
   }
   stopLibraryPageObserver();
+  stopBrowsePageObserver('discover');
+  stopBrowsePageObserver('airing');
   sessionResponses.invalidate();
   invalidateRequestResponses();
   reviewResponses.invalidate();
@@ -1125,6 +1138,11 @@ function stopLibraryPageObserver() {
   libraryPageObserver = null;
 }
 function appendLibraryPageMarker(list) {
+  const session = sessionResponses.current();
+  let epoch = libraryResponses.current();
+  const route = location.hash;
+  const current = () => sessionResponses.isCurrent(session) &&
+    libraryResponses.isCurrent(epoch) && location.hash === route;
   const marker = element('div', 'Loading more titles as you scroll…',
     'library-page-marker muted');
   marker.setAttribute('role', 'status');
@@ -1136,22 +1154,22 @@ function appendLibraryPageMarker(list) {
     const retry = element('button', 'Retry loading more titles', 'text-link');
     retry.type = 'button';
     retry.addEventListener('click', () => {
-      if (retry.disabled) return;
+      if (retry.disabled || !current()) return;
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadLibrary(true, continuation);
+      epoch = libraryResponses.current();
     });
     marker.append(retry);
   } };
-  const observer = new IntersectionObserver((entries) => {
-    if (!entries.some((entry) => entry.isIntersecting)) return;
-    observer.disconnect();
+  const observer = observeCatalogueContinuation(marker, () => {
+    if (!current()) return;
     if (libraryPageObserver === observer) libraryPageObserver = null;
     marker.textContent = 'Loading more titles…';
     void loadLibrary(true, continuation);
-  }, { rootMargin: '150px 0px' });
+    epoch = libraryResponses.current();
+  }, window.innerHeight);
   libraryPageObserver = observer;
-  observer.observe(marker);
 }
 const browsePageObservers = { discover: null, airing: null };
 function stopBrowsePageObserver(view) {
@@ -1160,6 +1178,12 @@ function stopBrowsePageObserver(view) {
   browsePageObservers[view] = null;
 }
 function appendBrowsePageMarker(view, list, loadPage) {
+  const session = sessionResponses.current();
+  const responses = view === 'discover' ? seasonalResponses : airingResponses;
+  let epoch = responses.current();
+  const route = location.hash;
+  const current = () => sessionResponses.isCurrent(session) &&
+    responses.isCurrent(epoch) && location.hash === route;
   stopBrowsePageObserver(view);
   const marker = element('div', 'Loading more titles as you scroll…',
     'browse-page-marker muted');
@@ -1172,24 +1196,25 @@ function appendBrowsePageMarker(view, list, loadPage) {
     const retry = element('button', 'Retry loading more titles', 'text-link');
     retry.type = 'button';
     retry.addEventListener('click', () => {
-      if (retry.disabled) return;
+      if (retry.disabled || !current()) return;
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadPage(continuation);
+      epoch = responses.current();
     });
     marker.append(retry);
   } };
-  const observer = new IntersectionObserver((entries) => {
-    if (!entries.some((entry) => entry.isIntersecting)) return;
-    observer.disconnect();
+  const observer = observeCatalogueContinuation(marker, () => {
+    if (!current()) return;
     marker.textContent = 'Loading more titles…';
     void loadPage(continuation);
-  }, { rootMargin: '150px 0px' });
+    epoch = responses.current();
+  }, window.innerHeight);
   browsePageObservers[view] = { observer, marker };
-  observer.observe(marker);
 }
 async function loadLibrary(append = false, continuation = null) {
   if (!append) stopLibraryPageObserver();
+  const route = location.hash;
   const session = sessionResponses.current();
   const epoch = libraryResponses.invalidate();
   const userId = state.user?.id;
@@ -1207,7 +1232,8 @@ async function loadLibrary(append = false, continuation = null) {
       ? `?afterAnidbId=${state.libraryAfter}` : '';
     const page = await api(`/api/library${suffix}`);
     if (!sessionResponses.isCurrent(session) ||
-        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (append && location.hash !== route)) return;
     if (!append) list.replaceChildren();
     else continuation?.marker.remove();
     state.libraryLoaded = true;notice.replaceChildren();
@@ -1226,7 +1252,8 @@ async function loadLibrary(append = false, continuation = null) {
     restoreRoutePosition();
   } catch {
     if (!sessionResponses.isCurrent(session) ||
-        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (append && location.hash !== route)) return;
     if (!append) {
       notice.replaceChildren(element('span', 'Your library could not be refreshed. '));
       const retry=element('button','Retry','quiet');retry.type='button';retry.addEventListener('click',()=>loadLibrary());notice.append(retry);
@@ -1308,6 +1335,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   scoreRefresh = 0, continuation = null) {
   const append = continuation !== null;
   if (!append) stopBrowsePageObserver('discover');
+  const route = location.hash;
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
   const userId = state.user?.id;
@@ -1331,7 +1359,8 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     if (sort !== 'newest') params.set('sort', sort);
     const page = await api(`/api/seasons?${params}`);
     if (!sessionResponses.isCurrent(session) ||
-        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (append && location.hash !== route)) return;
     if (page.state === 'unavailable') {
       if (append) continuation.showError();
       else catalogueReadError(notice, list);
@@ -1417,7 +1446,8 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     }
   } catch {
     if (!sessionResponses.isCurrent(session) ||
-        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (append && location.hash !== route)) return;
     if (append) continuation.showError();
     else catalogueReadError(notice, list);
   }
@@ -1466,6 +1496,7 @@ function renderAiringFilterChips() {
 let airingBrowseAfter = 0;
 async function loadCurrentAiring(session, epoch, userId, after = 0,
   continuation = null) {
+  const route = location.hash;
   const list = byId('airing-season-list');
   const notice = byId('airing-season-state');
   if (after === 0) {
@@ -1488,7 +1519,8 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   try {
     const page = await api(`/api/seasons?${params}`);
     if (!sessionResponses.isCurrent(session) ||
-        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (continuation && location.hash !== route)) return;
     if (page.state === 'unavailable') {
       if (continuation) continuation.showError();
       else notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
@@ -1546,7 +1578,8 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
     }
   } catch {
     if (!sessionResponses.isCurrent(session) ||
-        !airingResponses.isCurrent(epoch) || state.user?.id !== userId) return;
+        !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        (continuation && location.hash !== route)) return;
     if (continuation) continuation.showError();
     else notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
   }

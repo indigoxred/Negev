@@ -37,3 +37,19 @@ export function createSearchPager(first) {
     },
   };
 }
+
+// Load only the adjacent page while its marker is within roughly two screens.
+// A one-shot guard also ignores notifications already queued when disconnected.
+export function observeCatalogueContinuation(marker, load, viewportHeight,
+  Observer = globalThis.IntersectionObserver) {
+  const lead = Math.min(2400, Math.max(0, Math.round(viewportHeight * 2)));
+  let active = true;
+  const observer = new Observer((entries) => {
+    if (!active || !entries.some((entry) => entry.isIntersecting)) return;
+    active = false;
+    observer.disconnect();
+    load();
+  }, { rootMargin: `0px 0px ${lead}px 0px` });
+  observer.observe(marker);
+  return { disconnect() { active = false; observer.disconnect(); } };
+}

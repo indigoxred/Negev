@@ -96,3 +96,12 @@ test('global group annotations are display-only and a provider failure leaves re
  const found=await x.service.search(x.id);assert.equal(calls,1);assert.equal(found.items[0].groupRegistration.groupId,123);assert.equal(found.items[0].eligible,true);assert.equal(x.inspected.length,0);assert.equal(x.wakes(),0);
  x.setGroupReader(async()=>{throw Error('unavailable')});const fallback=await x.service.search(x.id);assert.equal(fallback.state,'candidates');assert.equal(fallback.items[0].groupRegistration,null);assert.equal(fallback.items[0].eligible,true);
 }));
+
+
+test('a rejected release can expose files for inspection but cannot be chosen or wake acquisition',()=>fixture(async x=>{
+ x.setInspectHook(async()=>({state:'held',reason:'release_title_mismatch',inspectedFiles:[{name:'Other S02E01.mkv',size:500,type:'video'}]}));
+ const found=await x.service.search(x.id),token=found.items[0].token;
+ const result=await x.service.inspect(x.id,token);assert.equal(result.state,'inspection');assert.equal(result.selectionStatus,'rejected');assert.equal(result.files[0].name,'Other S02E01.mkv');
+ const before=x.service.snapshot(x.id);const chosen=await x.service.choose(x.id,token,before.revision);
+ assert.equal(chosen.state,'held');assert.equal(chosen.reason,'release_title_mismatch');assert.deepEqual(x.service.snapshot(x.id),before);assert.equal(x.wakes(),0);
+}));

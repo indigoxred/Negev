@@ -80,7 +80,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   body.append(metadata(), element('p', 'Expand to inspect file coverage and registration.', 'muted'));
   details.append(summary, body); entry.append(main, details);
   let preview = null, task = null, choosing = false;
-  const canPick = () => c.eligible && !['already_available', 'owned_unverified'].includes(preview?.selectionStatus);
+  const canPick = () => c.eligible && preview?.state !== 'inspection' && !['already_available', 'owned_unverified'].includes(preview?.selectionStatus);
   const load = async (background = false) => {
     if (task) return task;
     task = (async () => {
@@ -88,6 +88,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
       try {
         preview = await inspect({ background });
         if (!isCurrent()) return false;
+        if(preview.state==='inspection'){const error=new Error(preview.reason);error.reason=preview.reason;error.inspectedFiles=preview.files;throw error;}
         let confirmed = preview.files.length > 0, likely = preview.files.length > 0;
         body.replaceChildren(metadata());
         for (const file of preview.files) {
@@ -96,6 +97,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
           likely &&= ['previously_verified', 'likely'].includes(proof?.state);
           body.append(element('p', `${file.name} · AniDB episode ${file.episodeIds.join(', ')} · ${evidenceLabel(proof?.state)}`));
         }
+        for(const file of preview.subtitles??[])body.append(element('p',file.name+' · subtitle · '+file.size.toLocaleString()+' bytes'));
         if(preview.bonusFiles?.length){
           body.append(element('p','Optional bonuses · separate from season coverage','muted'));
           for(const file of preview.bonusFiles) body.append(element('p',file.name+' · '+file.kind+' · AniDB '+file.anidbId+' · filename prediction'));
@@ -113,13 +115,17 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         return canPick();
       } catch (error) {
         if (!isCurrent()) return false;
-        preview = null; badge.textContent = 'File registration unknown';badge.className = 'registration-unknown release-registration';entry.classList.toggle('release-anidb-match', listedGroup);
+        preview = Array.isArray(error.inspectedFiles)?{state:'inspection',files:error.inspectedFiles}:null; badge.textContent = 'File registration unknown';badge.className = 'registration-unknown release-registration';entry.classList.toggle('release-anidb-match', listedGroup);
         const retry = element('button', 'Retry inspection', 'quiet');retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (isBusy()) return;setBusy(true);retry.disabled = true;
           try { await load(); } finally { setBusy(false);retry.disabled = false; }
         });
         body.replaceChildren(metadata(), element('p', onError(error, { background: background && !choosing }), 'muted'));
+        if(preview?.state==='inspection'){
+          summary.textContent='Details · '+preview.files.length+' files · selection not approved';
+          for(const file of preview.files)body.append(element('p',file.name+' · '+file.size.toLocaleString()+' bytes · '+file.type,'release-inspected-file'));
+        }
         if (!['release_search_expired','release_preview_expired'].includes(error.reason)) body.append(retry);
         task = null;return false;
       } finally { pick.disabled = choosing || !canPick(); }

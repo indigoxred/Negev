@@ -64,7 +64,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const unknownGrey=document.querySelector('.release-entry .registration-unknown')!==null;
  const coverage=document.querySelector('dialog').textContent.includes('AniDB episode 1');
  const compact=document.querySelector('.release-row-main').getBoundingClientRect().height<120;
- const defaults=document.querySelector('[aria-label=Quality]').value==='bd1080'&&document.querySelector('[aria-label=Audio]').value==='japanese';
+ const defaults=document.querySelector('[aria-label=Quality]').value==='bd1080'&&document.querySelector('[aria-label=Audio]').value==='japanese_dual';
  document.querySelector('[aria-label="Prefer this release group for future episodes"]').checked=true;
  click('Pick');await tick();
  const saved=document.querySelector('dialog').textContent.includes('Request #1 submitted')&&chooseCalls===1;
@@ -224,5 +224,22 @@ test('release dialog preserves manual choice through polling and offers alternat
  document.querySelector('#result').textContent=JSON.stringify(outcomes);})();
  </script>`;
  const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'Group listed on AniDB (global)',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: rejected file listing',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-inspection-list-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><pre id="result">pending</pre><script>${source}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ const tick=()=>new Promise(r=>setTimeout(r,20));
+ (async()=>{let chosen=0;const row=compactReleaseRow({candidate:{title:'[Group] Example Season 02 batch 1080p',eligible:true,size:1000},element,
+ inspect:async()=>({state:'inspection',reason:'release_title_mismatch',selectionStatus:'rejected',files:[{name:'Season 02/01.mkv',size:1000,type:'video'},{name:'Season 02/Extras/Interview.mkv',size:500,type:'video'}]}),
+ choose:async()=>{chosen++;},isCurrent:()=>true,isBusy:()=>false,setBusy:()=>{},onError:e=>e.reason,onSelected:()=>{throw Error('inspection must not save');}});
+ document.body.append(row);row.querySelector('details').open=true;await tick();await tick();row.querySelector('.release-pick').click();
+ document.querySelector('#result').textContent=JSON.stringify({files:[...row.querySelectorAll('.release-inspected-file')].map(x=>x.textContent),blocked:row.querySelector('.release-pick').disabled,chosen,summary:row.querySelector('summary').textContent,registration:row.querySelector('.release-registration').textContent});})();
+ </script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),{files:['Season 02/01.mkv · 1,000 bytes · video','Season 02/Extras/Interview.mkv · 500 bytes · video'],blocked:true,chosen:0,summary:'Details · 2 files · selection not approved',registration:'File registration unknown'});
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

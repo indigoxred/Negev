@@ -116,15 +116,59 @@ async function inspectMobile(url, profile, width = 390) {
         hasContent: document.querySelector('#season-list').textContent.includes('Pale Cocoon')})`,
     });
     await send('Page.navigate', { url: url.replace('#/discover',
+      '?libraryPages=1#/library') });
+    await wait(800);
+    const libraryBrowseFirst = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#library-list .poster-card').length`,
+    });
+    await send('Runtime.evaluate', { expression: "location.hash = '#/library?q=Garden'" });
+    await wait(500);
+    await send('Runtime.evaluate', { expression: "location.hash = '#/library'" });
+    await wait(800);
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(1000);
+    const libraryBrowseReturned = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({cards: document.querySelectorAll('#library-list .poster-card').length,
+        last: [...document.querySelectorAll('#library-list .poster-card strong')].at(-1)?.textContent,
+        marker: Boolean(document.querySelector('#library-list .library-page-marker'))})`,
+    });
+    await send('Page.navigate', { url: url.replace('#/discover',
       '#/discover?year=2025&season=ALL') });
     await wait(800);
     const browseFirst = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `document.querySelectorAll('#season-list .poster-card').length`,
+    });
+    const browseAhead = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `(() => {
+        const marker = document.querySelector('#season-list + .browse-page-marker');
+        const top = marker.getBoundingClientRect().top + scrollY;
+        window.scrollTo(0, top - innerHeight * 2.5);
+        return {markerTop: marker.getBoundingClientRect().top, height: innerHeight,
+          cards: document.querySelectorAll('#season-list .poster-card').length};
+      })()`,
+    });
+    await wait(1200);
+    const browseAheadLoaded = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#season-list .poster-card').length`,
     });
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
     await wait(1200);
     const browseScrolled = await send('Runtime.evaluate', { returnByValue: true,
+      expression: `({cards: document.querySelectorAll('#season-list .poster-card').length,
+        first: document.querySelector('#season-list .poster-card strong')?.textContent,
+        retry: Boolean(document.querySelector('#season-list + .browse-page-marker button'))})`,
+    });
+    await send('Runtime.evaluate', { expression: "location.hash = '#/requests'" });
+    await wait(300);
+    await send('Runtime.evaluate', { expression:
+      "location.hash = '#/discover?year=2025&season=ALL'" });
+    await wait(800);
+    await send('Runtime.evaluate', { expression:
+      'window.scrollTo(0, document.documentElement.scrollHeight)' });
+    await wait(1000);
+    const browseReturned = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({cards: document.querySelectorAll('#season-list .poster-card').length,
         first: document.querySelector('#season-list .poster-card strong')?.textContent,
         retry: Boolean(document.querySelector('#season-list + .browse-page-marker button'))})`,
@@ -669,8 +713,10 @@ async function inspectMobile(url, profile, width = 390) {
     }
     return { ...result.value, typography, dropdowns:dropdowns.result.value,airingDropdown:airingDropdown.result.value,longSynopsis:longSynopsis.result.value,
       toggleGeometry:toggleGeometry.result.value,synopsis,
+      libraryReturn: {first: libraryBrowseFirst.result.value, after: libraryBrowseReturned.result.value},
       browseScroll: { first: browseFirst.result.value,
-        after: browseScrolled.result.value, sorted: browseSorted.result.value,
+        ahead: browseAhead.result.value, aheadLoaded: browseAheadLoaded.result.value,
+        after: browseScrolled.result.value, returned: browseReturned.result.value, sorted: browseSorted.result.value,
         retry: browseRetry.result.value, recovered: browseRecovered.result.value },
       airingScroll: { first: airingFirst.result.value,
         after: airingScrolled.result.value,
@@ -843,6 +889,17 @@ test('signed-in consumer routes render real shell with search, library and reque
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId,
           title: 'Verified title', restricted: anidbId !== 2498 }));
+        return;
+      }
+      if (path === '/api/library' && request.headers.referer?.includes('libraryPages=1')) {
+        const after = new URL(request.url, 'http://localhost').searchParams.get('afterAnidbId');
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({state: 'current_proofs',
+          items: Array.from({length: after ? 1 : 18}, (_, index) => ({
+            anidbId: 50_000 + (after ? 18 : index),
+            title: `Library title ${after ? 19 : index + 1}`,
+            verifiedEpisodeCount: 1, lastVerifiedMs: 1_000,
+          })), nextAfterAnidbId: after ? null : 50_017}));
         return;
       }
       if (path === '/api/library') {
@@ -1379,14 +1436,27 @@ test('signed-in consumer routes render real shell with search, library and reque
           {text:'No synopsis is available for this title yet.',expand:false},
           {text:'No synopsis is available for this title yet.',expand:false}]);
       }
+      assert.deepEqual(mobile.libraryReturn, {first: 18,
+        after: {cards: 19, last: 'Library title 19', marker: false}},
+        'clearing a Library search restores a working next-page continuation');
       assert.equal(mobile.hasContent, true);
       assert.ok(mobile.scrollWidth <= 390, 'mobile page has no horizontal overflow');
       assert.ok(mobile.accountRight <= 390, 'Account control remains visible');
       assert.ok(mobile.searchRight <= 390, 'Search remains visible');
       assert.ok(mobile.typography.heading.some(f=>f.isCustomFont&&f.familyName.startsWith('Wix Madefor Display')&&f.glyphCount>0),JSON.stringify(mobile.typography));
       assert.ok(mobile.typography.control.some(f=>f.isCustomFont&&f.familyName.startsWith('Wix Madefor Text')&&f.glyphCount>0),JSON.stringify(mobile.typography));
+      assert.equal(mobile.browseScroll.first, 18);
+      assert.equal(mobile.browseScroll.ahead.cards, 18);
+      assert.ok(mobile.browseScroll.ahead.markerTop > mobile.browseScroll.ahead.height + 150,
+        'the marker is still offscreen and beyond the old 150px loading margin');
+      assert.ok(mobile.browseScroll.ahead.markerTop < mobile.browseScroll.ahead.height * 3,
+        'scrolling enters the bounded two-screen loading lead');
+      assert.equal(mobile.browseScroll.aheadLoaded, 25,
+        'the next page renders before its marker reaches the viewport');
       assert.deepEqual(mobile.browseScroll, { first: 18,
+        ahead: mobile.browseScroll.ahead, aheadLoaded: 25,
         after: { cards: 25, first: 'Title 1', retry: false },
+        returned: { cards: 25, first: 'Title 1', retry: false },
         sorted: { hash: '#/discover?year=2025&season=ALL&sort=title_asc',
           cards: 18, first: 'Sorted title 1' },
         retry: { before: 18, visible: true }, recovered: 19 });
@@ -1584,8 +1654,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       const pageOne = await dump(`${base}/#/discover?year=2025&season=ALL`,
         join(dir, 'page-one'));
       assert.equal((pageOne.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,
-        18, 'Discover renders more than twelve titles on its first page');
-      assert.match(pageOne, /browse-page-marker/);
+        25, 'desktop Discover fills the short page ahead while browsing');
+      assert.doesNotMatch(pageOne, /class="browse-page-marker/);
       const pageTwo = await dump(`${base}/#/discover?year=2025&season=ALL&after=18`,
         join(dir, 'page-two'));
       assert.equal((pageTwo.match(/<button\b[^>]*class="poster-card"/g) ?? []).length,

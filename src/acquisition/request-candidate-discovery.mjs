@@ -116,6 +116,14 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         }
       } else queries=queries.slice(0,4);
     }
+    // A broad provider window can fill with individual episodes before older
+    // packs appear. Keep every chosen alias and add one bounded batch search
+    // for Manual Pick's completed-series pack view, preserving refinement terms.
+    if(completedSeries&&filters!==null&&filters.packsOnly!==false&&
+        !queries.some(value=>/\bbatch\b/i.test(value))) {
+      const batchQuery=queries[0]?`${queries[0]} batch`:null;
+      if(batchQuery&&batchQuery.length<=120&&queries.length<5)queries.push(batchQuery);
+    }
     if (queries.length === 0) return held('query_too_long');
     const buckets = [];
     const rawKeys=new Set(),matchingKeys=new Set();

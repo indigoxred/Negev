@@ -8,13 +8,25 @@ test('quality default includes BD with or without a stated resolution and1080p+'
  assert.equal(matchesReleaseFilters({title:'[G] Show WEB 720p'},filters),false);
  assert.equal(matchesReleaseFilters({title:'[G] Show DVD 480p'},{...filters,quality:'all'}),true);
 });
-test('audio default is Japanese; dual and English dub have explicit filters',()=>{
+test('Japanese-only filtering excludes dual audio; English dub requires its explicit filter',()=>{
  assert.equal(matchesReleaseFilters({title:'[SubsPlease] Show1080p'},{...filters,quality:'all'}),true);
  assert.equal(matchesReleaseFilters({title:'[G] Show 1080p English Dub'},filters),false);
  assert.equal(matchesReleaseFilters({title:'[G] Show 1080p Dual Audio'},filters),false);
  assert.equal(matchesReleaseFilters({title:'[G] Show 1080p Dual Audio'},{...filters,audio:'japanese_dual'}),true);
  assert.equal(matchesReleaseFilters({title:'[G] Show 1080p English Dub'},{...filters,audio:'english'}),true);
  assert.equal(matchesReleaseFilters({title:'[G] Show 1080p'},{...filters,audio:'english'}),false);
+});
+
+test('manual defaults retain all four Helck packs, including dual-audio alternatives',()=>{
+ const packs=[
+  {title:'[SeriousChat] Helck (01-24) [1080p]',seeders:7},
+  {title:'[NAN0] Helck (01-24) [BD 1080p] [Dual Audio]',seeders:9},
+  {title:'[Sokudo] Helck (01-24) [BD 1080p] [Dual Audio]',seeders:44},
+  {title:'Helck S01 Complete 1080p WEB-DL Dual Audio-VARYG',seeders:21},
+ ];
+ assert.deepEqual(packs.filter(pack=>matchesReleaseFilters(pack)).map(pack=>pack.seeders),[7,9,44,21]);
+ assert.deepEqual(packs.filter(pack=>matchesReleaseFilters(pack,filters)).map(pack=>pack.seeders),[7]);
+ assert.equal(matchesReleaseFilters({title:'[G] Helck Complete 1080p English Dub'}),false);
 });
 test('group hints recognize common prefixes and metadata-adjacent suffixes without treating quality as a group',()=>{
  assert.equal(releaseFacts('[SubsPlease] Show - 07 [1080p]').group,'SubsPlease');

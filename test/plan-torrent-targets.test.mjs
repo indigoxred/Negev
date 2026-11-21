@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as targetPlanning from '../src/acquisition/plan-torrent-targets.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from
   '../src/acquisition/plan-torrent-targets.mjs';
 
@@ -403,4 +404,44 @@ test('standalone labelled opening and ending extras do not reject an otherwise c
  const extras=['Show - OP [BD 1080p].mkv','Show - ED [BD 1080p].mkv','Clean Opening.mkv','Clean Ending.mkv'].map(name=>({name,size:100}));
  const result=planTorrentTargets({request,detail,prepared:{state:'prepared_stopped',files:[...files,...extras]},releaseTitle:'Show BD 1080p',trustedTitle:'Show'});
  assert.equal(result.state,'planned_targets');assert.equal(result.plannedFiles.length,3);assert.equal(result.excludedVideoNames.length,4);
+});
+
+
+test('season-labelled year aliases are retrieval hints without changing strict matching', () => {
+  const matches = targetPlanning.matchesSeasonLabelledTitle;
+  assert.equal(typeof matches, 'function');
+  for (const [release, title] of [
+    ['[JP-EN] Silver Orchard : Season 02 S02 [2025] COMPLETE 1080p', 'Silver Orchard (2025)'],
+    ['[Group] Violet Harbour S03 (2024) BD', 'Violet Harbour (2024)'],
+    ['[Team] Moon & Lantern Season 01 [2023]', 'Moon and Lantern (2023)'],
+  ]) {
+    assert.equal(matchesTrustedReleaseTitle(release, title), false, release);
+    assert.equal(matches(release, title), true, release);
+  }
+});
+
+test('season-labelled retrieval preserves title, catalogue year, and consistent season tags', () => {
+  const matches = targetPlanning.matchesSeasonLabelledTitle;
+  assert.equal(typeof matches, 'function');
+  for (const release of [
+    '[Group] Silver Orchard Season 02 S03 [2025]',
+    '[Group] Silver Orchard S02 Season 03 [2025]',
+    '[Group] Silver Orchard Season 02 [2024]',
+    '[Group] Silver Orchard Side Story Season 02 [2025]',
+    '[Silver Orchard] Different Title Season 02 [2025]',
+    '[Group] Silver Orchard 02 [2025]',
+    '[Group] Silver Orchard Part 02 [2025]',
+    '[Group] Silver Orchard Season 00 [2025]',
+  ]) assert.equal(matches(release, 'Silver Orchard (2025)'), false, release);
+  assert.equal(matches('[Group] Silver Orchard Season 02 [2025]', 'Silver Orchard'), false);
+});
+
+test('metadata variation allows only an opted-in provisional target plan', () => {
+  const input = { request, detail: { ...detail, title: 'Silver Orchard (2025)' },
+    prepared: pack, releaseTitle: '[Group] Silver Orchard Season 02 S02 [2025]',
+    trustedTitle: 'Silver Orchard (2025)' };
+  assert.deepEqual(planTorrentTargets(input), { state: 'held', reason: 'release_title_mismatch' });
+  const plan = planTorrentTargets({ ...input, allowTitleMetadataVariation: true });
+  assert.equal(plan.state, 'planned_targets');
+  assert.deepEqual(plan.plannedFiles.map((file) => file.episodeIds), [[1001], [1002]]);
 });

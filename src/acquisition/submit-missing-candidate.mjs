@@ -3,7 +3,7 @@ import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
 import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
@@ -100,7 +100,9 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     .find((query) => matchesTrustedReleaseTitle(candidate?.title, query));
   const identityQuery = verifiedIdentity ??
     trustedReleaseQueries(detail.title, aliases)
-      .find((query) => matchesTrustedReleaseTitle(candidate?.title, query));
+      .find((query) => matchesTrustedReleaseTitle(candidate?.title, query)) ??
+    trustedIdentityTitles(detail.title, aliases)
+      .find((title) => matchesSeasonLabelledTitle(candidate?.title, title));
   if (!identityQuery) return held('release_title_mismatch');
   if (!verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
   if (typeof qbittorrent.verifyStagingRoot === 'function') {
@@ -144,7 +146,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   // Re-derive the episode map even when a caller supplies a reviewed plan.
   // The final server boundary cannot trust stale or forged preflight fields.
   const mapped = planTorrentTargets({ request, detail, prepared:mainPrepared,
-    releaseTitle: candidate.title, trustedTitle: identityQuery });
+    releaseTitle: candidate.title, trustedTitle: identityQuery,
+    allowTitleMetadataVariation: !verifiedIdentity });
   if (mapped.state !== 'planned_targets') return mapped;
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;

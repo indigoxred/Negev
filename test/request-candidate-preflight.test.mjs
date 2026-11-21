@@ -574,3 +574,25 @@ test('optional pack bonuses have their own identity while ambiguous extras do no
 });
 
 test('a complete requested OVA pack survives bonus-looking regular filenames',async()=>{const meta={...detail,format:'OVA'};const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example OVA Complete Batch'},readRequest:()=>request,loadDetail:async()=>meta,readVideoExtensions:async()=>({state:'extensions',values:['.mkv']}),readBonusOwnership:async()=>{throw Error('main episodes are not bonuses')},prepare:async()=>({...prepared,totalBytes:2000,files:[{name:'Example OVA 01.mkv',size:1000},{name:'Example OVA 02.mkv',size:1000}]}),offlineLookup:async({filename})=>({status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+(filename.includes('01')?1001:1002),CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:filename.includes('01')?1001:1002,PercentageStart:0,PercentageEnd:100}]}})});assert.equal(result.state,'preflight',JSON.stringify(result));assert.deepEqual(result.episodeIds,[1001,1002]);assert.equal(result.files.length,2);assert.equal(result.bonusFiles,undefined);});
+
+
+test('manual file inspection lists metainfo despite a rejected title without granting preflight',async()=>{
+ let prepares=0;
+ const options={requestId:4,candidate:{...candidate,title:'Different installment batch 1080p'},readRequest:()=>request,loadDetail:async()=>detail,prepare:async()=>{prepares++;return prepared;}};
+ const ordinary=await previewRequestCandidate(options);assert.equal(ordinary.reason,'release_title_mismatch');assert.equal(prepares,0);
+ const inspected=await previewRequestCandidate({...options,includeFileListing:true});
+ assert.equal(inspected.state,'held');assert.equal(inspected.reason,'release_title_mismatch');assert.equal(prepares,1);
+ assert.deepEqual(inspected.inspectedFiles,[{name:'Example - 01.mkv',size:1000,type:'video'}]);
+ assert.equal(JSON.stringify(inspected).includes('FormData'),false);assert.equal(inspected.episodeIds,undefined);
+});
+
+
+test('season labels between a translated title and year need exact per-file Shoko identity',async()=>{
+ const files=[{name:'Secret Shop S02E01.mkv',size:500},{name:'Secret Shop S02E02.mkv',size:500}];
+ for(const mode of ['exact','missing','wrong_second']){
+  let calls=0;const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'[Group] Secret Shop : Season 02 S02 [2025] Complete 1080p'},readRequest:()=>request,
+   loadDetail:async()=>({...detail,title:'Himitsu no Mise (2025)'}),releaseQueries:async()=>['Himitsu no Mise (2025)','Secret Shop (2025)'],prepare:async()=>({...prepared,files}),
+   offlineLookup:async({filename})=>{calls++;const id=filename.includes('01')?1001:mode==='wrong_second'?9999:1002;return mode==='missing'?{status:204}:{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};}});
+  assert.equal(result.state,mode==='exact'?'preflight':'held',JSON.stringify(result));assert.equal(calls,2);if(mode==='exact'){assert.equal(result.shokoPreview,'exact');assert.deepEqual(result.episodeIds,[1001,1002]);}
+ }
+});
