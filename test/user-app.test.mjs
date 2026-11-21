@@ -455,7 +455,7 @@ test('started release processing reports the real cancellation limit', async () 
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
     publicOrigin: origin, secureCookies: false,
     submitRequest: async () => null,
-    readRequest: () => ({ id: 1, requesterId: 7 }),
+    readRequest: () => ({ id: 1, requesterId: 8 }),
     cancelRequest: () => ({ state: 'held', reason: 'acquisition_started' }) });
   try {
     const login = await app.inject({ method: 'POST', url: '/api/login',
