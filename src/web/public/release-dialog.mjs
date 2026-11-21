@@ -13,7 +13,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const previous=active;
     if(previous){previous.close();previous.remove();if(active===previous)active=null;}
   };
-  const errorText=e=>({release_search_unavailable:'Indexers could not be reached. Retry search.',
+  const errorText=e=>({torrent_preflight_unavailable:'File details could not be checked. Retry inspection.',release_search_unavailable:'Indexers could not be reached. Retry search.',
     release_search_incomplete:'Some indexers could not be reached. Retry search.',
     release_already_processing:'This request already has files being processed. Its existing download is preserved.',
     stale_release_selection:'This request changed. Reopen release selection to see the current choice.',
@@ -67,7 +67,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     }
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',()=>{if(active===dialog)active=null;dialog.remove();},{once:true});
-    let control,busy=false,version=0,expiryTimer=null,nextButton=null,lastQuery='';
+    let control,busy=false,version=0,rowVersion=0,expiryTimer=null,nextButton=null,lastQuery='',searchStatus='',statusOwner=null;
     const shown=new Set();let confirmedAiring=false,completedSeries=false,preferredWait=null,preferenceInitialized=false;
     dialog.addEventListener('close',()=>clearTimeout(expiryTimer),{once:true});
     const current=()=>dialog.isConnected&&active===dialog;
@@ -93,7 +93,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       return box;
     };
     const showControl=()=>{
-      clearTimeout(expiryTimer);
+      clearTimeout(expiryTimer);rowVersion++;statusOwner=null;
       if(existing) {
         modes.hidden=actions.hidden=preferLabel.hidden=preferenceEditor.hidden=true;results.replaceChildren();
         status.textContent='Request #'+requestId+' already submitted';status.className='release-confirmation';
@@ -145,8 +145,9 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value,completedSeries&&packsOnly.checked]);
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
       buttons(true);if(nextButton)nextButton.disabled=true;
-      const epoch=++version;status.textContent='Searching indexers…';
-      if(!append){results.replaceChildren();shown.clear();nextButton=null;}
+      const epoch=++version;statusOwner=null;status.textContent='Searching indexers…';
+      if(!append){rowVersion++;results.replaceChildren();shown.clear();nextButton=null;}
+      const rowEpoch=rowVersion;
       if(!append){const headings=element('div',undefined,'release-results-heading');
         for(const label of ['Title','Group','Quality','Size','Seeds','Audio',''])headings.append(element('span',label));results.append(headings);}
       try{
@@ -155,8 +156,9 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         if(!current()||epoch!==version)return;
         nextButton?.remove();nextButton=null;updateContext(data);preferLabel.hidden=!confirmedAiring;
         if(!confirmedAiring)preferFuture.checked=false;
-        status.textContent=data.waitingFor==='first_episode'?'No released episodes to search yet. This request watches for the first release.':
+        searchStatus=data.waitingFor==='first_episode'?'No released episodes to search yet. This request watches for the first release.':
           data.items.length?`${data.items.length} matching releases${data.filteredOut?` · ${data.filteredOut} excluded by filters`:''} · audio and quality are advertised hints.`:data.filteredOut?'Releases were found, but none match the selected filters. Change filters or refine the search.':'No matches returned. Refine the title or retry search.';
+        status.textContent=searchStatus;
         for(const c of data.items) {
           const key=`${c.indexerId}:${c.guid}`;if(shown.has(key))continue;shown.add(key);
           results.append(compactReleaseRow({candidate:c,element,
@@ -167,18 +169,19 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
                 const begun=await command({action:'begin',mode:'manual'});control=begun.control;
               }
               return command({action:'choose',token:c.token,preferFutureGroup:confirmedAiring&&preferFuture.checked});
-            },isCurrent:current,isBusy:()=>busy,setBusy:buttons,
-            onError:error=>{const text=errorText(error);status.textContent=text;return text;},
+            },isCurrent:()=>current()&&rowEpoch===rowVersion,isBusy:()=>busy,setBusy:buttons,
+            onInspected:()=>{if(statusOwner===c.token){status.textContent=searchStatus;statusOwner=null;}},
+            onError:error=>{const text=errorText(error);if(current()&&rowEpoch===rowVersion){statusOwner=c.token;status.textContent=text;}return text;},
             onSelected:data=>{control=data.control;updateContext(data.context);showControl();saved(data);}}));
         }
         if(data.nextOffset!==null&&data.nextOffset!==undefined) {
           nextButton=element('button','Show more releases','quiet');
           nextButton.addEventListener('click',()=>{void search(true,data.nextOffset);});results.append(nextButton);
         }
-      }catch(e){if(current())status.textContent=errorText(e);}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
+      }catch(e){if(current()){statusOwner=null;status.textContent=errorText(e);}}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
     };
     const runAuto=async()=>{
-      if(busy||existing)return;buttons(true);version++;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
+      if(busy||existing)return;buttons(true);version++;rowVersion++;statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
       try{
         await refresh();
         if(control.phase==='proposal'){showControl();return;}

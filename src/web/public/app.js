@@ -865,7 +865,7 @@ function requestItemPresentation(item) {
     return {stage:'Choose a release',detail:'Open Manual Pick to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
   }
   if(item.status!=='cancelled'&&item.releaseSelection?.phase==='proposal') {
-    return {stage:'Release choice ready',detail:'Open Auto-Pick to review the better release.',note:'The registered option is used automatically after five minutes.',group:'active'};
+    return {stage:'Release choice ready',detail:'Open Auto-Pick to review the better release.',note:'The evidence-backed option is used automatically after five minutes.',group:'active'};
   }
   if(item.status!=='cancelled'&&item.preferredWait?.deadlineMs>Date.now()&&
       !['active','queued'].includes(item.progress?.transfer?.transferState)) {

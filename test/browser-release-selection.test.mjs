@@ -19,7 +19,7 @@ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==und
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
 const selection={candidate,preview,registration:'unknown'};
-let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[];
+let holdInspection=false,releaseInspection;let inspectionFailure="torrent_preflight_unavailable",inspectionCalls=0;let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[];
 let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false,preferredFlag=false;
 const api=async(url,options={})=>{
  if(url.endsWith('/release-choice')&&!options.method&&holdExistingRead)return new Promise((resolve,reject)=>{releaseExistingRead={resolve,reject};});
@@ -30,6 +30,7 @@ const api=async(url,options={})=>{
    ?{state:'candidates',items:[{...candidate,guid:'two',title:'[Another] Example WEB 1080p',token:'second'}],nextOffset:null,confirmedAiring:!completedMode,completedSeries:completedMode}
    :{state:'candidates',items:[candidate],nextOffset:50,confirmedAiring:!completedMode,completedSeries:completedMode};
  const body=JSON.parse(options.body);if(url.includes('/release-previews/'))previewWrites++;
+ if(body.action==='inspect'){inspectionCalls++;if(holdInspection)return new Promise((resolve,reject)=>{releaseInspection={resolve,reject};});if(inspectionFailure){const reason=inspectionFailure;inspectionFailure=false;throw Object.assign(Error('Transient inspection failed'),{reason});}}
  if(body.action==='inspect')return {state:'preflight',requestId:Number.MAX_SAFE_INTEGER,...preview};
  if(body.action==='preference')control={...control,preference:null,revision:control.revision+1};
  if(body.action==='begin')control={mode:body.mode,phase:'selecting',revision:control.revision+1};
@@ -55,6 +56,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  document.querySelector('#request-list').replaceChildren(element('p','Refreshed request card'));
  const survived=Boolean(document.querySelector('dialog[open] .release-entry'));
  document.querySelector('dialog .release-file-evidence').open=true;await tick();
+ const beforeRetry=inspectionCalls,searchesBeforeRetry=searchUrls.length;await tick();const noInspectionLoop=inspectionCalls===beforeRetry;
+ const retry=[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Retry inspection');if(retry)retry.click();await tick();
+ const sameResultRetry=Boolean(retry)&&inspectionCalls===beforeRetry+1&&!document.querySelector('[role=status]').textContent.includes('Transient inspection failed')&&searchUrls.length===searchesBeforeRetry;
+
  const unknownGrey=document.querySelector('.release-entry .registration-unknown')!==null;
  const coverage=document.querySelector('dialog').textContent.includes('AniDB episode 1');
  const compact=document.querySelector('.release-compact-row').getBoundingClientRect().height<160;
@@ -75,6 +80,9 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
  await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
  const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
+ control={mode:'manual',phase:'selecting',revision:1};inspectionFailure='release_search_expired';
+ await dialog.open({requestId:1,title:'Expired results',mode:'manual'});document.querySelector('dialog .release-file-evidence').open=true;await tick();
+ const expiredInspectionNoRetry=![...document.querySelectorAll('dialog button')].some(b=>b.textContent==='Retry inspection')&&document.querySelector('dialog').textContent.includes('Search again');dialog.close();
  const beforeRepeat={autoCalls,chooseCalls};control={mode:'manual',phase:'chosen',revision:22,selection};
  await dialog.open({requestId:1,title:'Existing request',mode:'auto',existing:true});
  const existingSuccess=document.querySelector('dialog').textContent.includes('Request #1 already submitted')&&document.querySelector('dialog a[href="#/requests?requestId=1"]')&&document.querySelector('dialog').textContent.includes('[Group] Example WEB 1080p')&&document.querySelector('dialog .release-mode-actions').hidden&&beforeRepeat.autoCalls===autoCalls&&beforeRepeat.chooseCalls===chooseCalls;
@@ -108,8 +116,15 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  completedMode=false;delegatedMode=true;control={mode:'auto',phase:'selecting',revision:1,preference:{group:'SubsPlease'}};
  await dialog.open({requestId:1,title:'Airing Example',mode:'auto'});
  const groupFeedback=document.querySelector('dialog').textContent.includes('Preferred group: SubsPlease')&&document.querySelector('dialog').textContent.includes('Until ');
- dialog.close();
- document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
+ dialog.close();let lateInspectionGuard=true;delegatedMode=false;
+ for(const outcome of ['success','failure']){
+  control={mode:'manual',phase:'selecting',revision:1};await dialog.open({requestId:1,title:'Pending inspection',mode:'manual'});holdInspection=true;
+  document.querySelector('dialog .release-file-evidence').open=true;await tick();click('Auto-Pick');await tick();
+  if(outcome==='success')releaseInspection.resolve({state:'preflight',...preview});else releaseInspection.reject(Error('Late inspection failure'));
+  await tick();holdInspection=false;
+  lateInspectionGuard&&=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('[role=status]').textContent.includes('better release')&&!document.querySelector('[role=status]').textContent.includes('Late inspection failure');dialog.close();
+ }
+ document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -118,6 +133,6 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:3,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
+      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });

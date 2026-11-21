@@ -44,7 +44,7 @@ test('title and library controls recover from pending and failed reads without d
     let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
-    let transferObservedMs = null;
+    let transferObservedMs = null,transferBasisPoints=3750,requestProposal=false;
     let newHistoryRequest = false;
     let holdWatchingRequests = true;
     let holdFirstSession = true;
@@ -177,12 +177,13 @@ test('title and library controls recover from pending and failed reads without d
               oneTimeAcquisitionComplete: true } } :
           { id: 7, anidbId: 1, title: 'Pending title', kind: 'movie',
             episodeIds: [11], monitorFuture: false, watchClosed: true,
+            ...(requestProposal?{releaseSelection:{mode:'auto',phase:'proposal'}}:{}),
             progress: { state: transferObservedMs === null ? 'saved' :
               'download_unverified', targetCount: 1,
               publicAvailability: proofReady ? 'verified_recently' : 'unverified',
               publicVerifiedTargets: proofReady ? 1 : 0,
               ...(transferObservedMs === null ? {} : { transfer: {
-                progressBasisPoints: 3750, etaSeconds: 120,
+                progressBasisPoints: transferBasisPoints, etaSeconds: 120,
                 speedBytesPerSecond: 512, transferState: 'active',
                 observedMs: transferObservedMs } }) } }] : [],
         nextBeforeId: history && !older ? 7 : null });
@@ -373,7 +374,9 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('dialog[open] input[type=checkbox]')");
       await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
-      await until("!document.querySelector('dialog[open]')");
+      // The season dialog closes before the asynchronous preview response arrives.
+      // Wait for the pending response to finish saving, not the earlier close.
+      await until("!document.querySelector('dialog[open]') && sessionStorage.getItem('negev-request-1-3-installment') === null");
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null);
       assert.deepEqual(submittedModes,[],'pending preparation does not open an invalid preview or submit again');previewPending=false;
       await evaluate("location.hash='#/title/1'");
@@ -520,6 +523,15 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
       assert.equal(await evaluate("getComputedStyle(document.querySelector('#request-list .request-transfer-fill')).animationName"), 'request-transfer-stripes');
+      transferBasisPoints=6250;
+      await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='62.5'");
+      assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-fill').style.width"),'62.5%');
+      requestProposal=true;await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('#request-list')?.textContent.includes('Release choice ready')");
+      assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('registered option')"),false,'a request card must not call likely evidence registered');
+      requestProposal=false;await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='62.5'");
       await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
         document.dispatchEvent(new Event('visibilitychange'))`);
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
