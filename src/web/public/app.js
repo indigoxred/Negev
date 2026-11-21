@@ -469,7 +469,8 @@ async function api(url, options = {}) {
     const headers = { Accept: 'application/json', ...fetchOptions.headers };
     if (fetchOptions.body !== undefined) headers['Content-Type'] = 'application/json';
     if (fetchOptions.method && fetchOptions.method !== 'GET' && state.csrf) headers['x-negev-csrf'] = state.csrf;
-    const response = await fetch(url, { credentials: 'same-origin', ...fetchOptions, headers });
+    const signal = fetchOptions.signal ?? (pacer ? AbortSignal.timeout(30_000) : undefined);
+    const response = await fetch(url, { credentials: 'same-origin', ...fetchOptions, headers, signal });
     const data = await response.json().catch(() => ({}));
     if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
     if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
