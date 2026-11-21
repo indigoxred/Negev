@@ -124,7 +124,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         body.replaceChildren(metadata(), element('p', onError(error, { background: background && !choosing }), 'muted'));
         if(preview?.state==='inspection'){
           summary.textContent='Details · '+preview.files.length+' files · selection not approved';
-          for(const file of preview.files)body.append(element('p',file.name+' · '+file.size.toLocaleString()+' bytes · '+file.type,'release-inspected-file'));
+          for(const file of preview.files)body.append(element('p',file.name+' · '+file.size.toLocaleString()+' bytes · '+(file.type??'other'),'release-inspected-file'));
         }
         if (!['release_search_expired','release_preview_expired'].includes(error.reason)) body.append(retry);
         task = null;return false;

@@ -21,6 +21,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     release_preview_expired:'This selection window expired without submitting a request. Reopen Request to search again.',
     ambiguous_or_unrequested_video:'The release files could not be mapped safely to this installment. Inspect another release.',
     shoko_preview_wrong_identity:'Shoko predicts different episodes for this release. This choice has not been submitted; inspect another release.',
+    unsafe_or_unselected_file:'This pack contains files outside the supported selection rules. Its file list is shown below.',
     release_title_mismatch:'This release does not safely match the requested installment.',
     related_title_unavailable:'Related installments could not be checked. Retry inspection.',
     release_not_eligible:'This release does not meet the current release preferences.',
