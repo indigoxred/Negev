@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 const browser=[process.env.NEGEV_TEST_BROWSER,'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','/usr/bin/google-chrome','/usr/bin/chromium'].filter(Boolean).find(existsSync);
 const source=['release-choice-fields.mjs','release-row.mjs','release-dialog.mjs'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8').replace(/^import .*;$/gm,'').replaceAll('export ','')).join('\n');
-const css=readFileSync(new URL('../src/web/public/consumer.css',import.meta.url),'utf8');
+const css=['style.css','consumer.css'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8')).join('\n');
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search',
   {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
     const dir=mkdtempSync(join(tmpdir(),'negev-release-browser-'));
@@ -63,7 +63,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
 
  const unknownGrey=document.querySelector('.release-entry .registration-unknown')!==null;
  const coverage=document.querySelector('dialog').textContent.includes('AniDB episode 1');
- const compact=document.querySelector('.release-compact-row').getBoundingClientRect().height<160;
+ const compact=document.querySelector('.release-row-main').getBoundingClientRect().height<120;
  const defaults=document.querySelector('[aria-label=Quality]').value==='bd1080'&&document.querySelector('[aria-label=Audio]').value==='japanese';
  document.querySelector('[aria-label="Prefer this release group for future episodes"]').checked=true;
  click('Pick');await tick();
@@ -73,11 +73,14 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
  const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use likely match')&&!document.querySelector('dialog').textContent.toLowerCase().includes('registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
  click('Use likely match');await tick();
- const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&document.querySelector('dialog').textContent.includes('Auto-Pick selected this release');
+ const receiptPrefs=document.querySelector('dialog .receipt-preferences');receiptPrefs.open=true;
+ document.querySelector('dialog .release-preference-editor').open=true;
+ const futurePreferences=document.querySelector('dialog .release-prefer-future input').getBoundingClientRect().width>0&&[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Save group').getBoundingClientRect().width>0;
+ const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&/[0-9]+ episodes? requested · Auto-Pick/.test(document.querySelector('dialog').textContent)&&document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden;
  dialog.close();
  alternativeRegistration='confirmed';control={mode:'auto',phase:'selecting',revision:1};
  await dialog.open({requestId:1,title:'Verified example',mode:'auto'});
- const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified exact AniDB files');dialog.close();
+ const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified files');dialog.close();
  alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
  await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
  const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
@@ -125,7 +128,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
   await tick();holdInspection=false;
   lateInspectionGuard&&=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('[role=status]').textContent.includes('better release')&&!document.querySelector('[role=status]').textContent.includes('Late inspection failure');dialog.close();
  }
- document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
+ document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,futurePreferences,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -134,7 +137,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
+      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,futurePreferences:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -161,7 +164,7 @@ const tick=()=>new Promise(r=>setTimeout(r,20));const until=async fn=>{for(let i
  const dialog=createReleaseDialog({api,element});await dialog.open({requestId:1,title:'Evidence Example'});
  await until(()=>document.querySelector('.release-compact-row .registration-likely'));
  const row=document.querySelector('.release-compact-row'),badge=row.querySelector('.release-registration');
- const likelyGreen=getComputedStyle(badge).color==='rgb(142, 231, 182)'&&getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)'&&badge.textContent==='Likely'&&badge.title.includes('not exact');
+ const likelyGreen=getComputedStyle(badge).color==='rgb(142, 231, 182)'&&getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)'&&badge.textContent==='Likely AniDB-listed file'&&badge.title.includes('not exact');
  const noDetailsNeeded=!row.querySelector('details').open&&row.textContent.includes('CRC32 and size');
  await until(()=>document.querySelectorAll('.release-compact-row')[1].querySelector('.registration-confirmed'));
  const rows=()=>[...document.querySelectorAll('.release-compact-row')];
@@ -220,6 +223,6 @@ test('release dialog preserves manual choice through polling and offers alternat
  const badge=row.querySelector('.registration-group');const initialGreen=row.classList.contains('release-anidb-match');const actualGreen=getComputedStyle(row.querySelector('strong')).color==='rgb(142, 231, 182)';await start();await tick();outcomes.push({listed,initialGreen,actualGreen,afterFailure:row.classList.contains('release-anidb-match'),label:badge?.textContent??null,global:badge?.title.includes('globally')??false,enabled:!row.querySelector('.release-pick').disabled});row.remove();}
  document.querySelector('#result').textContent=JSON.stringify(outcomes);})();
  </script>`;
- const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'AniDB group',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),[{listed:true,initialGreen:true,actualGreen:true,afterFailure:true,label:'Group listed on AniDB (global)',global:true,enabled:true},{listed:false,initialGreen:false,actualGreen:false,afterFailure:false,label:null,global:false,enabled:true}]);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

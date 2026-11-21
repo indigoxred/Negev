@@ -588,7 +588,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listRequests: (input) => requestLedger.listRequests(input),
     listLibraryTitles: () => ({ state: 'current_proofs', items: [
       { anidbId: 1234, title: 'Example series', englishTitle: null,
-        verifiedEpisodeCount: 2, lastVerifiedMs: 950 }],
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }],
     nextAfterAnidbId: null }),
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',
@@ -686,6 +686,13 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(page.statusCode, 200);
     assert.match(page.headers['content-security-policy'], /default-src 'none'/);
     assert.match(page.headers['content-security-policy'], /img-src 'self'/);
+    assert.match(page.headers['content-security-policy'], /font-src 'self'/);
+    for (const name of ['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf']) {
+      const font = await app.inject({method:'GET',url:'/fonts/'+name});
+      assert.equal(font.statusCode,200);assert.match(font.headers['content-type'],/font\/ttf/);
+      assert.equal(font.headers['x-content-type-options'],'nosniff');
+      assert.deepEqual(font.rawPayload,await readFile(new URL('../src/web/public/fonts/'+name,import.meta.url)));
+    }
     assert.match(page.body, /Negev/);
     assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);
@@ -765,7 +772,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(library.statusCode, 200);
     assert.deepEqual(library.json(), { state: 'current_proofs', items: [
       { anidbId: 1234, title: 'Example series', englishTitle: null,
-        verifiedEpisodeCount: 2, lastVerifiedMs: 950 }], nextAfterAnidbId: null });
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }], nextAfterAnidbId: null });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/library?afterAnidbId=-1', headers: { cookie } })).statusCode, 400);
     const airing = await app.inject({ method: 'GET', url: '/api/airing', headers: { cookie } });

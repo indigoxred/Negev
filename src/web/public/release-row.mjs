@@ -1,8 +1,8 @@
 import { releaseFacts } from './release-choice-fields.mjs';
 
-const evidenceLabel = state => state === 'previously_verified' ? 'Previously verified exact AniDB file' :
-  state === 'likely' ? 'Likely AniDB correspondence · CRC32 and size' :
-    state === 'filename_prediction' ? 'Filename prediction only · registration unknown' : 'Registration unknown';
+const evidenceLabel = state => state === 'previously_verified' ? 'Previously verified file' :
+  state === 'likely' ? 'Likely AniDB-listed file · CRC32 and size' :
+    state === 'filename_prediction' ? 'Filename prediction only · registration unknown' : 'File registration unknown';
 
 // Share pacing across picker replacements; leave explicit selection traffic alone.
 let nextInspectionMs = 0;
@@ -54,13 +54,13 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const main = element('div', undefined, 'release-row-main');
   const name = element('div', undefined, 'release-name');
   const title = element('strong', c.title); title.title = c.title;
-  const badge = element('span', '?', 'registration-unknown release-registration');
-  badge.title = 'Registration unknown'; badge.setAttribute('aria-label', badge.title);
+  const badge = element('span', 'File registration unknown', 'registration-unknown release-registration');
+  badge.title = 'File registration unknown'; badge.setAttribute('aria-label', badge.title);
   const listedGroup = c.groupRegistration?.state === 'listed' && c.groupRegistration.scope === 'global' &&
     Number.isSafeInteger(c.groupRegistration.groupId) && c.groupRegistration.groupId > 0;
   name.append(title);
   if (listedGroup) {
-    const groupBadge = element('span', 'AniDB group', 'registration-group release-registration');
+    const groupBadge = element('span', 'Group listed on AniDB (global)', 'registration-group release-registration');
     groupBadge.title = 'Group listed globally on AniDB via AniMap. This does not verify its association with this show or the exact release files.';
     groupBadge.setAttribute('aria-label', groupBadge.title); name.append(groupBadge);
     entry.classList.add('release-anidb-match');
@@ -84,7 +84,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const load = async (background = false) => {
     if (task) return task;
     task = (async () => {
-      badge.textContent = '…'; if (!background) pick.disabled = true;
+      badge.textContent = 'Checking file evidence…'; if (!background) pick.disabled = true;
       try {
         preview = await inspect({ background });
         if (!isCurrent()) return false;
@@ -100,8 +100,8 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         summary.textContent = preview.coverage ? `Details · File coverage checked: ${preview.coverage.coveredEpisodeCount}/${preview.coverage.requestedEpisodeCount} requested episodes` : `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
         badge.className = `${confirmed ? 'registration-confirmed' : likely ? 'registration-likely' : 'registration-unknown'} release-registration`;
         entry.classList.toggle('release-anidb-match', listedGroup || confirmed || likely);
-        badge.textContent = confirmed ? 'Verified' : likely ? 'Likely' : '?';
-        badge.title = confirmed ? 'Previously verified exact AniDB files' : likely ? 'Likely CRC32-and-size correspondence; not exact verification' : 'Registration unknown';
+        badge.textContent = confirmed ? 'Previously verified file'+(preview.files.length===1?'':'s') : likely ? 'Likely AniDB-listed file'+(preview.files.length===1?'':'s') : 'File registration unknown';
+        badge.title = confirmed ? 'Previously verified files' : likely ? 'Likely CRC32-and-size correspondence; not exact verification' : 'File registration unknown';
         badge.setAttribute('aria-label', badge.title);
         if (preview.selectionStatus === 'already_available') pick.textContent = 'Available';
         if (preview.selectionStatus === 'owned_unverified') pick.textContent = 'Owned';
@@ -109,7 +109,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         return canPick();
       } catch (error) {
         if (!isCurrent()) return false;
-        preview = null; badge.textContent = '?';badge.className = 'registration-unknown release-registration';entry.classList.toggle('release-anidb-match', listedGroup);
+        preview = null; badge.textContent = 'File registration unknown';badge.className = 'registration-unknown release-registration';entry.classList.toggle('release-anidb-match', listedGroup);
         const retry = element('button', 'Retry inspection', 'quiet');retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (isBusy()) return;setBusy(true);retry.disabled = true;

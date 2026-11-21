@@ -18,7 +18,7 @@ export function seasonTriggerPresentation(rows, currentAnidbId, hasMore) {
     triggerText: 'Watch future episodes' };
   if (current?.status?.state === 'partial') return {
     showAvailable: false, showTrigger: true,
-    triggerText: 'Complete season' };
+    triggerText: 'Request episodes' };
   if (current?.status?.state !== 'available') return {
     showAvailable: false, showTrigger: true,
     triggerText: 'Request series' };
@@ -107,4 +107,21 @@ export function seasonSelectionSummary(rows) {
       ? 'watch future episodes' : row.status.state === 'upcoming'
         ? 'watch for release and future episodes'
         : 'request episodes not verified in Plex'}`).join('; ');
+}
+// A preview of the already selected request scope, not acquisition policy.
+export function seasonSelectionScope(rows) {
+  if(!rows.length)return 'Select a season to continue.';
+  const ranges=values=>{const sorted=[...new Set(values)].sort((a,b)=>a-b),parts=[];for(let i=0;i<sorted.length;i++){const first=sorted[i];let last=first;while(sorted[i+1]===last+1)last=sorted[++i];parts.push(first===last?String(first):`${first}–${last}`);}return parts.join(', ');};
+  return rows.map(row=>{
+    const detail=row.detail;
+    if(row.status?.state==='upcoming')return `${rows.length>1?row.title+': ':''}Watch for release and future episodes; no released episodes to download yet.`;
+    const season=detail?.regularSeason,schedule=detail?.regularSchedule;
+    if(!Number.isSafeInteger(season?.total)||!Number.isSafeInteger(season?.verified)||season.verified>season.total)return `${row.title}: request episodes not confirmed available; Specials stay separate.`;
+    const datedScope=['airing','upcoming'].includes(detail.releaseState);
+    const aired=datedScope&&schedule?.total===season.total&&Number.isSafeInteger(schedule.aired)&&Number.isSafeInteger(schedule.verifiedAired)&&schedule.verifiedAired<=schedule.aired;
+    const total=aired?schedule.aired:season.total,skip=aired?schedule.verifiedAired:season.verified;
+    const numbers=(detail.episodes??[]).filter(e=>e.type==='Episode'&&e.availability==='available'&&(!aired||e.airDate&&e.airDate<=schedule.asOf)).map(e=>e.number).filter(n=>Number.isSafeInteger(n)&&n>0);
+    const skipText=skip?` ${skip} already available episode${skip===1?'':'s'}${numbers.length===skip?' ('+ranges(numbers)+')':''} will be skipped.`:'';
+    return `${rows.length>1?row.title+': ':''}${total-skip} episode${total-skip===1?'':'s'} to request.${skipText}${datedScope?' Future episodes will also be monitored.':''} Specials stay separate.`;
+  }).join(' ');
 }
