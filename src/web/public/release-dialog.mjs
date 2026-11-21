@@ -160,6 +160,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     };
     const search=async(append=false,offset=0)=>{
       if(busy||existing)return;
+      dialog.classList.remove('is-submitted');modes.hidden=false;
       const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value,completedSeries&&packsOnly.checked]);
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
       buttons(true);if(nextButton)nextButton.disabled=true;
