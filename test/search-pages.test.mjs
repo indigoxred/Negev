@@ -91,6 +91,8 @@ test('successive markers cannot consume the catalogue without further downward s
  const budget=createCataloguePrefetchBudget();
  assert.equal(budget.claim(0,800),true);
  for(let page=0;page<30;page++)assert.equal(budget.claim(0,800),false);
+ assert.equal(budget.claim(400,800),false,'layout movement without user input grants nothing');
+ budget.noteIntent();
  assert.equal(budget.claim(399,800),false);
  assert.equal(budget.claim(400,800),true);
  assert.equal(budget.claim(200,800),false);
@@ -115,13 +117,23 @@ test('catalogue cooldown honours Retry-After without automatic retrying a failed
 
 test('shared marker grants and scroll listeners stop stationary automatic chains',async()=>{
  const {observeCatalogueContinuation,createCataloguePrefetchBudget}=await import('../src/web/public/search-pages.mjs');
- const budget=createCataloguePrefetchBudget();let y=0,loads=0,listener=null,notify;
- const events={addEventListener:(event,fn)=>{listener=fn;},removeEventListener:()=>{listener=null;}};
+ const budget=createCataloguePrefetchBudget();let y=0,loads=0,notify;const listeners=new Map();
+ const events={addEventListener:(event,fn)=>{listeners.set(event,fn);},removeEventListener:(event,fn)=>{if(listeners.get(event)===fn)listeners.delete(event);}};
  class Observer{constructor(fn){notify=fn;}observe(){}disconnect(){}}
  const next=()=>observeCatalogueContinuation({},()=>{loads++;},800,Observer,{budget,events,readScrollY:()=>y});
  next();notify([{isIntersecting:true}]);assert.equal(loads,1);
  const control=next();notify([{isIntersecting:true}]);assert.equal(loads,1);
- y=400;listener();assert.equal(loads,2);
+ y=400;listeners.get('scroll')();assert.equal(loads,1,'programmatic/anchor movement cannot spend another grant');
+ listeners.get('wheel')({type:'wheel',isTrusted:false});listeners.get('scroll')();assert.equal(loads,1);
+ listeners.get('wheel')({type:'wheel',isTrusted:true});listeners.get('scroll')();assert.equal(loads,2);
  next();notify([{isIntersecting:true}]);assert.equal(loads,2);
  control.disconnect();
+});
+
+test('queued obsolete reads and pending flights cannot consume catalogue slots',async()=>{
+ const {createCatalogueReadPacer}=await import('../src/web/public/search-pages.mjs');let release,reads=0;
+ const pacer=createCatalogueReadPacer();const first=pacer.run(()=>{reads++;return new Promise(resolve=>{release=resolve;});});const second=pacer.run(()=>{reads++;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(reads,1);release();await Promise.all([first,second]);assert.equal(reads,2);
+ let time=0,current=true;const delayed=createCatalogueReadPacer({now:()=>time,sleep:async ms=>{time+=ms;current=false;}});
+ await delayed.run(()=>{});await delayed.run(()=>{});await assert.rejects(delayed.run(()=>{throw Error('must not reach network');},()=>current),/superseded/);
 });

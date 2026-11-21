@@ -46,7 +46,16 @@ export function observeCatalogueContinuation(marker, load, viewportHeight,
     events = globalThis.window } = {}) {
   const lead = Math.min(1200, Math.max(0, Math.round(viewportHeight)));
   let active = true, near = false;
-  const disconnect = () => { active = false; observer.disconnect(); events?.removeEventListener('scroll', attempt); };
+  const intentEvents = ['wheel', 'touchmove', 'keydown', 'pointerdown'];
+  const intent = event => {
+    if (!active || event?.isTrusted !== true) return;
+    if (event.type === 'keydown' && !['ArrowDown', 'PageDown', 'End', ' '].includes(event.key)) return;
+    budget?.noteIntent();
+  };
+  const disconnect = () => {
+    active = false; observer.disconnect(); events?.removeEventListener('scroll', attempt);
+    for (const event of intentEvents) events?.removeEventListener(event, intent);
+  };
   const attempt = () => {
     if (!active || !near || (budget && !budget.claim(readScrollY(), viewportHeight))) return;
     disconnect(); load();
@@ -55,19 +64,21 @@ export function observeCatalogueContinuation(marker, load, viewportHeight,
     near = entries.some(entry => entry.isIntersecting); attempt();
   }, { rootMargin: '0px 0px '+lead+'px 0px' });
   events?.addEventListener('scroll', attempt, { passive: true });
+  for (const event of intentEvents) events?.addEventListener(event, intent, { passive: true });
   observer.observe(marker);
   return { disconnect };
 }
 
 export function createCataloguePrefetchBudget() {
-  let last = null;
+  let last = null, intent = 0, used = 0;
   return {
-    reset() { last = null; },
+    reset() { last = null; intent = used = 0; },
+    noteIntent() { intent++; },
     claim(scrollY, height) {
       const position = Math.max(0, Number.isFinite(scrollY) ? scrollY : 0);
       const advance = Math.max(120, Math.min(400, height / 2));
-      if (last !== null && position < last + advance) return false;
-      last = position; return true;
+      if (last !== null && (intent === used || position < last + advance)) return false;
+      last = position; used = intent; return true;
     },
   };
 }
