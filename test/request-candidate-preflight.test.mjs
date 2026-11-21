@@ -596,3 +596,11 @@ test('season labels between a translated title and year need exact per-file Shok
   assert.equal(result.state,mode==='exact'?'preflight':'held',JSON.stringify(result));assert.equal(calls,2);if(mode==='exact'){assert.equal(result.shokoPreview,'exact');assert.deepEqual(result.episodeIds,[1001,1002]);}
  }
 });
+
+test('batch search hints pass preflight only when derived from the same-ID title',async()=>{
+ for(const [sourceQuery,expected] of [['Example batch','preflight'],['Other Title batch','held']]){
+  const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,sourceQuery},readRequest:()=>request,loadDetail:async()=>detail,prepare:async()=>prepared});
+  assert.equal(result.state,expected);
+  if(expected==='held')assert.equal(result.reason,'untrusted_release_query');
+ }
+});

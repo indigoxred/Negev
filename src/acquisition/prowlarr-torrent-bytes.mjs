@@ -1,8 +1,9 @@
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
+import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
-const MAX_TORRENT_BYTES = 2_000_000;
+const MAX_TORRENT_BYTES = MAX_TORRENT_METAINFO_BYTES;
 
 export function isTrustedProxy(value, base, apiKey, indexerId) {
   let url;
@@ -82,13 +83,15 @@ export async function fetchProwlarrTorrentBytes({
         !/^application\/x-bittorrent(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') ||
         !response.body) return held('torrent_unavailable');
     const length = Number(response.headers.get('content-length'));
-    if (Number.isFinite(length) && length > MAX_TORRENT_BYTES) return held('torrent_too_large');
+    if (Number.isFinite(length) && length > MAX_TORRENT_BYTES) {
+      await response.body.cancel().catch(() => {});
+      return held('torrent_too_large');
+    }
     const chunks = [];
     let total = 0;
     for await (const chunk of response.body) {
       total += chunk.byteLength;
       if (total > MAX_TORRENT_BYTES) {
-        await response.body.cancel().catch(() => {});
         return held('torrent_too_large');
       }
       chunks.push(chunk);

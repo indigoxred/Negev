@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 
 // Build only. No network call or torrent start is made here. A later caller
@@ -6,7 +7,7 @@ import { matchesStagingSavePath } from './staging-save-path.mjs';
 export function buildStoppedTorrentAddForm({ torrentBytes, savePath,
   saveRoot, category }) {
   if (!(torrentBytes instanceof Uint8Array) ||
-      torrentBytes.byteLength < 1 || torrentBytes.byteLength > 2_000_000 ||
+      torrentBytes.byteLength < 1 || torrentBytes.byteLength > MAX_TORRENT_METAINFO_BYTES ||
       !matchesStagingSavePath({ hash: typeof savePath === 'string'
         ? path.posix.basename(savePath) : null, savePath }, { saveRoot }) ||
       category !== 'negev') {

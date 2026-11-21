@@ -34,12 +34,26 @@ export function trustedReleaseQueries(title, aliases = []) {
       if (queries.length === maxQueries) return queries;
     }
   }
+  // Reuse spare query slots only after retaining the existing same-ID names.
+  for (const query of [...queries]) {
+    const neutral=query.replace(/[:：]/gu,' ').replace(/\s+/gu,' ').trim();
+    const key=neutral.toLocaleLowerCase('en');
+    if(neutral!==query&&!seen.has(key)) {
+      queries.push(neutral);seen.add(key);
+      if(queries.length===maxQueries)break;
+    }
+  }
   return queries;
 }
 
 // Search prefixes retrieve candidates; they are not evidence that a release
 // belongs to the AniDB title. Only the main title or same-ID official names
 // may establish the provisional file-planning identity.
+export function trustedPackQueries(title, aliases = []) {
+  return trustedReleaseQueries(title, aliases).map(query => `${query} batch`)
+    .filter(query => query.length <= 120);
+}
+
 export function trustedIdentityTitles(title, aliases = []) {
   const source = [title, typeof title === 'string' ?
     title.replace(/\s+\((?:19|20)\d{2}\)$/, '') : null,

@@ -11,9 +11,9 @@ test('a long same-ID title keeps its distinctive main title for release search',
     "I'll Cash In with a Cute Support Fairy to Become the Strongest!";
   const shortTitle = 'Kashita Maryoku wa "Revo-barai" de Kyousei Choushuu';
   assert.deepEqual(trustedReleaseQueries(longTitle, [english]),
-    [shortTitle, 'Kashita Maryoku wa', english]);
+    [shortTitle, 'Kashita Maryoku wa', english, english.replace(':','')]);
   assert.deepEqual(trustedTargetedQueries(longTitle, [english], 1),
-    [`${shortTitle} 01`, 'Kashita Maryoku wa 01', `${english} 01`]);
+    [`${shortTitle} 01`, 'Kashita Maryoku wa 01', `${english} 01`, `${english.replace(':','')} 01`]);
   assert.deepEqual(trustedIdentityTitles(longTitle, [english]),
     [shortTitle, english]);
 });

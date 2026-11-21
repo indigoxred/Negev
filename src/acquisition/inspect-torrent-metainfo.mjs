@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const keyOf = (name) => Buffer.from(name).toString('hex');
@@ -152,7 +153,7 @@ function v2Files(info) {
 // Structural preflight only. qBittorrent must still validate torrent piece
 // hashes and v2 Merkle layers; Shoko must later verify the actual video ED2K.
 export function inspectTorrentMetainfo({ bytes }) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 2 || bytes.length > 2_000_000) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 2 || bytes.length > MAX_TORRENT_METAINFO_BYTES) {
     return held('invalid_metainfo');
   }
   try {

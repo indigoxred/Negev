@@ -122,3 +122,18 @@ test('accepts BEP47 padding indexed by ordinal without changing the raw info has
   assert.deepEqual(result.files, [{name:'Show - 01.mkv',size:1000},{name:'Show - 02.mkv',size:1200}]);
   assert.equal(result.totalBytes, 2200);
 });
+
+test('valid season torrents over two MB traverse retrieval, structural parsing and stopped form with a shared hard bound',async()=>{
+ const {fetchProwlarrTorrentBytes}=await import('../src/acquisition/prowlarr-torrent-bytes.mjs');
+ const {buildStoppedTorrentAddForm}=await import('../src/acquisition/qbittorrent-add-form.mjs');
+ const count=106500,length=count*262144;
+ const bytes=torrent({length,name:'Example.mkv','piece length':262144,pieces:Buffer.alloc(count*20,7)});
+ assert.ok(bytes.length>2_000_000);
+ const proxy='http://prowlarr.internal:9696/3/download?apikey=syntheticKey&link=abc123&file=Example';
+ const retrieved=await fetchProwlarrTorrentBytes({baseUrl:'http://prowlarr.internal:9696/',apiKey:'syntheticKey',query:'Example',indexerIds:[3],candidate:{indexerId:3,guid:'one',title:'Example',size:length,proxyUrl:proxy},fetchImpl:async()=>new Response(bytes,{headers:{'content-type':'application/x-bittorrent','content-length':String(bytes.length)}})});
+ assert.equal(retrieved.state,'torrent_bytes');const result=inspect(retrieved.bytes);assert.equal(result.state,'metainfo_checked');
+ const form=buildStoppedTorrentAddForm({torrentBytes:retrieved.bytes,savePath:`/Downloads/negev/${result.hash}`,category:'negev'});
+ assert.equal(form.get('torrents').size,bytes.length);
+ const over=await fetchProwlarrTorrentBytes({baseUrl:'http://prowlarr.internal:9696/',apiKey:'syntheticKey',query:'Example',indexerIds:[3],candidate:{indexerId:3,guid:'one',title:'Example',size:length,proxyUrl:proxy},fetchImpl:async()=>new Response('de',{headers:{'content-type':'application/x-bittorrent','content-length':String(8*1024*1024+1)}})});
+ assert.equal(over.reason,'torrent_too_large');assert.equal(inspect(new Uint8Array(8*1024*1024+1)).state,'held');
+});

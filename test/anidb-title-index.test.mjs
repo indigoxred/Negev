@@ -110,7 +110,7 @@ test('uses an English synonym for display when AniDB has no official English tit
   assert.equal(index.get(19977).englishTitle,
     'Frieren: Beyond Journey\'s End (2027)');
   assert.equal(index.get(20291).englishTitle, null);
-  assert.deepEqual(index.get(18687).releaseQueries, ['Dungeon Meshi Season 2']);
+  assert.deepEqual(index.get(18687).releaseQueries, ['Dungeon Meshi Season 2', 'Delicious in Dungeon Season 2']);
 });
 
 test('normalizes an embedded title tab from the live dump to a searchable space', () => {

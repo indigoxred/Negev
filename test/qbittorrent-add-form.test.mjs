@@ -35,6 +35,6 @@ test('refuses ambiguous path, unsafe category, and unbounded or absent torrent d
     assert.throws(() => buildStoppedTorrentAddForm({ ...input, category }), TypeError);
   }
   assert.throws(() => buildStoppedTorrentAddForm({ ...input, torrentBytes: new Uint8Array() }), TypeError);
-  assert.throws(() => buildStoppedTorrentAddForm({ ...input, torrentBytes: new Uint8Array(2_000_001) }), TypeError);
+  assert.throws(() => buildStoppedTorrentAddForm({ ...input, torrentBytes: new Uint8Array(8 * 1024 * 1024 + 1) }), TypeError);
   assert.throws(() => buildStoppedTorrentAddForm({ ...input, torrentBytes: 'magnet:?xt=abc' }), TypeError);
 });
