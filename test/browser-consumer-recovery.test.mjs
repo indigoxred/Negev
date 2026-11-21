@@ -248,6 +248,7 @@ test('title and library controls recover from pending and failed reads without d
         }
         assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
+      await send('Emulation.setDeviceMetricsOverride', {width:1280,height:900,deviceScaleFactor:1,mobile:false});
       const base = `http://127.0.0.1:${server.address().port}`;
       await send('Page.navigate', { url: `${base}/#/title/1` });
       for (let attempt = 0; attempt < 80 && !heldSessionResponse; attempt++) {
@@ -529,6 +530,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
       assert.equal(await evaluate("getComputedStyle(document.querySelector('#request-list .request-transfer-fill')).animationName"), 'request-transfer-stripes');
+      assert.equal(await evaluate('innerWidth'),1280,'exercise the desktop overlap breakpoint');
       const controls = await evaluate("(() => { const row=document.querySelector('[data-request-id=\"7\"]'); const cancel=[...row.querySelectorAll('.request-actions button')].find(x=>x.textContent==='Cancel request'); const more=row.querySelector('.request-more'); if(!cancel)return {cancel:false}; const a=cancel.getBoundingClientRect(),b=more.getBoundingClientRect(); more.open=true;row.querySelector('.request-technical').open=true;window.__requestCard=row;return {cancel:true,overlap:a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top}; })()");
       assert.deepEqual(controls,{cancel:true,overlap:false},'admin cancellation and Details have separate hit areas');
       const beforePoll=historyReads;
