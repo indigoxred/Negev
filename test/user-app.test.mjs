@@ -379,7 +379,7 @@ test('cold-title preparation permits normal browsing after thirty deferred check
 });
 
 test('request cancellation is owner scoped and CSRF protected', async () => {
-  const user = { id: 7, username: 'Owner', role: 'admin',
+  const user = { id: 7, username: 'Owner', role: 'user',
     sessionVersion: 1, adultAllowed: true };
   const accounts = { authenticate: async () => user,
     getSessionUser: () => user, registerInvite: async () => null,
@@ -1077,3 +1077,33 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('administrators cancel another users unstarted request as its actual owner', async () => {
+  const user = { id: 7, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const calls = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: (id) => id === 2
+      ? { id: 2, requesterId: 8 } : { id, requesterId: 7 },
+    cancelRequest: (input) => { calls.push(input); return { state: 'cancelled', requestId: input.requestId }; } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers: { cookie, origin }, payload: {} })).statusCode, 403);
+    assert.equal((await app.inject({ method: 'POST', url: '/api/requests/2/cancel',
+      headers, payload: {} })).statusCode, 200);
+    const cancelled = await app.inject({ method: 'POST', url: '/api/requests/1/cancel',
+      headers, payload: {} });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.deepEqual(calls.map(({requesterId,requestId})=>({requesterId,requestId})), [{requesterId:8,requestId:2},{requesterId:7,requestId:1}]);
+  } finally { await app.close(); }
+});
+
