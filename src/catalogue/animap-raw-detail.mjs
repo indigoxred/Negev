@@ -107,10 +107,11 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
     }
   };
   return {
-    cachedEpisodeIndex(anidbId) {
+    cachedEpisodeIndex(anidbId, {includeSpecials=false} = {}) {
       const hit = cache.get(anidbId);
       if (!hit?.value || hit.expiresMs <= now()) return null;
       return { totalEntries: hit.value.episodes.length,
+        ...(includeSpecials?{kind:hit.value.kind,specialEpisodes:hit.value.episodes.filter(episode=>episode.type==='Special')}:{}),
         regularEpisodes: hit.value.episodes.filter((episode) =>
           episode.type === 'Episode'),
         regularIds: hit.value.episodes.filter((episode) =>
