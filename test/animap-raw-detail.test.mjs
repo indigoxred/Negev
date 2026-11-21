@@ -43,6 +43,7 @@ test('public raw AniDB record gives exact bounded episode pages', async () => {
   const first = await reader.read({ anidbId: 19586, page: 1 });
   const second = await reader.read({ anidbId: 19586, page: 2 });
   assert.equal(calls, 1);
+  assert.equal(first.format, 'TV Series');
   assert.deepEqual(reader.cachedEpisodeIndex(19586),
     { totalEntries: 3, regularIds: [316607, 316608], regularEpisodes: [
       { id: 316607, number: 1, type: 'Episode', title: 'First', airDate: '2026-10-03' },

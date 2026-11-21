@@ -25,7 +25,8 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
         (result.airDate ?? null) !== (first.airDate ?? null) ||
         (result.endDate ?? null) !== (first.endDate ?? null) ||
         (result.episodeCount ?? null) !== (first.episodeCount ?? null) ||
-        (result.restricted ?? null) !== (first.restricted ?? null)) {
+        (result.restricted ?? null) !== (first.restricted ?? null) ||
+        (result.format ?? null) !== (first.format ?? null)) {
       return invalid;
     }
     for (const episode of result.episodes) {
@@ -44,6 +45,7 @@ export async function collectAniDbDetail({ anidbId, loadPage, maxPages = 20 }) {
     if (result.nextPage === null) {
       if (episodes.length !== result.total) return invalid;
       return { state: 'details', anidbId, title: first.title, kind: first.kind,
+        ...(typeof first.format === 'string' && first.format.length<=100 ? {format:first.format} : {}),
         airDate: first.airDate ?? null, endDate: first.endDate ?? null,
         episodeCount: first.episodeCount ?? null, restricted: first.restricted ?? null,
         total: first.total, page: 1, complete: true, nextPage: null,

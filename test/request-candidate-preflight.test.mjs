@@ -563,3 +563,12 @@ test('a first installment cannot infer an absolute offset from count and base ti
  offlineLookup:async()=>({status:200,release:{CrossReferences:[]}})});
  assert.equal(result.state,'held');assert.equal(result.reason,'absolute_numbering_unverified');
 });
+
+test('optional pack bonuses have their own identity while ambiguous extras do not block the season',async()=>{
+ const meta={...detail,total:2,episodes:[...detail.episodes,{id:2001,number:1,type:'Special',title:'OVA'}]};
+ const files=[...prepared.files,{name:'Extras/Example OVA 1.mkv',size:5},{name:'Extras/Unknown OVA 2.mkv',size:5}];
+ const result=await previewRequestCandidate({requestId:4,candidate,readRequest:()=>request,loadDetail:async()=>meta,
+  readVideoExtensions:async()=>({state:'extensions',values:['.mkv']}),readBonusOwnership:async()=>({state:'missing'}),
+  prepare:async()=>({...prepared,files}),offlineLookup:async({filename})=>filename.includes('Unknown')?{status:204}:{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:`offline://42-${filename.includes('OVA')?2001:1001}`,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:filename.includes('OVA')?2001:1001,PercentageStart:0,PercentageEnd:100}]}}});
+ assert.equal(result.state,'preflight',JSON.stringify(result));assert.deepEqual(result.episodeIds,[1001]);assert.equal(result.files.length,1);assert.equal(result.bonusFiles.length,1);assert.equal(result.bonusFiles[0].anidbId,42);assert.deepEqual(result.bonusFiles[0].episodeIds,[2001]);assert.equal(result.skippedBonuses[0].name,'Extras/Unknown OVA 2.mkv');
+});

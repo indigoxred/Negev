@@ -215,3 +215,15 @@ test('a holding parent changed after intent cannot redirect a selected file', as
     assert.deepEqual(await readdir(outside), []);
     assert.equal((await readFile(path.join(roots.stagingRoot, file.name))).toString(), 'abc');
   }));
+
+test('a separately scoped bonus keeps its own identity through the journalled move',async()=>withRoots(async roots=>{
+ const bonus={name:'Show/Extras/OVA.mkv',size:3,episodeIds:[9001],scope:'bonus',anidbId:84,kind:'ova'};
+ await mkdir(path.dirname(path.join(roots.stagingRoot,bonus.name)),{recursive:true});await writeFile(path.join(roots.stagingRoot,bonus.name),'ova');
+ let intent;const result=await preparePureMove({...roots,attemptId:7,torrentHash:'a'.repeat(40),files:[bonus],recordIntent:async value=>{intent=value;return{state:'recorded'}}});
+ assert.equal(result.state,'prepared');assert.equal(intent.files[0].scope,'bonus');assert.equal(intent.files[0].anidbId,84);assert.equal(intent.files[0].kind,'ova');assert.deepEqual(intent.files[0].episodeIds,[9001]);
+ assert.equal((await readFile(path.join(result.holdingPath,bonus.name))).toString(),'ova');
+}));
+test('a bonus cannot enter a move without its separate catalogue scope',async()=>withRoots(async roots=>{
+ const result=await preparePureMove({...roots,attemptId:7,torrentHash:'a'.repeat(40),files:[{...file,scope:'bonus',anidbId:0,kind:'ova'}],recordIntent:async()=>({state:'recorded'})});
+ assert.equal(result.reason,'invalid_move_manifest');
+}));
