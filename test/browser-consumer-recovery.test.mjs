@@ -25,7 +25,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
-    let monitoredTitle = false;
+    let monitoredTitle = false;let seasonResult=null;
     let previewPending=false;let previewExisting=false;let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
@@ -123,7 +123,7 @@ test('title and library controls recover from pending and failed reads without d
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
         if (holdNextRequest) { holdNextRequest = false; heldRequestResponse = response; return; }
-        json(response,value.seasons?{items:[{anidbId:3,status:201,result:{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
+        json(response,value.seasons?{items:[{anidbId:3,status:201,result:seasonResult??{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
       } else if(path === '/api/requests/123/release-choice') {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:value.action==='auto'?'consumed':'selecting',revision:control.revision+1};}
         json(response,{state:'updated',control});
@@ -553,6 +553,20 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelector('#request-focus').hidden"),false);
       await evaluate("document.querySelector('#request-focus a').click()");
       await until("document.querySelector('#request-focus').hidden && document.querySelector('#request-list [data-request-id=\"7\"]')");
+      seasonResult={state:'pending',intentId:900};
+      await evaluate("location.hash = '#/title/3'");
+      await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
+      await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
+      await until("document.querySelector('dialog[open] input[type=checkbox]')");
+      await evaluate("document.querySelector('dialog[open] input[type=checkbox]').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      await until("document.querySelector('dialog[open] .request-feedback')?.textContent.includes('1 season requested')");
+      assert.equal(await evaluate("document.querySelector('dialog[open] .request-receipt-link').hidden"),false,
+        'preparation-only saves retain their generic Requests shortcut');
+      assert.equal(await evaluate("document.querySelector('dialog[open] .request-receipt-link').getAttribute('href')"),'#/requests');
+      await evaluate("document.querySelector('dialog[open] .request-receipt-link').click()");
+      await until("!document.querySelector('#view-requests').hidden");
+      seasonResult=null;
       monitoredTitle = true;
       await evaluate("location.hash = '#/title/3'");
       await until("document.querySelector('.season-already-monitored')?.hidden === false");
