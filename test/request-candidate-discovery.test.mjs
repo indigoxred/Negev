@@ -429,3 +429,97 @@ test('manual group refinements search same-ID alternate names without losing the
  await discover({requestId:12,interactive:true,query:'Canonical Anime Anime Time'});
  assert.ok(queries.includes('Official English Title Anime Time'));assert.ok(queries.every(query=>query.endsWith(' Anime Time')));assert.ok(queries.length<=4);
 });
+
+const completedDetail={...detail,airDate:'2016-04-05',endDate:'2016-06-28'};
+const manualFilters={quality:'bd1080',audio:'japanese_dual'};
+
+test('completed Manual Pick supplements the capped broad window with batches and deduplicates before pagination',async()=>{
+ const calls=[];
+ const release=(guid,title)=>({indexerId:7,guid,title,seeders:10,evidence:'unverified'});
+ const base=[...Array.from({length:198},(_,i)=>release(`episode-${i}`,`Canonical Anime - ${i+1} 1080p`)),
+  release('base-jp','[Group] Canonical Anime 01-24 1080p'),
+  release('base-dual','[Group] Canonical Anime Complete BD 1080p Dual Audio')];
+ const batch=[base[198],base[199],
+  release('subsplus','[SubsPlus+] Canonical Anime S01 Batch 1080p'),
+  release('subsplease','[SubsPlease] Canonical Anime 01-24 Unofficial Batch 1080p')];
+ const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>completedDetail,
+  releaseQueries:async()=>['English Alias','Second Alias','Third Alias'],pause:async()=>{},
+  searchReleases:async input=>{calls.push(input);return {state:'candidates',items:input.query.endsWith(' batch')?batch:base};}});
+ const found=await discover({requestId:12,interactive:true,filters:manualFilters});
+ assert.deepEqual(calls.map(call=>call.query),['Canonical Anime','English Alias','Second Alias','Third Alias','Canonical Anime batch']);
+ assert.ok(calls.every(call=>call.limit===200&&call.targetEpisodeNumber===null));
+ assert.equal(found.state,'candidates');
+ assert.deepEqual(found.items.map(item=>item.guid).sort(),['base-dual','base-jp','subsplease','subsplus']);
+ assert.equal(found.filteredOut,198);assert.equal(found.nextOffset,null);assert.equal(found.exhaustive,false);
+ assert.equal(found.searchIncomplete,undefined);
+ const repeated=await discover({requestId:12,interactive:true,filters:manualFilters});
+ assert.deepEqual(repeated.items,found.items);assert.equal(calls.length,5);
+});
+
+test('batch supplementation preserves manual group refinements, skips existing batch terms and obeys the query length bound',async()=>{
+ for(const [phrase,expected] of [
+  ['Canonical Anime Anime Time',['Canonical Anime Anime Time','English Alias Anime Time','Canonical Anime Anime Time batch']],
+  ['Canonical Anime BATCH',['Canonical Anime BATCH','English Alias BATCH']],
+  ['x'.repeat(120),['x'.repeat(120)]],
+ ]){
+  const queries=[];
+  const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>completedDetail,
+   releaseQueries:async()=>['English Alias'],pause:async()=>{},
+   searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[]};}});
+  await discover({requestId:12,interactive:true,filters:manualFilters,query:phrase});
+  assert.deepEqual(queries,expected);assert.ok(queries.every(query=>query.length<=120));
+ }
+});
+
+test('batch supplementation leaves Auto Pick, airing titles and explicit episode browsing unchanged',async()=>{
+ for(const [observation,options] of [
+  [completedDetail,{}],
+  [completedDetail,{interactive:true}],
+  [completedDetail,{interactive:true,filters:{...manualFilters,packsOnly:false}}],
+  [{...detail,airDate:'2016-04-05'},{interactive:true,filters:manualFilters}],
+ ]){
+  const queries=[];
+  const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>observation,pause:async()=>{},
+   searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:[]};}});
+  await discover({requestId:12,...options});assert.deepEqual(queries,['Canonical Anime']);
+ }
+});
+
+test('a failed batch supplement returns existing packs as incomplete and can recover on retry',async()=>{
+ const calls=[];let batchFails=true;
+ const pack={indexerId:7,guid:'pack',title:'Canonical Anime Complete 1080p',evidence:'unverified'};
+ const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>completedDetail,pause:async()=>{},
+  searchReleases:async({query})=>{calls.push(query);if(query.endsWith(' batch')&&batchFails)throw Error('indexer unavailable');
+   return {state:'candidates',items:[query.endsWith(' batch')?{...pack,guid:'extra'}:pack]};}});
+ const found=await discover({requestId:12,interactive:true,filters:manualFilters});
+ assert.equal(found.state,'candidates');assert.deepEqual(found.items.map(item=>item.guid),['pack']);
+ assert.equal(found.searchIncomplete,true);assert.deepEqual(found.failedQueries,['Canonical Anime batch']);
+ batchFails=false;
+ const retried=await discover({requestId:12,interactive:true,filters:manualFilters});
+ assert.equal(retried.items.length,2);assert.equal(retried.searchIncomplete,undefined);
+ assert.deepEqual(calls,['Canonical Anime','Canonical Anime batch','Canonical Anime batch']);
+});
+
+test('supplemental batches remain stable across filtered pages without repeating provider searches',async()=>{
+ const queries=[];
+ const batches=Array.from({length:65},(_,i)=>({indexerId:7,guid:`batch-${i}`,
+  title:`[Group] Canonical Anime Batch 1080p release ${i}`,seeders:100-i,evidence:'unverified'}));
+ const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>completedDetail,pause:async()=>{},
+  searchReleases:async({query})=>{queries.push(query);return {state:'candidates',items:query.endsWith(' batch')?batches:
+   [{indexerId:7,guid:'episode',title:'Canonical Anime - 01 1080p',evidence:'unverified'},batches[64]]};}});
+ const first=await discover({requestId:12,interactive:true,filters:manualFilters});
+ const second=await discover({requestId:12,interactive:true,filters:manualFilters,resultOffset:50});
+ assert.deepEqual(first.items.map(item=>item.guid),Array.from({length:50},(_,i)=>`batch-${i}`));
+ assert.deepEqual(second.items.map(item=>item.guid),Array.from({length:15},(_,i)=>`batch-${50+i}`));
+ assert.equal(first.nextOffset,50);assert.equal(second.nextOffset,null);
+ assert.equal(first.filteredOut,1);assert.equal(second.filteredOut,1);
+ assert.deepEqual(queries,['Canonical Anime','Canonical Anime batch']);
+});
+
+test('an unavailable batch supplement with no matching broad results reports uncertainty',async()=>{
+ const discover=createRequestCandidateDiscovery({readRequest:()=>request,loadDetail:async()=>completedDetail,pause:async()=>{},
+  searchReleases:async({query})=>query.endsWith(' batch')?{state:'unavailable'}:
+   {state:'candidates',items:[{indexerId:7,guid:'episode',title:'Canonical Anime - 01 1080p',evidence:'unverified'}]}});
+ assert.deepEqual(await discover({requestId:12,interactive:true,filters:manualFilters}),
+  {state:'held',reason:'release_search_incomplete'});
+});

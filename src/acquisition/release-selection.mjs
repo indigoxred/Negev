@@ -96,10 +96,13 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(!found.preview) {
       // Share only the in-flight read and successful identity evidence. A
       // temporary provider/busy result must not poison this receipt's retry.
-      found.pending??=Promise.resolve().then(()=>previewCandidate({requestId:id,candidate:found.candidate}));
+      found.pending??=Promise.resolve().then(()=>previewCandidate({requestId:id,candidate:found.candidate,includeFileListing:true}));
       try {
         const checked=await found.pending;
-        if(checked?.state!=='preflight')return checked??held('torrent_preflight_unavailable');
+        if(checked?.state!=='preflight'){
+          if(checked?.state==='held'&&Array.isArray(checked.inspectedFiles)&&checked.inspectedFiles.length<=500) return {state:'inspection',requestId:id,reason:checked.reason,selectionStatus:'rejected',files:checked.inspectedFiles.map(f=>({name:f.name,size:f.size,type:f.type}))};
+          return checked??held('torrent_preflight_unavailable');
+        }
         found.preview=checked;
       } catch {return held('torrent_preflight_unavailable');}
       finally {found.pending=null;}
@@ -149,7 +152,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const found=receipt(id,token);if(!found) return held('release_search_expired');
     if(!assessRelease(found.candidate).eligible) return held('release_not_eligible');
     const preview=await inspect(id,token);
-    if(preview?.state!=='preflight') return preview??held('torrent_preflight_unavailable');
+    if(preview?.state!=='preflight') return preview?.state==='inspection'?held(preview.reason):preview??held('torrent_preflight_unavailable');
     if(['already_available','owned_unverified'].includes(preview.selectionStatus))return held(
       preview.selectionStatus==='already_available'?'target_already_available':'target_already_owned');
     if(!preview.episodeIds.length) return held('release_has_no_requested_episodes');

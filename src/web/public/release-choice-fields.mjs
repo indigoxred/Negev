@@ -1,6 +1,6 @@
 // Advertised hints only. These do not establish the downloaded tracks or
 // AniDB registration; those facts remain separate from release selection.
-export const DEFAULT_RELEASE_FILTERS = Object.freeze({ quality: 'bd1080', audio: 'japanese' });
+export const DEFAULT_RELEASE_FILTERS = Object.freeze({ quality: 'bd1080', audio: 'japanese_dual' });
 export function validReleaseFilters(value) {
   return value && ['bd1080','1080','720','bd','all'].includes(value.quality) &&
     ['japanese','japanese_dual','dual','english'].includes(value.audio) &&

@@ -517,12 +517,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const readBonusOwnership=createBonusOwnershipReader({readEpisode:target=>metadata.run(()=>readShokoEpisodeFiles({baseUrl:shokoBaseUrl,apiKey:shokoApiKey,...target,purpose:'first_time',fetchImpl}))});
     const canAcquireRestrictedBonuses=request=>Number.isSafeInteger(request?.requesterId)&&accounts.getActiveUser({userId:request.requesterId})?.adultAllowed===true;
     const previewCandidate = prowlarr ? async ({ requestId, candidate,
-      offlineCache }) => {
+      offlineCache, includeFileListing = false }) => {
       const request = readSelectionRequest(requestId);
       const saved = request?.status === 'held' && !request.preview && offlineCache instanceof Map
         ? candidateChecks.get({ request, candidate }) : null;
-      if (saved) return { ...saved, cacheHit: true };
-      const result = await previewRequestCandidate({ requestId, candidate,
+      if (saved && (!includeFileListing || saved.state === 'preflight')) return { ...saved, cacheHit: true };
+      const result = await previewRequestCandidate({ requestId, candidate, includeFileListing,
         offlineCache, inspectCorrespondence,
         readBonusOwnership: acquisition?.pureMode===true?readBonusOwnership:undefined,
         allowRestrictedBonuses: canAcquireRestrictedBonuses(request),
@@ -540,7 +540,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           indexerIds: prowlarr.indexerIds, ...input, fetchImpl,
         })),
       });
-      if (request && !request.preview) candidateChecks.put({ request, candidate, result });
+      if (request && !request.preview && !includeFileListing) candidateChecks.put({ request, candidate, result });
       return result;
     } : undefined;
     const readRequestCoverage = async (request) => {

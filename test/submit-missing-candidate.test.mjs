@@ -520,3 +520,89 @@ test('dispatch includes only independently identified missing bonuses and exclud
  const result=await submitMissingCandidate({...input,candidate:chosen,detail:{...baseDetail,total:3,nextPage:null,episodes:[...baseDetail.episodes.map(e=>({...e,title:'Episode '+e.number})),{id:2001,number:1,type:'Special',title:'OVA'}]},readVideoExtensions:async()=>({state:'extensions',values:['.mkv']}),readBonusOwnership:async()=>({state:'missing'}),loadDetail:async()=>null,offlineLookup:async({filename})=>filename.includes('Unknown')?{status:204}:{status:200,release:{ProviderName:'Offline Importer',ID:'offline://42-2001',OriginalFilename:filename,IsCorrupted:false,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:2001,PercentageStart:0,PercentageEnd:100}]}}});
  assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.equal(adds,1);assert.match(priority,/id=2/);assert.equal(ledger.getBonusPlan(result.attemptId).length,1);assert.deepEqual(ledger.getFilePlan(result.attemptId),input.plannedFiles);
 }));
+
+
+for (const proof of ['exact', 'wrong_anime', 'wrong_episode', 'inconclusive', 'missing']) {
+  test('a season-labelled alias submission requires exact Shoko preview: ' + proof, async () =>
+    withLedgers(async ({ request, ledger }) => {
+      const chosen = { ...candidate,
+        title: '[Group] Silver Orchard Season 02 S02 [2025] COMPLETE 1080p' };
+      const calls = [];
+      const previews = [];
+      const input = options({ request, ledger, readEvidence: async () => absent(),
+        prowlarrFetch: async (url) => new URL(url).pathname.endsWith('/search')
+          ? Response.json([{ ...chosen, protocol: 'torrent', downloadUrl: proxy }])
+          : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } }),
+        qbittorrentFetch: qbittorrentFetch(calls) });
+      const animeId = proof === 'wrong_anime' ? 43 : 42;
+      const episodeId = proof === 'wrong_episode' ? 1002 : 1001;
+      const result = await submitMissingCandidate({ ...input, candidate: chosen,
+        detail: { ...baseDetail, title: 'Gin no Niwa (2025)' },
+        searchQuery: 'Silver Orchard (2025)',
+        releaseQueries: async () => ['Silver Orchard (2025)'],
+        ...(proof === 'missing' ? {} : { offlineLookup: async ({ filename }) => {
+          previews.push(filename);
+          return proof === 'inconclusive' ? { status: 204 } : { status: 200, release: {
+            ProviderName: 'Offline Importer', IsCorrupted: false,
+            ID: 'offline://' + animeId + '-' + episodeId, OriginalFilename: filename,
+            CrossReferences: [{ AnidbAnimeID: animeId, AnidbEpisodeID: episodeId,
+              PercentageStart: 0, PercentageEnd: 100 }],
+          } };
+        } }),
+      });
+      if (proof === 'exact') {
+        assert.equal(result.state, 'stopped_observed');
+        assert.deepEqual(ledger.getFilePlan(result.attemptId), input.plannedFiles);
+        assert.deepEqual(previews, ['01.mkv']);
+        assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
+      } else {
+        assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+        assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
+        assert.equal(calls.length, 0);
+      }
+    }));
+}
+
+
+test('a season-labelled batch checks every file before reservation or addition', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const encode = (value) => Buffer.isBuffer(value)
+      ? Buffer.concat([Buffer.from(value.length + ':'), value])
+      : typeof value === 'string' ? encode(Buffer.from(value))
+      : typeof value === 'number' ? Buffer.from('i' + value + 'e')
+      : Array.isArray(value) ? Buffer.concat([Buffer.from('l'), ...value.map(encode), Buffer.from('e')])
+      : Buffer.concat([Buffer.from('d'), ...Object.keys(value).sort()
+        .flatMap((key) => [encode(key), encode(value[key])]), Buffer.from('e')]);
+    const torrentBytes = encode({ info: { name: 'Silver Orchard',
+      files: [{ length: 1000, path: ['01.mkv'] }, { length: 1000, path: ['02.mkv'] }],
+      'piece length': 16384, pieces: Buffer.alloc(20, 1) } });
+    const chosen = { ...candidate, size: 2000,
+      title: '[Group] Silver Orchard Season 02 S02 [2025] COMPLETE' };
+    const previews = [];
+    let qbitCalls = 0;
+    const input = options({ request, ledger,
+      readEvidence: async () => { throw new Error('must not reserve'); },
+      prowlarrFetch: async (url) => new URL(url).pathname.endsWith('/search')
+        ? Response.json([{ ...chosen, protocol: 'torrent', downloadUrl: proxy }])
+        : new Response(torrentBytes, { headers: { 'content-type': 'application/x-bittorrent' } }),
+      qbittorrentFetch: async () => { qbitCalls++; throw new Error('must not add'); } });
+    const result = await submitMissingCandidate({ ...input, candidate: chosen,
+      episodeIds: undefined, plannedFiles: undefined,
+      detail: { ...baseDetail, title: 'Gin no Niwa (2025)' },
+      searchQuery: 'Silver Orchard (2025)',
+      releaseQueries: async () => ['Silver Orchard (2025)'],
+      offlineLookup: async ({ filename }) => {
+        previews.push(filename);
+        return filename === '02.mkv' ? { status: 204 } : { status: 200, release: {
+          ProviderName: 'Offline Importer', IsCorrupted: false,
+          ID: 'offline://42-1001', OriginalFilename: filename,
+          CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+            PercentageStart: 0, PercentageEnd: 100 }],
+        } };
+      },
+    });
+    assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+    assert.deepEqual(previews, ['01.mkv', '02.mkv']);
+    assert.equal(qbitCalls, 0);
+    assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
+  }));

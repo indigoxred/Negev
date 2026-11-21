@@ -1,5 +1,5 @@
 import { compactReleaseRow, createVisibleReleaseInspectionQueue } from './release-row.mjs';
-import { releaseFacts } from './release-choice-fields.mjs';
+import { releaseFacts, DEFAULT_RELEASE_FILTERS } from './release-choice-fields.mjs';
 export function makeReleaseActions(element,{onAuto,onManual}) {
   const container=element('div',undefined,'release-mode-actions');
   const auto=element('button','Auto-Pick','primary');
@@ -40,7 +40,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const makeFilter=(label,options)=>{const wrapper=element('label',label);const select=element('select');select.setAttribute('aria-label',label);
       for(const [value,text]of options){const option=element('option',text);option.value=value;select.append(option);}wrapper.append(select);actions.append(wrapper);return select;};
     const quality=makeFilter('Quality',[['bd1080','Blu-ray or 1080p+'],['1080','1080p+'],['720','720p+'],['bd','BD only'],['all','All qualities']]);
-    const audio=makeFilter('Audio',[['japanese','Japanese'],['japanese_dual','Japanese + dual'],['dual','Dual audio'],['english','English dub']]);
+    const audio=makeFilter('Audio',[['japanese','Japanese only'],['japanese_dual','Japanese + dual'],['dual','Dual audio'],['english','English dub']]);
+    quality.value=DEFAULT_RELEASE_FILTERS.quality;audio.value=DEFAULT_RELEASE_FILTERS.audio;
     const packsLabel=element('label',undefined,'release-packs-only');packsLabel.hidden=true;
     const packsOnly=element('input');packsOnly.type='checkbox';packsOnly.checked=true;packsOnly.setAttribute('aria-label','Season packs only');
     packsLabel.append(packsOnly,element('span','Season packs only'));

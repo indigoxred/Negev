@@ -1,7 +1,7 @@
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
-import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
+import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
@@ -18,12 +18,15 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // This never sends the prepared FormData to qBittorrent and does not claim
 // that the future downloaded bytes are registered with AniDB.
 export async function previewRequestCandidate({ requestId, candidate,
-  readRequest, loadDetail, releaseQueries = async () => [],
+  readRequest, loadDetail, releaseQueries = async () => [], includeFileListing = false,
   readRelatedTitles,
   readVideoExtensions, offlineLookup, offlineCache, inspectCorrespondence,
   readBonusOwnership, allowRestrictedBonuses = false,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   prepare = prepareStoppedCandidate } = {}) {
+  let inspectedFiles;
+  const held = reason => ({state:'held',reason,...(inspectedFiles?{inspectedFiles}:{})});
+  if (typeof includeFileListing !== 'boolean') return held('invalid_preflight');
   if (!validId(requestId) || typeof readRequest !== 'function' ||
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
       typeof releaseQueries !== 'function' || typeof pause !== 'function' ||
@@ -64,10 +67,11 @@ export async function previewRequestCandidate({ requestId, candidate,
   const verifiedIdentity = trustedIdentityTitles(detail.title, aliases).find((query) =>
     matchesTrustedReleaseTitle(candidate.title, query));
   const firstQuery = verifiedIdentity ?? queries.find((query) =>
-    matchesTrustedReleaseTitle(candidate.title, query));
-  if (!firstQuery) return held('release_title_mismatch');
-  if (!verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
-  let sourceQuery = firstQuery;
+    matchesTrustedReleaseTitle(candidate.title, query)) ?? queries.find(query =>
+      matchesSeasonLabelledTitle(candidate.title, query));
+  if ((!firstQuery || !verifiedIdentity && !offlineLookup) && !includeFileListing) return held('release_title_mismatch');
+  let sourceQuery = firstQuery ?? queries[0];
+  if (!sourceQuery) return held('query_too_long');
   if (candidate.sourceQuery !== undefined) {
     if (typeof candidate.sourceQuery !== 'string' ||
         /[\x00-\x1f\x7f]/.test(candidate.sourceQuery)) {
@@ -106,6 +110,10 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
+  if (includeFileListing && Array.isArray(prepared.files) && prepared.files.length <= 500) {
+    inspectedFiles = prepared.files.map(file => ({name:file.name,size:file.size,type:torrentFileKind(file.name)}));
+  }
+  if (!firstQuery || !verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
   let extensions;
   if (readVideoExtensions) {
     try { extensions = await readVideoExtensions(); } catch { return held('shoko_settings_unavailable'); }
@@ -125,11 +133,12 @@ export async function previewRequestCandidate({ requestId, candidate,
       requestedTitle: detail.title, related, releaseTitle: candidate.title,
       fileNames: mainPrepared.files.filter((file) =>
         torrentFileKind(file.name) === 'video').map((file) => file.name) });
-    if (checked.state !== 'related_title_clear') return checked;
+    if (checked.state !== 'related_title_clear') return {...checked,...(inspectedFiles?{inspectedFiles}:{})};
   }
   const plan = planTorrentTargets({ request, detail, prepared: mainPrepared,
-    releaseTitle: candidate.title, trustedTitle: firstQuery });
-  if (plan.state !== 'planned_targets') return plan;
+    releaseTitle: candidate.title, trustedTitle: firstQuery,
+    allowTitleMetadataVariation: !verifiedIdentity });
+  if (plan.state !== 'planned_targets') return {...plan,...(inspectedFiles?{inspectedFiles}:{})};
   if (candidate.targetEpisodeId !== undefined &&
       !plan.episodeIds.includes(candidate.targetEpisodeId)) {
     return held('targeted_result_wrong_episode');

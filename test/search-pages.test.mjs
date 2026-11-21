@@ -41,3 +41,47 @@ test('empty search has no further page', () => {
     total: 0, items: [] });
   assert.equal(pager.nextPage, null);
 });
+
+test('continuations start two screens ahead, once, with a bounded bottom-only lead', async () => {
+  const { observeCatalogueContinuation } = await import('../src/web/public/search-pages.mjs');
+  assert.equal(typeof observeCatalogueContinuation, 'function');
+  for (const [height, margin] of [[844, '0px 0px 1688px 0px'],
+    [900, '0px 0px 1800px 0px'], [8000, '0px 0px 2400px 0px']]) {
+    let notify;
+    let observed;
+    let options;
+    let disconnected = 0;
+    let loads = 0;
+    const marker = {};
+    class Observer {
+      constructor(callback, settings) { notify = callback; options = settings; }
+      observe(target) { observed = target; }
+      disconnect() { disconnected++; }
+    }
+    observeCatalogueContinuation(marker, () => { loads++; }, height, Observer);
+    assert.equal(observed, marker);
+    assert.equal(options.rootMargin, margin);
+    notify([{ isIntersecting: false }]);
+    assert.equal(loads, 0, 'no page outside the bounded lead');
+    notify([{ isIntersecting: true }]);
+    notify([{ isIntersecting: true }]);
+    assert.equal(loads, 1, 'queued observer callbacks cannot start concurrent copies');
+    assert.equal(disconnected, 1);
+  }
+});
+
+test('discarded continuation observers cannot load after route or filter changes', async () => {
+  const { observeCatalogueContinuation } = await import('../src/web/public/search-pages.mjs');
+  assert.equal(typeof observeCatalogueContinuation, 'function');
+  let notify;
+  let loads = 0;
+  class Observer {
+    constructor(callback) { notify = callback; }
+    observe() {}
+    disconnect() {}
+  }
+  const control = observeCatalogueContinuation({}, () => { loads++; }, 844, Observer);
+  control.disconnect();
+  notify([{ isIntersecting: true }]);
+  assert.equal(loads, 0, 'a queued intersection must not revive an abandoned page');
+});
