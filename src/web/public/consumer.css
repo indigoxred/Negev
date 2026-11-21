@@ -139,3 +139,7 @@ main{max-width:1344px;margin:auto;padding:33px 0 90px}.page-head{display:flex;al
 @media(max-width:650px){.release-results-heading{display:none}.release-row-main{grid-template-columns:repeat(5,minmax(0,1fr))}.release-name{grid-column:1/5}.release-pick{grid-column:5;grid-row:1}.release-group,.release-quality,.release-size,.release-seeds,.release-audio{grid-row:2;font-size:11px}.release-file-evidence summary{font-size:10px}.release-search-actions label{flex:1}.release-search-actions select{max-width:100%}}
 
 .release-search-dialog .release-confirmation{font-size:1.2rem;font-weight:700;color:var(--success,#8ce8bd);border:1px solid currentColor;border-radius:.5rem;padding:.8rem;margin:.8rem 0}
+
+.release-search-actions .release-packs-only{display:flex;flex-direction:row;align-items:center;gap:.4rem;align-self:center;font-size:12px;white-space:nowrap}
+.release-search-actions .release-packs-only[hidden]{display:none}
+.release-search-actions .release-packs-only input{flex:none;min-width:0;width:16px;height:16px;margin:0}

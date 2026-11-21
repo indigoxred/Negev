@@ -41,6 +41,11 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       for(const [value,text]of options){const option=element('option',text);option.value=value;select.append(option);}wrapper.append(select);actions.append(wrapper);return select;};
     const quality=makeFilter('Quality',[['bd1080','BD / 1080p+'],['1080','1080p+'],['720','720p+'],['bd','BD only'],['all','All qualities']]);
     const audio=makeFilter('Audio',[['japanese','Japanese'],['japanese_dual','Japanese + dual'],['dual','Dual audio'],['english','English dub']]);
+    const packsLabel=element('label',undefined,'release-packs-only');packsLabel.hidden=true;
+    const packsOnly=element('input');packsOnly.type='checkbox';packsOnly.checked=true;packsOnly.setAttribute('aria-label','Season packs only');
+    packsLabel.append(packsOnly,element('span','Season packs only'));
+    packsLabel.title='Hide releases advertising a single episode. Unspecified coverage stays visible until files are inspected.';
+    actions.append(packsLabel);
     const searchButton=element('button','Search');
     const preferLabel=element('label',undefined,'release-prefer-future');preferLabel.hidden=true;
     const preferFuture=element('input');preferFuture.type='checkbox';preferFuture.setAttribute('aria-label','Prefer this release group for future episodes');
@@ -63,7 +68,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',()=>{if(active===dialog)active=null;dialog.remove();},{once:true});
     let control,busy=false,version=0,expiryTimer=null,nextButton=null,lastQuery='';
-    const shown=new Set();let confirmedAiring=false,preferenceInitialized=false;
+    const shown=new Set();let confirmedAiring=false,completedSeries=false,preferredWait=null,preferenceInitialized=false;
     dialog.addEventListener('close',()=>clearTimeout(expiryTimer),{once:true});
     const current=()=>dialog.isConnected&&active===dialog;
     const basePath=()=>requestId?`/api/requests/${requestId}`:`/api/release-previews/${previewId}`;
@@ -72,13 +77,13 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const command=async body=>accept(await api(`${basePath()}/release-choice`,{method:'POST',body:JSON.stringify({...body,revision:control.revision})}));
     const setMode=value=>{auto.className=value==='auto'?'primary':'quiet';manual.className=value==='manual'?'primary':'quiet';auto.setAttribute('aria-pressed',String(value==='auto'));manual.setAttribute('aria-pressed',String(value==='manual'));};
     const updateContext=ctx=>{
-      if(!ctx)return;confirmedAiring=ctx.confirmedAiring===true;preferenceEditor.hidden=!confirmedAiring;
+      if(!ctx)return;preferredWait=ctx.preferredWait??null;completedSeries=ctx.completedSeries===true;packsLabel.hidden=!completedSeries;confirmedAiring=ctx.confirmedAiring===true;preferenceEditor.hidden=!confirmedAiring;
       if(!preferenceInitialized){preferFuture.checked=Boolean(ctx.preferredGroup);preferenceInitialized=true;}
       if(document.activeElement!==groupInput)groupInput.value=ctx.preferredGroup??'';
       preferenceSummary.textContent=ctx.preferredGroup?'Preferred group: '+ctx.preferredGroup:'Edit future release preference';
     };
     const refresh=async()=>{const data=await api(`${basePath()}/release-choice`);control=data.control;updateContext(data.context);return control;};
-    const buttons=value=>{busy=value;for(const input of [auto,manual,searchButton,quality,audio,query,preferFuture,saveGroup,clearGroup,groupInput])input.disabled=value;};
+    const buttons=value=>{busy=value;for(const input of [auto,manual,searchButton,quality,audio,packsOnly,query,preferFuture,saveGroup,clearGroup,groupInput])input.disabled=value;};
     const selectionSummary=selection=>{
       const box=element('div',undefined,'release-entry');
       box.append(element('strong',selection.candidate.title));
@@ -115,11 +120,17 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       } else status.textContent=control.mode==='manual'&&control.phase==='selecting'
         ?(requestId?'Choose a release below. This request will not start an automatic grab while you select.':'Choose a release below. Browsing and closing this window do not submit a request.')
         :requestId?'Request submitted. Automatic acquisition is enabled; view your request to follow its status.':'Browse releases below. Nothing is requested until you pick a release or choose Auto-Pick.';
+      if(control.mode==='auto'&&control.phase==='consumed'&&!control.selection&&confirmedAiring&&control.preference?.group){
+        results.append(element('p','Preferred group: '+control.preference.group));
+        results.append(element('p',preferredWait?.deadlineMs>Date.now()
+          ? 'Until '+new Date(preferredWait.deadlineMs).toLocaleString()
+          : 'For new episodes, wait up to two hours after a suitable alternative appears.','muted'));
+      }
       if(requestId&&control.phase==='consumed'&&!control.selection){status.className='release-confirmation';const view=element('a','View request','button primary');view.href=`#/requests?requestId=${requestId}`;view.addEventListener('click',()=>dialog.close());results.append(view);}
     };
     const search=async(append=false,offset=0)=>{
       if(busy)return;
-      const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value]);
+      const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value,completedSeries&&packsOnly.checked]);
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
       buttons(true);if(nextButton)nextButton.disabled=true;
       const epoch=++version;status.textContent='Searching indexers…';
@@ -127,13 +138,13 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       if(!append){const headings=element('div',undefined,'release-results-heading');
         for(const label of ['Title','Group','Quality','Size','Seeds','Audio',''])headings.append(element('span',label));results.append(headings);}
       try{
-        const params=new URLSearchParams({quality:quality.value,audio:audio.value});if(phrase)params.set('query',phrase);if(offset)params.set('offset',String(offset));
+        const params=new URLSearchParams({quality:quality.value,audio:audio.value});if(completedSeries)params.set('packsOnly',String(packsOnly.checked));if(phrase)params.set('query',phrase);if(offset)params.set('offset',String(offset));
         const data=await api(`${basePath()}/releases${params.size?`?${params}`:''}`);
         if(!current()||epoch!==version)return;
         nextButton?.remove();nextButton=null;updateContext(data);preferLabel.hidden=!confirmedAiring;
         if(!confirmedAiring)preferFuture.checked=false;
         status.textContent=data.waitingFor==='first_episode'?'No released episodes to search yet. This request watches for the first release.':
-          data.items.length?`${data.items.length} matching releases${data.filteredOut?` · ${data.filteredOut} excluded by filters`:''} · audio and quality are advertised hints.`:data.filteredOut?'Releases were found, but none match the selected quality and audio filters. Change filters or refine the search.':'No matches returned. Refine the title or retry search.';
+          data.items.length?`${data.items.length} matching releases${data.filteredOut?` · ${data.filteredOut} excluded by filters`:''} · audio and quality are advertised hints.`:data.filteredOut?'Releases were found, but none match the selected filters. Change filters or refine the search.':'No matches returned. Refine the title or retry search.';
         for(const c of data.items) {
           const key=`${c.indexerId}:${c.guid}`;if(shown.has(key))continue;shown.add(key);
           results.append(compactReleaseRow({candidate:c,element,
@@ -181,7 +192,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       void savePreference(preferFuture.checked?group:null);
     });
     auto.addEventListener('click',runAuto);manual.addEventListener('click',()=>{void search();});searchButton.addEventListener('click',()=>{void search();});
-    quality.addEventListener('change',()=>{void search();});audio.addEventListener('change',()=>{void search();});
+    packsOnly.addEventListener('change',()=>{void search();});quality.addEventListener('change',()=>{void search();});audio.addEventListener('change',()=>{void search();});
     query.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();void search();}});
     try{await refresh();if(!current())return;showControl();if(control.phase==='proposal'||control.phase==='chosen')return;
       if(mode==='auto')await runAuto();else await search();

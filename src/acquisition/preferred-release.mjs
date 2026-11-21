@@ -1,5 +1,5 @@
 import { releaseFacts } from '../web/public/release-choice-fields.mjs';
-import { assessRelease, compareReleases } from './release-preference.mjs';
+import { compareReleases, compareReleaseRecognitionTier } from './release-preference.mjs';
 
 export const PREFERRED_GROUP_WAIT_MS = 2 * 60 * 60_000;
 const key = value => typeof value === 'string' ? value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '') : '';
@@ -23,7 +23,7 @@ export function initializePreferredReleases(db) {
   ) STRICT`);
 }
 export function checkPreferredRelease(db, preference, { requestId, candidate, preview, releaseState, nowMs }) {
-  if (!preference || releaseState !== 'airing' || matchesPreferredGroup(candidate, preference.group)) return { state: 'ready' };
+  if (!preference || releaseState === 'completed' || matchesPreferredGroup(candidate, preference.group)) return { state: 'ready' };
   const watch = db.prepare('SELECT monitor_future,watch_closed,cancelled_ms FROM requests WHERE id=?').get(requestId);
   if (!watch || !watch.monitor_future || watch.watch_closed || watch.cancelled_ms !== null) return { state: 'ready' };
   const fresh = preview.episodeIds.filter(id => !preference.knownEpisodeIds.includes(id));
@@ -42,11 +42,9 @@ export function checkPreferredRelease(db, preference, { requestId, candidate, pr
     try {
       const prior=JSON.parse(row.fallback_json);
       const registered=p=>p.files?.length>0&&p.files.every(f=>p.correspondence?.files?.some(e=>e.name===f.name&&e.size===f.size&&['likely','previously_verified'].includes(e.state)));
-      const a=assessRelease(candidate),b=assessRelease(prior.candidate);
-      const ar=releaseFacts(candidate.title).resolution??0,br=releaseFacts(prior.candidate.title).resolution??0;
-      const better=a.healthyPeers&&!b.healthyPeers || a.healthyPeers===b.healthyPeers&&
-        (ar>br||ar===br&&(registered(preview)&&!registered(prior.preview)||
-          registered(preview)===registered(prior.preview)&&compareReleases(candidate,prior.candidate)<0));
+      const tier=compareReleaseRecognitionTier(candidate,prior.candidate);
+      const better=tier<0 || tier===0&&(registered(preview)&&!registered(prior.preview)||
+        registered(preview)===registered(prior.preview)&&compareReleases(candidate,prior.candidate)<0);
       if(better)db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=?').run(saved,requestId,id);
     }catch{/* The newly observed valid fallback can replace an unreadable old record. */
       db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=?').run(saved,requestId,id);

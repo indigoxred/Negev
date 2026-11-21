@@ -1202,3 +1202,15 @@ test('self-stale and import-evidence retries are short and migrate existing long
   const reset=new DatabaseSync(dbPath);reset.exec('DELETE FROM acquisition_request_checks');reset.close();
  }
 }));
+
+test('Auto-Pick delegation gets one immediate turn after an empty search and survives restart',async()=>fixture(async dbPath=>{
+ let queue=openAcquisitionRequestQueue(dbPath);const db=new DatabaseSync(dbPath);
+ try{
+  const claim=queue.claimNext({nowMs:100,priorityRequestId:1});queue.recordResult({requestId:1,pass:claim.pass,state:'held',reason:'no_safe_release',checkedMs:100});
+  db.prepare('UPDATE requests SET release_control=? WHERE id=1').run(JSON.stringify({mode:'auto',phase:'consumed',revision:2}));
+  queue.close();queue=openAcquisitionRequestQueue(dbPath);
+  const next=queue.claimNext({nowMs:101,priorityRequestId:1});assert.equal(next.requestId,1);
+  queue.recordResult({requestId:1,pass:next.pass,state:'held',reason:'no_safe_release',checkedMs:102});
+  assert.notEqual(queue.claimNext({nowMs:103,priorityRequestId:1}).requestId,1);
+ }finally{db.close();queue.close();}
+}));

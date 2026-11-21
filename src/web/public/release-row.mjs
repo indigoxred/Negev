@@ -22,7 +22,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   const pick = element('button', 'Pick', 'primary release-pick'); pick.disabled = !c.eligible;
   main.append(name, group, quality, size, seeds, audio, pick);
   const details = element('details', undefined, 'release-file-evidence');
-  const summary = element('summary', 'Details');
+  const summary = element('summary', c.coverageKind==='advertised_pack'?'Details · Pack advertised':c.coverageKind==='unknown'?'Details · Coverage unknown':'Details');
   const body = element('div', undefined, 'release-evidence-body');
   const metadata = () => element('p', `${c.indexer} · ${c.coverage} · ${c.languageHints}`, 'muted');
   body.append(metadata(), element('p', 'Expand to inspect file coverage and registration.', 'muted'));
@@ -45,7 +45,7 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
           body.append(element('p', `${file.name} · AniDB episode ${file.episodeIds.join(', ')} · ${evidenceLabel(proof?.state)}`));
         }
         for (const file of preview.filesToExclude ?? []) body.append(element('p', `${file.name} · excluded`, 'muted'));
-        summary.textContent = `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
+        summary.textContent = preview.coverage ? `Details · File coverage checked: ${preview.coverage.coveredEpisodeCount}/${preview.coverage.requestedEpisodeCount} requested episodes` : `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
         badge.className = `${confirmed ? 'registration-confirmed' : 'registration-unknown'} release-registration`;
         badge.textContent = confirmed ? 'Verified' : likely ? 'Likely' : '?';
         badge.title = confirmed ? 'Previously verified exact AniDB files' : likely ? 'Likely CRC32-and-size correspondence; not exact verification' : 'Registration unknown';

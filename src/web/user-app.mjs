@@ -1275,7 +1275,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   };
   const publicSelection=s=>s?{candidate:publicRelease(s.candidate),preview:{
     torrentHash:s.preview.torrentHash,episodeIds:s.preview.episodeIds,files:s.preview.files,
-    correspondence:s.preview.correspondence},registration:correspondenceLevel(s.preview)}:undefined;
+    correspondence:s.preview.correspondence,coverage:s.preview.coverage},registration:correspondenceLevel(s.preview)}:undefined;
   const publicControl=c=>c?{mode:c.mode,phase:c.phase,revision:c.revision,
     ...(c.preference?{preference:{group:c.preference.group,audio:c.preference.audio}}:{}),
     ...(c.expiresMs?{expiresMs:c.expiresMs}:{}),
@@ -1287,8 +1287,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control','no-store');
     const id=await releaseAccess(request,reply);if(!id)return;
     const offset=request.query.offset===undefined?0:Number(request.query.offset);
-    const filters={quality:request.query.quality??'bd1080',audio:request.query.audio??'japanese'};
-    if(!validReleaseFilters(filters)||Object.keys(request.query).some(k=>!['query','offset','quality','audio'].includes(k)) ||
+    const filters={quality:request.query.quality??'bd1080',audio:request.query.audio??'japanese',
+      ...(request.query.packsOnly===undefined?{}:{packsOnly:request.query.packsOnly==='true'})};
+    if(!validReleaseFilters(filters)||(request.query.packsOnly!==undefined&&!['true','false'].includes(request.query.packsOnly))||Object.keys(request.query).some(k=>!['query','offset','quality','audio','packsOnly'].includes(k)) ||
       !Number.isSafeInteger(offset)||![0,50,100,150].includes(offset)||
       request.query.query!==undefined&&(typeof request.query.query!=='string'||
       request.query.query.trim().length<2||request.query.query.length>120||/[\x00-\x1f\x7f]/.test(request.query.query))) {

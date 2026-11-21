@@ -1,7 +1,7 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
-import { hasTargetEpisodeHint } from './release-preference.mjs';
+import { hasTargetEpisodeHint, hasSingleEpisodeHint, compareReleases } from './release-preference.mjs';
 import { matchesReleaseFilters, validReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -51,6 +51,9 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const releaseState = inferReleaseState({
       today: new Date(now()).toISOString().slice(0, 10), ...detail,
     }).state;
+    const completedSeries=interactive&&request.kind==='series'&&releaseState==='completed';
+    const matches=item=>(filters===null||matchesReleaseFilters(item,filters))&&
+      !(completedSeries&&filters!==null&&filters.packsOnly!==false&&hasSingleEpisodeHint(item));
     let target = null;
     if (searchTargetEpisodeId !== null) {
       target = detail.episodes.find((episode) => episode.id === searchTargetEpisodeId);
@@ -141,7 +144,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         continue;
       }
       successful++;
-      for(const item of result.items){const key=`${item.indexerId}:${item.guid}`;rawKeys.add(key);if(filters===null||matchesReleaseFilters(item,filters))matchingKeys.add(key);}
+      for(const item of result.items){const key=`${item.indexerId}:${item.guid}`;rawKeys.add(key);if(matches(item))matchingKeys.add(key);}
       queryCache.set(cacheKey, { result, anidbId: request.anidbId,
         until: saved?.result === result ? saved.until :
           now() + (result.items.length ? 300_000 : 20_000) });
@@ -149,7 +152,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       // Preserve which bucket answered the exact missing-episode query. This
       // is ordering evidence only; stopped metainfo and identity checks still
       // decide whether a candidate can be submitted.
-      buckets.push(result.items.filter(item=>filters===null||matchesReleaseFilters(item,filters)).map((item) => ({ ...item,
+      buckets.push(result.items.filter(item=>matches(item)).map((item) => ({ ...item,
+        ...(interactive&&filters!==null?{selectionPolicy:{allowUhd:true,allowEnglishDub:filters.audio==='english'}}:{}),
         ...(!interactive ? {sourceQuery: query} : {}),
         ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
@@ -172,7 +176,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         bestByCandidate.set(key, item);
       }
     }
-    const items = [];
+    let items = [];
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact
     // episode hit must not displace every same-title alias result.
@@ -191,6 +195,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       }
       if (!any) break;
     }
+    if(completedSeries)items=[...bestByCandidate.values()].sort((a,b)=>
+      compareReleases(a,b,{preferSeasonPack:true})).slice(0,combinedLimit);
     if (items.length === 0 && failedQueries.length > 0) {
       return held('release_search_incomplete');
     }

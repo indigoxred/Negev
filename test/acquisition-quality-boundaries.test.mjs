@@ -64,7 +64,11 @@ test('healthy same-quality alternative beats barely seeded exact filename predic
     betterSeeds: 10, worseSeeds: 2 }), 'better');
 });
 
-test('healthy lower-quality release remains available when higher quality is barely seeded', async () => {
+test('seeded1080p is not downgraded merely because720p reports more peers', async () => {
   assert.equal(await select({ betterTitle: '- 01 WEB 1080p', worseTitle: '- 01 WEB 720p',
-    betterSeeds: 1, worseSeeds: 10 }), 'exact');
+    betterSeeds: 1, worseSeeds: 10 }), 'better');
+});
+
+test('720p remains available when the1080p release has no reported seeders',async()=>{
+ assert.equal(await select({betterTitle:'- 01 WEB 1080p',worseTitle:'- 01 WEB 720p',betterSeeds:0,worseSeeds:10}),'exact');
 });
