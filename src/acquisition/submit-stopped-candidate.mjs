@@ -1,4 +1,5 @@
 import { readBoundedJson, readBoundedText } from '../http/bounded-response.mjs';
+import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
@@ -25,7 +26,7 @@ async function exactPreparedTorrent(prepared, saveRoot) {
       form.get('autoTMM') !== 'false' || form.get('skip_checking') !== 'false' ||
       form.get('contentLayout') !== 'NoSubfolder') return null;
   const torrent = form.get('torrents');
-  if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > 2_000_000) return null;
+  if (!(torrent instanceof Blob) || torrent.size < 1 || torrent.size > MAX_TORRENT_METAINFO_BYTES) return null;
   const metainfo = inspectTorrentMetainfo({ bytes: new Uint8Array(await torrent.arrayBuffer()) });
   return metainfo.state === 'metainfo_checked' &&
     metainfo.hash === prepared.expected.hash.toLowerCase() ? metainfo : null;

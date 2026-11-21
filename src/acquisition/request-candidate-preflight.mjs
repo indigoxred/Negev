@@ -3,7 +3,7 @@ import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
-import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries, trustedPackQueries } from './trusted-release-queries.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
@@ -85,7 +85,8 @@ export async function previewRequestCandidate({ requestId, candidate,
             target.number).includes(candidate.sourceQuery)) {
         return held('untrusted_release_query');
       }
-    } else if (!queries.includes(candidate.sourceQuery)) {
+    } else if (!queries.includes(candidate.sourceQuery) &&
+        !trustedPackQueries(detail.title, aliases).includes(candidate.sourceQuery)) {
       return held('untrusted_release_query');
     }
     sourceQuery = candidate.sourceQuery;

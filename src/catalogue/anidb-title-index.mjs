@@ -71,7 +71,10 @@ function finishIndex(byId) {
       .sort((left, right) => left.length - right.length ||
         left.localeCompare(right));
     entry.releaseQueries = [...new Set([entry.title,
-      ...romanized.slice(0, 2), ...entry.englishOfficial])].slice(0, 4);
+      ...romanized.slice(0, 2), ...entry.englishOfficial,
+      ...[...entry.englishSynonyms].filter(title => title.length >= 8 && title.length <= 120 &&
+        (title.match(/\p{L}{2,}/gu) ?? []).length >= 2 &&
+        (!entry.englishOfficial.size || [...entry.englishOfficial].some(official=>title.length<official.length)))])].slice(0, 4);
     // AniDB often lists the translated name as an English synonym rather
     // than an official title. Prefer a descriptive synonym over an abbreviated
     // one for display, without changing release search or anime identity.

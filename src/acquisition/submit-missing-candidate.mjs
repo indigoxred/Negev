@@ -5,7 +5,7 @@ import { submitStoppedCandidate } from './submit-stopped-candidate.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
-import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedIdentityTitles, trustedTargetedQueries, trustedPackQueries } from './trusted-release-queries.mjs';
 import { checkRelatedInstallment } from './related-installment-guard.mjs';
 import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs';
 import { basename } from 'node:path';
@@ -90,7 +90,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       return episode && trustedTargetedQueries(detail.title,
         aliases, episode.number).includes(searchQuery);
     });
-    if (!trusted.includes(searchQuery) && !targeted) {
+    if (!trusted.includes(searchQuery) && !targeted &&
+        !trustedPackQueries(detail.title, aliases).includes(searchQuery)) {
       return held('untrusted_release_query');
     }
     selectedQuery = searchQuery;

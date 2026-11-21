@@ -1,6 +1,6 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
-import { trustedReleaseQueries, trustedTargetedQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQueries, trustedPackQueries } from './trusted-release-queries.mjs';
 import { hasTargetEpisodeHint, hasSingleEpisodeHint, compareReleases } from './release-preference.mjs';
 import { matchesReleaseFilters, validReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
@@ -51,7 +51,9 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     const releaseState = inferReleaseState({
       today: new Date(now()).toISOString().slice(0, 10), ...detail,
     }).state;
-    const completedSeries=interactive&&request.kind==='series'&&releaseState==='completed';
+    const completed = request.kind==='series'&&releaseState==='completed';
+    const completedSeries=interactive&&completed;
+    const automaticPacks = !interactive && completed && request.episodeIds.length > 1;
     const matches=item=>(filters===null||matchesReleaseFilters(item,filters))&&
       !(completedSeries&&filters!==null&&filters.packsOnly!==false&&hasSingleEpisodeHint(item));
     let target = null;
@@ -125,6 +127,8 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       if(batchQuery&&batchQuery.length<=120&&queries.length<5)queries.push(batchQuery);
     }
     if (queries.length === 0) return held('query_too_long');
+    if (automaticPacks) queries=[...new Set([
+      ...trustedPackQueries(detail.title, aliases), ...queries])].slice(0,16);
     const buckets = [];
     const rawKeys=new Set(),matchingKeys=new Set();
     let successful = 0;
@@ -132,14 +136,15 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
     for (const [index, query] of queries.entries()) {
       let result;
       const queryTarget = targetByQuery.get(query);
-      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null,interactive?200:25]);
+      const searchLimit = interactive ? 200 : automaticPacks ? 50 : 25;
+      const cacheKey = JSON.stringify([query, queryTarget?.number ?? null,searchLimit]);
       const saved = queryCache.get(cacheKey);
       try {
         if (saved && saved.until > now()) result = saved.result;
         else {
           if (index > 0) await pause(1_000);
           result = await searchReleases({ query,
-            ...(interactive?{limit:200}:{}),
+            ...(interactive||automaticPacks?{limit:searchLimit}:{}),
             targetEpisodeNumber: queryTarget?.number ?? null });
         }
       }
@@ -203,7 +208,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       }
       if (!any) break;
     }
-    if(completedSeries)items=[...bestByCandidate.values()].sort((a,b)=>
+    if(completed)items=[...bestByCandidate.values()].sort((a,b)=>
       compareReleases(a,b,{preferSeasonPack:true})).slice(0,combinedLimit);
     if (items.length === 0 && failedQueries.length > 0) {
       return held('release_search_incomplete');

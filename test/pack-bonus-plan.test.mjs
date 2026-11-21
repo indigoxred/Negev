@@ -47,6 +47,26 @@ test('adds one exact same-series Special with missing ownership and preserves ma
   assert.deepEqual(result.skippedBonuses, []);
 });
 
+test('episode zero uses normal bonus identity and ownership checks rather than guessing a regular offset',async()=>{
+ const files=[file('Example - 01.mkv'),file('Example - 00v3.mkv')];
+ const found=await planPackBonuses(options({files}));
+ assert.deepEqual(found.mainFiles,[files[0]]);
+ assert.equal(found.bonusFiles[0].episodeIds[0],1002);
+ assert.equal(found.bonusFiles[0].kind,'special');
+ const unknown=await planPackBonuses(options({files,offlineLookup:async()=>({status:204})}));
+ assert.deepEqual(unknown.mainFiles,[files[0]]);assert.equal(unknown.bonusFiles.length,0);
+ const regular=await planPackBonuses(options({files,offlineLookup:async({filename})=>preview(filename,42,1001)}));
+ assert.equal(regular.mainFiles.length,2);assert.equal(regular.bonusFiles.length,0);
+ const owned=await planPackBonuses(options({files,readOwnership:async()=>({state:'available'})}));
+ assert.equal(owned.bonusFiles.length,0);assert.equal(owned.skippedBonuses.length,1);
+});
+
+test('title-leading zero and conflicting regular coordinates stay in the main plan when prediction is unknown',async()=>{
+ const files=['0 Saiji Start Dash Monogatari S01E01.mkv','0 Saiji Start Dash Monogatari - 01.mkv','Show S01E00 S01E01.mkv','Show - 00 - 01.mkv'].map(file);
+ const found=await planPackBonuses(options({files,offlineLookup:async()=>({status:204})}));
+ assert.deepEqual(found.mainFiles,files);assert.equal(found.skippedBonuses.length,0);
+});
+
 test('preserves all unclassified files including unsafe and passive entries for parent gates', async () => {
   const files = [file('Example.S01E01.mkv'), file('README.txt'), file('../OVA/clip.mkv')];
   assert.deepEqual((await planPackBonuses(options({ files }))).mainFiles, files);

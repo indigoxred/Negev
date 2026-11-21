@@ -20,6 +20,21 @@ export function isPackBonusVideo(name) {
   if (!safeVideoName(name)) return false;
   const stem = path.posix.basename(name, path.posix.extname(name));
   const ungrouped = stem.replace(/\[[^\]]*\]/g, ' ').trim();
+  // Preserve bracketed regular coordinates too, before optional zero hints.
+  if (/(?:^|[^a-z0-9])S0*[1-9]\d{0,2}E0*[1-9]\d{0,3}(?:v\d+)?(?=$|[^a-z0-9])/i.test(stem)) return false;
+  // Zero is only an optional-file hint. The bonus planner still requires an
+  // exact same-show Special prediction before importing it as a Special.
+  // Conflicting regular coordinates must remain main files for the mapper to
+  // reject; uncertainty must never silently discard a requested episode.
+  const zeroCoordinate = /(?:^|[ ._-])S\d{1,3}E0{1,4}(?:v\d+)?(?=$|[ ._([])/i.test(ungrouped) ||
+      / - (?:E)?0{1,4}(?:v\d+)?(?=$|[ ._([])/i.test(ungrouped) ||
+      /(?:^|[ ._-])E0{1,4}(?:v\d+)?(?=$|[ ._([])/i.test(ungrouped) ||
+      /^0{1,4}(?:v\d+)?$/i.test(ungrouped);
+  if (zeroCoordinate) {
+    if (/(?:^|[ ._-])(?:S\d{1,3}E|E)0*[1-9]\d{0,3}(?:v\d+)?(?=$|[ ._([])/i.test(ungrouped) ||
+        /(?:^| - )0*[1-9]\d{0,3}(?:v\d+)?(?=$|[ ._([])/i.test(ungrouped)) return false;
+    return true;
+  }
   if (/(?:^|[^a-z0-9])S0*[1-9]\d{0,2}E\d{1,4}(?:v\d+)?(?=$|[^a-z0-9])/i.test(stem)) return false;
   if (name.split('/').slice(0, -1).some((part) => BONUS_DIRECTORY.test(part))) return true;
   // A group named [OVA] is not a marker; numeric/suffix markers outside
