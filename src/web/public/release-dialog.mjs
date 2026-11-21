@@ -1,4 +1,4 @@
-import { compactReleaseRow } from './release-row.mjs';
+import { compactReleaseRow, createVisibleReleaseInspectionQueue } from './release-row.mjs';
 import { releaseFacts } from './release-choice-fields.mjs';
 export function makeReleaseActions(element,{onAuto,onManual}) {
   const container=element('div',undefined,'release-mode-actions');
@@ -68,6 +68,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',()=>{if(active===dialog)active=null;dialog.remove();},{once:true});
     let control,busy=false,version=0,rowVersion=0,expiryTimer=null,nextButton=null,lastQuery='',searchStatus='',statusOwner=null;
+    const evidenceQueue=createVisibleReleaseInspectionQueue({root:dialog});
+    dialog.addEventListener('close',()=>evidenceQueue.clear(),{once:true});
     const shown=new Set();let confirmedAiring=false,completedSeries=false,preferredWait=null,preferenceInitialized=false;
     dialog.addEventListener('close',()=>clearTimeout(expiryTimer),{once:true});
     const current=()=>dialog.isConnected&&active===dialog;
@@ -89,11 +91,11 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       box.append(element('strong',selection.candidate.title));
       box.append(element('p',`${selection.candidate.source} · ${selection.candidate.resolution??'?'}p · ${selection.candidate.seeders??'?'} seeds · ${selection.preview.episodeIds.length} requested episode(s)`,'muted'));
       box.append(element('p',selection.registration==='confirmed'?'Previously verified exact AniDB files':
-        selection.registration==='likely'?'Likely AniDB correspondence · CRC32 and size':'Registration unknown',selection.registration==='confirmed'?'registration-confirmed':'registration-unknown'));
+        selection.registration==='likely'?'Likely AniDB correspondence · CRC32 and size':'Registration unknown',selection.registration==='confirmed'?'registration-confirmed':selection.registration==='likely'?'registration-likely':'registration-unknown'));
       return box;
     };
     const showControl=()=>{
-      clearTimeout(expiryTimer);rowVersion++;statusOwner=null;
+      clearTimeout(expiryTimer);rowVersion++;evidenceQueue.clear();statusOwner=null;
       if(existing) {
         modes.hidden=actions.hidden=preferLabel.hidden=preferenceEditor.hidden=true;results.replaceChildren();
         status.textContent='Request #'+requestId+' already submitted';status.className='release-confirmation';
@@ -146,7 +148,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
       buttons(true);if(nextButton)nextButton.disabled=true;
       const epoch=++version;statusOwner=null;status.textContent='Searching indexers…';
-      if(!append){rowVersion++;results.replaceChildren();shown.clear();nextButton=null;}
+      if(!append){rowVersion++;evidenceQueue.clear();results.replaceChildren();shown.clear();nextButton=null;}
       const rowEpoch=rowVersion;
       if(!append){const headings=element('div',undefined,'release-results-heading');
         for(const label of ['Title','Group','Quality','Size','Seeds','Audio',''])headings.append(element('span',label));results.append(headings);}
@@ -162,7 +164,9 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
         for(const c of data.items) {
           const key=`${c.indexerId}:${c.guid}`;if(shown.has(key))continue;shown.add(key);
           results.append(compactReleaseRow({candidate:c,element,
-            inspect:()=>command({action:'inspect',token:c.token}),
+            inspect:({background=false}={})=>background
+              ? api(`${basePath()}/release-inspection?token=${encodeURIComponent(c.token)}`)
+              : command({action:'inspect',token:c.token}),
             choose:async()=>{
               await refresh();
               if(control.phase!=='selecting'||control.mode!=='manual') {
@@ -170,8 +174,9 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
               }
               return command({action:'choose',token:c.token,preferFutureGroup:confirmedAiring&&preferFuture.checked});
             },isCurrent:()=>current()&&rowEpoch===rowVersion,isBusy:()=>busy,setBusy:buttons,
+            observeEvidence:(entry,inspect)=>evidenceQueue.observe(entry,inspect),
             onInspected:()=>{if(statusOwner===c.token){status.textContent=searchStatus;statusOwner=null;}},
-            onError:error=>{const text=errorText(error);if(current()&&rowEpoch===rowVersion){statusOwner=c.token;status.textContent=text;}return text;},
+            onError:(error,{background=false}={})=>{const text=errorText(error);if(!background&&current()&&rowEpoch===rowVersion){statusOwner=c.token;status.textContent=text;}return text;},
             onSelected:data=>{control=data.control;updateContext(data.context);showControl();saved(data);}}));
         }
         if(data.nextOffset!==null&&data.nextOffset!==undefined) {
@@ -181,7 +186,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       }catch(e){if(current()){statusOwner=null;status.textContent=errorText(e);}}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
     };
     const runAuto=async()=>{
-      if(busy||existing)return;buttons(true);version++;rowVersion++;statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
+      if(busy||existing)return;buttons(true);version++;rowVersion++;evidenceQueue.clear();statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
       try{
         await refresh();
         if(control.phase==='proposal'){showControl();return;}

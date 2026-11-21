@@ -1308,6 +1308,20 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
+  // Background evidence reads have their own budget and never enter the draft
+  // command coalescer, so an inspection cannot consume a concurrent Pick/Auto.
+  for(const route of ['/api/requests/:id/release-inspection','/api/release-previews/:previewId/release-inspection']) app.get(route,{preHandler:requireUser,
+    config:{rateLimit:{max:60,timeWindow:'1 minute'}}},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
+    const token=request.query.token;
+    if(typeof token!=='string'||token.length<1||token.length>64||Object.keys(request.query).some(k=>k!=='token'))return reply.code(400).send({error:'Invalid release inspection'});
+    try {
+      const result=await request.releaseSelector.inspect(id,token);
+      if(result?.state==='held')return reply.code(409).send(result);
+      if(request.params.previewId&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
+      return result;
+    } catch {return reply.code(503).send({reason:'torrent_preflight_unavailable'});}
+  });
   for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.get(route,{preHandler:requireUser},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
     return {state:'selection',control:publicControl(request.releaseSelector.snapshot(id)),context:await request.releaseSelector.context?.(id)};

@@ -4,8 +4,51 @@ const evidenceLabel = state => state === 'previously_verified' ? 'Previously ver
   state === 'likely' ? 'Likely AniDB correspondence · CRC32 and size' :
     state === 'filename_prediction' ? 'Filename prediction only · registration unknown' : 'Registration unknown';
 
+// Share pacing across picker replacements; leave explicit selection traffic alone.
+let nextInspectionMs = 0;
+const waitForInspectionTurn = async valid => {
+  while (valid()) {
+    const delay = nextInspectionMs - Date.now();
+    if (delay <= 0) { nextInspectionMs = Date.now() + 1100; return true; }
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+  return false;
+};
+// Inspect only results the user can still see; never sweep returned torrents.
+export function createVisibleReleaseInspectionQueue({ root, Observer = globalThis.IntersectionObserver,
+  waitForTurn = waitForInspectionTurn } = {}) {
+  const jobs = new Map(); let pending = [], running = false;
+  const drain = async () => {
+    if (running) return; running = true;
+    try {
+      while (pending.length) {
+        const job = pending.shift();
+        const valid = () => jobs.get(job.entry) === job && job.visible;
+        if (!valid() || !await waitForTurn(valid)) { job.queued = false; continue; }
+        if (!valid()) { job.queued = false; continue; }
+        observer.unobserve(job.entry); jobs.delete(job.entry);
+        try { await job.inspect(); } catch { /* Unknown evidence stays usable. */ }
+      }
+    } finally { running = false; }
+  };
+  const observer = typeof Observer === 'function' ? new Observer(entries => {
+    for (const entry of entries) {
+      const job = jobs.get(entry.target);
+      if (!job) continue;
+      job.visible = entry.isIntersecting;
+      if (!job.visible || job.queued) continue;
+      job.queued = true; pending.push(job);
+    }
+    void drain();
+  }, { root }) : null;
+  return {
+    observe(entry, inspect) { if (observer) { jobs.set(entry, { entry, inspect, visible: false }); observer.observe(entry); } },
+    clear() { observer?.disconnect(); jobs.clear(); pending = []; },
+  };
+}
+
 export function compactReleaseRow({ candidate: c, element, inspect, choose,
-  isCurrent, isBusy, setBusy, onError, onSelected, onInspected = () => {} }) {
+  isCurrent, isBusy, setBusy, onError, onSelected, onInspected = () => {}, observeEvidence = () => {} }) {
   const facts = releaseFacts(c.title);
   const entry = element('article', undefined, 'release-entry release-compact-row');
   const main = element('div', undefined, 'release-row-main');
@@ -29,12 +72,12 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
   details.append(summary, body); entry.append(main, details);
   let preview = null, task = null;
   const canPick = () => c.eligible && !['already_available', 'owned_unverified'].includes(preview?.selectionStatus);
-  const load = async () => {
+  const load = async (background = false) => {
     if (task) return task;
     task = (async () => {
       badge.textContent = '…'; pick.disabled = true;
       try {
-        preview = await inspect();
+        preview = await inspect({ background });
         if (!isCurrent()) return false;
         let confirmed = preview.files.length > 0, likely = preview.files.length > 0;
         body.replaceChildren(metadata());
@@ -46,7 +89,8 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         }
         for (const file of preview.filesToExclude ?? []) body.append(element('p', `${file.name} · excluded`, 'muted'));
         summary.textContent = preview.coverage ? `Details · File coverage checked: ${preview.coverage.coveredEpisodeCount}/${preview.coverage.requestedEpisodeCount} requested episodes` : `Details · ${preview.episodeIds.length} episode${preview.episodeIds.length === 1 ? '' : 's'}`;
-        badge.className = `${confirmed ? 'registration-confirmed' : 'registration-unknown'} release-registration`;
+        badge.className = `${confirmed ? 'registration-confirmed' : likely ? 'registration-likely' : 'registration-unknown'} release-registration`;
+        entry.classList.toggle('release-anidb-match', confirmed || likely);
         badge.textContent = confirmed ? 'Verified' : likely ? 'Likely' : '?';
         badge.title = confirmed ? 'Previously verified exact AniDB files' : likely ? 'Likely CRC32-and-size correspondence; not exact verification' : 'Registration unknown';
         badge.setAttribute('aria-label', badge.title);
@@ -56,13 +100,13 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
         return canPick();
       } catch (error) {
         if (!isCurrent()) return false;
-        preview = null; badge.textContent = '?';
+        preview = null; badge.textContent = '?';badge.className = 'registration-unknown release-registration';entry.classList.remove('release-anidb-match');
         const retry = element('button', 'Retry inspection', 'quiet');retry.type = 'button';
         retry.addEventListener('click', async () => {
           if (isBusy()) return;setBusy(true);retry.disabled = true;
           try { await load(); } finally { setBusy(false);retry.disabled = false; }
         });
-        body.replaceChildren(metadata(), element('p', onError(error), 'muted'));
+        body.replaceChildren(metadata(), element('p', onError(error, { background }), 'muted'));
         if (!['release_search_expired','release_preview_expired'].includes(error.reason)) body.append(retry);
         task = null;return false;
       } finally { pick.disabled = !canPick(); }
@@ -80,5 +124,6 @@ export function compactReleaseRow({ candidate: c, element, inspect, choose,
     } catch (error) { onError(error); }
     finally { setBusy(false); pick.disabled = !canPick(); if (canPick()) pick.textContent = 'Pick'; }
   });
+  observeEvidence(entry, () => isCurrent() ? load(true) : Promise.resolve(false));
   return entry;
 }

@@ -36,3 +36,5 @@ already-claimed start owns its attempt while authentication is pending. Other
 attempts and completion continue independently. Durable dispatch intents remain
 authoritative after restart; an uncertain add is observed by exact hash rather
 than sent a second time.
+
+Manual Pick automatically inspects visible results serially. Both likely CRC32-and-size matches and previously verified exact files use green titles/badges with distinct Likely/Verified labels. All selected pack videos must qualify. Unknown and partially matched packs stay grey; grey is not evidence that a release is absent from AniDB. Background failures do not interrupt browsing or retry automatically. Closing, replacing a search or switching to Auto-Pick clears queued inspection work.
