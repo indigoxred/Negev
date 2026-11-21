@@ -91,12 +91,20 @@ async function inspectMobile(url, profile, width = 390) {
       pending.set(id, { resolve, reject });
       socket.send(JSON.stringify({ id, method, params }));
     });
+    const settled = async () => {
+      for(let attempt=0;attempt<900;attempt++) {
+        const {result}=await send('Runtime.evaluate',{returnByValue:true,expression:"[...document.querySelectorAll('#season-state,#airing-season-state,#library-state,.browse-page-marker,.library-page-marker')].some(el=>el.getClientRects().length && (el.classList.contains('browse-page-marker')||el.classList.contains('library-page-marker') ? el.textContent.trim()==='Loading more titles…' : el.textContent.trim().startsWith('Loading ')))"});
+        if(!result.value)return;
+        await wait(100);
+      }
+      assert.fail('catalogue read did not settle within its bounded pacing window');
+    };
     await send('Page.enable');
     await send('Emulation.setDeviceMetricsOverride', {
       width, height: 844, deviceScaleFactor: 1, mobile: true,
     });
     await send('Page.navigate', { url });
-    await wait(1200);
+    await wait(1200); await settled();
     await send('Runtime.evaluate', {expression:'document.fonts.ready',awaitPromise:true});
     await send('DOM.enable'); await send('CSS.enable');
     const doc = await send('DOM.getDocument');
@@ -117,17 +125,17 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover',
       '?libraryPages=1#/library') });
-    await wait(800);
+    await wait(800); await settled();
     const libraryBrowseFirst = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#library-list .poster-card').length`,
     });
     await send('Runtime.evaluate', { expression: "location.hash = '#/library?q=Garden'" });
-    await wait(500);
+    await wait(500); await settled();
     await send('Runtime.evaluate', { expression: "location.hash = '#/library'" });
-    await wait(800);
+    await wait(800); await settled();
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(1000);
+    await wait(1000); await settled();
     const libraryBrowseReturned = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({cards: document.querySelectorAll('#library-list .poster-card').length,
         last: [...document.querySelectorAll('#library-list .poster-card strong')].at(-1)?.textContent,
@@ -135,7 +143,7 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover',
       '#/discover?year=2025&season=ALL') });
-    await wait(800);
+    await wait(800); await settled();
     const browseFirst = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#season-list .poster-card').length`,
     });
@@ -143,31 +151,31 @@ async function inspectMobile(url, profile, width = 390) {
       expression: `(() => {
         const marker = document.querySelector('#season-list + .browse-page-marker');
         const top = marker.getBoundingClientRect().top + scrollY;
-        window.scrollTo(0, top - innerHeight * 2.5);
+        window.scrollTo(0, top - innerHeight * 1.5);
         return {markerTop: marker.getBoundingClientRect().top, height: innerHeight,
           cards: document.querySelectorAll('#season-list .poster-card').length};
       })()`,
     });
-    await wait(1200);
+    await wait(1200); await settled();
     const browseAheadLoaded = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#season-list .poster-card').length`,
     });
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(1200);
+    await wait(1200); await settled();
     const browseScrolled = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({cards: document.querySelectorAll('#season-list .poster-card').length,
         first: document.querySelector('#season-list .poster-card strong')?.textContent,
         retry: Boolean(document.querySelector('#season-list + .browse-page-marker button'))})`,
     });
     await send('Runtime.evaluate', { expression: "location.hash = '#/requests'" });
-    await wait(300);
+    await wait(300); await settled();
     await send('Runtime.evaluate', { expression:
       "location.hash = '#/discover?year=2025&season=ALL'" });
-    await wait(800);
+    await wait(800); await settled();
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(1000);
+    await wait(1000); await settled();
     const browseReturned = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({cards: document.querySelectorAll('#season-list .poster-card').length,
         first: document.querySelector('#season-list .poster-card strong')?.textContent,
@@ -177,7 +185,7 @@ async function inspectMobile(url, profile, width = 390) {
       const sort = document.querySelector('#season-sort');
       sort.value = 'title_asc'; sort.dispatchEvent(new Event('change', {bubbles: true}));
     })()` });
-    await wait(1000);
+    await wait(1000); await settled();
     const browseSorted = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({hash: location.hash,
         cards: document.querySelectorAll('#season-list .poster-card').length,
@@ -185,33 +193,33 @@ async function inspectMobile(url, profile, width = 390) {
     });
     await send('Page.navigate', { url: url.replace('#/discover',
       '#/discover?year=2024&season=ALL') });
-    await wait(800);
+    await wait(800); await settled();
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(800);
+    await wait(800); await settled();
     const browseRetry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const retry = document.querySelector(
         '#season-list + .browse-page-marker button');
         const before = document.querySelectorAll('#season-list .poster-card').length;
         retry?.click(); return {before, visible: Boolean(retry)}; })()`,
     });
-    await wait(800);
+    await wait(800); await settled();
     const browseRecovered = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#season-list .poster-card').length`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
-    await wait(900);
+    await wait(900); await settled();
     await send('Runtime.evaluate', { expression: `(() => {
       document.querySelector('#airing-year').value = '2025';
       document.querySelector('#airing-form').requestSubmit();
     })()` });
-    await wait(900);
+    await wait(900); await settled();
     const airingFirst = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#airing-season-list .tracked-title').length`,
     });
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(1200);
+    await wait(1200); await settled();
     const airingScrolled = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({cards: document.querySelectorAll('#airing-season-list .tracked-title').length,
         retry: Boolean(document.querySelector('#airing-season-list + .browse-page-marker button'))})`,
@@ -220,17 +228,17 @@ async function inspectMobile(url, profile, width = 390) {
       document.querySelector('#airing-year').value = '2024';
       document.querySelector('#airing-form').requestSubmit();
     })()` });
-    await wait(800);
+    await wait(800); await settled();
     await send('Runtime.evaluate', { expression:
       'window.scrollTo(0, document.documentElement.scrollHeight)' });
-    await wait(800);
+    await wait(800); await settled();
     const airingRetry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const retry = document.querySelector(
         '#airing-season-list + .browse-page-marker button');
         const before = document.querySelectorAll('#airing-season-list .tracked-title').length;
         retry?.click(); return {before, visible: Boolean(retry)}; })()`,
     });
-    await wait(800);
+    await wait(800); await settled();
     const airingRecovered = await send('Runtime.evaluate', { returnByValue: true,
       expression: `document.querySelectorAll('#airing-season-list .tracked-title').length`,
     });
@@ -239,7 +247,7 @@ async function inspectMobile(url, profile, width = 390) {
       document.querySelector('#airing-form').requestSubmit();
     })()` });
     await send('Page.navigate', { url });
-    await wait(300);
+    await wait(300); await settled();
     const tagBrowse = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const picker = document.querySelector('#season-form .genre-picker');
         picker.open = true;
@@ -302,7 +310,7 @@ async function inspectMobile(url, profile, width = 390) {
       })()`,
     });
     await send('Page.navigate',{url:url.replace('#/discover','#/airing')});
-    await wait(500);
+    await wait(500); await settled();
     const airingDropdown=await send('Runtime.evaluate',{returnByValue:true,
       expression:`(() => {const filters=document.querySelector('#airing-filters-toggle');if(filters.getAttribute('aria-expanded')!=='true')filters.click();const picker=document.querySelector('#airing-form .genre-picker');
         const visible=picker.getBoundingClientRect().height>0;
@@ -318,7 +326,7 @@ async function inspectMobile(url, profile, width = 390) {
         search.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));
         const escape=!picker.open&&document.activeElement===picker.querySelector('summary');
         choice.click();return{visible,searchInside,checkboxInside,outside,escape};})()`});
-    await send('Page.navigate',{url});await wait(300);
+    await send('Page.navigate',{url});await wait(300); await settled();
     const toggleGeometry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { document.querySelector('#identity').open=true; const toggle = document.querySelector('#chinese-toggle');
         const account = document.querySelector('#identity');
@@ -343,7 +351,7 @@ async function inspectMobile(url, profile, width = 390) {
           saved: localStorage.getItem('negev:show-adult:1')}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/discover?q=Lovely') });
-    await wait(1200);
+    await wait(1200); await settled();
     const searchAdult = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const cards = [...document.querySelectorAll('#results [data-anidb-id]')];
         const shown = cards.filter((card) => !card.hidden).map((card) => Number(card.dataset.anidbId));
@@ -362,7 +370,7 @@ async function inspectMobile(url, profile, width = 390) {
     await send('Runtime.evaluate', { expression:
       `document.querySelector('#adult-toggle').click()` });
     await send('Page.navigate', { url: url.replace('#/discover', '#/discover?year=2026&season=FALL') });
-    await wait(800);
+    await wait(800); await settled();
     const filtered = await send('Runtime.evaluate', { returnByValue: true,
       expression: `({adultHidden: document.querySelector('#season-list [data-anidb-id="9589"]')?.hidden,
         normalVisible: !document.querySelector('#season-list [data-anidb-id="4158"]')?.hidden})`,
@@ -383,7 +391,7 @@ async function inspectMobile(url, profile, width = 390) {
           label: toggle.textContent}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/4158') });
-    await wait(800);
+    await wait(800); await settled();
     const longSynopsis=await send('Runtime.evaluate',{returnByValue:true,
       expression:`(() => {const description=document.querySelector('#detail .detail-description');
         const toggle=document.querySelector('#detail .detail-description-toggle');
@@ -404,7 +412,7 @@ async function inspectMobile(url, profile, width = 390) {
           capacity: getComputedStyle(list).gridTemplateColumns.split(' ').length};
         if (!button.hidden) button.click(); return before; })()`,
     });
-    await wait(300);
+    await wait(300); await settled();
     const franchiseAfter = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const cards = [...document.querySelectorAll('.related-list .related-card')];
         const firstTop = cards[0]?.getBoundingClientRect().top;
@@ -605,7 +613,7 @@ async function inspectMobile(url, profile, width = 390) {
         action?.querySelector('.primary')?.click();
         return { saving: action?.querySelector('.primary')?.textContent }; })()`,
     });
-    await wait(300);
+    await wait(300); await settled();
     const unlistedFilmSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
         return { button: action?.querySelector('.primary')?.textContent,
@@ -646,7 +654,7 @@ async function inspectMobile(url, profile, width = 390) {
     let airingTrack = null;
     if (width === 390) {
       await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
-      await wait(800);
+      await wait(800); await settled();
       const weeklyPresence = await send('Runtime.evaluate', { returnByValue: true,
         expression: `(() => [...document.querySelectorAll('#airing-list .result')]
           .map((card) => ({title: card.querySelector('strong')?.textContent,
@@ -659,27 +667,27 @@ async function inspectMobile(url, profile, width = 390) {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'all'; mode.dispatchEvent(new Event('change'));
       })()` });
-      await wait(800);
+      await wait(800); await settled();
       const allWeeklyPresence = await send('Runtime.evaluate', { returnByValue: true,
         expression: `(() => [...document.querySelectorAll('#airing-list .result')]
           .map((card) => ({title: card.querySelector('strong')?.textContent,
             badge: card.querySelector('.presence')?.textContent})))()`,
       });
       await send('Page.navigate', { url: url.replace('#/discover', '#/title/19847') });
-      await wait(800);
+      await wait(800); await settled();
       await send('Runtime.evaluate', { expression:
         `document.querySelector('#detail .detail-action-row [data-track-id]')?.click()` });
-      await wait(300);
+      await wait(300); await settled();
       const tracked = await send('Runtime.evaluate', { returnByValue: true,
         expression: `document.querySelector('#detail .detail-action-row [data-track-id]')?.textContent`,
       });
       await send('Page.navigate', { url: url.replace('#/discover', '#/airing') });
-      await wait(800);
+      await wait(800); await settled();
       await send('Runtime.evaluate', { expression: `(() => {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'custom'; mode.dispatchEvent(new Event('change'));
       })()` });
-      await wait(800);
+      await wait(800); await settled();
       const custom = await send('Runtime.evaluate', { returnByValue: true,
         expression: `({mode: document.querySelector('#airing-view-mode')?.value,
           card: [...document.querySelectorAll('.tracked-title .poster-card')]
@@ -695,7 +703,7 @@ async function inspectMobile(url, profile, width = 390) {
         const mode = document.querySelector('#airing-view-mode');
         mode.value = 'library'; mode.dispatchEvent(new Event('change'));
       })()` });
-      await wait(300);
+      await wait(300); await settled();
     }
     const synopsis = [];
     for (const id of [8,9]) {
@@ -1449,8 +1457,8 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.browseScroll.ahead.cards, 18);
       assert.ok(mobile.browseScroll.ahead.markerTop > mobile.browseScroll.ahead.height + 150,
         'the marker is still offscreen and beyond the old 150px loading margin');
-      assert.ok(mobile.browseScroll.ahead.markerTop < mobile.browseScroll.ahead.height * 3,
-        'scrolling enters the bounded two-screen loading lead');
+      assert.ok(mobile.browseScroll.ahead.markerTop < mobile.browseScroll.ahead.height * 2,
+        'scrolling enters the bounded one-screen loading lead');
       assert.equal(mobile.browseScroll.aheadLoaded, 25,
         'the next page renders before its marker reaches the viewport');
       assert.deepEqual(mobile.browseScroll, { first: 18,

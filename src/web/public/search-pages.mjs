@@ -38,18 +38,77 @@ export function createSearchPager(first) {
   };
 }
 
-// Load only the adjacent page while its marker is within roughly two screens.
+// Load only the adjacent page within one screen; grants span successive markers.
 // A one-shot guard also ignores notifications already queued when disconnected.
 export function observeCatalogueContinuation(marker, load, viewportHeight,
-  Observer = globalThis.IntersectionObserver) {
-  const lead = Math.min(2400, Math.max(0, Math.round(viewportHeight * 2)));
-  let active = true;
+  Observer = globalThis.IntersectionObserver,
+  { budget = null, readScrollY = () => globalThis.scrollY ?? 0,
+    events = globalThis.window } = {}) {
+  const lead = Math.min(1200, Math.max(0, Math.round(viewportHeight)));
+  let active = true, near = false;
+  const intentEvents = ['wheel', 'touchmove', 'keydown', 'pointerdown'];
+  const intent = event => {
+    if (!active || event?.isTrusted !== true) return;
+    if (event.type === 'wheel' && event.deltaY <= 0) return;
+    if (event.type === 'keydown' && !['ArrowDown', 'PageDown', 'End', ' '].includes(event.key)) return;
+    budget?.noteIntent();
+  };
+  const disconnect = () => {
+    active = false; observer.disconnect(); events?.removeEventListener('scroll', attempt);
+    for (const event of intentEvents) events?.removeEventListener(event, intent);
+  };
+  const attempt = () => {
+    if (!active || !near || (budget && !budget.claim(readScrollY(), viewportHeight))) return;
+    disconnect(); load();
+  };
   const observer = new Observer((entries) => {
-    if (!active || !entries.some((entry) => entry.isIntersecting)) return;
-    active = false;
-    observer.disconnect();
-    load();
-  }, { rootMargin: `0px 0px ${lead}px 0px` });
+    near = entries.some(entry => entry.isIntersecting); attempt();
+  }, { rootMargin: '0px 0px '+lead+'px 0px' });
+  events?.addEventListener('scroll', attempt, { passive: true });
+  for (const event of intentEvents) events?.addEventListener(event, intent, { passive: true });
   observer.observe(marker);
-  return { disconnect() { active = false; observer.disconnect(); } };
+  return { disconnect };
+}
+
+export function createCataloguePrefetchBudget() {
+  let last = null, intent = 0, used = 0;
+  return {
+    reset() { last = null; intent = used = 0; },
+    noteIntent() { intent++; },
+    consume(scrollY) { last = Math.max(0, Number.isFinite(scrollY) ? scrollY : 0); used = intent; },
+    claim(scrollY, height) {
+      const position = Math.max(0, Number.isFinite(scrollY) ? scrollY : 0);
+      const advance = Math.max(120, Math.min(400, height / 2));
+      if (last !== null && (intent === used || position < last + advance)) return false;
+      last = position; used = intent; return true;
+    },
+  };
+}
+
+// Separate from acquisition. Admit bounded catalogue reads, never retry errors.
+export function createCatalogueReadPacer({ now = Date.now,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  let tail = Promise.resolve(), blockedUntil = 0;
+  const starts = [];
+  return {
+    defer(value, fallbackMs = 60_000) {
+      const time = now();
+      const parsed = /^\d+$/.test(value ?? '') ? time + Number(value) * 1000 : Date.parse(value);
+      blockedUntil = Math.max(blockedUntil, Number.isFinite(parsed) && parsed > time ? parsed : time + fallbackMs);
+    },
+    run(read, current = () => true) {
+      const result = tail.then(async () => {
+        for (;;) {
+          if (!current()) throw new Error('Catalogue read superseded');
+          const time = now();
+          while (starts.length && starts[0] <= time - 60_000) starts.shift();
+          const due = Math.max(blockedUntil, starts.length >= 10 ? starts[0] + 60_000 : 0,
+            starts.length >= 2 ? starts.at(-1) + 6000 : 0);
+          if (due <= time) { starts.push(time); return read(); }
+          await sleep(due - time);
+        }
+      });
+      tail = result.catch(() => {}); return result;
+    },
+  };
 }

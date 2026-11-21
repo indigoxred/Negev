@@ -2,7 +2,7 @@ import { catalogueAvailability } from './card-availability.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
-import { createSearchPager, observeCatalogueContinuation } from './search-pages.mjs';
+import { createSearchPager, observeCatalogueContinuation, createCataloguePrefetchBudget, createCatalogueReadPacer } from './search-pages.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation, requestNeedsReleaseChoice } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
@@ -459,22 +459,28 @@ for (const button of document.querySelectorAll('[data-request-scope]')) {
     loadRequests();
   });
 }
+const cataloguePacers = { seasons: createCatalogueReadPacer(), library: createCatalogueReadPacer() };
 async function api(url, options = {}) {
-  const headers = { Accept: 'application/json', ...options.headers };
-  if (options.body !== undefined) headers['Content-Type'] = 'application/json';
-  if (options.method && options.method !== 'GET' && state.csrf) {
-    headers['x-negev-csrf'] = state.csrf;
-  }
-  const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(data.error || data.reason || `Request failed (${response.status})`);
-    error.status = response.status;
-    error.reason = data.reason;
-    error.field = data.field;
-    throw error;
-  }
-  return data;
+  const { catalogueCurrent, ...fetchOptions } = options;
+  const pacer = /^\/api\/seasons(?:\?|$)/.test(url) ? cataloguePacers.seasons :
+    /^\/api\/library(?:\?|$)/.test(url) ? cataloguePacers.library : null;
+  const userId = state.user?.id;
+  const read = async () => {
+    const headers = { Accept: 'application/json', ...fetchOptions.headers };
+    if (fetchOptions.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (fetchOptions.method && fetchOptions.method !== 'GET' && state.csrf) headers['x-negev-csrf'] = state.csrf;
+    const signal = fetchOptions.signal ?? (pacer ? AbortSignal.timeout(30_000) : undefined);
+    const response = await fetch(url, { credentials: 'same-origin', ...fetchOptions, headers, signal });
+    const data = await response.json().catch(() => ({}));
+    if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
+    if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
+    if (!response.ok) {
+      const error = new Error(data.error || data.reason || 'Request failed ('+response.status+')');
+      error.status = response.status; error.reason = data.reason; error.field = data.field; throw error;
+    }
+    return data;
+  };
+  return pacer ? pacer.run(read, catalogueCurrent ?? (() => state.user?.id === userId)) : read();
 }
 const releasePreviewSaved=new Map();
 const releaseDialog=createReleaseDialog({api,element,onSaved:data=>{
@@ -1146,6 +1152,7 @@ function publicPresenceBadge(presence,item={}) {
   const label=element('span',badge.text,'presence '+badge.state);
   if(badge.specialText)label.append(element('span',badge.specialText,'special-coverage '+badge.specialState));return label;
 }
+const prefetchBudgets = { library: createCataloguePrefetchBudget(), discover: createCataloguePrefetchBudget(), airing: createCataloguePrefetchBudget() };
 let libraryPageObserver = null;
 function stopLibraryPageObserver() {
   libraryPageObserver?.disconnect();
@@ -1169,6 +1176,7 @@ function appendLibraryPageMarker(list) {
     retry.type = 'button';
     retry.addEventListener('click', () => {
       if (retry.disabled || !current()) return;
+      prefetchBudgets.library.consume(window.scrollY);
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadLibrary(true, continuation);
@@ -1176,13 +1184,18 @@ function appendLibraryPageMarker(list) {
     });
     marker.append(retry);
   } };
-  const observer = observeCatalogueContinuation(marker, () => {
-    if (!current()) return;
+  let started = false;
+  const start = () => {
+    if (started || !current()) return;
+    started = true; observer.disconnect();
     if (libraryPageObserver === observer) libraryPageObserver = null;
     marker.textContent = 'Loading more titles…';
-    void loadLibrary(true, continuation);
-    epoch = libraryResponses.current();
-  }, window.innerHeight);
+    void loadLibrary(true, continuation); epoch = libraryResponses.current();
+  };
+  const manual = element('button', 'Load more titles', 'text-link');
+  manual.type = 'button'; manual.addEventListener('click', () => { prefetchBudgets.library.consume(window.scrollY); start(); }); marker.append(manual);
+  const observer = observeCatalogueContinuation(marker, start, window.innerHeight,
+    undefined, { budget: prefetchBudgets.library });
   libraryPageObserver = observer;
 }
 const browsePageObservers = { discover: null, airing: null };
@@ -1211,6 +1224,7 @@ function appendBrowsePageMarker(view, list, loadPage) {
     retry.type = 'button';
     retry.addEventListener('click', () => {
       if (retry.disabled || !current()) return;
+      prefetchBudgets[view].consume(window.scrollY);
       retry.disabled = true;
       marker.replaceChildren(element('p', 'Loading more titles…', 'muted'));
       void loadPage(continuation);
@@ -1218,16 +1232,20 @@ function appendBrowsePageMarker(view, list, loadPage) {
     });
     marker.append(retry);
   } };
-  const observer = observeCatalogueContinuation(marker, () => {
-    if (!current()) return;
-    marker.textContent = 'Loading more titles…';
-    void loadPage(continuation);
-    epoch = responses.current();
-  }, window.innerHeight);
+  let started = false;
+  const start = () => {
+    if (started || !current()) return;
+    started = true; observer.disconnect(); marker.textContent = 'Loading more titles…';
+    void loadPage(continuation); epoch = responses.current();
+  };
+  const manual = element('button', 'Load more titles', 'text-link');
+  manual.type = 'button'; manual.addEventListener('click', () => { prefetchBudgets[view].consume(window.scrollY); start(); }); marker.append(manual);
+  const observer = observeCatalogueContinuation(marker, start, window.innerHeight,
+    undefined, { budget: prefetchBudgets[view] });
   browsePageObservers[view] = { observer, marker };
 }
 async function loadLibrary(append = false, continuation = null) {
-  if (!append) stopLibraryPageObserver();
+  if (!append) { stopLibraryPageObserver(); prefetchBudgets.library.reset(); }
   const route = location.hash;
   const session = sessionResponses.current();
   const epoch = libraryResponses.invalidate();
@@ -1244,10 +1262,10 @@ async function loadLibrary(append = false, continuation = null) {
   try {
     const suffix = append && state.libraryAfter !== null
       ? `?afterAnidbId=${state.libraryAfter}` : '';
-    const page = await api(`/api/library${suffix}`);
+    const page = await api(`/api/library${suffix}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && libraryResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (!append) list.replaceChildren();
     else continuation?.marker.remove();
     state.libraryLoaded = true;notice.replaceChildren();
@@ -1267,7 +1285,7 @@ async function loadLibrary(append = false, continuation = null) {
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (!append) {
       notice.replaceChildren(element('span', 'Your library could not be refreshed. '));
       const retry=element('button','Retry','quiet');retry.type='button';retry.addEventListener('click',()=>loadLibrary());notice.append(retry);
@@ -1348,7 +1366,7 @@ function catalogueReadError(notice, list) {
 async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   scoreRefresh = 0, continuation = null) {
   const append = continuation !== null;
-  if (!append) stopBrowsePageObserver('discover');
+  if (!append) { stopBrowsePageObserver('discover'); prefetchBudgets.discover.reset(); }
   const route = location.hash;
   const session = sessionResponses.current();
   const epoch = seasonalResponses.invalidate();
@@ -1371,10 +1389,10 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
     if (kind !== 'all') params.set('kind', kind);
     if (tag) params.set('tag', tag);
     if (sort !== 'newest') params.set('sort', sort);
-    const page = await api(`/api/seasons?${params}`);
+    const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && seasonalResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (page.state === 'unavailable') {
       if (append) continuation.showError();
       else catalogueReadError(notice, list);
@@ -1461,7 +1479,7 @@ async function loadSeasonal({ year, season, after, kind, tag, sort = 'newest' },
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !seasonalResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (append && location.hash !== route)) return;
+        location.hash !== route) return;
     if (append) continuation.showError();
     else catalogueReadError(notice, list);
   }
@@ -1514,7 +1532,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   const list = byId('airing-season-list');
   const notice = byId('airing-season-state');
   if (after === 0) {
-    airingBrowseAfter = 0;
+    airingBrowseAfter = 0; prefetchBudgets.airing.reset();
     stopBrowsePageObserver('airing');
     notice.textContent = 'Loading ongoing titles…';
     list.replaceChildren();
@@ -1531,10 +1549,10 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   if (tag) params.set('tag', tag);
   if (after) params.set('after', String(after));
   try {
-    const page = await api(`/api/seasons?${params}`);
+    const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && airingResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (continuation && location.hash !== route)) return;
+        location.hash !== route) return;
     if (page.state === 'unavailable') {
       if (continuation) continuation.showError();
       else notice.textContent = 'The ongoing-title catalogue is unavailable right now.';
@@ -1593,7 +1611,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   } catch {
     if (!sessionResponses.isCurrent(session) ||
         !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
-        (continuation && location.hash !== route)) return;
+        location.hash !== route) return;
     if (continuation) continuation.showError();
     else notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
   }
