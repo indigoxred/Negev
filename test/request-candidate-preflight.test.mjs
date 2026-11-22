@@ -604,3 +604,21 @@ test('batch search hints pass preflight only when derived from the same-ID title
   if(expected==='held')assert.equal(result.reason,'untrusted_release_query');
  }
 });
+
+test('a year-labelled installment uses same-ID season aliases before accepting a pack',async()=>{
+  const second={...detail,title:'The Apothecary Diaries (2025)'};
+  const make=title=>previewRequestCandidate({requestId:4,candidate:{...candidate,title},
+    readRequest:()=>request,loadDetail:async()=>second,
+    releaseQueries:async()=>['Kusuriya no Hitorigoto (2025)','Kusuriya no Hitorigoto 2nd Season','The Apothecary Diaries S2','The Apothecary Diaries'],
+    readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:43,title:'Kusuriya no Hitorigoto',relation:'Prequel'}]}),
+    prepare:async()=>({...prepared,files:[{name:'Kusuriya no Hitorigoto - 01.mkv',size:1000}]}),
+    offlineLookup:async()=>({status:0})});
+  const rejected=await make('[EMBER] The Apothecary Diaries (2023) (Season 1) [BDRip] [1080p]');
+  assert.equal(rejected.reason,'related_installment_mismatch');
+});
+
+test('season-one labels remain valid for a first installment with a sequel',()=>{
+  // Related-title matching is exercised through the full preflight.
+  return previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 1'},readRequest:()=>request,loadDetail:async()=>detail,
+    readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:43,title:'Example Season 2',relation:'Sequel'}]}),prepare:async()=>prepared}).then(result=>assert.equal(result.state,'preflight'));
+});

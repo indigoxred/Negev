@@ -86,3 +86,40 @@ test('unavailable or inconsistent relation evidence holds without a download', (
     related: { ...related, anidbId: 999 }, fileNames: ['01.mkv'] }),
   { state: 'held', reason: 'related_title_unavailable' });
 });
+
+test('same-ID season aliases reject season-one packs and file coordinates for a year-labelled sequel', () => {
+  const input={anidbId:18562,requestedTitle:'Kusuriya no Hitorigoto (2025)',
+    requestedAliases:['Kusuriya no Hitorigoto 2nd Season','The Apothecary Diaries S2'],
+    related:{state:'related_titles',anidbId:18562,items:[{anidbId:17460,title:'Kusuriya no Hitorigoto',relation:'Prequel'}]}};
+  for(const [releaseTitle,fileNames]of [
+    ['[EMBER] The Apothecary Diaries (2023) (Season 1) [BDRip] [1080p Dual Audio HEVC]',['Kusuriya no Hitorigoto - 01.mkv']],
+    ['[Group] The Apothecary Diaries S02 (1080p)',['The Apothecary Diaries S01E01.mkv']],
+  ])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle,fileNames}),{state:'held',reason:'related_installment_mismatch'});
+  for(const [releaseTitle,fileNames]of [
+    ['[kikuri] Kusuriya no Hitorigoto 2nd Season (BD 1080p) | The Apothecary Diaries S02',['Kusuriya no Hitorigoto S02E01.mkv']],
+    ['[Group] Kusuriya no Hitorigoto (25-48) [1080p]',['Kusuriya no Hitorigoto - 25.mkv']],
+  ])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle,fileNames}),{state:'related_title_clear'});
+});
+
+test('ambiguous aliases and prequel relations alone do not invent requested season numbers',()=>{
+  const input={anidbId:468,requestedTitle:'Quiet Country Cafe',related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Yokohama Kaidashi Kikou',relation:'Prequel'}]},releaseTitle:'Quiet Country Cafe S01',fileNames:['Quiet Country Cafe S01E01.mkv']};
+  assert.deepEqual(checkRelatedInstallment(input),{state:'related_title_clear'});
+  assert.deepEqual(checkRelatedInstallment({...input,requestedAliases:['Quiet Country Cafe S2','Quiet Country Cafe S3']}),{state:'related_title_clear'});
+});
+
+test('common season annotation layouts cannot bypass explicit same-ID season evidence',()=>{
+  const input={anidbId:468,requestedTitle:'Example (2025)',requestedAliases:['Example 2nd Season','Example S2'],related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Example',relation:'Prequel'}]},fileNames:['Example - 01.mkv']};
+  for(const tag of ['(S01)','[S01]','Season 01','1st Season','Season I'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:`Example ${tag} [1080p]`}),{state:'held',reason:'related_installment_mismatch'},tag);
+  assert.deepEqual(checkRelatedInstallment({...input,requestedTitle:'Example Season 2',requestedAliases:['Example S3'],releaseTitle:'Example S03',fileNames:['Example S03E01.mkv']}),{state:'held',reason:'related_installment_mismatch'});
+});
+
+test('ordinal season title followed by an episode is not parsed again as a different season',()=>{
+  const input={anidbId:18562,requestedTitle:'Kusuriya no Hitorigoto (2025)',requestedAliases:['Kusuriya no Hitorigoto 2nd Season','The Apothecary Diaries S2'],related:{state:'related_titles',anidbId:18562,items:[{anidbId:17870,title:'Kusuriya no Hitorigoto',relation:'Prequel'}]},releaseTitle:'[kikuri] Kusuriya no Hitorigoto 2nd Season (BD 1080p) | The Apothecary Diaries S02',fileNames:['Kusuriya no Hitorigoto 2nd Season - 01 (BD 1080p) [kikuri].mkv']};
+  assert.deepEqual(checkRelatedInstallment(input),{state:'related_title_clear'});
+});
+
+test('explicit season coordinates keep underscore and bracket delimiters',()=>{
+  const input={anidbId:468,requestedTitle:'Example Season 2',related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Example',relation:'Prequel'}]}};
+  for(const file of ['Example_S03E01_1080p.mkv','Example_S01E01_1080p.mkv','Example.S01_1080p','Example_Season_01_1080p','Example_1st_Season_1080p'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:file,fileNames:[file]}),{state:'held',reason:'related_installment_mismatch'},file);
+  assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'Example_S02E01_1080p.mkv',fileNames:['Example_S02E01_1080p.mkv']}),{state:'related_title_clear'});
+});
