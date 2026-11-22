@@ -123,3 +123,24 @@ test('explicit season coordinates keep underscore and bracket delimiters',()=>{
   for(const file of ['Example_S03E01_1080p.mkv','Example_S01E01_1080p.mkv','Example.S01_1080p','Example_Season_01_1080p','Example_1st_Season_1080p'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:file,fileNames:[file]}),{state:'held',reason:'related_installment_mismatch'},file);
   assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'Example_S02E01_1080p.mkv',fileNames:['Example_S02E01_1080p.mkv']}),{state:'related_title_clear'});
 });
+
+test('trusted textual season titles do not reinterpret following episode numbers',()=>{
+ const cases=[['Example Season 2','Example Second Season'],['Example Final Season','Example Season 4'],['Example Season 2','Example Spring Season'],['Example Season 2','Example 2nd Season Final Season']];
+ for(const [requestedTitle,alias]of cases){
+  const title=requestedTitle.includes('Final')?requestedTitle:alias;
+  const input={anidbId:468,requestedTitle,requestedAliases:[alias],related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Example',relation:'Prequel'}]}};
+  for(const file of [`${title} - 01.mkv`,`${title.replaceAll(' ','_')}_-_02.mkv`,`${title}.03.mkv`])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:alias+' [1080p] [Batch]',fileNames:[file]}),{state:'related_title_clear'},file);
+  for(const tag of ['S01E01','Season 01','1st Season'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:alias+' [1080p] [Batch]',fileNames:[`${title} ${tag} - 01.mkv`]}),{state:'held',reason:'related_installment_mismatch'},tag);
+ }
+});
+
+test('a literal title ending Season remains distinct from an explicit season annotation',()=>{
+ const input={anidbId:468,requestedTitle:'A Life in Another Season',related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'A Life in Another Season Again',relation:'Sequel'}]}};
+ assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'A Life in Another Season [1080p]',fileNames:['A Life in Another Season - 03.mkv']}),{state:'related_title_clear'});
+ assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'A Life in Another Season S02',fileNames:['A Life in Another Season S02E03.mkv']}),{state:'held',reason:'related_installment_mismatch'});
+});
+
+test('trusted text never hides conflicting season coordinates inside aliases or release groups',()=>{
+ const input={anidbId:468,requestedTitle:'Example Season 2',requestedAliases:['Example Second Season','Example S03 Final Season'],related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Example',relation:'Prequel'}]}};
+ for(const file of ['Example S03 Final Season - 01.mkv','[Example Second Season] Example Season 01 - 01.mkv','Other Second Season - 01.mkv'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'Example Season 2 [Batch]',fileNames:[file]}),{state:'held',reason:'related_installment_mismatch'},file);
+});

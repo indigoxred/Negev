@@ -43,3 +43,17 @@ test('earlier preview-policy rejections are not replayed after the policy change
   assert.equal(cache.get({request,candidate}).shokoPreviewConflict,'absolute_number_offset');
  }finally{cache.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('legacy season-mismatch decisions are reconsidered without flushing other evidence',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-text-season-cache-')),dbPath=path.join(dir,'state.sqlite');let cache=openCandidateCheckCache(dbPath,{now:()=>100});cache.close();
+ const legacyKey=c=>createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses',request.id,request.anidbId,request.kind,[...request.episodeIds],c.indexerId,request.title,c.guid,c.title,c.size,c.sourceQuery,c.targetEpisodeId])).digest('hex');
+ const other={...candidate,guid:'unrelated-cache'},positive={...candidate,guid:'positive-cache'};const db=new DatabaseSync(dbPath);
+ for(const [c,result]of [[candidate,{state:'held',reason:'related_installment_mismatch'}],[other,{state:'held',reason:'shoko_preview_wrong_identity'}],[positive,{state:'preflight',episodeIds:[1001]}]])db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(legacyKey(c),42,'[1001]',JSON.stringify(result),100,21600100);db.close();
+ cache=openCandidateCheckCache(dbPath,{now:()=>100});try{
+  assert.equal(cache.get({request,candidate}),null);
+  assert.equal(cache.get({request,candidate:other}).reason,'shoko_preview_wrong_identity');
+  assert.equal(cache.get({request,candidate:positive}).state,'preflight');
+  const result={state:'held',reason:'related_installment_mismatch'};cache.put({request,candidate,result});
+  assert.deepEqual(cache.get({request,candidate}),result);cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>101});assert.deepEqual(cache.get({request,candidate}),result);
+ }finally{cache.close();await rm(dir,{recursive:true,force:true});}
+});

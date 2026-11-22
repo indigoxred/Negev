@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
+const relatedGuardRevision = 'trusted-title-season-v1';
 const deterministic = new Set(['release_title_mismatch', 'shoko_preview_wrong_identity',
   'targeted_result_wrong_episode', 'shoko_video_format_unsupported',
   'related_installment_mismatch', 'invalid_metainfo', 'unsafe_torrent_path',
@@ -40,13 +41,23 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
   return {
     get(input) {
       const row = get.get(keyFor(input), now());
-      try { return row ? JSON.parse(row.result_json) : null; } catch { return null; }
+      try {
+        if (!row) return null;
+        const result = JSON.parse(row.result_json);
+        // Old parsing decisions must not hold saved requests for six hours.
+        // Keep unrelated negatives and positive evidence reusable.
+        if (result.state === 'held' && result.reason === 'related_installment_mismatch' &&
+            result._relatedGuardRevision !== relatedGuardRevision) return null;
+        delete result._relatedGuardRevision;
+        return result;
+      } catch { return null; }
     },
     put({ request, candidate, result }) {
       const positive = result?.state === 'preflight';
       if (!positive && !(result?.state === 'held' && deterministic.has(result.reason))) return;
       const safe = Object.fromEntries(fields.filter(key => result[key] !== undefined)
         .map(key => [key, result[key]]));
+      if (result.reason === 'related_installment_mismatch') safe._relatedGuardRevision = relatedGuardRevision;
       const json = JSON.stringify(safe);
       if (Buffer.byteLength(json) > 64_000) return;
       const checkedMs = now();
