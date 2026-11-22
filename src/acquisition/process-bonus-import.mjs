@@ -17,6 +17,7 @@ export async function processBonusImport({ item, acquisitions, pureMoves,
   if (typeof acquisitions?.getAttempt !== 'function' ||
       typeof acquisitions?.getBonusPlan !== 'function' ||
       typeof acquisitions?.recordBonusProgress !== 'function' ||
+      typeof acquisitions?.releaseBonusClaimForReview !== 'function' ||
       typeof pureMoves?.getIntent !== 'function' || typeof now !== 'function' ||
       typeof readEpisode !== 'function' || typeof verifyPublic !== 'function') {
     throw new TypeError('Invalid bonus import configuration');
@@ -29,18 +30,20 @@ export async function processBonusImport({ item, acquisitions, pureMoves,
       !sameEpisode(item?.episodeIds, item?.episodeIds) || !pending.has(item?.status)) {
     return waiting('invalid_bonus_item');
   }
+  let publishedMs = null;
+  let claimReleasedMs = item.claimReleasedMs ?? null;
   let currentStatus = item.status;
   let currentFileId = validId(item.fileId) ? item.fileId : undefined;
   const clock = () => {
     const time = now();
-    if (!Number.isSafeInteger(time) || time < 0 || time > Number.MAX_SAFE_INTEGER - 60_000) {
+    if (!Number.isSafeInteger(time) || time < 0 || time > Number.MAX_SAFE_INTEGER - 3600_000) {
       throw new TypeError('Invalid bonus import clock');
     }
     return time;
   };
   const save = (status, { fileId = currentFileId, reason, delay = false } = {}) => {
     const nowMs = clock();
-    const nextCheckMs = nowMs + (delay ? 60_000 : 0);
+    const nextCheckMs = nowMs + (delay ? claimReleasedMs === null ? 60_000 : 3600_000 : 0);
     try {
       const result = acquisitions.recordBonusProgress({ attemptId: item.attemptId,
         name: item.name, status, nowMs, nextCheckMs,
@@ -52,9 +55,21 @@ export async function processBonusImport({ item, acquisitions, pureMoves,
     } catch { return false; }
   };
   const retry = (reason) => {
-    const nextCheckMs = clock() + 60_000;
+    const nowMs=clock();
+    // Optional observation owns no exclusive target indefinitely. Publication,
+    // not download selection or a restart, starts this finite window. Expiry
+    // preserves the file in place and permits only a later explicit request;
+    // it never classifies a provider outage as a failed file or starts a grab.
+    if(claimReleasedMs===null&&publishedMs!==null&&nowMs>=publishedMs+15*60_000&&
+        typeof acquisitions.releaseBonusClaimForReview==='function') {
+      try{const released=acquisitions.releaseBonusClaimForReview({attemptId:item.attemptId,name:item.name,publishedMs,nowMs,reason});
+        if(released?.state==='attention'){claimReleasedMs=released.releasedMs;currentStatus='attention';}}
+      catch{/* Preserve exclusive ownership if the durable journal cannot update. */}
+    }
+    const nextCheckMs=nowMs+(claimReleasedMs===null?60_000:3600_000);
     save(currentStatus, { reason, delay: true });
-    return waiting(reason, nextCheckMs);
+    return claimReleasedMs===null?waiting(reason,nextCheckMs):
+      {state:'bonus_review',attemptId:item.attemptId,name:item.name,reason,nextCheckMs};
   };
   let parent, plan, move;
   try {
@@ -83,7 +98,10 @@ export async function processBonusImport({ item, acquisitions, pureMoves,
     return retry('bonus_journal_conflict');
   }
   const journalFile = matches[0];
+  if(move.status==='published_observed'&&Number.isSafeInteger(move.updatedMs)&&
+      move.updatedMs>=0&&move.updatedMs<=clock())publishedMs=move.updatedMs;
   const publish = () => {
+    if(claimReleasedMs!==null)return true;
     if (currentStatus === 'selected' || (currentStatus === 'attention' && !validId(currentFileId))) {
       return save('published');
     }

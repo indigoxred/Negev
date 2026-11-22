@@ -55,3 +55,13 @@ test('explicit English dub and UHD manual filters do not change the automatic po
  assert.equal(choice.state,'updated');assert.equal(choice.control.selection.candidate.selectionPolicy.allowEnglishDub,true);
  assert.equal(choice.control.selection.candidate.selectionPolicy.allowUhd,true);
 }));
+
+test('a consumed airing choice retains editable preference without reopening selection or replacing its exact attempt',()=>fixture(async({service,requests,acquisitions,requestId,now,candidate,preview,make})=>{
+ const found=await service.search(requestId),chosen=await service.choose(requestId,found.items[0].token,1,true);
+ const attempt=acquisitions.reserve({requestId,candidate:candidate(),episodeIds:[102],preparedHash:preview.torrentHash,plannedFiles:preview.files,nowMs:now});
+ assert.equal(attempt.state,'reserved');assert.equal(requests.consumeReleaseChoice(requestId,chosen.control.revision),true);
+ const current=requests.getReleaseControl(requestId),restarted=make();assert.equal(current.phase,'consumed');
+ const edited=await restarted.setPreference(requestId,'Erai-raws',current.revision,'dual');assert.equal(edited.state,'updated');assert.equal(edited.control.phase,'consumed');assert.equal(edited.control.preference.audio,'dual');
+ assert.equal(acquisitions.getAttempt(attempt.attemptId).status,'reserved');
+ const cleared=await restarted.setPreference(requestId,null,edited.control.revision);assert.equal(cleared.control.preference,null);assert.equal(cleared.control.phase,'consumed');
+}));

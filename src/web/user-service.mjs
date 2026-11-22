@@ -737,13 +737,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             coverage = recentPublicCoverage({ episodeIds: item.episodeIds, includeIds:true,
               ...positivesByTitle.get(item.anidbId) });
           }
+          const releaseControl=requests.getReleaseControl(item.id,checkedMs);
           const local = progress.read(item.id,{availableEpisodeIds:coverage?.availableEpisodeIds??[]});
           if(coverage){const {availableEpisodeIds,...publicCoverage}=coverage;coverage=publicCoverage;}
           return { ...item,
             title: titleSource?.getTitle(item.anidbId) ??
               titleRegistry.getTitle({ anidbId: item.anidbId }) ?? item.title,
             preferredWait:requests.getPreferredWait(item.id,checkedMs),
-            releaseSelection: (()=>{const c=requests.getReleaseControl(item.id,checkedMs);
+            releasePreference:item.status==='held'&&item.kind==='series'&&item.monitorFuture&&!item.watchClosed&&releaseControl.preference
+              ?{group:releaseControl.preference.group,audio:releaseControl.preference.audio}:null,
+            releaseSelection: (()=>{const c=releaseControl;
               return ['selecting','proposal','chosen'].includes(c.phase)
                 ? {mode:c.mode,phase:c.phase,expiresMs:c.expiresMs??null}:null;})(),
             englishTitle: englishTitles[index],

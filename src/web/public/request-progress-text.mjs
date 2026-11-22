@@ -140,14 +140,17 @@ export function requestPresentation(progress, kind,
     watching ? 'watching' : 'active', ...measuredProgress };
 }
 
-// Request cards expose selection tools only while an actual choice is pending.
+// A saved choice and a group deadline cannot override completed availability.
+export function requestHasPendingAcquisition(item) {
+  const p=item?.progress;
+  return item?.status!=='cancelled'&&p?.oneTimeAcquisitionComplete!==true&&
+    !(p?.publicAvailability==='verified_recently'&&Number.isSafeInteger(p.targetCount)&&
+      p.targetCount>0&&p.publicVerifiedTargets===p.targetCount);
+}
 export function requestNeedsReleaseChoice(item) {
-  if (item?.status === 'cancelled' ||
-      !['selecting', 'proposal'].includes(item?.releaseSelection?.phase)) return false;
-  const progress = item.progress;
-  if (progress?.oneTimeAcquisitionComplete === true ||
-      ['active', 'queued'].includes(progress?.transfer?.transferState)) return false;
-  return !(progress?.publicAvailability === 'verified_recently' &&
-    Number.isSafeInteger(progress.targetCount) && progress.targetCount > 0 &&
-    progress.publicVerifiedTargets === progress.targetCount);
+  return requestHasPendingAcquisition(item)&&['selecting','proposal'].includes(item?.releaseSelection?.phase)&&
+    !['active','queued'].includes(item?.progress?.transfer?.transferState);
+}
+export function requestCanEditReleasePreference(item) {
+  return item?.status==='held'&&item.kind==='series'&&item.monitorFuture===true&&!item.watchClosed;
 }

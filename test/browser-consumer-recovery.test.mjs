@@ -46,7 +46,7 @@ test('title and library controls recover from pending and failed reads without d
     let operationalReads = 0;
     let olderRequestReads = 0;
     let proofReady = false;
-    let transferObservedMs = null,transferBasisPoints=3750,requestProposal=false;
+    let transferObservedMs = null,transferBasisPoints=3750,requestProposal=false,requestAiring=false;
     let newHistoryRequest = false;
     let holdWatchingRequests = true;
     let holdFirstSession = true;
@@ -125,6 +125,8 @@ test('title and library controls recover from pending and failed reads without d
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
         if (holdNextRequest) { holdNextRequest = false; heldRequestResponse = response; return; }
         json(response,value.seasons?{items:[{anidbId:3,status:201,result:seasonResult??{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
+      } else if(path === '/api/requests/7/release-choice') {
+        json(response,{state:'selection',control:{mode:'auto',phase:'consumed',revision:9,preference:{group:'SubsPlease',audio:'dual'}},context:{confirmedAiring:true,preferredGroup:'SubsPlease'}});
       } else if(path === '/api/requests/123/release-choice') {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:value.action==='auto'?'consumed':'selecting',revision:control.revision+1};}
         json(response,{state:'updated',control});
@@ -181,8 +183,8 @@ test('title and library controls recover from pending and failed reads without d
             watchClosed: false, progress: { state: 'saved', targetCount: 1,
               publicAvailability: 'unverified', publicVerifiedTargets: 0,
               oneTimeAcquisitionComplete: true } } :
-          { id: 7, anidbId: 1, title: 'Pending title', kind: 'movie', status: 'held', requesterId: 8, canCancel: true,
-            episodeIds: [11], monitorFuture: false, watchClosed: true,
+          { id: 7, anidbId: 1, title: 'Pending title', kind: requestAiring?'series':'movie', status: 'held', requesterId: 8, canCancel: true,
+            episodeIds: [11], monitorFuture: requestAiring, watchClosed: !requestAiring,releasePreference:requestAiring?{group:'SubsPlease',audio:'dual'}:null,
             ...(requestProposal?{releaseSelection:{mode:'auto',phase:'proposal'}}:{}),
             progress: { state: transferObservedMs === null ? 'saved' :
               'download_unverified', targetCount: 1,
@@ -590,6 +592,17 @@ test('title and library controls recover from pending and failed reads without d
       requestProposal=false;await evaluate("document.querySelector('#refresh-requests').click()");
       await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='62.5'");
       assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-release-options')"),null,'release tools disappear when selection is no longer pending');
+      requestAiring=true;await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("Boolean(document.querySelector('[data-request-id=\"7\"] .request-group-preference button'))");
+      await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open=true;document.querySelector('[data-request-id=\"7\"] .request-group-preference button').click()");
+      await until("Boolean(document.querySelector('dialog .release-preference-editor[open]'))");
+      assert.equal(await evaluate("document.querySelector('dialog .release-mode-actions').hidden"),true,'consumed preference editor has no acquisition actions');
+      await evaluate("document.querySelector('dialog').close()");
+      proofReady=true;requestProposal=true;await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('[data-request-id=\"7\"] .request-stage')?.textContent==='Watching for the next episode'");
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-release-options')"),null,'fully available proposal has no obsolete release picker');
+      requestAiring=false;proofReady=false;requestProposal=false;await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')==='62.5'");
       await evaluate(`Date.now = () => ${transferObservedMs + 16 * 60_000};
         document.dispatchEvent(new Event('visibilitychange'))`);
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
