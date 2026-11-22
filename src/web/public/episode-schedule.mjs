@@ -35,8 +35,11 @@ export function episodeScheduleLabel(episode, asOf) {
   return untitled ? 'Aired · title not published yet' : 'Aired';
 }
 
-export function nextAirDateLabel({ kind, releaseState, schedule } = {}) {
-  if (kind !== 'series' || releaseState !== 'airing') return null;
+export function nextAirDateLabel({ kind, releaseState, releaseStatus, schedule } = {}) {
+  // Catalogue presentation can establish completion while request handling
+  // conservatively keeps an incomplete episode roster open for monitoring.
+  if (kind !== 'series' || releaseState !== 'airing' ||
+      typeof releaseStatus === 'string' && releaseStatus.toLowerCase() === 'finished') return null;
   if (!fullDate(schedule?.nextAirDate)) return 'Next air date unknown';
   const number = Number.isSafeInteger(schedule.nextEpisodeNumber) &&
     schedule.nextEpisodeNumber > 0 ? `${schedule.nextEpisodeNumber} · ` : '';

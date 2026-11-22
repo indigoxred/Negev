@@ -1252,6 +1252,25 @@ test('signed-in consumer routes render real shell with search, library and reque
             title: 'Second', availability: 'unknown' }] }));
         return;
       }
+      if (/^\/api\/catalogue\/9900[12](?:\/display)?$/.test(path)) {
+        const display = path.endsWith('/display');
+        const id = Number(path.split('/')[3]);
+        const slow = display === (id === 99001);
+        setTimeout(() => {
+          response.setHeader('Content-Type', 'application/json');
+          response.end(JSON.stringify(display ? {
+            state: 'display', title: 'Finished long series', type: 'TV Series',
+            releaseStatus: 'Finished', restricted: false, tags: [],
+          } : {
+            state: 'details', anidbId: id, title: 'Finished long series',
+            kind: 'series', restricted: false, releaseState: 'airing',
+            monitorFuture: true, episodeCount: 220, page: 1, total: 225,
+            nextPage: 2, episodes: [{ id: id * 100, number: 1,
+              type: 'Episode', title: 'First', availability: 'unknown' }],
+          }));
+        }, slow ? 300 : 0);
+        return;
+      }
       if (path === '/api/catalogue/94') {
         completedColdSeasonReads++;
         response.setHeader('Content-Type', 'application/json');
@@ -1423,6 +1442,16 @@ test('signed-in consumer routes render real shell with search, library and reque
         /2 of 2 regular episodes verified playable in Plex/);
       assert.match(completedColdSeason,
         /Available · 2\/2/);
+      for (const id of [99001, 99002]) {
+        const finished = await dump(`${base}/#/title/${id}`,
+          join(dir, `finished-${id}`));
+        assert.match(finished, /Finished long series/);
+        assert.match(finished, /TV Series · finished/);
+        assert.match(finished, /225 listed AniDB entries/,
+          'the incomplete detail roster must also have rendered');
+        assert.doesNotMatch(finished, /Next air date unknown/,
+          'finished catalogue status suppresses next-air text in either response order');
+      }
       const browse = await dump(`${base}/#/discover`, join(dir, 'browse'), 'discover');
       assert.match(browse, /Pale Cocoon/);
       assert.match(browse, /★ 8.2/);

@@ -2231,10 +2231,23 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     displayCache.set(item.anidbId, displayRead);
     if (displayCache.size > 100) displayCache.delete(displayCache.keys().next().value);
   }
+  let displayReleaseStatus = null;
+  let nextAirData = null;
+  let nextAirElement = null;
+  const refreshNextAir = () => {
+    if (!nextAirElement) return;
+    const label = nextAirDateLabel({ kind: nextAirData.kind,
+      releaseState: nextAirData.releaseState, releaseStatus: displayReleaseStatus,
+      schedule: nextAirData.regularSchedule });
+    nextAirElement.hidden = !label;
+    nextAirElement.textContent = label ?? '';
+  };
   const renderDisplay = (display, title) => {
     if (!isCurrentDetail() || display?.state !== 'display') return;
     if (display.restricted !== false &&
         (!state.showAdult || state.user?.adultAllowed !== true)) return;
+    displayReleaseStatus = display.releaseStatus;
+    refreshNextAir();
     panel.querySelector('.detail-title')?.replaceWith(titleLabel({ title,
       englishTitle: display.englishTitle ?? item.englishTitle },
     { tag: 'h1', className: 'detail-title' }));
@@ -2408,10 +2421,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
       sourceDetails.append(element('summary', 'Catalogue details'), element('p', `${data.kind === 'movie' ? 'Film' : 'Series'} · ${data.total} listed AniDB entr${data.total === 1 ? 'y' : 'ies'} · AniDB ${item.anidbId}`));
       panel.append(sourceDetails);
     }
-    const nextAir = nextAirDateLabel({ kind: data.kind,
-      releaseState: data.releaseState, schedule: data.regularSchedule });
-    if (nextAir) panel.append(element('p', nextAir,
-      `detail-next-air${data.regularSchedule?.nextAirDate ? '' : ' unknown'}`));
+    if (data.kind === 'series' && data.releaseState === 'airing') {
+      nextAirData = data;
+      nextAirElement = element('p', undefined,
+        `detail-next-air${data.regularSchedule?.nextAirDate ? '' : ' unknown'}`);
+      refreshNextAir();
+      panel.append(nextAirElement);
+    }
     let refreshAvailabilitySummary = () => {};
     if (notReleased) panel.append(element('p',
       'Not yet released. You can request this title now; Negev will watch for its release.',

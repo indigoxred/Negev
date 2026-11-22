@@ -54,3 +54,14 @@ test('only an airing series shows a next air date or an honest unknown state', (
   assert.equal(nextAirDateLabel({ kind: 'series', releaseState: 'completed',
     schedule: null }), null);
 });
+
+test('finished catalogue presentation suppresses next-air text without changing request state', () => {
+  for (const releaseStatus of ['Finished', 'FINISHED']) {
+    for (const schedule of [null, { nextAirDate: '2026-11-29', nextEpisodeNumber: 2 }]) {
+      assert.equal(nextAirDateLabel({ kind: 'series', releaseState: 'airing',
+        releaseStatus, schedule }), null);
+    }
+  }
+  assert.equal(nextAirDateLabel({ kind: 'series', releaseState: 'airing',
+    releaseStatus: 'Airing', schedule: null }), 'Next air date unknown');
+});
