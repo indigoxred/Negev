@@ -21,7 +21,7 @@ const validReason = (value) => typeof value === 'string' &&
 export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
-  readRelatedTitles,
+  readRelatedTitles, releaseQueries = async () => [],
   readReleaseControl, consumeReleaseChoice, readChosenAttempt,
   checkPreferredRelease, getPreferredFallback, closePreferredWaits,
   preferRegisteredCorrespondence = false,
@@ -39,6 +39,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       [readReleaseControl,consumeReleaseChoice,readChosenAttempt,checkPreferredRelease,getPreferredFallback,closePreferredWaits].some(fn=>fn!==undefined&&typeof fn!=='function') ||
       typeof preferRegisteredCorrespondence!=='boolean' ||
       typeof preferShokoPreview !== 'boolean' ||
+      typeof releaseQueries !== 'function' ||
       typeof requireReleasePolicy !== 'boolean' ||
       typeof now !== 'function' ||
       !Number.isSafeInteger(maxPreflights) || maxPreflights < 1 ||
@@ -170,13 +171,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
       let related;
       try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
       catch { return held('related_title_unavailable'); }
+      let requestedAliases = [];
+      try { requestedAliases = await releaseQueries({ anidbId: request.anidbId }); }
+      catch { /* Canonical checks remain conservative if aliases are unavailable. */ }
       safeTitles = [];
       for (const item of found.items) {
         // Reject a known different installment before spending a metainfo
         // read or a place in the bounded three-candidate preview. File names
         // are checked again after metainfo is fetched for surviving titles.
         const checked = checkRelatedInstallment({ anidbId: request.anidbId,
-          requestedTitle: request.title, related, releaseTitle: item.title,
+          requestedTitle: request.title, requestedAliases, related, releaseTitle: item.title,
           fileNames: [item.title] });
         if (checked.reason === 'related_title_unavailable') return checked;
         if (checked.state === 'related_title_clear') safeTitles.push(item);
@@ -233,7 +237,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
       [preferSeasonPack ? 'quality-policy-season-pack-v3' :
-        requireReleasePolicy ? 'quality-policy-v4' :
+        requireReleasePolicy ? 'quality-policy-v5' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
@@ -426,7 +430,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
       if (!pinned && preferShokoPreview && !uncertainPackPhase &&
           !(control?.preference&&found.releaseState==='airing'&&matchesPreferredGroup(candidate,control.preference.group))&&
           (preferRegisteredCorrespondence ? correspondenceLevel(preview)==='unknown' : preview.shokoPreview !== 'exact')) {
-        uncertainSelection ??= { candidate, preview, index };
+        if (!uncertainSelection || compareReleases(candidate,
+          uncertainSelection.candidate, { preferSeasonPack }) < 0) {
+          uncertainSelection = { candidate, preview, index };
+        }
         continue;
       }
       if (uncertainSelection && requireReleasePolicy &&

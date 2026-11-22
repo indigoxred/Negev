@@ -4,14 +4,15 @@ import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs
 
 const held = (reason) => ({ state: 'held', reason });
 const MAX_VIDEO_BYTES = 64 * 1024 ** 3;
-const titleTokens = (value) => typeof value === 'string'
-  ? (value.normalize('NFKC').toLocaleLowerCase('en')
+const literalTitleTokens = (value) => typeof value === 'string'
+  ? value.normalize('NFKC').toLocaleLowerCase('en')
     .replace(/&/g, ' and ').replace(/×/g, ' x ')
-    .match(/[\p{L}\p{N}]+/gu) ?? []).flatMap((token, index, all) => {
+    .match(/[\p{L}\p{N}]+/gu) ?? [] : [];
+const titleTokens = (value) => literalTitleTokens(value).flatMap((token, index, all) => {
       if (token === 'season' && /^0*[1-9]\d*$/.test(all[index + 1] ?? '')) return [];
       const season = /^s0*([1-9]\d*)$/.exec(token);
       return [season ? season[1] : token];
-    }) : [];
+    });
 // A search hit may be unrelated despite matching episode numbers. This is
 // provisional title evidence; completed bytes still need exact AniDB proof.
 export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
@@ -19,15 +20,19 @@ export const matchesTrustedReleaseTitle = (releaseTitle, ...titles) => {
   // group. It must not establish the anime identity by itself.
   const withoutGroup = typeof releaseTitle === 'string' ?
     releaseTitle.replace(/^\s*\[[^\]\r\n]{1,120}\]\s*(?=\S)/u, '') : releaseTitle;
-  const release = titleTokens(withoutGroup);
-  return titles.some((title) => {
-    const key = titleTokens(title);
+  const matches = (release, key) => {
     const compact = key.join('');
     if (compact.length < 2) return false;
-    if (release.includes(compact)) return true;
-    return release.some((_, index) => key.every((word, offset) =>
-      release[index + offset] === word));
-  });
+    return release.includes(compact) || release.some((_, index) =>
+      key.every((word, offset) => release[index + offset] === word));
+  };
+  const literalRelease = literalTitleTokens(withoutGroup);
+  const release = titleTokens(withoutGroup);
+  // A trusted name can itself end in Season. Match that literal identity
+  // before a following episode number is normalized as a season annotation.
+  // Explicit wrong-season coordinates remain the separate installment guard.
+  return titles.some(title => matches(literalRelease, literalTitleTokens(title)) ||
+    matches(release, titleTokens(title)));
 };
 
 

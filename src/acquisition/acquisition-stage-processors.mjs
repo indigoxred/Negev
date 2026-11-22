@@ -249,7 +249,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           readRecoveredTargets: (requestId) =>
             recognitionRecoveries.getReleasedTargets(requestId),
         } : {}),
-        discoverCandidates, previewCandidate, loadDetail,
+        discoverCandidates, previewCandidate, loadDetail, releaseQueries,
         preferShokoPreview: true, requireReleasePolicy: true,
         ...(readRelatedTitles ? { readRelatedTitles: relatedTitleReader } : {}),
         submitCandidate: async ({ request, ...selected }) => {

@@ -57,3 +57,15 @@ test('legacy season-mismatch decisions are reconsidered without flushing other e
   assert.deepEqual(cache.get({request,candidate}),result);cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>101});assert.deepEqual(cache.get({request,candidate}),result);
  }finally{cache.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('textual episode-title revisions recheck both cached title and season mismatches across restart',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-text-episode-cache-')),dbPath=path.join(dir,'state.sqlite');let cache=openCandidateCheckCache(dbPath,{now:()=>100});cache.close();
+ const key=c=>createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses',request.id,request.anidbId,request.kind,[...request.episodeIds],c.indexerId,request.title,c.guid,c.title,c.size,c.sourceQuery,c.targetEpisodeId])).digest('hex');
+ const cases=[['title',{state:'held',reason:'release_title_mismatch'}],['season',{state:'held',reason:'related_installment_mismatch',_relatedGuardRevision:'trusted-title-season-v1'}]];
+ const db=new DatabaseSync(dbPath);for(const [guid,result]of cases){const c={...candidate,guid};db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(key(c),42,'[1001]',JSON.stringify(result),100,21600100);}db.close();
+ cache=openCandidateCheckCache(dbPath,{now:()=>101});try{
+  for(const [guid,legacy]of cases){const c={...candidate,guid};assert.equal(cache.get({request,candidate:c}),null,'old '+legacy.reason+' must not hold the saved request');
+   const result={state:'held',reason:legacy.reason};cache.put({request,candidate:c,result});assert.deepEqual(cache.get({request,candidate:c}),result);}
+  cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>102});for(const [guid,result]of cases)assert.deepEqual(cache.get({request,candidate:{...candidate,guid}}),{state:'held',reason:result.reason});
+ }finally{cache.close();await rm(dir,{recursive:true,force:true});}
+});
