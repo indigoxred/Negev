@@ -194,9 +194,12 @@
         <header class="page-head requests-page-head"><h1 id="requests-heading">My requests</h1>
           <p id="requests-description">Follow your anime requests.</p><button id="refresh-requests" class="quiet" type="button">Refresh</button></header>
         <div class="request-toolbar">
-        <div id="request-scope" class="request-scope" aria-label="Request owners" hidden><span class="toolbar-label">Owner</span>
-          <button type="button" data-request-scope="all" aria-pressed="true">All requests</button>
-          <button type="button" data-request-scope="mine" aria-pressed="false">Mine</button>
+        <div id="request-scope" class="request-scope" aria-label="Request owners" hidden>
+          <span class="toolbar-label" id="request-owner-label">Requested by</span>
+          <div class="request-scope-options" role="group" aria-labelledby="request-owner-label">
+            <button type="button" data-request-scope="all" aria-pressed="true">All requests</button>
+            <button type="button" data-request-scope="mine" aria-pressed="false">Mine</button>
+          </div>
         </div>
         <div class="request-view-filter"><span class="toolbar-label">View</span><div class="request-tabs" role="tablist" aria-label="Request status">
           <button type="button" data-request-tab="history" aria-selected="true">Recent requests</button>
