@@ -49,11 +49,25 @@ export function releaseFacts(title = '') {
 }
 // Shared explicit-language policy. Missing tags and burned-in subtitles remain
 // unknown hints, not a reason to reject an otherwise suitable release.
+// Only an explicit subtitle-language exclusion is negative evidence. A
+// foreign track alongside English, multi-subs or absent tags is not an exclusion.
+function subtitleLanguageDeclarations(title) {
+  title=title.normalize('NFKD').replace(/\p{M}/gu,'');
+  const language='(?:english|eng|en|japanese|jpn|jap|ja|german|deutsch|deu|ger|de|french|francais|fra|fre|fr|spanish|espanol|spa|esp|es|russian|rus|ru|italian|ita|it|portuguese|por|pt|hindi|hin|tamil|tam|telugu|tel|ukrainian|ukr|korean|kor|ko|chinese|chi|zho|zh|polish|pol|pl|arabic|ara|ar)';
+  const list=language+'(?:(?:[ ._/,+&-]+|[ ._-]+and[ ._-]+)'+language+')*';
+  const before=new RegExp(String.raw`\b(only[ ._-]+)?(${list})[ ._-]+(?:subs?|subtitles?)\b([ ._-]+only\b)?`,'gi');
+  const after=new RegExp(String.raw`\b(only[ ._-]+)?(?:subs?|subtitles?)[ ._:-]+(${list})\b([ ._-]+only\b)?`,'gi');
+  const declarations=[...title.matchAll(before),...title.matchAll(after)];
+  const english=match=>/\b(?:english|eng|en)\b/i.test(match[2]);
+  return {excludesEnglish:declarations.some(match=>(match[1]||match[3])&&!english(match)),
+    includesEnglish:declarations.some(english)};
+}
 export function releaseLanguageSuitability(title, { allowEnglishDub = false } = {}) {
   title = (typeof title === 'string' ? title : '').replaceAll('_', ' ');
   const facts = releaseFacts(title);
-  const noEnglish = /\b(?:no[ ._-]*(?:(?:eng|english)[ ._-]*)?(?:subs?|subtitles?)|unsubbed|raw[ ._-]*only)\b/i.test(title) ||
-    /\bsub[ ._-]*french\b/i.test(title) && !/\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?)\b/i.test(title);
+  const subtitles=subtitleLanguageDeclarations(title);
+  const noEnglish = subtitles.excludesEnglish || /\b(?:no[ ._-]*(?:(?:eng|english)[ ._-]*)?(?:subs?|subtitles?)|unsubbed|raw[ ._-]*only)\b/i.test(title) ||
+    /\bsub[ ._-]*french\b/i.test(title) && !subtitles.includesEnglish && !/\b(?:eng(?:lish)?[ ._-]*subs?|multi[ ._-]*subs?)\b/i.test(title);
   const reason = noEnglish ? 'no_english_subtitles' : facts.audio === 'other'
     ? 'incompatible_audio' : facts.audio === 'english' && !allowEnglishDub ? 'english_dub_only' : null;
   return { eligible: reason === null, reason, audio: facts.audio };

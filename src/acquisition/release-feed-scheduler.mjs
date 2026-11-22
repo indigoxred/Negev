@@ -1,29 +1,22 @@
-// Shared clock for the installed Prowlarr indexers. A feed result can only
-// wake an existing guarded request through the durable feed ledger.
+// One clock, independent deadlines for installed Prowlarr indexers. A feed hit
+// only wakes an existing guarded request through the durable feed ledger.
 export function createReleaseFeedScheduler({ indexerIds, feedLedger,
   readFeed, now = Date.now,
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (!Array.isArray(indexerIds) || indexerIds.length < 1 ||
       indexerIds.length > 20 ||
-      indexerIds.some((id) => !Number.isSafeInteger(id) || id < 1) ||
+      indexerIds.some(id => !Number.isSafeInteger(id) || id < 1) ||
       new Set(indexerIds).size !== indexerIds.length ||
       typeof feedLedger?.getPollIntervalMs !== 'function' ||
       typeof feedLedger?.accept !== 'function' ||
-      typeof readFeed !== 'function' || typeof now !== 'function' ||
-      typeof setTimer !== 'function' || typeof clearTimer !== 'function') {
+      [readFeed,now,setTimer,clearTimer].some(fn => typeof fn !== 'function')) {
     throw new TypeError('Invalid release feed scheduler');
   }
-  let started = false;
-  let stopped = false;
-  let timer;
-  let running;
-  let failures = 0;
-  let lastResult = null;
-  let lastAttemptMs = null;
-  let nextPollMs = null;
-  let blockedUntilMs = 0;
+  let started = false, stopped = false, timer, running, lastResult = null;
+  const feeds = new Map(indexerIds.map(id => [id,
+    { failures:0, lastAttemptMs:null, nextPollMs:null, blockedUntilMs:0 }]));
   const recheckMs = 3_600_000;
-  const schedule = (delay) => {
+  const schedule = delay => {
     if (stopped) return;
     timer = setTimer(() => {
       timer = undefined;
@@ -31,62 +24,62 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
       return running;
     }, delay);
   };
+  const due = (state,cadence,clock) => Math.max(state.blockedUntilMs,
+    state.lastAttemptMs === null ? clock :
+      Math.min(state.nextPollMs ?? clock,state.lastAttemptMs + cadence));
   const tick = async () => {
     let cadence;
-    try { cadence = feedLedger.getPollIntervalMs({ nowMs: now() }); }
-    catch { lastResult = { state: 'unavailable' }; schedule(5 * 60_000); return; }
+    try { cadence = feedLedger.getPollIntervalMs({ nowMs:now() }); }
+    catch { lastResult={state:'unavailable'};schedule(300_000);return; }
     if (cadence === null) {
-      lastResult = { state: 'idle' };
-      nextPollMs = null;
-      schedule(60_000);
-      return;
+      lastResult={state:'idle'};schedule(60_000);return;
     }
-    const clock = now();
-    const cadenceDueMs = lastAttemptMs === null ? clock :
-      Math.min(nextPollMs ?? clock, lastAttemptMs + cadence);
-    const dueMs = Math.max(cadenceDueMs, blockedUntilMs);
-    if (clock < dueMs) {
-      schedule(Math.min(recheckMs, dueMs - clock));
-      return;
+    if (!Number.isSafeInteger(cadence) || cadence < 1 || cadence > 86_400_000) {
+      lastResult={state:'unavailable'};schedule(300_000);return;
     }
-    lastAttemptMs = clock;
-    let failed = false;
-    let retryAfterMs = 0;
-    let wokenRequests = 0;
+    let wokenRequests = 0, attempted = false;
     for (const indexerId of indexerIds) {
-      let result;
-      try { result = await readFeed(indexerId); }
-      catch { result = { state: 'unavailable' }; }
-      if (result?.state !== 'feed' || !Array.isArray(result.items)) {
-        failed = true;
-        retryAfterMs = Math.max(retryAfterMs,
-          Number.isSafeInteger(result?.retryAfterMs) ? result.retryAfterMs : 0);
-        continue;
+      if (stopped) return;
+      const state=feeds.get(indexerId);
+      if (now() < due(state,cadence,now())) continue;
+      attempted=true;
+      state.lastAttemptMs=now();
+      let result,failed=false;
+      try { result=await readFeed(indexerId); }
+      catch { result={state:'unavailable'}; }
+      if (result?.state !== 'feed' || !Array.isArray(result.items)) failed=true;
+      else {
+        try {
+          const recorded=feedLedger.accept({indexerId,items:result.items,nowMs:now()});
+          if (!Number.isSafeInteger(recorded?.wokenRequests) || recorded.wokenRequests < 0) {
+            throw new Error('Invalid feed acceptance');
+          }
+          wokenRequests+=recorded.wokenRequests;
+        } catch { failed=true; }
       }
-      try {
-        const recorded = feedLedger.accept({ indexerId,
-          items: result.items, nowMs: now() });
-        wokenRequests += recorded.wokenRequests;
-      } catch { failed = true; }
+      state.failures=failed ? Math.min(state.failures+1,8) : 0;
+      // An indexer's Retry-After is not evidence that unrelated indexers are
+      // limited. If the provider refuses every feed, each honours its deadline.
+      const retryAfterMs=Number.isSafeInteger(result?.retryAfterMs) && result.retryAfterMs>0
+        ? Math.min(result.retryAfterMs,86_400_000) : 0;
+      state.blockedUntilMs=failed ? now()+Math.min(86_400_000,
+        Math.max(retryAfterMs,300_000*2**(state.failures-1))) : 0;
+      state.nextPollMs=failed ? state.blockedUntilMs : now()+cadence;
     }
-    failures = failed ? Math.min(failures + 1, 8) : 0;
-    lastResult = { state: failed ? 'unavailable' : 'checked', wokenRequests };
-    const finishedMs = now();
-    blockedUntilMs = failed ? finishedMs + Math.min(86_400_000,
-      Math.max(retryAfterMs, 5 * 60_000 * 2 ** (failures - 1))) : 0;
-    nextPollMs = failed ? blockedUntilMs : finishedMs + cadence;
-    schedule(Math.min(recheckMs, Math.max(1, nextPollMs - now())));
+    if (attempted) lastResult={state:[...feeds.values()].some(f=>f.failures>0)
+      ? 'unavailable' : 'checked',wokenRequests};
+    const nextDueMs=Math.min(...[...feeds.values()].map(state=>due(state,cadence,now())));
+    schedule(Math.min(recheckMs,Math.max(1,nextDueMs-now())));
   };
   return {
     start() {
       if (started || stopped) throw new Error('Release feed scheduler already started');
-      started = true;
-      schedule(60_000);
+      started=true;schedule(60_000);
     },
     async stop() {
-      stopped = true;
+      stopped=true;
       if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
+      timer=undefined;
       if (running) await running;
     },
     getLastResult() { return lastResult; },

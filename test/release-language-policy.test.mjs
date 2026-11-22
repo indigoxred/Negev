@@ -25,3 +25,13 @@ test('underscore-separated explicit audio and subtitle declarations follow the s
   const c={title,seeders:20};assert.equal(assessRelease(c).eligible,false,title);assert.equal(matchesReleaseFilters(c,{quality:'all',audio:'japanese_dual'}),false,title);
  }
 });
+
+for(const declaration of ['German Subtitles Only','French Subtitles Only','Spanish_Subtitles_Only','Only Japanese Subs','Subs: German Only','Subtitles French Only','Only Russian Subtitles','Français Subtitles Only','Español Subs Only','German / French Subs Only','French Subtitles Only Multi-Subs'])test('both pick modes reject explicit foreign-only subtitles: '+declaration,()=>{
+ const c=candidate('[Japanese Audio] ['+declaration+']');assert.equal(assessRelease(c).eligible,false);for(const audio of ['japanese','japanese_dual','dual','english'])assert.equal(matchesReleaseFilters(c,{quality:'all',audio}),false);
+});
+
+test('foreign subtitle declarations including English and unlabelled burned-in releases remain eligible',()=>{
+ for(const tag of ['Japanese Audio English and German Subtitles Only','Japanese Audio German / English Subs Only','Japanese Audio Subs: English / French Only','Japanese Audio Sub French / English Only','Japanese Audio Multi-Subs','Dual Audio English Subs','Japanese Audio French Subtitles English Subtitles','Hardsub','']){
+  const c=candidate(tag);assert.equal(assessRelease(c).eligible,true,tag);assert.equal(matchesReleaseFilters(c,{quality:'all',audio:'japanese_dual'}),true,tag);
+ }
+});

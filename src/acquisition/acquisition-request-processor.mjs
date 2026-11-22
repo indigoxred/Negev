@@ -94,6 +94,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     let exactAvailable = new Set();
     let uncertainOwned = new Set();
+    let pendingCoverage = new Set();
     if (readPublicCoverage) {
       let coverage;
       try { coverage = await readPublicCoverage(request); }
@@ -121,6 +122,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
         }
         uncertainOwned = new Set(ids);
       }
+      if (coverage.pendingEpisodeIds !== undefined) {
+        const ids=coverage.pendingEpisodeIds;
+        if (!Array.isArray(ids) || new Set(ids).size!==ids.length ||
+          ids.some(id=>!uncertainOwned.has(id))) return held('availability_unverified');
+        pendingCoverage=new Set(ids);
+      }
       if (coverage.verifiedTargets === request.episodeIds.length) {
         if(pinned) consumeReleaseChoice?.(requestId,control.revision);
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
@@ -129,7 +136,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
     let found, expiredFallback;
     const missingIds = request.episodeIds.filter((id) =>
       !exactAvailable.has(id) && !uncertainOwned.has(id));
-    if (missingIds.length === 0) return held('availability_unverified');
+    if (missingIds.length === 0) return held(pendingCoverage.size
+      ? 'availability_check_pending' : 'availability_unverified');
     const searchTargetEpisodeId = request.kind === 'series' && missingIds.length > 0 ?
       missingIds[(pass - 1) % missingIds.length] : null;
     try { found = pinned ? {state:'candidates',requestId,anidbId:request.anidbId,
