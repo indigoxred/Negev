@@ -128,10 +128,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  control={mode:'auto',phase:'consumed',revision:40,preference:{group:'SubsPlease',audio:'dual'}};
  const beforePreferenceSearch=searchUrls.length,beforePreferenceAuto=autoCalls,beforePreferenceChoose=chooseCalls;
  holdExistingRead=true;const preferenceOpening=dialog.open({requestId:1,title:'Airing preference',preferenceOnly:true});await tick();
- const preferenceLoadingSafe=document.querySelector('.release-mode-actions').hidden&&document.querySelector('.release-search-actions').hidden;
+ const preferenceLoadingSafe=document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden;
  click('Auto-Pick');click('Manual Pick');click('Search');await tick();
  releaseExistingRead.resolve({control,context:{confirmedAiring:true,preferredGroup:'SubsPlease'}});holdExistingRead=false;await preferenceOpening;
- const preferenceOnly=document.querySelector('.release-mode-actions').hidden&&document.querySelector('.release-search-actions').hidden&&document.querySelector('.release-preference-editor').open&&document.querySelector('[aria-label="Preferred release group"]').value==='SubsPlease';
+ const preferenceOnly=document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden&&document.querySelector('.release-preference-editor').open&&document.querySelector('[aria-label="Preferred release group"]').value==='SubsPlease';
  document.querySelector('[aria-label="Preferred release group"]').value='Erai-raws';click('Save group');await tick();
  const preferenceAudioPreserved=lastPreferenceAudio==='dual'&&control.preference?.group==='Erai-raws'&&control.phase==='consumed'&&document.querySelector('[role=status]').textContent.includes('saved');
  click('Clear preference');await tick();
