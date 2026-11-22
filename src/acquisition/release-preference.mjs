@@ -76,12 +76,14 @@ export function compareReleases(left, right, { preferSeasonPack = false } = {}) 
     const rank=c=>Number(hasSingleEpisodeHint(c));
     if(rank(left)!==rank(right))return rank(left)-rank(right);
   }
+  // An episode-title hint helps retrieval and ties. It cannot authorize a
+  // quality downgrade: metainfo still has to prove the requested episode.
+  const suitability = compareReleaseSuitability(left, right);
+  if (suitability !== 0) return suitability;
   if (left.targetedEpisode !== right.targetedEpisode && !preferSeasonPack) {
     return Number(right.targetedEpisode === true) -
       Number(left.targetedEpisode === true);
   }
-  const suitability = compareReleaseSuitability(left, right);
-  if (suitability !== 0) return suitability;
   if(left.titleHintMatch!==right.titleHintMatch) {
     const relevance=Number(right.titleHintMatch===true)-Number(left.titleHintMatch===true);
     if(relevance)return relevance;

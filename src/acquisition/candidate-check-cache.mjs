@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const relatedGuardRevision = 'trusted-title-season-v1';
+const relatedGuardRevision = 'trusted-title-season-v2';
+const titleIdentityRevision = 'literal-season-title-v1';
 const deterministic = new Set(['release_title_mismatch', 'shoko_preview_wrong_identity',
   'targeted_result_wrong_episode', 'shoko_video_format_unsupported',
   'related_installment_mismatch', 'invalid_metainfo', 'unsafe_torrent_path',
@@ -48,7 +49,10 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
         // Keep unrelated negatives and positive evidence reusable.
         if (result.state === 'held' && result.reason === 'related_installment_mismatch' &&
             result._relatedGuardRevision !== relatedGuardRevision) return null;
+        if (result.state === 'held' && result.reason === 'release_title_mismatch' &&
+            result._titleIdentityRevision !== titleIdentityRevision) return null;
         delete result._relatedGuardRevision;
+        delete result._titleIdentityRevision;
         return result;
       } catch { return null; }
     },
@@ -58,6 +62,7 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
       const safe = Object.fromEntries(fields.filter(key => result[key] !== undefined)
         .map(key => [key, result[key]]));
       if (result.reason === 'related_installment_mismatch') safe._relatedGuardRevision = relatedGuardRevision;
+      if (result.reason === 'release_title_mismatch') safe._titleIdentityRevision = titleIdentityRevision;
       const json = JSON.stringify(safe);
       if (Buffer.byteLength(json) > 64_000) return;
       const checkedMs = now();
