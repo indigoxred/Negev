@@ -399,7 +399,7 @@ function renderRoute() {
       byId('search-form').requestSubmit();
     }
   }
-  if (page === 'discover') {
+  if (page === 'discover' && route.query.length < 2) {
     const choice = seasonChoice(route);
     const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}-${choice.sort}`;
     if (state.seasonalRouteKey !== key) {

@@ -783,6 +783,7 @@ test('signed-in consumer routes render real shell with search, library and reque
     let failedAiringContinuation = false;
     let posterGets = 0, posterHeadReads = 0;
     const posterRequests = [];
+    let catalogueReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -959,6 +960,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/seasons') {
+        catalogueReads++;
         const params = new URL(request.url, 'http://localhost').searchParams;
         if (params.get('year') === '2024') {
           const after = Number(params.get('after') ?? 0);
@@ -1449,6 +1451,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       const base = `http://127.0.0.1:${server.address().port}`;
       const discover = await dump(`${base}/#/discover?q=Pale`, join(dir, 'discover'));
       assert.match(discover, /Pale Cocoon/);
+      assert.equal(catalogueReads,0,'text search does not load the hidden catalogue grid');
       const probeIndex=posterRequests.indexOf('HEAD');
       assert.ok(probeIndex>0 && posterRequests[0]==='GET',
         'a native image failure is followed by the status probe');
