@@ -120,7 +120,7 @@ test('title and library controls recover from pending and failed reads without d
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);if(value.action==='preference')preferenceCommands.push(value);control={...control,mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1,...(value.action==='preference'?{preference:{group:value.group,audio:value.audio}}:{})};}
         json(response,{state:'updated',control,context:{confirmedAiring:true,preferredGroup:control.preference?.group??null}});
       } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/releases')) {
-        json(response,{state:'candidates',items:[],nextOffset:null});
+        json(response,{state:'candidates',items:[],nextOffset:null,confirmedAiring:true});
       } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
