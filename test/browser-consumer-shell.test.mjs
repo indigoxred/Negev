@@ -16,7 +16,7 @@ const assets = new Map([
   ['/style.css', ['style.css', 'text/css']],
   ['/consumer.css', ['consumer.css', 'text/css']],
   ...['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf'].map(name=>['/fonts/'+name,['fonts/'+name,'font/ttf']]),
-  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs', 'poster-recovery.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
@@ -781,12 +781,26 @@ test('signed-in consumer routes render real shell with search, library and reque
     let failedRelatedDetailReads = 0;
     let failedDiscoverContinuation = false;
     let failedAiringContinuation = false;
+    let posterGets = 0, posterHeadReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
         `default-src 'none'; script-src 'self'${new URL(request.url, 'http://localhost')
           .searchParams.has('english') ? " 'unsafe-inline'" : ''}; ` +
         "style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'");
+      if (path === '/api/catalogue/posters/anidb/4158') {
+        response.setHeader('Cache-Control','no-store');
+        if (request.method === 'HEAD') posterHeadReads++;
+        else posterGets++;
+        if (request.method === 'HEAD' || posterGets === 1) {
+          response.writeHead(503,{'Retry-After':'1'});response.end();
+        } else {
+          // A tiny image fixture proves native load/error events, not AniDB validation.
+          response.setHeader('Content-Type','image/svg+xml');
+          response.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>');
+        }
+        return;
+      }
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
@@ -1432,6 +1446,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       const base = `http://127.0.0.1:${server.address().port}`;
       const discover = await dump(`${base}/#/discover?q=Pale`, join(dir, 'discover'));
       assert.match(discover, /Pale Cocoon/);
+      assert.equal(posterGets,2,'one native GET retry follows the transient failure');
+      assert.equal(posterHeadReads,1,'one HEAD probe reads the cooldown');
+      assert.doesNotMatch(discover, /<img[^>]*src="\/api\/catalogue\/posters\/anidb\/4158"[^>]*missing-art/);
       assert.doesNotMatch(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const completedColdSeason = await dump(`${base}/#/title/94`,

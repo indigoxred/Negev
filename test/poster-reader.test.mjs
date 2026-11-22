@@ -2,6 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createPosterReader } from '../src/catalogue/poster-reader.mjs';
 
+test('a transient poster failure expires promptly instead of poisoning the ten-minute cache',async()=>{
+  let time=1000,failed=true,calls=0;
+  const reader=createPosterReader({now:()=>time,fetchImpl:async url=>{
+    calls++;
+    if(failed)throw Error('temporary connection failure');
+    return String(url).includes('/api/anidb/')
+      ?new Response(JSON.stringify({anidb_id:1,picture:'1.jpg'}))
+      :new Response(Buffer.from([0xff,0xd8,0xff]),{headers:{'content-type':'image/jpeg'}});
+  }});
+  assert.equal((await reader.read({anidbId:1})).retryable,true);
+  failed=false;time+=16000;
+  assert.equal((await reader.read({anidbId:1})).state,'image');
+  assert.equal(calls,3);
+});
+
 test('poster reader caps concurrent lookups and caches an exact AniDB image', async () => {
   let active = 0;
   let peak = 0;

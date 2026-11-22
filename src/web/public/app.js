@@ -3,6 +3,7 @@ import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager, observeCatalogueContinuation, createCataloguePrefetchBudget, createCatalogueReadPacer } from './search-pages.mjs';
+import { attachPosterRecovery } from './poster-recovery.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation, requestNeedsReleaseChoice, requestHasPendingAcquisition, requestCanEditReleasePreference } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
@@ -322,7 +323,7 @@ function posterImage(item, className = '') {
   poster.alt = '';
   poster.loading = 'lazy';
   if (className) poster.className = className;
-  poster.addEventListener('error', () => poster.classList.add('missing-art'));
+  attachPosterRecovery(poster);
   return poster;
 }
 function renderRoute() {

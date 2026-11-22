@@ -7,6 +7,7 @@ import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { buildUserApp } from '../src/web/user-app.mjs';
+import { withCatalogueRetry } from '../src/catalogue/catalogue-retry.mjs';
 
 const origin = 'http://localhost:3000';
 
@@ -615,6 +616,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       : { state: 'unavailable' },
     readCataloguePoster: async ({ anidbId }) => anidbId === 1234
       ? { state: 'image', type: 'image/jpeg', bytes: Buffer.from([0xff, 0xd8, 0xff]) }
+      : anidbId === 1235 ? withCatalogueRetry({state:'unavailable',retryable:true},91_000)
       : { state: 'unavailable' },
     readDisplayMetadata: async ({ anidbId }) => anidbId === 1235
       ? { state: 'display', anidbId, title: 'Adult series', restricted: true,
@@ -756,6 +758,11 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(poster.statusCode, 200);
     assert.match(poster.headers['content-type'], /image\/jpeg/);
     assert.deepEqual(poster.rawPayload, Buffer.from([1, 2, 3]));
+    const deferredPoster=await app.inject({method:'GET',
+      url:'/api/catalogue/posters/anidb/1235',headers:{cookie}});
+    assert.equal(deferredPoster.statusCode,503);
+    assert.equal(deferredPoster.headers['retry-after'],'90');
+    assert.equal(deferredPoster.headers['cache-control'],'no-store');
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/posters/not-a-uuid', headers: { cookie } })).statusCode, 404);
     const cataloguePoster = await app.inject({ method: 'GET',
