@@ -36,6 +36,16 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0)
     ) STRICT`);
+    if(!db.prepare('PRAGMA table_info(start_checks)').all().some(c=>c.name==='title_policy_revision')){
+      db.exec('ALTER TABLE start_checks ADD COLUMN title_policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(title_policy_revision>=0)');
+    }
+    // Revisit only pre-correction title decisions once. Fresh genuine conflicts
+    // retain their normal terminal review; an existing start intent still wins.
+    db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
+      WHERE state='held' AND reason='related_installment_mismatch' AND title_policy_revision=0 AND checked_ms IS NOT NULL;
+      UPDATE start_checks SET title_policy_revision=1 WHERE title_policy_revision=0`);
+    db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
+      WHERE state='held' AND reason='provider_unavailable' AND checked_ms IS NOT NULL`);
     // Earlier builds treated a busy metadata reader as a thirty-minute hold.
     // Bring only that transient condition forward on reopen.
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),
@@ -60,9 +70,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
-    (attempt_id,version,state,reason,checked_ms,next_due_ms)
-    VALUES (?,1,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
-    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL`);
+    (attempt_id,version,state,reason,checked_ms,next_due_ms,title_policy_revision)
+    VALUES (?,1,NULL,NULL,NULL,NULL,1) ON CONFLICT(attempt_id) DO UPDATE SET
+    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,title_policy_revision=1`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,version,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM start_checks WHERE attempt_id=?`);
@@ -128,10 +138,10 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid start result');
       }
-      const sessionRetry = ['provider_http_403', 'authentication_backoff',
+      const sessionRetry = ['provider_unavailable', 'provider_http_403', 'authentication_backoff',
         'authentication_unavailable', 'metadata_reader_busy',
         'availability_evidence_stale', 'import_activity_unverified'].includes(reason);
-      const metadataRetry = ['related_title_unavailable',
+      const metadataRetry = ['detail_unavailable', 'related_title_unavailable',
         'shoko_settings_unavailable'].includes(reason);
       const due = state === 'held' && sessionRetry
         ? checkedMs + SESSION_RETRY_MS :
