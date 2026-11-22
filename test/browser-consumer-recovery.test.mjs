@@ -243,6 +243,14 @@ test('title and library controls recover from pending and failed reads without d
       });
       const evaluate = async (expression) => (await send('Runtime.evaluate',
         { expression, returnByValue: true })).result.value;
+      // A cached title can still satisfy content assertions while its view is
+      // hidden. Await the actual hashchange before interacting; otherwise a
+      // legitimate route transition can close the dialog the test just opened.
+      const navigate = async (hash) => {
+        const expression = 'new Promise(resolve => { const hash = '+JSON.stringify(hash)+'; if(location.hash===hash){resolve(true);return;} window.addEventListener("hashchange",()=>resolve(true),{once:true}); location.hash=hash; })';
+        const result = await send('Runtime.evaluate', {expression, awaitPromise:true, returnByValue:true});
+        assert.equal(result.result?.value,true,'hash navigation completes before interacting');
+      };
       const until = async (expression) => {
         for (let attempt = 0; attempt < 300; attempt++) {
           if (await evaluate(expression)) return;
@@ -286,32 +294,32 @@ test('title and library controls recover from pending and failed reads without d
       for (let attempt = 0; attempt < 80 && detailPosts < 1; attempt++) await wait(100);
       assert.equal(detailPosts, 1);
       detailReady = true;
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/1'");
+      await navigate("#/title/1");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       assert.equal(await evaluate("document.querySelector('#detail a[data-plex-link]')?.textContent"),
         undefined, 'title details do not add an optional Plex link');
       assert.equal(detailPosts, 1, 'ready state must use GET, not repeat hydration POST');
       detailReady = false;
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
       holdNextDetailPost = true;
-      await evaluate("location.hash = '#/title/1'");
+      await navigate("#/title/1");
       for (let attempt = 0; attempt < 80 && !heldDetailResponse; attempt++) await wait(100);
       assert.ok(heldDetailResponse, 'detail hydration starts automatically');
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/1'");
+      await navigate("#/title/1");
       await until("document.querySelector('#detail')?.textContent.includes('You can request this title now')");
       assert.equal(detailPosts, 2, 'an in-flight hydration POST must not be duplicated');
       assert.ok(heldDetailResponse);
       json(heldDetailResponse, { state: 'detail_ready' });
       heldDetailResponse = null;
       detailReady = true;
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/1'");
+      await navigate("#/title/1");
       await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
@@ -331,25 +339,25 @@ test('title and library controls recover from pending and failed reads without d
 
       // Browser Back / a receipt link must not leave a hidden native modal
       // keeping the Requests page inert (scrolling can still appear to work).
-      await evaluate("location.hash='#/requests'");
+      await navigate("#/requests");
       await until("!document.querySelector('#view-requests').hidden");
       assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
         'leaving a title closes its modal before hiding the title view');
-      await evaluate("location.hash='#/title/1'");
+      await navigate("#/title/1");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Cancel').click()");
       assert.equal(submittedModes.length,0,'cancelling the submenu never submits a request');
-      await evaluate("location.hash='#/title/3'");
+      await navigate("#/title/3");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
-      await evaluate("location.hash='#/requests'");
+      await navigate("#/requests");
       await until("!document.querySelector('#view-requests').hidden");
       assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
         'the series chooser cannot leave Requests inert');
-      await evaluate("location.hash='#/title/3'");
+      await navigate("#/title/3");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Manual Pick')");
@@ -370,12 +378,12 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),pendingPreviewKey,'preview preference does not clear the pending request key');
       assert.deepEqual(submittedModes,[]);
       assert.equal(await evaluate("document.querySelector('dialog[open] [aria-label=Quality]').value"),'bd1080');
-      await evaluate("location.hash='#/requests'");
+      await navigate("#/requests");
       await until("!document.querySelector('#view-requests').hidden");
       assert.equal(await evaluate("document.querySelectorAll('dialog:modal').length"),0,
         'the body-mounted release picker also closes on navigation');
       previewExisting=true;
-      await evaluate("location.hash='#/title/3'");
+      await navigate("#/title/3");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
       await until("document.querySelector('dialog[open] input[type=checkbox]')");
@@ -388,8 +396,8 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null,'existing success finishes the pending command key');
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
       previewExisting=false;previewPending=true;
-      await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash='#/title/3'");
+      await navigate("#/discover");await until("!document.querySelector('#view-discover').hidden");
+      await navigate("#/title/3");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
       await until("document.querySelector('dialog[open] input[type=checkbox]')");
@@ -400,19 +408,19 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('dialog[open]') && sessionStorage.getItem('negev-request-1-3-installment') === null");
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),null);
       assert.deepEqual(submittedModes,[],'pending preparation does not open an invalid preview or submit again');previewPending=false;
-      await evaluate("location.hash='#/title/1'");
+      await navigate("#/title/1");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
       await until("document.querySelector('dialog[open]')?.textContent.includes('Automatic acquisition is enabled')");
       assert.deepEqual(submittedModes,['auto_review']);
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
-      await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash='#/title/1'");await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
+      await navigate("#/discover");await until("!document.querySelector('#view-discover').hidden");
+      await navigate("#/title/1");await until("document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       for(const result of [{state:'pending',intentId:901},{state:'saved',created:false,requestId:123}]){
         filmResult=result;
-        await evaluate("location.hash='#/discover'");await until("!document.querySelector('#view-discover').hidden");
-        await evaluate("location.hash='#/title/1'");await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
+        await navigate("#/discover");await until("!document.querySelector('#view-discover').hidden");
+        await navigate("#/title/1");await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
         await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
         await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
         await until("!document.querySelector('dialog[open]')");
@@ -421,9 +429,9 @@ test('title and library controls recover from pending and failed reads without d
       // Finish a genuine submission response after navigation, without
       // re-opening an off-page popup or sending the request a second time.
       filmResult = null;
-      await evaluate("location.hash='#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash='#/title/1'");
+      await navigate("#/title/1");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request film'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request film').click()");
       holdNextRequest = true;
@@ -431,7 +439,7 @@ test('title and library controls recover from pending and failed reads without d
       for (let attempt=0; attempt<80 && !heldRequestResponse; attempt++) await wait(100);
       assert.ok(heldRequestResponse, 'submission is in flight');
       const submissionsBeforeLeaving = submittedModes.length;
-      await evaluate("location.hash='#/requests'");
+      await navigate("#/requests");
       await until("!document.querySelector('#view-requests').hidden");
       json(heldRequestResponse,{state:'saved',created:true,requestId:123});
       heldRequestResponse = null;
@@ -440,26 +448,26 @@ test('title and library controls recover from pending and failed reads without d
         'a late successful save cannot reopen a modal on Requests');
       assert.equal(submittedModes.length,submissionsBeforeLeaving);
       const beforeReentry = titleReads;
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/1'");
+      await navigate("#/title/1");
       await until("window.location.hash === '#/title/1' && document.querySelector('#detail')?.textContent.includes('Film · 1 listed AniDB entry')");
       await wait(100);
       assert.ok(titleReads > beforeReentry, 'returning to title revalidates details');
-      await evaluate("location.hash = '#/title/2'");
+      await navigate("#/title/2");
       await until("document.querySelector('#detail')?.textContent.includes('Try again')");
       assert.equal(await evaluate("document.querySelector('#detail')?.textContent.includes('No synopsis is available for this title yet.')"),false,
         'provider failure is not a successful missing-synopsis result');
       await evaluate("[...document.querySelectorAll('#detail button')].find(b => b.textContent === 'Try again').click()");
       await until("document.querySelector('#detail')?.textContent.includes('Recovered title')");
       assert.equal(failedTitleReads, 2);
-      await evaluate("location.hash = '#/discover'");
+      await navigate("#/discover");
       await until("!document.querySelector('#view-discover').hidden");
-      await evaluate("location.hash = '#/title/2'");
+      await navigate("#/title/2");
       await until("document.querySelector('#detail')?.textContent.includes('The recovered catalogue summary.')");
       assert.equal(recoveredDisplayReads, 2,
         'a failed display read must be retried when the title is reopened');
-      await evaluate("location.hash = '#/library'");
+      await navigate("#/library");
       await until("document.querySelector('#library-list')?.textContent.includes('First title')");
       assert.equal(await evaluate("document.querySelector('#library-list')?.textContent.includes('Show more verified titles')"), false,
         'the next page starts automatically when the list bottom is visible');
@@ -473,7 +481,7 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelectorAll('#library-list .poster-card').length"), 2);
       const libraryReadsBeforeReturn = firstLibraryReads;
       proofReady = false;
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       await until("document.querySelector('#request-list')?.textContent.includes('Pending title')");
       await evaluate("document.querySelector('#more-requests').click()");
       await until("document.querySelector('#request-list')?.textContent.includes('Older completed title')");
@@ -494,30 +502,30 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), false);
       newHistoryRequest = false;
-      await evaluate("location.hash = '#/library'");
+      await navigate("#/library");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,
         'returning to Library must read current proof instead of keeping its old cards');
       const requestReadsBeforeReturn = requestReads;
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch') && document.querySelector('#request-list')?.textContent.includes('film is playable in Plex')");
       assert.ok(requestReads > requestReadsBeforeReturn,
         'returning to Requests must read the changed request progress');
-      await evaluate("location.hash = '#/discover?q=Pending'");
+      await navigate("#/discover?q=Pending");
       await until("document.querySelector('#results')?.textContent.includes('In library')");
       const searchReadsBeforeReturn = searchReads;
       proofReady = false;
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       await until("!document.querySelector('#view-requests').hidden");
-      await evaluate("location.hash = '#/discover?q=Pending'");
+      await navigate("#/discover?q=Pending");
       await until("document.querySelector('#results')?.textContent.includes('Pending title') && !document.querySelector('#results')?.textContent.includes('In library')");
       assert.ok(searchReads > searchReadsBeforeReturn,
         'returning to the same search must revalidate the availability badge');
       holdWatchingRequests = true;
       const historyBeforeHeldWatch = historyReads;
-      await evaluate("location.hash = '#/library'");
+      await navigate("#/library");
       await until("!document.querySelector('#view-library').hidden");
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       await until("document.querySelector('#watch-list')?.textContent.includes('Loading watches')");
       assert.equal(heldWatchingResponses.length, 1);
       for (let attempt = 0; attempt < 80 && historyReads === historyBeforeHeldWatch; attempt++) {
@@ -537,9 +545,9 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#watch-list')?.textContent.includes('No Airing shows')");
       proofReady = false;
       transferObservedMs = Date.now();
-      await evaluate("location.hash = '#/library'");
+      await navigate("#/library");
       await until("!document.querySelector('#view-library').hidden");
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       await until("document.querySelector('#request-list')?.textContent.includes('Downloading')");
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')?.getAttribute('aria-valuenow')"), '37.5');
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-percent')?.textContent"), '37.5%');
@@ -608,7 +616,7 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('#request-list')?.textContent.includes('Checking download status')");
       assert.equal(await evaluate("document.querySelector('#request-list .request-transfer-progress')"), null);
       transferObservedMs = null;
-      await evaluate("location.hash='#/admin'");
+      await navigate("#/admin");
       await until("!document.querySelector('#view-admin').hidden");
       await until("document.querySelector('#review-list a')?.textContent.includes('Older completed title')");
       assert.equal(await evaluate("document.querySelector('#review-list a').getAttribute('href')"),'#/requests?requestId=6');
@@ -620,7 +628,7 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("document.querySelector('#request-focus a').click()");
       await until("document.querySelector('#request-focus').hidden && document.querySelector('#request-list [data-request-id=\"7\"]')");
       seasonResult={state:'pending',intentId:900};
-      await evaluate("location.hash = '#/title/3'");
+      await navigate("#/title/3");
       await until("[...document.querySelectorAll('#detail button')].some(b=>b.textContent==='Request series'&&!b.disabled)");
       await evaluate("[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Request series').click()");
       await until("document.querySelector('dialog[open] input[type=checkbox]')");
@@ -634,7 +642,7 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('#view-requests').hidden");
       seasonResult=null;
       monitoredTitle = true;
-      await evaluate("location.hash = '#/title/3'");
+      await navigate("#/title/3");
       await until("document.querySelector('.season-already-monitored')?.hidden === false");
       assert.equal(await evaluate("document.querySelector('#detail .request-receipt-link:not([hidden])')?.getAttribute('href')"), '#/requests?requestId=123',
         'a monitored title must link to its exact watch, not the empty Recent list');
@@ -644,9 +652,9 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("document.querySelector('#request-focus a').click()");
       await until("document.querySelector('#request-focus').hidden");
       holdWatchingRequests = true;
-      await evaluate("location.hash = '#/library'");
+      await navigate("#/library");
       await until("!document.querySelector('#view-library').hidden");
-      await evaluate("location.hash = '#/requests'");
+      await navigate("#/requests");
       for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
         await wait(100);
       }
