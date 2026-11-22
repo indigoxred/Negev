@@ -1,3 +1,4 @@
+import { preferenceEditorReady, preferenceSaveReady } from './helpers/preference-readiness.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -26,7 +27,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
     let monitoredTitle = false;let seasonResult=null;
-    let previewPending=false;let previewExisting=false;let previewOpens=0;const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
+    let previewPending=false;let previewExisting=false;let previewOpens=0;const preferenceCommands=[];const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
     let titleReads = 0;
@@ -116,10 +117,10 @@ test('title and library controls recover from pending and failed reads without d
         previewOpens++;let body='';for await(const chunk of request)body+=chunk;
         json(response,previewPending?{state:'pending',intentId:900,created:false}:previewExisting?{state:'existing',requestId:123,created:false}:{state:'preview',previewId:'preview-'+previewOpens});
       } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/release-choice')) {
-        if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);control={mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1};}
-        json(response,{state:'updated',control,context:{confirmedAiring:true}});
+        if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);if(value.action==='preference')preferenceCommands.push(value);control={...control,mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1,...(value.action==='preference'?{preference:{group:value.group,audio:value.audio}}:{})};}
+        json(response,{state:'updated',control,context:{confirmedAiring:true,preferredGroup:control.preference?.group??null}});
       } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/releases')) {
-        json(response,{state:'candidates',items:[],nextOffset:null});
+        json(response,{state:'candidates',items:[],nextOffset:null,confirmedAiring:true});
       } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
@@ -256,7 +257,8 @@ test('title and library controls recover from pending and failed reads without d
           if (await evaluate(expression)) return;
           await wait(100);
         }
-        assert.fail(`UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
+        const release=await evaluate("(() => {const d=document.querySelector('dialog.release-search-dialog[open]');return d?{modal:d.matches(':modal'),text:d.textContent,controls:[...d.querySelectorAll('button,input,summary')].map(e=>({label:e.textContent||e.getAttribute('aria-label'),disabled:e.disabled,visible:e.getClientRects().length>0}))}:null})()");
+        assert.fail(`release=${JSON.stringify(release)}; preferenceCommands=${JSON.stringify(preferenceCommands)}; UI did not reach expected state: ${expression}; detail=${await evaluate("document.querySelector('#detail')?.textContent")}; requests=${await evaluate("document.querySelector('#request-list')?.textContent")}; reads=${requestReads}; hidden=${await evaluate('document.hidden')}; error=${await evaluate("document.querySelector('#message')?.textContent")}`);
       };
       await send('Emulation.setDeviceMetricsOverride', {width:1280,height:900,deviceScaleFactor:1,mobile:false});
       const base = `http://127.0.0.1:${server.address().port}`;
@@ -370,11 +372,14 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(previewOpens,1);
       const pendingPreviewKey=await evaluate("sessionStorage.getItem('negev-request-1-3-installment')");
       assert.ok(pendingPreviewKey);
-      // The dialog exists before its initial asynchronous search finishes.
-      // Wait for its controls, as a real user must, before clicking Save.
-      await until("[...document.querySelectorAll('dialog[open] button')].some(b=>b.textContent==='Save group'&&!b.disabled)");
-      await evaluate("document.querySelector('dialog[open] .release-preference-editor').open=true;document.querySelector('dialog[open] [aria-label=\"Preferred release group\"]').value='Group';[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Save group').click()");
-      await until("document.querySelector('dialog[open]')?.textContent.includes('Future release preference saved')");
+      // Enabled alone also matches the hidden editor before the initial GET.
+      // Use visible controls, then wait for the initial search to settle.
+      await until(`(${preferenceEditorReady.toString()})()`);
+      await evaluate("document.querySelector('dialog.release-search-dialog[open]:modal .release-preference-editor summary').click()");
+      await until(`(${preferenceSaveReady.toString()})()`);
+      await evaluate("(() => {const d=document.querySelector('dialog.release-search-dialog[open]:modal');const input=d.querySelector('[aria-label=\"Preferred release group\"]');input.focus();input.value='Group';[...d.querySelectorAll('button')].find(b=>b.textContent==='Save group').click();})()");
+      await until("document.querySelector('dialog.release-search-dialog[open]:modal')?.textContent.includes('Future release preference saved')");
+      assert.deepEqual(preferenceCommands.map(({action,group,audio})=>({action,group,audio})),[{action:'preference',group:'Group',audio:'japanese'}]);
       assert.equal(await evaluate("sessionStorage.getItem('negev-request-1-3-installment')"),pendingPreviewKey,'preview preference does not clear the pending request key');
       assert.deepEqual(submittedModes,[]);
       assert.equal(await evaluate("document.querySelector('dialog[open] [aria-label=Quality]').value"),'bd1080');
