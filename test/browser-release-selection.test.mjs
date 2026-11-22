@@ -1,3 +1,4 @@
+import { preferenceEditorReady, preferenceSaveReady } from './helpers/preference-readiness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
@@ -257,5 +258,49 @@ test('release dialog preserves manual choice through polling and offers alternat
  document.querySelector('#result').textContent=JSON.stringify({files:[...row.querySelectorAll('.release-inspected-file')].map(x=>x.textContent),blocked:row.querySelector('.release-pick').disabled,chosen,summary:row.querySelector('summary').textContent,registration:row.querySelector('.release-registration').textContent});})();
  </script>`;
  const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-500));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),{files:['Season 02/01.mkv · 1,000 bytes · video','Season 02/Extras/Soundtrack.flac · 500 bytes · other'],blocked:true,chosen:0,summary:'Details · 2 files · selection not approved',registration:'File registration unknown'});
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: preference readiness race',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-preference-race-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
+ ${preferenceEditorReady.toString()}
+ ${preferenceSaveReady.toString()}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ const settle=async predicate=>{for(let i=0;i<200;i++){if(predicate())return;await Promise.resolve();}throw Error('Controlled fixture did not settle');};
+ (async()=>{const outcomes=[];for(const oldGuard of [true,false]){
+ let finishInitial,reads=0,posts=[];let control={mode:'manual',phase:'selecting',revision:1};
+ const response=()=>({control,context:{confirmedAiring:true,preferredGroup:control.preference?.group??null}});
+ const api=async(url,options={})=>{
+   if(url.endsWith('/release-choice')&&!options.method){if(++reads===1)return new Promise(resolve=>finishInitial=()=>resolve(response()));return response();}
+   if(url.includes('/releases'))return {state:'candidates',items:[],nextOffset:null,confirmedAiring:true};
+   const body=JSON.parse(options.body);posts.push(body);control={...control,revision:control.revision+1,preference:{group:body.group,audio:body.audio}};return {state:'updated',...response()};
+ };
+ const picker=createReleaseDialog({api,element});const opening=picker.open({previewId:'race',title:'Example',mode:'manual'});
+ const dialog=document.querySelector('dialog.release-search-dialog[open]');const editor=dialog.querySelector('.release-preference-editor');
+ const save=[...editor.querySelectorAll('button')].find(b=>b.textContent==='Save group');
+ const enabledOnlyGuard=!save.disabled,visibleAtMount=preferenceEditorReady();let transientSaved=false;
+ if(oldGuard){
+   editor.open=true;dialog.querySelector('[aria-label="Preferred release group"]').value='Group';save.click();
+   await settle(()=>dialog.textContent.includes('Future release preference saved'));transientSaved=true;
+   finishInitial();await opening;
+ }else{
+   finishInitial();await opening;
+   if(!preferenceEditorReady())throw Error('Visible editor is not ready');
+   editor.querySelector('summary').click();
+   if(!preferenceSaveReady())throw Error('Visible Save is not ready');
+   const input=dialog.querySelector('[aria-label="Preferred release group"]');input.focus();input.value='Group';save.click();
+   await settle(()=>dialog.textContent.includes('Future release preference saved'));
+ }
+ outcomes.push({oldGuard,enabledOnlyGuard,visibleAtMount,transientSaved,confirmationRetained:dialog.textContent.includes('Future release preference saved'),posts:posts.map(p=>({action:p.action,group:p.group})),storedGroup:control.preference?.group});picker.close();
+ }document.querySelector('#result').textContent=JSON.stringify(outcomes);})().catch(error=>document.querySelector('#result').textContent='ERROR '+error.stack);
+ </script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
+ const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-1000));
+ assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"').replaceAll('&gt;','>').replaceAll('&lt;','<')),[
+ {oldGuard:true,enabledOnlyGuard:true,visibleAtMount:false,transientSaved:true,confirmationRetained:false,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'},
+ {oldGuard:false,enabledOnlyGuard:true,visibleAtMount:false,transientSaved:false,confirmationRetained:true,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'}]);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
