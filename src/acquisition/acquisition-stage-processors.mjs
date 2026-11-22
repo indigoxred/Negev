@@ -289,7 +289,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
-        readRelatedTitles: relatedTitleReader,
+        readRelatedTitles: relatedTitleReader, loadDetail, releaseQueries,
         readVideoExtensions, readBonusOwnership,
         fetchImpl, renewQbittorrent, now });
     },

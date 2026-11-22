@@ -295,24 +295,18 @@ test('a second queue connection cannot claim the same stopped attempt', async ()
     } finally { other.close(); }
   }));
 
-test('a repeated unavailable start goes to review rather than polling forever', async () =>
+test('temporary provider read failures keep a prompt retry after repeated checks', async () =>
   fixture(async (ctx) => {
-    const first = ctx.queue.claimNext({ nowMs: 1_000 });
-    assert.equal(ctx.queue.recordResult({ attemptId: first.attemptId,
-      version: first.version, state: 'held', reason: 'provider_unavailable',
-      checkedMs: 1_001 }).state, 'recorded');
-    const second = ctx.queue.claimNext({ nowMs: 1_801_001 });
-    assert.equal(second.attemptId, first.attemptId);
-    assert.equal(ctx.queue.recordResult({ attemptId: second.attemptId,
-      version: second.version, state: 'held', reason: 'provider_unavailable',
-      checkedMs: 1_801_002 }).state, 'recorded');
-    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
-    assert.deepEqual(ctx.queue.listReviewNeeded(), [{
-      attemptId: first.attemptId, reason: 'provider_unavailable',
-      checkedMs: 1_801_002,
-    }]);
-    assert.equal(ctx.queue.claimNext({ nowMs: 10_000_000 }).attemptId,
-      ctx.ids[1].attemptId);
+    const first=ctx.queue.claimNext({nowMs:1000});
+    ctx.queue.recordResult({...first,state:'held',reason:'provider_unavailable',checkedMs:1001});
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs,61001);
+    const second=ctx.queue.claimNext({nowMs:61001});
+    assert.equal(second.attemptId,first.attemptId);
+    ctx.queue.recordResult({...second,state:'held',reason:'provider_unavailable',checkedMs:61002});
+    assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs,121002);
+    assert.deepEqual(ctx.queue.listReviewNeeded(),[]);
+    ctx.reopen();
+    assert.equal(ctx.queue.claimNext({nowMs:121002}).attemptId,first.attemptId);
   }));
 
 test('journalled start processor and queue issue only one start intent', async () =>

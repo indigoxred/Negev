@@ -18,7 +18,7 @@ export async function startStoppedCandidate({
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
-  readRelatedTitles, readVideoExtensions, readBonusOwnership,
+  readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
   now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 }) {
   let base;
@@ -31,6 +31,8 @@ export async function startStoppedCandidate({
       typeof now !== 'function' || typeof readRequest !== 'function' ||
       typeof readEvidence !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
+      (loadDetail !== undefined && typeof loadDetail !== 'function') ||
+      (releaseQueries !== undefined && typeof releaseQueries !== 'function') ||
       (readVideoExtensions !== undefined && typeof readVideoExtensions !== 'function') ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
@@ -74,8 +76,24 @@ export async function startStoppedCandidate({
     let related;
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
     catch { return held('related_title_unavailable'); }
+    // Refresh the same-ID authority used at preflight; saved UI titles and
+    // torrent filenames cannot manufacture trusted aliases at the start boundary.
+    let requestedTitle=request.title,requestedAliases=[];
+    if(loadDetail){
+      let detail;
+      try{detail=await loadDetail({anidbId:request.anidbId});}
+      catch{return held('detail_unavailable');}
+      if(detail?.state!=='details'||detail.anidbId!==request.anidbId||
+        detail.kind!==request.kind||typeof detail.title!=='string'||!detail.title.trim())return held('detail_unavailable');
+      requestedTitle=detail.title;
+    }
+    if(releaseQueries){
+      try{requestedAliases=await releaseQueries({anidbId:request.anidbId});}
+      catch{return held('related_title_unavailable');}
+      if(!Array.isArray(requestedAliases)||requestedAliases.some(title=>typeof title!=='string'))return held('related_title_unavailable');
+    }
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
-      requestedTitle: request.title, related,
+      requestedTitle, requestedAliases, related,
       fileNames: plannedFiles.map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return checked;
   }
@@ -147,9 +165,9 @@ export async function startStoppedCandidate({
       headers: { Cookie: qbittorrentSessionCookie(activeSessionId),
         Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return held('storage_path_unverified');
+    if (response.status !== 200) return held(response.status===403?'provider_http_403':'provider_unavailable');
     paths = await readBoundedJson(response, 100_000);
-  } catch { return held('storage_path_unverified'); }
+  } catch { return held('provider_unavailable'); }
   if (paths?.save_path !== expected.savePath ||
       typeof paths.download_path !== 'string') return held('storage_path_unverified');
   if (paths.download_path !== '' && paths.download_path !== expected.savePath) {

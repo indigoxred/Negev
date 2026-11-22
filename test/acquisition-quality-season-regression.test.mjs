@@ -49,9 +49,10 @@ async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=
     offlineLookup:async({filename})=>{if(!prediction)return {status:204};const id=1000+Number(filename.split(' - ')[1]?.slice(0,2));return {status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};},
     inspectCorrespondence:async({files})=>({files:files.map(f=>({...f,state:registered?'likely':'unknown'}))}),
     prepare:input=>prepareStoppedCandidate({baseUrl:'http://prowlarr:9696/',apiKey:'synthetic',indexerIds:[3],fetchImpl:prowlarrFetch,...input})});return checked;};
-  const added=[];let active=null;
+  const added=[],started=[];let active=null;
   const qbitFetch=async(input,options={})=>{
     const url=new URL(input);
+    if(url.pathname.endsWith('/start')){started.push(active.guid);return new Response('Ok.');}
     if(url.pathname.endsWith('/version'))return new Response('v5.3.0');
     if(url.pathname.endsWith('/add')){
       const blob=options.body.get('torrents');const meta=inspectTorrentMetainfo({bytes:new Uint8Array(await blob.arrayBuffer())});
@@ -63,14 +64,15 @@ async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=
     if(url.pathname.endsWith('/files'))return Response.json(active.metadata.files.map((f,index)=>({...f,index,priority:1,progress:0})));
     throw Error('Unexpected qBittorrent endpoint '+url.pathname);
   };
-  const stages=createAcquisitionStageProcessors({requests,acquisitions,handoffs:{getHandoff:()=>null},discoverCandidates,previewCandidate,loadDetail,releaseQueries,readRelatedTitles,
+  const stages=createAcquisitionStageProcessors({readVideoExtensions:async()=>({state:"extensions",values:[".mkv"]}),requests,acquisitions,handoffs:{getHandoff:()=>null},discoverCandidates,previewCandidate,loadDetail,releaseQueries,readRelatedTitles,
     readPublicCoverage:async request=>({verifiedTargets:0,targetCount:request.episodeIds.length,availableEpisodeIds:[],uncertainEpisodeIds:[]}),
     readEvidence:async({anidbId,episodeIds})=>({anidbId,episodeIds,observedAtMs:200,importFence:{state:'settled',anidbId,episodeIds,beforeObservedAtMs:199,afterObservedAtMs:200},shoko:{state:'ok',complete:true,files:[]},plex:{state:'ok',complete:true,sourceVerified:true,libraryIds:[102],parts:[]}}),
     publicSections:{episode:[102],movie:[123]},prowlarr:{baseUrl:'http://prowlarr:9696/',apiKey:'synthetic',indexerIds:[3]},
     stagingHostPath:'/srv/negev/staging',qbitStagingRoot:'/Downloads/negev',holdingRoot:'/srv/negev/holding',importRoot:'/srv/shoko/import',
     verifyStagingRoot:async()=>({state:'verified_staging_root'}),realpathImpl:async p=>p,ensureImportRoot:async()=>({state:'import_child_ready'}),verifyShokoSource:async()=>({state:'verified_shoko_source'}),
     shoko:{baseUrl:'http://shoko:8111/',apiKey:'synthetic',providerId:'11111111-2222-4333-8444-555555555555'},now:()=>201});
-  return {added,inspected,requests,acquisitions,requestId:saved.requestId,
+  return {added,started,inspected,requests,acquisitions,requestId:saved.requestId,
+    runStart:attemptId=>stages.processStart({attemptId,qbittorrent:{baseUrl:"http://qb:8080/",sessionId:"syntheticSID"},fetchImpl:qbitFetch}),
     selection:createReleaseSelection({requests,discoverCandidates,previewCandidate,loadDetail,now:()=>201,
       readPublicCoverage:async()=>({availableEpisodeIds:[],uncertainEpisodeIds:[]})}),
     run:input=>stages.processRequest({requestId:saved.requestId,qbittorrent:{baseUrl:'http://qb:8080/',sessionId:'syntheticSID'},fetchImpl:qbitFetch,providerFetchImpl:prowlarrFetch,...input})};
@@ -128,4 +130,11 @@ test('Manual Pick preserves the exact trusted textual-season choice until the re
 test('a higher-quality generic title with wrong descriptor episodes cannot trigger a grab',async t=>{
   const f=await fixture(t,{registered:true,items:[release('wrongfiles','[G] Example WEB 1080p',[2],30),release('correct','[G] Example - 01 WEB 480p',[1],5)]});
   const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,['correct']);assert.ok(f.inspected.includes('wrongfiles'));
+});
+
+for(const alias of ['Example Second Season','Example Final Season','Example Spring Season'])test('actual stage starts exact saved textual-season release once: '+alias,async t=>{
+ const f=await fixture(t,{title:'Example Season 2',aliases:[alias],registered:true,items:[{...release('text','[G] '+alias+' - 01 [1080p]'),names:[alias+' - 01.mkv']}]});
+ const result=await f.run();assert.equal(result.state,'stopped_observed');
+ const start=await f.runStart(result.attemptId);assert.equal(start.state,'start_unknown',JSON.stringify(start));
+ assert.deepEqual(f.started,['text']);await f.runStart(result.attemptId);assert.deepEqual(f.started,['text']);
 });

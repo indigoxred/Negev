@@ -82,6 +82,10 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
         db.exec(`ALTER TABLE ${checksTable} ADD COLUMN ${name} ${definition}`);
       }
     }
+    // Older pure-mode observers labelled a normal finish as torrent_changed.
+    // Re-observe the exact owner/files promptly; this is not permission to import.
+    if(pureMode)db.exec(`UPDATE pure_move_completion_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
+      WHERE state='held' AND reason='torrent_changed' AND checked_ms IS NOT NULL`);
     if (pureMode) {
       // The mandatory media probe no longer runs. Revisit its saved holds
       // through the ordinary worker; never scan unchanged bytes again.
@@ -215,7 +219,7 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const delay = ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable', 'torrent_not_stopped',
+          'authentication_unavailable', 'completion_transition', 'torrent_not_stopped',
           'torrent_still_present', 'staging_not_empty',
           'media_retirement_pending', 'media_retirement_unavailable']
           .includes(reason) ? SESSION_RETRY_MS :

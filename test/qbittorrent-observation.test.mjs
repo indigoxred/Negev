@@ -124,3 +124,16 @@ test('invalid authentication and provider errors never authorize completion', as
     fetchImpl: async () => ({ status: 200, text: async () => '{' }) }),
   { state: 'held', reason: 'provider_invalid_response' });
 });
+
+test('completion-transition retry never accepts a changed owner, path or file structure',async()=>{
+ const moving={...torrent,state:'downloading',progress:0.99,amount_left:10};
+ const partial=files.map(f=>({...f,progress:0.99,is_seed:false}));
+ for(const mutation of ['owner','path','file','priority']){
+   const after=mutation==='owner'?{...torrent,category:'foreign'}:torrent;
+   const afterPath=mutation==='path'?{...properties,save_path:'/foreign'}:properties;
+   const afterFiles=mutation==='file'?files.map(f=>({...f,name:'Other.mkv'})):mutation==='priority'?files.map(f=>({...f,priority:0})):files;
+   const values=[[moving],properties,partial,[after],afterPath,afterFiles];
+   const r=await observeTorrentCompletion({...config,fetchImpl:async()=>Response.json(values.shift())});
+   assert.equal(r.state,'held');assert.notEqual(r.reason,'completion_transition',mutation);
+ }
+});

@@ -11,7 +11,7 @@ const held = (reason) => ({ state: 'held', reason });
 export async function processRecordedStart({ attemptId, requests, acquisitions,
   stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
   verifyStagingRoot, realpathImpl, readEvidence,
-  readRelatedTitles, readVideoExtensions, readBonusOwnership,
+  readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
   publicLibraryIds, fetchImpl = fetch, renewQbittorrent, now = Date.now,
   start = startStoppedCandidate } = {}) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
@@ -100,6 +100,6 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     saveRoot: qbitStagingRoot,
     baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
     readRequest: (id) => requests.getRequest(id), readEvidence,
-    readRelatedTitles, readVideoExtensions, readBonusOwnership,
+    readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
     publicLibraryIds, fetchImpl, renewQbittorrent, now });
 }

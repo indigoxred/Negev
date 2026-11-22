@@ -104,6 +104,14 @@ export async function observeTorrentCompletion({
       etaSeconds: eta, speedBytesPerSecond: speed, transferState }); }
     catch { /* Display telemetry must never authorize or block an import. */ }
   }
+  const structure = list => JSON.stringify(list.map(file =>
+    [file.index,file.name,file.size,file.priority]));
+  // Completion may happen between the two reads. Never import that mixed
+  // snapshot: schedule a fresh stable observation without a long failure penalty.
+  if(sameOwner && before.progress<1 && before.amount_left>0 && beforeCompletion.reason==='incomplete' &&
+    afterCompletion.state==='complete' && structure(files)===structure(filesAfter)){
+    return held('completion_transition');
+  }
   if (!sameOwner ||
       (before.state !== after.state &&
         (beforeCompletion.state !== 'complete' || afterCompletion.state !== 'complete')) ||
