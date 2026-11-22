@@ -4,7 +4,7 @@ import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager, observeCatalogueContinuation, createCataloguePrefetchBudget, createCatalogueReadPacer } from './search-pages.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
-import { requestPresentation, requestNeedsReleaseChoice } from './request-progress-text.mjs';
+import { requestPresentation, requestNeedsReleaseChoice, requestHasPendingAcquisition, requestCanEditReleasePreference } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
 import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch,
@@ -855,6 +855,15 @@ async function loadRequestView(view, append = false, silent = false) {
         releaseOptions.append(element('summary', 'Release options'), tools);
         details.append(releaseOptions);
       }
+      if(state.releaseSearch&&requestCanEditReleasePreference(item)&&
+          (state.user?.role==='admin'||item.requesterId===state.user?.id)) {
+        const preference=element('div',undefined,'request-group-preference');
+        const edit=element('button','Release-group preference','quiet');
+        edit.addEventListener('click',()=>{void releaseDialog.open({requestId:item.id,title:preferredDisplayTitle(item)??'Anime request',preferenceOnly:true});});
+        preference.append(edit);
+        if(item.releasePreference?.group)preference.append(element('small','Preferred group: '+item.releasePreference.group,'muted'));
+        details.append(preference);
+      }
       if (details.childElementCount) {
         const more = element('details', undefined, 'request-more');
         more.append(element('summary', 'Details & options'), details);
@@ -944,13 +953,13 @@ function renderRequestStatus(status, presentation) {
     'request-note'));
 }
 function requestItemPresentation(item) {
-  if(item.status!=='cancelled'&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='manual') {
+  if(requestNeedsReleaseChoice(item)&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='manual') {
     return {stage:'Choose a release',detail:'Open Manual Pick to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
   }
-  if(item.status!=='cancelled'&&item.releaseSelection?.phase==='proposal') {
+  if(requestNeedsReleaseChoice(item)&&item.releaseSelection?.phase==='proposal') {
     return {stage:'Release choice ready',detail:'Open Auto-Pick to review the better release.',note:'The evidence-backed option is used automatically after five minutes.',group:'active'};
   }
-  if(item.status!=='cancelled'&&item.preferredWait?.deadlineMs>Date.now()&&
+  if(requestHasPendingAcquisition(item)&&item.preferredWait?.deadlineMs>Date.now()&&
       !['active','queued'].includes(item.progress?.transfer?.transferState)) {
     return {stage:`Waiting for ${item.preferredWait.group}`,
       detail:`Until ${new Date(item.preferredWait.deadlineMs).toLocaleString()}`,

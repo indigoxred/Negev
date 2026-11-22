@@ -27,14 +27,14 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     release_not_eligible:'This release does not meet the current release preferences.',
     target_already_available:'These episodes are already available. No new download is needed.',
     target_already_owned:'These files are already owned and are being verified. No duplicate download will start.'}[e.reason]??e.message??'Could not complete release selection. Retry.');
-  const open=async({requestId=null,previewId=null,title,mode='manual',next=null,existing=false})=>{
+  const open=async({requestId=null,previewId=null,title,mode='manual',next=null,existing=false,preferenceOnly=false})=>{
     closeActive();
     const dialog=element('dialog',undefined,'release-search-dialog');active=dialog;
-    dialog.setAttribute('aria-label',`Release selection · ${title}`);
+    dialog.setAttribute('aria-label',`${preferenceOnly?'Release-group preference':'Release selection'} · ${title}`);
     const header=element('div',undefined,'season-request-popup-heading');
     const close=element('button','Close','quiet');close.addEventListener('click',()=>dialog.close());
     header.append(element('h2',title),close);
-    const status=element('p','Loading saved selection…','muted');status.setAttribute('role','status');
+    const status=element('p',preferenceOnly?'Loading release-group preference…':'Loading saved selection…','muted');status.setAttribute('role','status');
     const actions=element('div',undefined,'release-search-actions');
     const auto=element('button','Auto-Pick',mode==='auto'?'primary':'quiet'),manual=element('button','Manual Pick',mode==='manual'?'primary':'quiet');
     const modes=element('div',undefined,'release-mode-actions');modes.append(auto,manual);
@@ -67,6 +67,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       const nextButton=element('button','Next selected installment','quiet');
       nextButton.addEventListener('click',()=>{dialog.close();next();});dialog.append(nextButton);
     }
+    if(preferenceOnly){modes.hidden=actions.hidden=preferLabel.hidden=true;saveGroup.disabled=clearGroup.disabled=groupInput.disabled=true;}
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',()=>{if(active===dialog)active=null;dialog.remove();},{once:true});
     let control,busy=false,version=0,rowVersion=0,expiryTimer=null,nextButton=null,lastQuery='',searchStatus='',statusOwner=null;
@@ -78,7 +79,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const basePath=()=>requestId?`/api/requests/${requestId}`:`/api/release-previews/${previewId}`;
     const accept=data=>{if(data.created===false&&data.state==='updated')existing=true;if(data.state==='updated'&&Number.isSafeInteger(data.requestId)&&data.requestId>0)requestId=data.requestId;return data;};
     const saved=data=>{if(Number.isSafeInteger(requestId)&&requestId>0)onSaved({...data,requestId,previewId});};
-    const command=async body=>accept(await api(`${basePath()}/release-choice`,{method:'POST',body:JSON.stringify({...body,revision:control.revision})}));
+    const command=async body=>{if(preferenceOnly&&body.action!=='preference')throw Error('This dialog only edits the future release preference.');return accept(await api(`${basePath()}/release-choice`,{method:'POST',body:JSON.stringify({...body,revision:control.revision})}));};
     const setMode=value=>{auto.className=value==='auto'?'primary':'quiet';manual.className=value==='manual'?'primary':'quiet';auto.setAttribute('aria-pressed',String(value==='auto'));manual.setAttribute('aria-pressed',String(value==='manual'));};
     const updateContext=ctx=>{
       if(!ctx)return;preferredWait=ctx.preferredWait??null;completedSeries=ctx.completedSeries===true;packsLabel.hidden=!completedSeries;confirmedAiring=ctx.confirmedAiring===true;preferenceEditor.hidden=!confirmedAiring;
@@ -87,7 +88,8 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       preferenceSummary.textContent=ctx.preferredGroup?'Preferred group: '+ctx.preferredGroup:'Edit future release preference';
     };
     const refresh=async()=>{const data=await api(`${basePath()}/release-choice`);control=data.control;updateContext(data.context);return control;};
-    const buttons=value=>{busy=value;for(const input of [auto,manual,searchButton,quality,audio,packsOnly,query,preferFuture,saveGroup,clearGroup,groupInput])input.disabled=value;};
+    const buttons=value=>{busy=value;for(const input of [auto,manual,searchButton,quality,audio,packsOnly,query,preferFuture,saveGroup,clearGroup,groupInput])input.disabled=value;
+      if(preferenceOnly&&!value){groupInput.disabled=saveGroup.disabled=!confirmedAiring;clearGroup.disabled=!control?.preference?.group;}};
     const selectionSummary=selection=>{
       const box=element('div',undefined,'release-entry');
       box.append(element('strong',selection.candidate.title));
@@ -105,6 +107,13 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     };
     const showControl=()=>{
       clearTimeout(expiryTimer);rowVersion++;evidenceQueue.clear();statusOwner=null;
+      if(preferenceOnly){
+        dialog.classList.add('is-submitted');modes.hidden=actions.hidden=preferLabel.hidden=true;
+        preferenceEditor.hidden=!confirmedAiring&&!control.preference?.group;preferenceEditor.open=true;
+        status.textContent=confirmedAiring?'For new episodes, wait up to two hours after a suitable alternative appears, then use an eligible fallback.':
+          'Only currently airing titles can set a preferred group. An existing preference can still be cleared.';
+        results.replaceChildren();buttons(false);return;
+      }
       const submitted = existing || control.phase === 'chosen' || control.phase === 'consumed';
       dialog.classList.toggle('is-submitted', submitted);
       modes.hidden = actions.hidden = submitted;
@@ -159,7 +168,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       if(submitted)receiptPreferences();
     };
     const search=async(append=false,offset=0)=>{
-      if(busy||existing)return;
+      if(busy||existing||preferenceOnly)return;
       dialog.classList.remove('is-submitted');modes.hidden=false;
       const phrase=query.value.trim();const filterKey=JSON.stringify([phrase,quality.value,audio.value,completedSeries&&packsOnly.checked]);
       if(filterKey!==lastQuery){append=false;offset=0;}lastQuery=filterKey;actions.hidden=false;setMode('manual');status.className='muted';
@@ -203,7 +212,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       }catch(e){if(current()){statusOwner=null;status.textContent=errorText(e);}}finally{buttons(false);if(nextButton)nextButton.disabled=false;}
     };
     const runAuto=async()=>{
-      if(busy||existing)return;buttons(true);version++;rowVersion++;evidenceQueue.clear();statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
+      if(busy||existing||preferenceOnly)return;buttons(true);version++;rowVersion++;evidenceQueue.clear();statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
       try{
         await refresh();
         if(control.phase==='proposal'){showControl();return;}
@@ -216,7 +225,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     };
     const savePreference=async group=>{
       if(busy||existing)return;buttons(true);
-      try{await refresh();const data=await command({action:'preference',group,audio:audio.value==='english'?'english':audio.value==='dual'?'dual':'japanese'});
+      try{await refresh();const data=await command({action:'preference',group,audio:preferenceOnly?(control.preference?.audio??'japanese'):audio.value==='english'?'english':audio.value==='dual'?'dual':'japanese'});
         control=data.control;updateContext(data.context);preferFuture.checked=Boolean(control.preference?.group);status.textContent=group?'Future release preference saved.':'Future release preference cleared.';saved(data);}
       catch(error){status.textContent=errorText(error);}finally{buttons(false);}
     };
@@ -236,7 +245,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       try{await refresh();if(current())showControl();}catch{/* The durable save already succeeded; optional details may be retried later. */}
       return;
     }
-    try{await refresh();if(!current())return;showControl();if(existing||control.phase==='proposal'||control.phase==='chosen')return;
+    try{await refresh();if(!current())return;showControl();if(preferenceOnly||existing||control.phase==='proposal'||control.phase==='chosen')return;
       if(mode==='auto')await runAuto();else await search();
     }catch(e){if(current())status.textContent=errorText(e);}
   };

@@ -157,3 +157,17 @@ test('verified playable bonus releases only its independent target for a later c
   assert.deepEqual(f.ledger.getBonusPlan(1), [bonus]);
   assert.throws(() => f.ledger.listPendingBonuses({ nowMs: 30, limit: 0 }), TypeError);
 });
+
+test('a retained bonus under review cannot be acquired again opportunistically by another pack',t=>{
+ const f=fixture(t);f.plan();assert.equal(f.ledger.releaseBonusClaimForReview({attemptId:1,name:bonus.name,publishedMs:10,nowMs:900010,reason:'bonus_awaiting_shoko'}).state,'attention');
+ const second=f.ledger.recordBonusPlan({attemptId:2,hash,files:[bonus],nowMs:900011});
+ assert.equal(second.files.length,0);assert.deepEqual(second.skipped,[{name:bonus.name,reason:'bonus_review_pending'}]);
+});
+
+test('a released bonus awaiting Plex proof still prevents a second opportunistic bonus',t=>{
+ const f=fixture(t);f.plan();f.ledger.recordBonusProgress({attemptId:1,name:bonus.name,status:'published',nowMs:11});
+ f.ledger.releaseBonusClaimForReview({attemptId:1,name:bonus.name,publishedMs:10,nowMs:900010,reason:'bonus_awaiting_shoko'});
+ assert.equal(f.ledger.recordBonusProgress({attemptId:1,name:bonus.name,status:'identified',fileId:77,nowMs:900011}).state,'identified');
+ const second=f.ledger.recordBonusPlan({attemptId:2,hash,files:[bonus],nowMs:900012});
+ assert.equal(second.files.length,0);assert.equal(second.skipped[0].reason,'bonus_review_pending');
+});

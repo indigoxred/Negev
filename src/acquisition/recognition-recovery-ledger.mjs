@@ -35,7 +35,8 @@ export function openRecognitionRecoveryLedger(dbPath) {
   // eligible single-file preservation. Pack members use the rescan journal.
   const singleEligible = `CASE WHEN json_valid(p.manifest_json) THEN
     (SELECT COUNT(*) FROM json_each(p.manifest_json,'$.files') f
-      WHERE json_type(f.value,'$.episodeIds')='array') ELSE 0 END=1
+      WHERE json_type(f.value,'$.episodeIds')='array'
+        AND COALESCE(json_extract(f.value,'$.scope'),'main')<>'bonus') ELSE 0 END=1
     AND NOT EXISTS (SELECT 1 FROM recognition_recoveries prior
       JOIN acquisition_target_claims old ON old.attempt_id=prior.attempt_id
       JOIN acquisition_target_claims current ON current.anidb_id=old.anidb_id
@@ -104,7 +105,7 @@ export function openRecognitionRecoveryLedger(dbPath) {
     try { manifest = JSON.parse(found.manifestJson); }
     catch { return null; }
     const videos = manifest?.files?.filter((file) =>
-      Array.isArray(file.episodeIds));
+      file.scope !== 'bonus' && Array.isArray(file.episodeIds));
     if (videos?.length !== 1 || !Array.isArray(videos[0].episodeIds) ||
         videos[0].episodeIds.length < 1 ||
         JSON.stringify([...videos[0].episodeIds].sort((a, b) => a - b)) !==

@@ -1507,3 +1507,17 @@ test('opt-in file proof contributes to request progress and expires without Plex
     assert.equal((await read()).publicAvailability, 'unverified');
   } finally { await service?.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('requests expose saved airing preferences independently of a consumed choice',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-preference-projection-')),dbPath=path.join(dir,'state.sqlite');let service;
+ try{
+  const accounts=openAccountLedger(dbPath,{now:()=>1000});const owner=await accounts.bootstrapAdmin({username:'Owner',password:'long-owner-passphrase'});accounts.close();
+  const requests=openRequestLedger(dbPath);const saved=requests.submit({requesterId:owner.id,requestKey:'airing',nowMs:1000,intent:{state:'ready',anidbId:42,title:'Example',kind:'series',episodeIds:[1001],monitorFuture:true}});
+  requests.updateReleaseControl(saved.requestId,requests.getReleaseControl(saved.requestId).revision,{mode:'auto',phase:'consumed',preference:{group:'SubsPlease',audio:'dual',knownEpisodeIds:[1001],createdMs:1000}},1000);requests.close();
+  service=await createUserService({dbPath,shokoBaseUrl:'http://shoko.internal:8111',shokoApiKey:'synthetic',sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,now:()=>1000,fetchImpl:async()=>json({})});
+  const login=await service.app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Owner',password:'long-owner-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];
+  const r=await service.app.inject({url:'/api/requests',headers:{cookie}});assert.equal(r.statusCode,200,r.body);
+  assert.equal(r.json().items[0].releaseSelection,null);
+  assert.deepEqual(r.json().items[0].releasePreference,{group:'SubsPlease',audio:'dual'});
+ }finally{await service?.close();await rm(dir,{recursive:true,force:true});}
+});

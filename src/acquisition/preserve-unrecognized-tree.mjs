@@ -1,3 +1,4 @@
+import { preserveRequestedFiles } from './preserve-requested-files.mjs';
 import { constants } from 'node:fs';
 import { lstat, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
@@ -58,6 +59,9 @@ export async function preserveUnrecognizedTree({ manifest, importRoot,
     [sourceStat, destStat] = await Promise.all([status(source),
       status(destination)]);
   } catch { return held('unsafe_move_roots'); }
+  if (manifest.files.some(file => file.scope === 'bonus')) {
+    return preserveRequestedFiles({manifest,source,destination,fileId,recheck,renameFile:renameTree});
+  }
   if (sourceStat && destStat) return held('duplicate_recovery_tree');
   if (destStat) {
     return destStat.isDirectory() && !destStat.isSymbolicLink() &&

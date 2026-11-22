@@ -39,6 +39,7 @@ function fixture(t) {
   const acquisitions = { getAttempt: () => ({ id: 1, requestId: 1, status: 'torrent_observed',
     anidbId: 42, expectedHash: hash, torrentHash: hash }),
     getBonusPlan: (...args) => ledger.getBonusPlan(...args),
+    releaseBonusClaimForReview: input => ledger.releaseBonusClaimForReview(input),
     recordBonusProgress: (input) => { calls.progress.push(input); return ledger.recordBonusProgress(input); } };
   const item = () => ledger.listPendingBonuses({ nowMs: time })[0];
   t.after(() => { db.close(); rmSync(dir, { recursive: true, force: true }); });
@@ -164,4 +165,26 @@ test('one bonus never waits for or changes another bonus in the physical manifes
   assert.equal((await f.run()).state, 'bonus_playable');
   assert.deepEqual(f.calls.read, [{ anidbId: 500, episodeId: 901 }]);
   assert.equal(f.move.manifest.files[2].dev, 'invalid');
+});
+
+test('bonus observation relinquishes exclusivity after its original publication window and survives restart',async t=>{
+ const f=fixture(t);f.move.updatedMs=2;f.read=async()=>({state:'ok',complete:true,files:[]});
+ f.time=900002;f.restart();
+ const result=await f.run();assert.equal(result.state,'bonus_review');
+ assert.equal(f.db.prepare('SELECT active FROM acquisition_bonus_files').get().active,0);
+ assert.equal(f.db.prepare('SELECT active FROM acquisition_target_claims').get().active,0);
+ f.time=7*86400000;f.restart();f.read=async()=>({state:'ok',complete:true,files:[observedFile]});
+ assert.equal((await f.run()).state,'bonus_playable');
+ assert.equal(f.db.prepare('SELECT reason FROM acquisition_bonus_files').get().reason,null);
+});
+
+test('bonus deadline starts at publication, never expires a pending download, and leaves main ownership intact',async t=>{
+ for(const unpublished of [true,false]){
+  const f=fixture(t);f.read=async()=>({state:'ok',complete:true,files:[]});f.db.exec('UPDATE acquisition_target_claims SET active=1');
+  f.time=7*86400000;f.move.updatedMs=f.time-100;
+  if(unpublished)f.move.status='prepared';
+  assert.equal((await f.run()).state,'bonus_waiting');
+  assert.equal(f.db.prepare('SELECT active FROM acquisition_bonus_files').get().active,1);
+  assert.equal(f.db.prepare('SELECT active FROM acquisition_target_claims').get().active,1);
+ }
 });

@@ -70,6 +70,9 @@ export function createBonusPackLedger(db) {
   if(!db.prepare('PRAGMA table_info(acquisition_bonus_files)').all().some(c=>c.name==='excluded_before_start')) {
     db.exec('ALTER TABLE acquisition_bonus_files ADD COLUMN excluded_before_start INTEGER NOT NULL DEFAULT 0 CHECK(excluded_before_start IN (0,1))');
   }
+  if(!db.prepare('PRAGMA table_info(acquisition_bonus_files)').all().some(c=>c.name==='claim_released_ms')) {
+    db.exec('ALTER TABLE acquisition_bonus_files ADD COLUMN claim_released_ms INTEGER CHECK(claim_released_ms>=0)');
+  }
   const transaction = (run) => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = run(); db.exec('COMMIT'); return result; }
@@ -123,6 +126,11 @@ export function createBonusPackLedger(db) {
             (file.anidbId === parent.anidb_id && mainIds.has(file.episodeIds[0])))) return held('main_plan_conflict');
         const selected = [], skipped = [];
         for (const file of canonical) {
+          // Expired optional work no longer blocks an explicit request, but a
+          // second pack must not silently download the same unresolved bonus.
+          const review=db.prepare(`SELECT 1 FROM acquisition_bonus_files WHERE anidb_id=? AND episode_id=?
+            AND claim_released_ms IS NOT NULL AND status NOT IN ('playable','skipped') LIMIT 1`).get(file.anidbId,file.episodeIds[0]);
+          if(review){skipped.push({name:file.name,reason:'bonus_review_pending'});continue;}
           const busy = db.prepare(`SELECT 1 FROM acquisition_target_claims
             WHERE anidb_id=? AND episode_id=? AND active=1`).get(file.anidbId, file.episodeIds[0]) ||
             db.prepare(`SELECT 1 FROM acquisition_bonus_files WHERE anidb_id=? AND episode_id=? AND active=1`)
@@ -156,11 +164,11 @@ export function createBonusPackLedger(db) {
         .map((table) => `AND NOT EXISTS(SELECT 1 FROM ${table} t WHERE t.attempt_id=b.attempt_id)`).join(' ');
       return db.prepare(`SELECT b.* FROM acquisition_bonus_files b
         JOIN acquisition_attempts a ON a.id=b.attempt_id
-        WHERE b.active=1 AND b.status NOT IN ('playable','skipped') AND b.next_check_ms<=?
+        WHERE (b.active=1 OR b.claim_released_ms IS NOT NULL) AND b.status NOT IN ('playable','skipped') AND b.next_check_ms<=?
         ${exclusions} ORDER BY b.next_check_ms,b.attempt_id,b.file_name LIMIT ?`).all(nowMs, limit)
         .map((row) => ({ attemptId: row.attempt_id, ...canonicalRow(row), status: row.status,
           fileId: row.shoko_file_id, reason: row.reason, nextCheckMs: row.next_check_ms,
-          checkedMs: row.checked_ms, createdMs: row.created_ms }));
+          checkedMs: row.checked_ms, createdMs: row.created_ms, claimReleasedMs: row.claim_released_ms }));
     },
     recordBonusProgress({ attemptId, name, status, nowMs, fileId, reason, nextCheckMs = nowMs }) {
       if (!validId(attemptId) || typeof name !== 'string' || !name || !statuses.has(status) ||
@@ -175,7 +183,8 @@ export function createBonusPackLedger(db) {
         if (nowMs < row.checked_ms) return held('stale_bonus_progress');
         if (row.shoko_file_id !== null && fileId !== undefined && row.shoko_file_id !== fileId) return held('file_identity_conflict');
         if (['identified', 'playable'].includes(status) && !validId(fileId)) return held('file_identity_required');
-        if ((row.active === 0 || terminated(attemptId)) && status !== row.status) return held('bonus_inactive');
+        if (terminated(attemptId) || row.active === 0 && status !== row.status &&
+            (row.claim_released_ms === null || !['attention','identified','playable'].includes(status))) return held('bonus_inactive');
         const stage = ranks[status];
         if (stage !== undefined && (stage < row.progress_stage || stage > row.progress_stage + 1)) return held('invalid_bonus_transition');
         if (row.status === 'skipped' && status !== 'skipped') return held('bonus_inactive');
@@ -185,6 +194,19 @@ export function createBonusPackLedger(db) {
           .run(status, active, fileId ?? row.shoko_file_id, reason ?? null,
             nextCheckMs, nowMs, stage ?? row.progress_stage, attemptId, name);
         return { state: status };
+      });
+    },
+    releaseBonusClaimForReview({attemptId,name,publishedMs,nowMs,reason}) {
+      if(!validId(attemptId)||typeof name!=='string'||!name||!validTime(publishedMs)||!validTime(nowMs)||
+          typeof reason!=='string'||!reason||reason.length>500)throw new TypeError('Invalid bonus review');
+      return transaction(()=>{
+        const row=db.prepare('SELECT * FROM acquisition_bonus_files WHERE attempt_id=? AND file_name=?').get(attemptId,name);
+        if(!row||terminated(attemptId)||['playable','skipped'].includes(row.status)||publishedMs<row.created_ms||
+            nowMs<publishedMs+15*60_000||nowMs<row.checked_ms)return held('bonus_review_not_due');
+        if(row.claim_released_ms!==null)return {state:'attention',releasedMs:row.claim_released_ms};
+        db.prepare("UPDATE acquisition_bonus_files SET active=0,status='attention',claim_released_ms=?,reason=?,checked_ms=?,next_check_ms=? WHERE attempt_id=? AND file_name=?")
+          .run(nowMs,reason,nowMs,nowMs+3600_000,attemptId,name);
+        return {state:'attention',releasedMs:nowMs};
       });
     },
     deactivateBonuses(attemptId, nowMs) {
