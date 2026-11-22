@@ -2006,7 +2006,6 @@ byId('search-form').addEventListener('submit', async (event) => {
       tile.setAttribute('aria-hidden', 'true');
       const poster = posterImage(item);
       poster.addEventListener('load', () => tile.classList.add('has-poster'));
-      poster.addEventListener('error', () => poster.remove());
       tile.append(poster);
       const copy = element('span', undefined, 'result-copy');
       copy.append(titleLabel(item),
