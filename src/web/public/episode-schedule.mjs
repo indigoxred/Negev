@@ -42,3 +42,14 @@ export function nextAirDateLabel({ kind, releaseState, schedule } = {}) {
     schedule.nextEpisodeNumber > 0 ? `${schedule.nextEpisodeNumber} · ` : '';
   return `Next scheduled episode: ${number}${schedule.nextAirDate}`;
 }
+
+// Request monitoring is distinct from tracking and from a finished watch.
+export function watchingNextAirLabel(item) {
+  if (item?.status !== 'held' || item.kind !== 'series' ||
+      item.monitorFuture !== true || item.watchClosed === true) return null;
+  const schedule = item.nextAir;
+  if (!fullDate(schedule?.nextAirDate)) return 'Next air date unknown';
+  const number = Number.isSafeInteger(schedule.nextEpisodeNumber) &&
+    schedule.nextEpisodeNumber > 0 ? `Episode ${schedule.nextEpisodeNumber} · ` : '';
+  return `Next: ${number}${schedule.nextAirDate}`;
+}
