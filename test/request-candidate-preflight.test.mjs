@@ -627,3 +627,34 @@ for(const [title,alias]of [['Example Season 2','Example Second Season'],['Exampl
  const stem=title.includes('Final')?title:alias;let predictions=0;const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:alias+' [1080p] [Batch]',size:2000},readRequest:()=>request,loadDetail:async()=>({...detail,title}),releaseQueries:async()=>[alias],readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:41,title:'Example',relation:'Prequel'}]}),prepare:async()=>({...prepared,totalBytes:2000,files:[1,2].map(n=>({name:`${stem} - 0${n}.mkv`,size:1000}))}),offlineLookup:async({filename})=>{predictions++;const id=filename.includes('01')?1001:1002;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:`offline://42-${id}`,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};}});
  assert.equal(result.state,'preflight',JSON.stringify(result));assert.equal(predictions,2);assert.deepEqual(result.episodeIds,[1001,1002]);
 });
+
+test('sub-limit long-title retrieval reaches the real recovery worker only with exact episode prediction', async () => {
+  const title = 'Distinctive Journey Across the Faraway Kingdom with Companions and Unexpected Adventures';
+  const filename = 'Journey - 01.mkv';
+  const selected = { ...candidate, title: '[Group] Distinctive Journey Across Alternate Spacing - 01 1080p Multi-Subs',
+    seeders: 80, evidence: 'unverified' };
+  for (const prediction of ['exact', 'unknown', 'wrong']) {
+    let submitted = 0;
+    const discover = createRequestCandidateDiscovery({ readRequest: () => request,
+      loadDetail: async () => ({ ...detail, title }), pause: async () => {},
+      searchReleases: async ({ query }) => ({ state: 'candidates',
+        items: query === 'Distinctive Journey Across 01' ? [selected] : [] }) });
+    const process = createAcquisitionRequestProcessor({ readRequest: () => request,
+      requireReleasePolicy: true, preferShokoPreview: true,
+      readRecoveredTargets: () => [1001], loadDetail: async () => ({ ...detail, title }),
+      discoverCandidates: discover,
+      previewCandidate: input => previewRequestCandidate({ ...input,
+        readRequest: () => request, loadDetail: async () => ({ ...detail, title }),
+        prepare: async () => ({ ...prepared, files: [{ name: filename, size: 1_000 }] }),
+        offlineLookup: async () => prediction === 'unknown' ? { status: 204 } :
+          { status: 200, release: { ProviderName: 'Offline Importer', IsCorrupted: false,
+            ID: 'offline://42-1001', OriginalFilename: filename,
+            CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: prediction === 'exact' ? 1001 : 1002,
+              PercentageStart: 0, PercentageEnd: 100 }] } } }),
+      submitCandidate: async () => { submitted++; return { state: 'stopped_observed', attemptId: 11 }; },
+    });
+    const result = await process({ requestId: 4 });
+    assert.equal(submitted, prediction === 'exact' ? 1 : 0, prediction);
+    if (prediction === 'exact') assert.equal(result.state, 'stopped_observed');
+  }
+});

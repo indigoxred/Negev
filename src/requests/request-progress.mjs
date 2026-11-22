@@ -88,6 +88,8 @@ export function openRequestProgress(dbPath, { now = Date.now,
           AND h.attempt_id IS NULL AND j.attempt_id IS NULL
           AND t.attempt_id IS NULL AND x.attempt_id IS NULL
           AND si.attempt_id IS NULL
+          AND EXISTS (SELECT 1 FROM acquisition_target_claims live
+            WHERE live.attempt_id=a.id AND live.active=1)
         ORDER BY c.checked_ms DESC,a.id DESC LIMIT 1`);
     }
     const checkedMs = now();
@@ -112,7 +114,8 @@ export function openRequestProgress(dbPath, { now = Date.now,
           AND c.state='held' AND c.reason='file_lookup_inconclusive'
           AND c.next_due_ms IS NOT NULL AND h.attempt_id IS NULL
           AND j.attempt_id IS NULL AND t.attempt_id IS NULL
-          AND x.attempt_id IS NULL LIMIT 101`);
+          AND x.attempt_id IS NULL AND EXISTS (SELECT 1 FROM acquisition_target_claims live
+            WHERE live.attempt_id=a.id AND live.active=1) LIMIT 101`);
     }
     const rows = inconclusiveFileCheck.all(requestId);
     if (rows.length > 100) return null;
@@ -160,13 +163,13 @@ export function openRequestProgress(dbPath, { now = Date.now,
       if (rows.length > 100) return { state: 'unknown',
         reason: 'too_many_attempts', publicAvailability: 'unverified' };
       const active = rows.filter((row) => !row.released_id && !row.retired_id &&
-        !row.rejected_id);
+        !row.rejected_id && row.claimed_count > 0);
       const privateVerifiedTargets = active.reduce((sum, row) =>
         sum + (row.handoff_status ? row.claimed_count : 0), 0);
       // Completed handoffs remain immutable history. Only attempts covering
       // a still-unverified target describe what this request is doing now.
       const pending=active.filter(row=>{const ids=JSON.parse(row.claimed_episode_ids);
-        return ids.length===0||ids.some(id=>!available.has(id));});
+        return ids.some(id=>!available.has(id));});
       const pendingPrivateTargets=pending.reduce((sum,row)=>sum+(row.handoff_status?row.claimed_count:0),0);
       const interruptedCheck = interrupted(requestId);
       const rejectedNeedsReview = rows.some((row) => row.rejected_id && !row.retired_id);

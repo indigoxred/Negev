@@ -54,3 +54,15 @@ test('keeps a same-ID romanized synonym and English official title in bounded qu
   assert.deepEqual(trustedTargetedQueries(title, [main, synonym, english], 1),
     [`${title} 01`, `${synonym} 01`, `${english} 01`]);
 });
+
+test('a long title below the provider limit gets a spare bounded retrieval prefix, not identity evidence', () => {
+  const title = 'Mezametara Saikyou Soubi to Uchuusen Mochi Datta no de, Ikkodate Mezashite Youhei to Shite Jiyuu ni Ikitai';
+  const alias = 'Reborn as a Space Mercenary: I Woke Up Piloting the Strongest Starship!';
+  const queries = trustedReleaseQueries(title, [alias]);
+  assert.ok(title.length < 120);
+  assert.ok(queries.includes('Mezametara Saikyou Soubi'));
+  assert.ok(queries.includes(alias));
+  assert.ok(queries.length <= 4);
+  assert.ok(trustedTargetedQueries(title, [alias], 8).includes('Mezametara Saikyou Soubi 08'));
+  assert.ok(!trustedIdentityTitles(title, [alias]).includes('Mezametara Saikyou Soubi'));
+});

@@ -34,6 +34,19 @@ export function trustedReleaseQueries(title, aliases = []) {
       if (queries.length === maxQueries) return queries;
     }
   }
+  // Long official names can fit the provider limit while differing from
+  // indexer spelling in later words. Reuse only spare slots for retrieval;
+  // these prefixes never become trustedIdentityTitles or bypass exact preview.
+  for (const value of [title, ...(Array.isArray(aliases) ? aliases.slice(0, 10) : [])]) {
+    if (queries.length === maxQueries) break;
+    if (typeof value !== 'string' || value.length < 60) continue;
+    const words = value.match(/[\p{L}\p{N}]+/gu) ?? [];
+    const prefix = words.slice(0, 3).join(' ');
+    const key = prefix.toLocaleLowerCase('en');
+    if (words.length < 8 || prefix.length < 16 || prefix.length > 120 || seen.has(key)) continue;
+    queries.push(prefix);
+    seen.add(key);
+  }
   // Reuse spare query slots only after retaining the existing same-ID names.
   for (const query of [...queries]) {
     const neutral=query.replace(/[:：]/gu,' ').replace(/\s+/gu,' ').trim();
