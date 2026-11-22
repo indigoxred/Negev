@@ -618,3 +618,14 @@ test('final submission rejects season-one metadata against trusted season-two al
   assert.equal(ledger.inspectRequestAttempts(request.id).state,'no_attempt');
   assert.equal(qbitCalls.length,0);
 }));
+
+for(const [title,alias]of [['Example Season 2','Example Second Season'],['Example Final Season','Example Season 4']])test(`final submission accepts trusted textual season title: ${title}`,async()=>withLedgers(async({request,ledger})=>{
+ const encode=v=>Buffer.isBuffer(v)?Buffer.concat([Buffer.from(v.length+':'),v]):typeof v==='string'?encode(Buffer.from(v)):typeof v==='number'?Buffer.from('i'+v+'e'):Buffer.concat([Buffer.from('d'),...Object.keys(v).sort().flatMap(k=>[encode(k),encode(v[k])]),Buffer.from('e')]);
+ const stem=title.includes('Final')?title:alias,filename=stem+' - 01.mkv';const metainfo={length:1000,name:filename,'piece length':16384,pieces:Buffer.alloc(20,1)},infoBytes=encode(metainfo),localHash=createHash('sha1').update(infoBytes).digest('hex'),torrentBytes=encode({info:metainfo}),localPath=`/Downloads/negev/${localHash}`;
+ const chosen={...candidate,title:alias+' [1080p]'};const calls=[];let infoReads=0;
+ const input=options({request,ledger,readEvidence:async()=>absent(),prowlarrFetch:async url=>new URL(url).pathname.endsWith('/search')?Response.json([{...chosen,protocol:'torrent',downloadUrl:proxy}]):new Response(torrentBytes,{headers:{'content-type':'application/x-bittorrent'}}),qbittorrentFetch:async(url,init)=>{
+  const endpoint=new URL(url).pathname;calls.push(endpoint);if(endpoint.endsWith('/version'))return new Response('v5.3.0');if(endpoint.endsWith('/add'))return new Response('Ok.');if(endpoint.endsWith('/info')&&++infoReads===1)return Response.json([]);if(endpoint.endsWith('/files'))return Response.json([{index:0,name:filename,size:1000,priority:1,progress:0}]);if(endpoint.endsWith('/properties'))return Response.json({save_path:localPath,download_path:''});return Response.json([{...torrent,hash:localHash,save_path:localPath}]);
+ }});
+ const result=await submitMissingCandidate({...input,candidate:chosen,detail:{...baseDetail,title},plannedFiles:[{name:filename,size:1000,episodeIds:[1001]}],searchQuery:alias,releaseQueries:async()=>[alias],readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:41,title:'Example',relation:'Prequel'}]})});
+ assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.equal(calls.filter(p=>p.endsWith('/add')).length,1);assert.deepEqual(ledger.getFilePlan(result.attemptId),[{name:filename,size:1000,episodeIds:[1001]}]);
+}));

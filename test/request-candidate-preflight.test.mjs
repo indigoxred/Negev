@@ -622,3 +622,8 @@ test('season-one labels remain valid for a first installment with a sequel',()=>
   return previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 1'},readRequest:()=>request,loadDetail:async()=>detail,
     readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:43,title:'Example Season 2',relation:'Sequel'}]}),prepare:async()=>prepared}).then(result=>assert.equal(result.state,'preflight'));
 });
+
+for(const [title,alias]of [['Example Season 2','Example Second Season'],['Example Final Season','Example Season 4']])test(`preflight accepts trusted textual season pack: ${title}`,async()=>{
+ const stem=title.includes('Final')?title:alias;let predictions=0;const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:alias+' [1080p] [Batch]',size:2000},readRequest:()=>request,loadDetail:async()=>({...detail,title}),releaseQueries:async()=>[alias],readRelatedTitles:async()=>({state:'related_titles',anidbId:42,items:[{anidbId:41,title:'Example',relation:'Prequel'}]}),prepare:async()=>({...prepared,totalBytes:2000,files:[1,2].map(n=>({name:`${stem} - 0${n}.mkv`,size:1000}))}),offlineLookup:async({filename})=>{predictions++;const id=filename.includes('01')?1001:1002;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:`offline://42-${id}`,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}};}});
+ assert.equal(result.state,'preflight',JSON.stringify(result));assert.equal(predictions,2);assert.deepEqual(result.episodeIds,[1001,1002]);
+});
