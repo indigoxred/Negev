@@ -140,7 +140,8 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       try{groupRegistration=registry?.match(item.group)??null;}catch{/* Optional display evidence stays neutral. */}
       return {...item,groupRegistration,token:cache(id,c)};};
     return {...result,...await context(id),
-      items:items.sort((a,b)=>compareReleases(a,b,{preferSeasonPack:request.kind==='series'&&result.releaseState==='completed'})).map(publicCandidate)};
+      items:items.sort((a,b)=>Number(b.titleHintMatch===true)-Number(a.titleHintMatch===true)||
+        compareReleases(a,b,{preferSeasonPack:request.kind==='series'&&result.releaseState==='completed'})).map(publicCandidate)};
   };
   const begin=(id,mode,revision)=>{
     if(!['auto','manual'].includes(mode)) return held('invalid_release_selection');

@@ -105,3 +105,13 @@ test('a rejected release can expose files for inspection but cannot be chosen or
  const before=x.service.snapshot(x.id);const chosen=await x.service.choose(x.id,token,before.revision);
  assert.equal(chosen.state,'held');assert.equal(chosen.reason,'release_title_mismatch');assert.deepEqual(x.service.snapshot(x.id),before);assert.equal(x.wakes(),0);
 }));
+
+test('title relevance survives Manual and initial Auto sorting before the three-preview cap',()=>fixture(async({service,id,items,inspected,setInspectHook})=>{
+ items.splice(0,items.length,...[0,1,2].map(i=>({guid:`wrong-${i}`,indexerId:1,title:'[Example] Unrelated Anime S01 BD 1080p',size:1000,seeders:100,evidence:'unverified',titleHintMatch:false})),
+  {guid:'right',indexerId:1,title:'[Group] Example S01 BD 1080p',size:1000,seeders:3,evidence:'unverified',titleHintMatch:true});
+ setInspectHook(async()=>inspected.at(-1)==='right'?null:{state:'held',reason:'release_title_mismatch'});
+ const found=await service.search(id);assert.equal(found.items[0].guid,'right');
+ const begun=service.begin(id,'auto',service.snapshot(id).revision);
+ const result=await service.auto(id,begun.control.revision);
+ assert.equal(result.control.phase,'chosen');assert.equal(result.control.selection.candidate.guid,'right');
+}));

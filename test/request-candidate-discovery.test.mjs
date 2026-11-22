@@ -446,19 +446,19 @@ test('completed Manual Pick supplements the capped broad window with batches and
   releaseQueries:async()=>['English Alias','Second Alias','Third Alias'],pause:async()=>{},
   searchReleases:async input=>{calls.push(input);return {state:'candidates',items:input.query.endsWith(' batch')?batch:base};}});
  const found=await discover({requestId:12,interactive:true,filters:manualFilters});
- assert.deepEqual(calls.map(call=>call.query),['Canonical Anime','English Alias','Second Alias','Third Alias','Canonical Anime batch']);
+ assert.deepEqual(calls.map(call=>call.query),['Canonical Anime','English Alias','Second Alias','Third Alias','Canonical Anime batch','English Alias batch','Second Alias batch','Third Alias batch']);
  assert.ok(calls.every(call=>call.limit===200&&call.targetEpisodeNumber===null));
  assert.equal(found.state,'candidates');
  assert.deepEqual(found.items.map(item=>item.guid).sort(),['base-dual','base-jp','subsplease','subsplus']);
  assert.equal(found.filteredOut,198);assert.equal(found.nextOffset,null);assert.equal(found.exhaustive,false);
  assert.equal(found.searchIncomplete,undefined);
  const repeated=await discover({requestId:12,interactive:true,filters:manualFilters});
- assert.deepEqual(repeated.items,found.items);assert.equal(calls.length,5);
+ assert.deepEqual(repeated.items,found.items);assert.equal(calls.length,8);
 });
 
 test('batch supplementation preserves manual group refinements, skips existing batch terms and obeys the query length bound',async()=>{
  for(const [phrase,expected] of [
-  ['Canonical Anime Anime Time',['Canonical Anime Anime Time','English Alias Anime Time','Canonical Anime Anime Time batch']],
+  ['Canonical Anime Anime Time',['Canonical Anime Anime Time','English Alias Anime Time','Canonical Anime Anime Time batch','English Alias Anime Time batch']],
   ['Canonical Anime BATCH',['Canonical Anime BATCH','English Alias BATCH']],
   ['x'.repeat(120),['x'.repeat(120)]],
  ]){
@@ -471,10 +471,9 @@ test('batch supplementation preserves manual group refinements, skips existing b
  }
 });
 
-test('batch supplementation leaves Auto Pick, airing titles and explicit episode browsing unchanged',async()=>{
+test('batch supplementation leaves single-target background searches, airing and explicit episode browsing unchanged',async()=>{
  for(const [observation,options] of [
   [completedDetail,{}],
-  [completedDetail,{interactive:true}],
   [completedDetail,{interactive:true,filters:{...manualFilters,packsOnly:false}}],
   [{...detail,airDate:'2016-04-05'},{interactive:true,filters:manualFilters}],
  ]){

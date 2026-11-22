@@ -73,7 +73,7 @@ export function compareReleases(left, right, { preferSeasonPack = false } = {}) 
   const b = assessRelease(right);
   if (a.eligible !== b.eligible) return Number(b.eligible) - Number(a.eligible);
   if (preferSeasonPack) {
-    const rank=c=>hasSeasonPackHint(c)?0:hasSingleEpisodeHint(c)?2:1;
+    const rank=c=>Number(hasSingleEpisodeHint(c));
     if(rank(left)!==rank(right))return rank(left)-rank(right);
   }
   if (left.targetedEpisode !== right.targetedEpisode && !preferSeasonPack) {
@@ -82,6 +82,15 @@ export function compareReleases(left, right, { preferSeasonPack = false } = {}) 
   }
   const suitability = compareReleaseSuitability(left, right);
   if (suitability !== 0) return suitability;
+  if(left.titleHintMatch!==right.titleHintMatch) {
+    const relevance=Number(right.titleHintMatch===true)-Number(left.titleHintMatch===true);
+    if(relevance)return relevance;
+  }
+  // An advertised Batch label cannot lower the quality tier of a potential
+  // complete pack. Metainfo still decides actual episode coverage.
+  if(preferSeasonPack&&hasSeasonPackHint(left)!==hasSeasonPackHint(right)) {
+    return Number(hasSeasonPackHint(right))-Number(hasSeasonPackHint(left));
+  }
   if (a.trusted !== b.trusted) return Number(b.trusted) - Number(a.trusted);
   if (a.subtitleHint !== b.subtitleHint) {
     return Number(b.subtitleHint) - Number(a.subtitleHint);

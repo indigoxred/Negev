@@ -32,7 +32,9 @@ export function releaseFacts(title = '') {
   const dual = /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i.test(languageTitle);
   const english = /\b(?:english|eng)[ ._-]*(?:dub(?:bed)?|audio)\b|\b(?:dub(?:bed)?|audio)[ ._-]*in[ ._-]+(?:english|eng)\b|\bdub[ ._-]*only\b/i.test(languageTitle);
   const otherLanguage = '(?:russian|rus|french|german|spanish|italian|portuguese|hindi|tamil|telugu|ukrainian|korean|chinese)';
-  const other = new RegExp('\\b'+otherLanguage+'[ ._-]*(?:dub(?:bed)?|audio)\\b|\\b(?:dub(?:bed)?|audio)[ ._-]*in[ ._-]+'+otherLanguage+'\\b','i').test(languageTitle);
+  const annotationTitle=languageTitle.replace(/^\s*\[[^\]\r\n]{1,120}\]\s*(?=\S)/u,'');
+  const languageAnnotation = new RegExp('(?:\\(|\\[)\\s*'+otherLanguage+'\\s*(?:\\)|\\])','i').test(annotationTitle);
+  const other = languageAnnotation && !dual || new RegExp('\\b'+otherLanguage+'[ ._-]*(?:dub(?:bed)?|audio)\\b|\\b(?:dub(?:bed)?|audio)[ ._-]*in[ ._-]+'+otherLanguage+'\\b','i').test(languageTitle);
   const explicitJapanese = /\b(?:japanese|jpn)[ ._-]*(?:audio|dub(?:bed)?)\b|\b(?:audio|dub(?:bed)?)[ ._-]*in[ ._-]+(?:japanese|jpn)\b/i.test(languageTitle);
   const audio = other && !explicitJapanese ? 'other' :
     (dual || english && explicitJapanese) ? 'dual' : english ? 'english' : explicitJapanese ? 'japanese' : 'unknown';
