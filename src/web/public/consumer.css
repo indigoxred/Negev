@@ -82,7 +82,7 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 @media(min-width:701px){.request-row:has(.request-actions>:nth-child(2))>.request-more{grid-row:2;align-self:start}}
 
 /* Keep the owner label and both selected/unselected buttons centred. */
-.request-scope{align-items:center}.request-scope>button{height:36px;box-sizing:border-box;align-self:center;margin:0}.request-scope>.toolbar-label{align-self:center}
+.request-scope{align-items:center}.request-scope-options>button{height:36px;box-sizing:border-box;align-self:center;margin:0}.request-scope>.toolbar-label{align-self:center}
 
 /* Submitting/searching a request is an action, unlike the picker's view tabs. */
 .release-mode-actions.release-request-actions{gap:12px;flex-wrap:wrap;border-bottom:0}
@@ -92,3 +92,5 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 .release-request-actions>button.primary:hover{background:#ccbcff;border-color:#ccbcff;color:#211b31}
 .release-request-actions>button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 @media(max-width:700px){.release-request-actions>button{flex:1 1 132px}}
+
+.request-scope{background:none;border:0;padding:0;gap:12px}.request-scope-options{display:inline-flex;align-items:center;gap:3px;padding:4px;background:#ffffff06;border:1px solid #ffffff0d;border-radius:12px}
