@@ -1,6 +1,7 @@
+import { matchesTrustedReleaseTitle } from './plan-torrent-targets.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
-import { trustedReleaseQueries, trustedTargetedQueries, trustedPackQueries } from './trusted-release-queries.mjs';
+import { trustedReleaseQueries, trustedTargetedQueries, trustedPackQueries, trustedIdentityTitles } from './trusted-release-queries.mjs';
 import { hasTargetEpisodeHint, hasSingleEpisodeHint, compareReleases } from './release-preference.mjs';
 import { matchesReleaseFilters, validReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
@@ -119,12 +120,12 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       } else queries=queries.slice(0,4);
     }
     // A broad provider window can fill with individual episodes before older
-    // packs appear. Keep every chosen alias and add one bounded batch search
-    // for Manual Pick's completed-series pack view, preserving refinement terms.
-    if(completedSeries&&filters!==null&&filters.packsOnly!==false&&
-        !queries.some(value=>/\bbatch\b/i.test(value))) {
-      const batchQuery=queries[0]?`${queries[0]} batch`:null;
-      if(batchQuery&&batchQuery.length<=120&&queries.length<5)queries.push(batchQuery);
+    // packs appear. Supplement each bounded alias for both interactive modes,
+    // preserving refinements and the existing per-query pacing/cache.
+    if(completedSeries&&(filters===null||filters.packsOnly!==false)) {
+      const batchQueries=queries.filter(value=>!/\bbatch\b/i.test(value))
+        .map(value=>`${value} batch`).filter(value=>value.length<=120);
+      queries=[...new Set([...queries,...batchQueries])].slice(0,8);
     }
     if (queries.length === 0) return held('query_too_long');
     if (automaticPacks) queries=[...new Set([
@@ -208,8 +209,22 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       }
       if (!any) break;
     }
-    if(completed)items=[...bestByCandidate.values()].sort((a,b)=>
-      compareReleases(a,b,{preferSeasonPack:true})).slice(0,combinedLimit);
+    if(completed) {
+      const identityTitles=trustedIdentityTitles(detail.title,aliases);
+      // Retrieval relevance only. A group sharing the show's name must not
+      // evict real title hits; every survivor still needs exact file checks.
+      items=[...bestByCandidate.values()].map(item=>{
+        const suffix=/-([A-Za-z][A-Za-z0-9._]{1,59})(?=\s*(?:\(|$))/.exec(item.title);
+        // Only remove a suffix that could itself supply the title match.
+        // A hyphenated anime title is not automatically a release group.
+        const hintTitle=suffix&&matchesTrustedReleaseTitle(suffix[1],...identityTitles)
+          ?item.title.slice(0,suffix.index)+item.title.slice(suffix.index+suffix[0].length)
+          :item.title;
+        return {...item,titleHintMatch:matchesTrustedReleaseTitle(hintTitle,...identityTitles)};
+      })
+        .sort((a,b)=>Number(b.titleHintMatch)-Number(a.titleHintMatch)||
+          compareReleases(a,b,{preferSeasonPack:true})).slice(0,combinedLimit);
+    }
     if (items.length === 0 && failedQueries.length > 0) {
       return held('release_search_incomplete');
     }

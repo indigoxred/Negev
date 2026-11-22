@@ -131,7 +131,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   const mainPrepared = { ...prepared, files: bonus.mainFiles };
   if (readRelatedTitles) {
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
-      requestedTitle: detail.title, related, releaseTitle: candidate.title,
+      requestedTitle: detail.title, requestedAliases: aliases, related, releaseTitle: candidate.title,
       fileNames: mainPrepared.files.filter((file) =>
         torrentFileKind(file.name) === 'video').map((file) => file.name) });
     if (checked.state !== 'related_title_clear') return {...checked,...(inspectedFiles?{inspectedFiles}:{})};

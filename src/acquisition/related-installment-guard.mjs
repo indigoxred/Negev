@@ -8,24 +8,31 @@ const relatedTitleVariants = (title) => {
   const singular = title.replace(/(\p{L}{3,}[^s])s$/iu, '$1');
   return singular === title ? [title] : [title, singular];
 };
-const roman = { ii: 2, iii: 3, iv: 4, v: 5 };
-const titleSeason = (title) => {
-  const match = /\bseason[ ._-]+(ii|iii|iv|v|[2-9]\d?)\b/i.exec(title) ??
-    /\b([2-9]\d?)(?:nd|rd|th)[ ._-]+season\b/i.exec(title);
-  return match ? (roman[match[1].toLowerCase()] ?? Number(match[1])) : null;
+const roman = { i: 1, ii: 2, iii: 3, iv: 4, v: 5 };
+// Explicit coordinates are negative evidence only. Ordinary episode numbers,
+// catalogue years and a prequel relationship do not establish a season number.
+const releaseSeasons = name => {
+  const ordinal = /(?<![\p{L}\p{N}])0*([1-9]\d?)(?:st|nd|rd|th)[ ._-]+season(?=$|[^\p{L}\p{N}])/giu;
+  const ordinals = [...name.matchAll(ordinal)].map(match => Number(match[1]));
+  // Do not read the episode in "2nd Season - 01" again as "Season 01".
+  const remainder = name.replace(ordinal, ' ');
+  return [...ordinals, ...[
+    ...remainder.matchAll(/(?<![\p{L}\p{N}])season[ ._-]+(?:0*([1-9]\d?)|(i|ii|iii|iv|v))(?=$|[^\p{L}\p{N}])/giu),
+    ...remainder.matchAll(/(?<![\p{L}\p{N}])s0*([1-9]\d?)(?=e\d{1,4}(?:v\d{1,2})?(?=$|[^\p{L}\p{N}])|$|[^\p{L}\p{N}])/giu),
+  ].map(match => match[2] ? roman[match[2].toLowerCase()] : Number(match[1]))];
+};const titleSeason = title => {
+  const seasons = new Set(releaseSeasons(title));
+  return seasons.size === 1 ? [...seasons][0] : null;
 };
-const releaseSeasons = (name) => [
-  ...name.matchAll(/(?:^|[ ._/-])s0*([2-9]\d?)(?=e\d{1,4}(?:$|[ ._/-])|$|[ ._/-])/gi),
-  ...name.matchAll(/\bseason[ ._-]+([2-9]\d?)\b/gi),
-].map((match) => Number(match[1]));
-
 // A title can be the prefix of a separately listed sequel or side story.
 // Direct AniDB relations provide conservative negative evidence before any
 // bytes are downloaded; completed bytes still require exact AniDB proof.
-export function checkRelatedInstallment({ anidbId, requestedTitle, related,
+export function checkRelatedInstallment({ anidbId, requestedTitle, requestedAliases = [], related,
   releaseTitle, fileNames = [] } = {}) {
   if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
       typeof requestedTitle !== 'string' || !requestedTitle.trim() ||
+      !Array.isArray(requestedAliases) || requestedAliases.length > 50 ||
+      requestedAliases.some(title => typeof title !== 'string' || title.length > 500) ||
       related?.state !== 'related_titles' || related.anidbId !== anidbId ||
       !Array.isArray(related.items) || related.items.length > 50 ||
       !Array.isArray(fileNames) || fileNames.length < 1 || fileNames.length > 50 ||
@@ -42,7 +49,10 @@ export function checkRelatedInstallment({ anidbId, requestedTitle, related,
     return held('related_title_unavailable');
   }
   const names = releaseTitle === undefined ? fileNames : [releaseTitle, ...fileNames];
-  const namedSeason = titleSeason(requestedTitle);
+  const aliasSeasons = new Set([requestedTitle, ...requestedAliases].map(titleSeason).filter(Boolean));
+  // Conflicting aliases must not erase explicit canonical negative evidence.
+  const namedSeason = titleSeason(requestedTitle) ??
+    (aliasSeasons.size === 1 ? [...aliasSeasons][0] : null);
   const hasPrequel = related.items.some((item) =>
     item.relation?.toLowerCase() === 'prequel');
   const hasSequel = related.items.some((item) =>
@@ -51,7 +61,7 @@ export function checkRelatedInstallment({ anidbId, requestedTitle, related,
   // installment's name. Episode numbers alone must not cross that boundary.
   if (names.some((name) => releaseSeasons(name).some((season) =>
     (namedSeason !== null && season !== namedSeason) ||
-    (namedSeason === null && !hasPrequel && hasSequel)))) {
+    (namedSeason === null && season > 1 && !hasPrequel && hasSequel)))) {
     return held('related_installment_mismatch');
   }
   if (related.items.some((item) => {
