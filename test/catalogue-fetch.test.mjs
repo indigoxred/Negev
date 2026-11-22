@@ -69,3 +69,37 @@ test('seasonal and title/poster readers reuse the same bounded exact AniDB paylo
  const [a,b,c]=await Promise.all([catalogue.read({year:2026,season:'FALL',limit:4}),catalogue.read({year:2026,season:'FALL',limit:4,after:2}),display.read({anidbId:1})]);
  assert.equal(a.items.length,4);assert.equal(b.items.length,4);assert.equal(c.state,'display');assert.equal(calls.filter(u=>u.endsWith('/api/v1/map')).length,1);assert.equal(calls.filter(u=>u===url(1)).length,1);assert.equal(calls.length,7);assert.ok(peak<=4);
 });
+
+test('active admission and aborted queued jobs leave capacity for a healthy replacement',async()=>{
+ let resolve;const seen=[];const read=createCatalogueFetch({concurrency:1,maxPending:1,fetchImpl:async u=>{seen.push(String(u));if(String(u)===url(1))return new Promise(r=>{resolve=r;});return json({ok:true});}});
+ const a=read(url(1)),c=new AbortController(),b=read(url(2),{signal:c.signal});await tick();assert.deepEqual(seen,[url(1)]);c.abort();await assert.rejects(b,{name:'AbortError'});const replacement=read(url(3));resolve(json({ok:true}));assert.equal((await a).status,200);assert.equal((await replacement).status,200);assert.deepEqual(seen,[url(1),url(3)]);
+});
+
+test('an early rejected body is cancelled before another queued lookup uses its slot',async()=>{
+ let cancelled=false,observed=false;const read=createCatalogueFetch({concurrency:1,fetchImpl:async u=>{if(String(u)===url(1))return new Response(new ReadableStream({cancel(){cancelled=true;}}),{headers:{'content-length':'128001'}});observed=cancelled;return json({ok:true});}});
+ const a=read(url(1)).catch(()=>null),b=read(url(2));await a;await b;assert.equal(cancelled,true);assert.equal(observed,true);
+});
+
+test('same-key cooldown responses count down and do not outlive their absolute deadline',async()=>{
+ let time=1000,calls=0;const read=createCatalogueFetch({now:()=>time,fetchImpl:async()=>++calls===1?new Response('',{status:503,headers:{'Retry-After':'2'}}):json({ok:true})});
+ assert.equal((await read(url(1))).headers.get('retry-after'),'2');time+=1000;assert.equal((await read(url(1))).headers.get('retry-after'),'1');time+=2001;assert.equal((await read(url(1))).status,200);assert.equal(calls,2);
+});
+
+test('zero and elapsed Retry-After do not create a new provider blackout',async()=>{
+ for(const retry of ['0','Sun, 22 Nov 2026 00:00:00 GMT']){let calls=0;const read=createCatalogueFetch({now:()=>Date.parse('2026-11-22T01:00:00Z'),fetchImpl:async()=>++calls===1?new Response('',{status:503,headers:{'Retry-After':retry}}):json({ok:true})});await read(url(1));assert.equal((await read(url(2))).status,200);assert.equal(calls,2);}
+});
+
+test('a later viewer can join existing work during a different-path provider cooldown',async()=>{
+ let resolve,calls=0;const read=createCatalogueFetch({fetchImpl:async u=>{calls++;if(String(u)===url(1))return new Promise(r=>{resolve=r;});return new Response('',{status:503,headers:{'Retry-After':'60'}});}});
+ const a=read(url(1));await tick();await read(url(2));const b=read(url(1));resolve(json({ok:true}));assert.equal((await a).status,200);assert.equal((await b).status,200);assert.equal(calls,2);
+});
+
+test('stalled body timeout cancels the reader and frees its shared slot',async()=>{
+ let cancelled=false;const read=createCatalogueFetch({concurrency:1,timeoutMs:20,fetchImpl:async u=>String(u)===url(1)?new Response(new ReadableStream({cancel(){cancelled=true;}})):json({ok:true})});
+ const a=read(url(1)).catch(()=>null),b=read(url(2));await a;assert.equal((await b).status,200);assert.equal(cancelled,true);
+});
+
+test('overlapping provider failures preserve the later absolute deadline for both keys',async()=>{
+ let time=1000;const replies=new Map();const read=createCatalogueFetch({now:()=>time,fetchImpl:u=>new Promise(resolve=>replies.set(String(u),resolve))});
+ const a=read(url(1)),b=read(url(2));await tick();replies.get(url(1))(new Response('',{status:503,headers:{'Retry-After':'120'}}));await a;time+=1000;replies.get(url(2))(new Response('',{status:429,headers:{'Retry-After':'2'}}));assert.equal((await b).headers.get('retry-after'),'119');assert.equal((await read(url(2))).headers.get('retry-after'),'119');assert.equal((await read(url(1))).headers.get('retry-after'),'119');
+});

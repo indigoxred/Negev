@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { readBoundedText } from '../http/bounded-response.mjs';
 
 const MAX_IMAGE_BYTES = 2_000_000;
@@ -16,7 +17,7 @@ export async function readAniDbPoster({ anidbId, fetchImpl = fetch,
     const options = { method: 'GET', redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) };
     const metadata = await fetchImpl(`https://animap.id/api/anidb/${anidbId}`, options);
-    if (metadata.status !== 200) return { state: 'unavailable' };
+    if (metadata.status !== 200) return withCatalogueRetry({ state: 'unavailable' }, metadata);
     const data = JSON.parse(await readBoundedText(metadata, 64_000));
     if (data?.anidb_id !== anidbId ||
         typeof data.picture !== 'string' || !/^\d+\.jpg$/.test(data.picture)) {
@@ -42,5 +43,5 @@ export async function readAniDbPoster({ anidbId, fetchImpl = fetch,
     if (bytes.length < 3 || bytes[0] !== 0xff || bytes[1] !== 0xd8 ||
         bytes[2] !== 0xff) return { state: 'unavailable' };
     return { state: 'image', type: 'image/jpeg', bytes };
-  } catch { return { state: 'unavailable' }; }
+  } catch (error) { return withCatalogueRetry({ state: 'unavailable' }, error); }
 }

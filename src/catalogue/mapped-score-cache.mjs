@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { readBoundedJson } from '../http/bounded-response.mjs';
@@ -36,6 +37,7 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
     mal_id=excluded.mal_id,state=excluded.state,score=excluded.score,
     votes=excluded.votes,members=excluded.members,checked_ms=excluded.checked_ms`);
   const pending = new Map();
+  const retryAfter = new Map();
   let draining = null;
   let closed = false;
   const validRow = (row, malId, time) => row?.mal_id === malId &&
@@ -50,7 +52,7 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (response.status !== 200) throw new Error('Score source unavailable');
+      if (response.status !== 200) throw withCatalogueRetry(new Error('Score source unavailable'), response);
       const data = await readBoundedJson(response, 128_000);
       if (data?.mal_id !== malId) throw new Error('Score identity changed');
       const votes = data.scored_by;
@@ -66,9 +68,9 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
         throw new Error('Invalid score');
       }
       return { state: 'rated', score, votes, members };
-    } catch {
-      return { state: 'unavailable', score: null, votes: null,
-        members: null };
+    } catch (error) {
+      return withCatalogueRetry({ state: 'unavailable', score: null, votes: null,
+        members: null }, error);
     }
   };
   const drain = () => {
@@ -79,8 +81,14 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
         pending.delete(anidbId);
         const value = await readScore(malId);
         if (closed) break;
-        save.run(anidbId, malId, value.state, value.score,
-          value.votes, value.members, now());
+        const until = catalogueRetryAt(value);
+        if (value.state === 'unavailable' && until !== null) {
+          retryAfter.set(anidbId, {malId, until});
+          while(retryAfter.size>1000)retryAfter.delete(retryAfter.keys().next().value);
+        } else {
+          retryAfter.delete(anidbId);
+          save.run(anidbId, malId, value.state, value.score, value.votes, value.members, now());
+        }
         if (pending.size && minGapMs) await sleep(minGapMs);
       }
     })().finally(() => { draining = null; if (pending.size && !closed) drain(); });
@@ -100,6 +108,8 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
       for (const { anidbId, malId } of entries) {
         const row = find.get(anidbId);
         if (validRow(row, malId, time)) checked++;
+        const deferred = retryAfter.get(anidbId);
+        if (deferred?.malId === malId && deferred.until > time) continue;
         const lifetime = row?.state === 'unavailable' ? 60 * 60_000 : WEEK;
         if (row?.mal_id !== malId || row.checked_ms > time ||
             row.checked_ms + lifetime <= time) pending.set(anidbId, malId);
@@ -109,6 +119,6 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
         checked, total: entries.length };
     },
     whenIdle: async () => { while (draining) await draining; },
-    close() { closed = true; pending.clear(); db.close(); },
+    close() { closed = true; pending.clear(); retryAfter.clear(); db.close(); },
   };
 }
