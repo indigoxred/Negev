@@ -1,3 +1,4 @@
+import { createWatchingScheduleReader } from './watching-schedule.mjs';
 import { createCatalogueFetch } from '../catalogue/catalogue-fetch.mjs';
 import { createBonusOwnershipReader } from '../acquisition/bonus-ownership.mjs';
 import { cachedRegularCoverage } from './card-coverage.mjs';
@@ -623,6 +624,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ...(titleChecks?.getRecentAvailableIds({ anidbId, nowMs: checkedMs }) ?? []),
         ...(fileProofs?.getRecentAvailableIds({ anidbId }) ?? []),
       ]) : new Set();
+    const watchingSchedules = createWatchingScheduleReader({
+      cachedIndex: (anidbId) => rawDetailReader.cachedEpisodeIndex(anidbId),
+      readDetail: (input) => rawDetailReader.read(input), today, now,
+      verifiedIds: (anidbId) => publicAvailableIdsForTitle(anidbId, now()),
+    });
     const publicPresenceForTitle = (anidbId, checkedMs) => {
       const ids = publicAvailableIdsForTitle(anidbId, checkedMs);
       return { state: ids.size > 0 ? 'in_library' : 'unknown',
@@ -745,6 +751,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           return { ...item,
             title: titleSource?.getTitle(item.anidbId) ??
               titleRegistry.getTitle({ anidbId: item.anidbId }) ?? item.title,
+            nextAir: watchingSchedules.read(item),
             preferredWait:requests.getPreferredWait(item.id,checkedMs),
             releasePreference:item.status==='held'&&item.kind==='series'&&item.monitorFuture&&!item.watchClosed&&releaseControl.preference
               ?{group:releaseControl.preference.group,audio:releaseControl.preference.audio}:null,

@@ -12,7 +12,7 @@ import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch
 import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
+import { episodeScheduleLabel, nextAirDateLabel, watchingNextAirLabel } from './episode-schedule.mjs';
 import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs';
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonSelectionScope, seasonTriggerPresentation } from './season-request-selection.mjs';
@@ -935,6 +935,8 @@ function renderRequestStatus(status, presentation) {
   if(presentation.stage==='Awaiting owner review'&&note){detail=note;note='';}
   if(presentation.stage==='Downloading')detail=detail.replace(/^One release is [0-9.]+% downloaded\. /,'One release · ');
   status.replaceChildren(element('strong', presentation.stage, 'request-stage'),element('span',detail,'request-detail'));
+  const nextAir = watchingNextAirLabel(status.negevRequest);
+  if (nextAir) status.append(element('span', nextAir, 'request-next-air'));
   if (Number.isFinite(presentation.progressPercent)) {
     const transfer = element('div', undefined, 'request-transfer-meter');
     const meter = element('div', undefined, 'request-transfer-progress');

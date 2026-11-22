@@ -825,8 +825,9 @@ test('signed-in consumer routes render real shell with search, library and reque
             publicAvailability: 'verified_recently', publicVerifiedTargets: 1 },
         }, {
           id: 3, requesterId: 1, requesterName: 'Owner', anidbId: 7, title: 'A title needing help', kind: 'series',
-          episodeIds: [12], monitorFuture: false, watchClosed: false, canCancel: false,
+          episodeIds: [12], monitorFuture: true, watchClosed: false, canCancel: false,
           status: 'held',
+          nextAir: { nextAirDate: '2026-11-29', nextEpisodeNumber: 2 },
           progress: { state: 'review_needed', targetCount: 1,
             publicAvailability: 'unverified', publicVerifiedTargets: 0 },
         }, {
@@ -1771,6 +1772,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.doesNotMatch(filmExtrasOnly, /1 film entry verified playable/);
       const requests = await dump(`${base}/#/requests`, join(dir, 'requests'));
       assert.match(requests, /Pale Cocoon/);
+      assert.match(requests, /class="request-next-air">Next: Episode 2 · 2026-11-29/);
       const englishRequests = await dump(`${base}/?english=1#/requests`,
         join(dir, 'english-requests'));
       assert.match(englishRequests, /<strong[^>]*>The Pale Cocoon<\/strong>/);
