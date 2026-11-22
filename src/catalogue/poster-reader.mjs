@@ -26,14 +26,14 @@ export function createPosterReader({ fetchImpl = fetch, now = Date.now,
       const job = pending.shift();
       active++;
       Promise.resolve().then(() => readAniDbPoster({
-        anidbId: job.anidbId, fetchImpl,
+        anidbId: job.anidbId, fetchImpl, now,
       })).then((result) => {
         drop(job.anidbId);
         const size = result.state === 'image' ? result.bytes.length : 0;
         if (size <= maxCacheBytes) {
           cache.set(job.anidbId, { result, size,
             expiresMs: result.state === 'image' ? now() + 86_400_000 :
-              catalogueRetryAt(result) ?? now() + 600_000 });
+              catalogueRetryAt(result) ?? now() + (result.retryable ? 15_000 : 600_000) });
           cacheBytes += size;
           while (cache.size > 500 || cacheBytes > maxCacheBytes) {
             drop(cache.keys().next().value);
@@ -61,7 +61,8 @@ export function createPosterReader({ fetchImpl = fetch, now = Date.now,
       }
       if (hit) drop(anidbId);
       if (inflight.has(anidbId)) return inflight.get(anidbId);
-      if (pending.length >= 40) return Promise.resolve({ state: 'unavailable' });
+      if (pending.length >= 40) return Promise.resolve(withCatalogueRetry(
+        { state: 'unavailable', retryable: true }, now() + 15_000));
       const result = new Promise((resolve) => {
         pending.push({ anidbId, resolve }); pump();
       });

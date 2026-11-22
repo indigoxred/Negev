@@ -42,11 +42,11 @@ test('empty search has no further page', () => {
   assert.equal(pager.nextPage, null);
 });
 
-test('continuations start one screen ahead, once, with a bounded bottom-only lead', async () => {
+test('continuations start two screens ahead, once, with a bounded bottom-only lead', async () => {
   const { observeCatalogueContinuation } = await import('../src/web/public/search-pages.mjs');
   assert.equal(typeof observeCatalogueContinuation, 'function');
-  for (const [height, margin] of [[844, '0px 0px 844px 0px'],
-    [900, '0px 0px 900px 0px'], [8000, '0px 0px 1200px 0px']]) {
+  for (const [height, margin] of [[844, '0px 0px 1688px 0px'],
+    [900, '0px 0px 1800px 0px'], [8000, '0px 0px 2400px 0px']]) {
     let notify;
     let observed;
     let options;
@@ -103,7 +103,9 @@ test('catalogue reads share one flight, bounded bursts and a rolling minute budg
  const {createCatalogueReadPacer}=await import('../src/web/public/search-pages.mjs');
  let time=0;const seen=[];const pacer=createCatalogueReadPacer({now:()=>time,sleep:async ms=>{time+=ms;}});
  await Promise.all(Array.from({length:13},(_,i)=>pacer.run(async()=>{seen.push(time);return i;})));
- assert.deepEqual(seen.slice(0,3),[0,0,6000]);
+ assert.deepEqual(seen.slice(0,4),[0,0,6000,12000]);
+ assert.ok(seen.slice(1).every((t,i)=>t-seen[i]<=12000),
+   'sustained browsing must not spend a burst then freeze for most of a minute');
  for(let i=0;i<seen.length;i++)assert.ok(seen.filter(t=>t>=seen[i]&&t<seen[i]+60000).length<=10);
  const before=seen.length;await assert.rejects(pacer.run(()=>{seen.push(time);},()=>false));assert.equal(seen.length,before);
 });

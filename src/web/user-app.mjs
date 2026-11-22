@@ -1,4 +1,5 @@
 import { validRegularCoverage } from './public/card-availability.mjs';
+import { catalogueRetryAt } from '../catalogue/catalogue-retry.mjs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
@@ -125,7 +126,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   // separate route budgets; login and registration retain peer throttling.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
   const assetNames = ['index.html', 'app.js', 'style.css', 'consumer.css',
-    'card-availability.mjs', 'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+    'card-availability.mjs', 'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs', 'poster-recovery.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'consumer-route.mjs', 'season-availability-presentation.mjs',
@@ -611,6 +612,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         typeof readCataloguePoster !== 'function' ||
         !(await confirmKnownTitle({ anidbId: id }))) return reply.code(404).send();
     const result = await readCataloguePoster({ anidbId: id });
+    if (result?.state === 'unavailable' && result.retryable === true) {
+      reply.header('Cache-Control', 'no-store');
+      reply.header('Retry-After', String(Math.max(1, Math.ceil(
+        ((catalogueRetryAt(result) ?? now() + 15_000) - now()) / 1000))));
+      return reply.code(503).send();
+    }
     if (result?.state !== 'image' || result.type !== 'image/jpeg' ||
         !Buffer.isBuffer(result.bytes) || result.bytes.length > 2_000_000) {
       return reply.code(404).send();

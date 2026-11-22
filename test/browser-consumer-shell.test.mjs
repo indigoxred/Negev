@@ -16,7 +16,7 @@ const assets = new Map([
   ['/style.css', ['style.css', 'text/css']],
   ['/consumer.css', ['consumer.css', 'text/css']],
   ...['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf'].map(name=>['/fonts/'+name,['fonts/'+name,'font/ttf']]),
-  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
+  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs', 'poster-recovery.mjs',
     'request-progress-text.mjs', 'response-epoch.mjs',
     'franchise-explorer.mjs', 'acquisition-notice.mjs',
     'adult-search-visibility.mjs', 'chinese-visibility.mjs',
@@ -51,7 +51,7 @@ const dump = async (url, profile, captureName, viewport = '1440,900', virtualTim
   });
 });
 
-async function inspectMobile(url, profile, width = 390) {
+async function inspectMobile(url, profile, width = 390, posterOnly = false) {
   const child = spawn(browser, ['--headless=new', '--no-first-run',
     '--disable-gpu', '--disable-dev-shm-usage', '--no-sandbox',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'],
@@ -104,6 +104,19 @@ async function inspectMobile(url, profile, width = 390) {
       width, height: 844, deviceScaleFactor: 1, mobile: true,
     });
     await send('Page.navigate', { url });
+    if (posterOnly) {
+      for (let attempt=0; attempt<150; attempt++) {
+        const {result}=await send('Runtime.evaluate',{returnByValue:true,
+          expression:`(() => {const image=document.querySelector('img[src="/api/catalogue/posters/anidb/4158"]');return Boolean(image?.complete&&image.naturalWidth>0&&image.parentElement.classList.contains('has-poster'));})()`});
+        if(result.value){
+          const html=await send('Runtime.evaluate',{returnByValue:true,expression:'document.documentElement.outerHTML'});
+          return html.result.value;
+        }
+        await wait(100);
+      }
+      const state=await send('Runtime.evaluate',{returnByValue:true,expression:`({title:document.title,images:[...document.querySelectorAll('img')].map(i=>({src:i.getAttribute('src'),complete:i.complete,width:i.naturalWidth,connected:i.isConnected,parent:i.parentElement.className})),text:document.querySelector('#results')?.textContent})`});
+      throw new Error('Native poster recovery did not load: '+JSON.stringify(state.result.value));
+    }
     await wait(1200); await settled();
     await send('Runtime.evaluate', {expression:'document.fonts.ready',awaitPromise:true});
     await send('DOM.enable'); await send('CSS.enable');
@@ -781,12 +794,30 @@ test('signed-in consumer routes render real shell with search, library and reque
     let failedRelatedDetailReads = 0;
     let failedDiscoverContinuation = false;
     let failedAiringContinuation = false;
+    let posterGets = 0, posterHeadReads = 0;
+    const posterRequests = [];
+    let catalogueReads = 0;
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
         `default-src 'none'; script-src 'self'${new URL(request.url, 'http://localhost')
           .searchParams.has('english') ? " 'unsafe-inline'" : ''}; ` +
         "style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'");
+      if (path === '/api/catalogue/posters/anidb/4158') {
+        posterRequests.push(request.method);
+        response.setHeader('Cache-Control','no-store');
+        if (request.method === 'HEAD') posterHeadReads++;
+        else posterGets++;
+        if (request.method === 'HEAD' || posterGets === 1) {
+          response.writeHead(503,{'Retry-After':'1'});response.end();
+        } else {
+          response.setHeader('Cache-Control','private, max-age=3600');
+          // A tiny image fixture proves native load/error events, not AniDB validation.
+          response.setHeader('Content-Type','image/svg+xml');
+          response.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>');
+        }
+        return;
+      }
       if (path === '/api/session') {
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ user: { id: 1, username: 'Owner', role: 'admin',
@@ -942,6 +973,7 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/seasons') {
+        catalogueReads++;
         const params = new URL(request.url, 'http://localhost').searchParams;
         if (params.get('year') === '2024') {
           const after = Number(params.get('after') ?? 0);
@@ -1430,8 +1462,20 @@ test('signed-in consumer routes render real shell with search, library and reque
     const dir = await mkdtemp(join(tmpdir(), 'negev-browser-consumer-'));
     try {
       const base = `http://127.0.0.1:${server.address().port}`;
-      const discover = await dump(`${base}/#/discover?q=Pale`, join(dir, 'discover'));
+      const discover = await inspectMobile(`${base}/#/discover?q=Pale`, join(dir, 'discover'),1440,true);
       assert.match(discover, /Pale Cocoon/);
+      assert.equal(catalogueReads,0,'text search does not load the hidden catalogue grid');
+      console.log('Native poster recovery request sequence:',JSON.stringify(posterRequests));
+      const probeIndex=posterRequests.indexOf('HEAD');
+      assert.ok(probeIndex>0 && posterRequests[0]==='GET',
+        'a native image failure is followed by the status probe');
+      assert.ok(posterRequests.slice(probeIndex+1).includes('GET'),
+        'a native image GET follows the cooldown probe');
+      assert.ok(posterGets>=2);
+      assert.equal(posterHeadReads,1,'one HEAD probe reads the cooldown');
+      assert.match(discover, /<span[^>]*class="[^"]*\bhas-poster\b[^"]*"[^>]*>[^<]*<img[^>]*src="\/api\/catalogue\/posters\/anidb\/4158"/,
+        'the exact poster must remain present and fire its native load handler');
+      assert.doesNotMatch(discover, /<img[^>]*src="\/api\/catalogue\/posters\/anidb\/4158"[^>]*missing-art/);
       assert.doesNotMatch(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
       const completedColdSeason = await dump(`${base}/#/title/94`,

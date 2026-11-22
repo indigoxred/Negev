@@ -38,13 +38,14 @@ export function createSearchPager(first) {
   };
 }
 
-// Load only the adjacent page within one screen; grants span successive markers.
+// Start the adjacent page before fast scrolling reaches it. Grants span markers
+// and prevent the larger lead from draining pages while the reader is still.
 // A one-shot guard also ignores notifications already queued when disconnected.
 export function observeCatalogueContinuation(marker, load, viewportHeight,
   Observer = globalThis.IntersectionObserver,
   { budget = null, readScrollY = () => globalThis.scrollY ?? 0,
     events = globalThis.window } = {}) {
-  const lead = Math.min(1200, Math.max(0, Math.round(viewportHeight)));
+  const lead = Math.min(2400, Math.max(0, Math.round(viewportHeight * 2)));
   let active = true, near = false;
   const intentEvents = ['wheel', 'touchmove', 'keydown', 'pointerdown'];
   const intent = event => {

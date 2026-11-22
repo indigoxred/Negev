@@ -1,6 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readAniDbPoster } from '../src/catalogue/anidb-poster.mjs';
+import { catalogueRetryAt } from '../src/catalogue/catalogue-retry.mjs';
+
+test('numeric jpeg filenames use the same fixed host and JPEG byte checks', async () => {
+  const urls=[];
+  const result=await readAniDbPoster({anidbId:19791,fetchImpl:async url=>{
+    urls.push(String(url));
+    return urls.length===1 ? new Response(JSON.stringify({anidb_id:19791,picture:'12287.jpeg'}))
+      : new Response(Buffer.from([0xff,0xd8,0xff]),{headers:{'content-type':'image/jpeg'}});
+  }});
+  assert.equal(result.state,'image');
+  assert.equal(urls[1],'https://cdn.anidb.net/images/main/12287.jpeg');
+});
+
+test('temporary provider failures retain retry evidence, missing artwork does not',async()=>{
+  for(const stage of ['metadata','image']){
+    const result=await readAniDbPoster({anidbId:1,now:()=>1000,fetchImpl:async url=>
+      stage==='metadata'||!String(url).includes('/api/anidb/')
+        ? new Response(null,{status:503,headers:{'Retry-After':'90'}})
+        : new Response(JSON.stringify({anidb_id:1,picture:'1.jpg'}))});
+    assert.equal(result.retryable,true);
+    assert.equal(catalogueRetryAt(result),91000);
+  }
+  const missing=await readAniDbPoster({anidbId:1,fetchImpl:async()=>
+    new Response(JSON.stringify({anidb_id:1,picture:null}))});
+  assert.equal(missing.state,'unavailable');assert.notEqual(missing.retryable,true);
+});
 
 test('reads a poster only from the exact AniDB ID and fixed image host', async () => {
   const urls = [];

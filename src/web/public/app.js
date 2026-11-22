@@ -3,6 +3,7 @@ import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { createSearchPager, observeCatalogueContinuation, createCataloguePrefetchBudget, createCatalogueReadPacer } from './search-pages.mjs';
+import { attachPosterRecovery } from './poster-recovery.mjs';
 import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
 import { requestPresentation, requestNeedsReleaseChoice, requestHasPendingAcquisition, requestCanEditReleasePreference } from './request-progress-text.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
@@ -318,11 +319,11 @@ const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
   : `/api/catalogue/posters/anidb/${item.anidbId}`;
 function posterImage(item, className = '') {
   const poster = document.createElement('img');
-  poster.src = posterUrl(item);
   poster.alt = '';
   poster.loading = 'lazy';
   if (className) poster.className = className;
-  poster.addEventListener('error', () => poster.classList.add('missing-art'));
+  attachPosterRecovery(poster);
+  poster.src = posterUrl(item);
   return poster;
 }
 function renderRoute() {
@@ -398,7 +399,7 @@ function renderRoute() {
       byId('search-form').requestSubmit();
     }
   }
-  if (page === 'discover') {
+  if (page === 'discover' && route.query.length < 2) {
     const choice = seasonChoice(route);
     const key = `${choice.year}-${choice.season}-${choice.after}-${choice.kind}-${choice.tag}-${choice.sort}`;
     if (state.seasonalRouteKey !== key) {
@@ -2005,7 +2006,6 @@ byId('search-form').addEventListener('submit', async (event) => {
       tile.setAttribute('aria-hidden', 'true');
       const poster = posterImage(item);
       poster.addEventListener('load', () => tile.classList.add('has-poster'));
-      poster.addEventListener('error', () => poster.remove());
       tile.append(poster);
       const copy = element('span', undefined, 'result-copy');
       copy.append(titleLabel(item),
