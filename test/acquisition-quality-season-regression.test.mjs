@@ -138,3 +138,13 @@ for(const alias of ['Example Second Season','Example Final Season','Example Spri
  const start=await f.runStart(result.attemptId);assert.equal(start.state,'start_unknown',JSON.stringify(start));
  assert.deepEqual(f.started,['text']);await f.runStart(result.attemptId);assert.deepEqual(f.started,['text']);
 });
+
+for(const mode of ['auto','manual'])for(const language of ['German','French','Spanish'])test('actual '+mode+' path never dispatches an explicit '+language+'-subtitles-only release',async t=>{
+ const f=await fixture(t,{registered:true,items:[release('foreign','[G] Example - 01 1080p [Japanese Audio] ['+language+' Subtitles Only]')]});
+ if(mode==='auto'){const r=await f.run();assert.equal(r.state,'held');assert.deepEqual(f.added,[])}else{
+  const initial=f.selection.snapshot(f.requestId);f.selection.begin(f.requestId,'manual',initial.revision);
+  const filtered=await f.selection.search(f.requestId);assert.equal(filtered.items.length,0);
+  const unfiltered=await f.selection.search(f.requestId,undefined,0,null);assert.equal(unfiltered.items.length,1);
+  const selected=await f.selection.choose(f.requestId,unfiltered.items[0].token,f.selection.snapshot(f.requestId).revision);assert.equal(selected.state,'held');assert.equal(selected.reason,'release_not_eligible');assert.deepEqual(f.added,[]);
+ }
+});

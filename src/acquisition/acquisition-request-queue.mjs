@@ -7,6 +7,7 @@ const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
 const RETRY_DELAY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
+const COVERAGE_CONTINUATION_MS = 1_000;
 const RELATED_RETRY_MS = 5 * 60_000;
 const METADATA_SHORT_RETRY_MS = 60_000;
 const METADATA_SHORT_WINDOW_MS = 10 * 60_000;
@@ -162,6 +163,17 @@ export function openAcquisitionRequestQueue(dbPath,
       SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
       WHERE state='held' AND reason='service_stopping'
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000`);
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all().some(c=>c.name==='coverage_policy_revision')) {
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN coverage_policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(coverage_policy_revision>=0)');
+    }
+    // Old generic holds also contained budget-deferred positive checks. Bring
+    // these forward once; the worker now distinguishes a continuation from
+    // genuine uncertainty and never grants permission to duplicate owned media.
+    db.exec(`UPDATE acquisition_request_checks
+      SET next_due_ms=MIN(next_due_ms,checked_ms+60000)
+      WHERE state='held' AND reason='availability_unverified' AND coverage_policy_revision=0
+        AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000;
+      UPDATE acquisition_request_checks SET coverage_policy_revision=1 WHERE coverage_policy_revision=0`);
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -198,9 +210,9 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0)) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision,coverage_policy_revision)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1) ON CONFLICT(request_id) DO UPDATE SET
+    pass=excluded.pass,state=NULL,coverage_policy_revision=1,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,
@@ -596,7 +608,7 @@ export function openAcquisitionRequestQueue(dbPath,
       const elapsed = checkedMs - (emptySinceMs ?? checkedMs);
       const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
-      const nextDueMs = reason==='preferred_group_wait'&&retryAtMs!==null?retryAtMs:reason === 'interrupted_attempt_present'
+      const nextDueMs = reason==='availability_check_pending' ? checkedMs+COVERAGE_CONTINUATION_MS : reason==='preferred_group_wait'&&retryAtMs!==null?retryAtMs:reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
           ['related_title_unavailable',

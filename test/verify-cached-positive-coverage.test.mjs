@@ -93,3 +93,9 @@ test('a repeatedly unavailable target cannot starve uninspected owned episodes',
   assert.deepEqual(result.availableEpisodeIds, [1002]);
   assert.deepEqual(result.uncertainEpisodeIds, [1001]);
 });
+
+test('only budget-deferred episodes request a continuation; actual uncertainty remains protected',async()=>{
+ const cache=new Map();let clock=100;const options={request,cached,cache,maxChecks:1,now:()=>clock,readShoko:async({episodeId})=>episodeId===1001?{state:'unavailable'}:{state:'ok',complete:true,files:[{fileId:9}]},readPublic:async()=>({state:'available'})};
+ const first=await verifyCachedPositiveCoverage(options);assert.deepEqual(first.pendingEpisodeIds,[1002]);assert.deepEqual(first.uncertainEpisodeIds,[1001,1002]);clock+=1000;
+ const second=await verifyCachedPositiveCoverage(options);assert.equal(second.pendingEpisodeIds,undefined);assert.deepEqual(second.availableEpisodeIds,[1002]);assert.deepEqual(second.uncertainEpisodeIds,[1001]);
+});

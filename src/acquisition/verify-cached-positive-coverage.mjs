@@ -42,7 +42,8 @@ export async function verifyCachedPositiveCoverage({ request, cached,
   pending.sort((left, right) => (cache.get(keyFor(left.id))?.checkedMs ?? -1) -
     (cache.get(keyFor(right.id))?.checkedMs ?? -1));
   // Old cached positives beyond this pass's budget stay protected, never missing.
-  for (const item of pending.slice(maxChecks)) uncertain.add(item.id);
+  const deferred = new Set(pending.slice(maxChecks).map(item => item.id));
+  for (const id of deferred) uncertain.add(id);
   const selected = pending.slice(0, maxChecks);
   let next = 0;
   const worker = async () => {
@@ -81,5 +82,6 @@ export async function verifyCachedPositiveCoverage({ request, cached,
   const availableEpisodeIds = request.episodeIds.filter(id => confirmed.has(id));
   return { verifiedTargets: availableEpisodeIds.length,
     targetCount: request.episodeIds.length, availableEpisodeIds,
+    ...(deferred.size ? { pendingEpisodeIds: request.episodeIds.filter(id => deferred.has(id)) } : {}),
     ...(uncertain.size ? { uncertainEpisodeIds: request.episodeIds.filter(id => uncertain.has(id)) } : {}) };
 }
