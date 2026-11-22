@@ -1,0 +1,71 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { createCatalogueFetch } from '../src/catalogue/catalogue-fetch.mjs';
+const url=id=>`https://animap.id/api/anidb/${id}`;
+const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+const tick=()=>new Promise(r=>setImmediate(r));
+
+test('shared catalogue slots include body reads and identical lookups share one independent response',async()=>{
+ let calls=0,active=0,peak=0;const releases=[];
+ const read=createCatalogueFetch({concurrency:4,fetchImpl:async()=>{calls++;active++;peak=Math.max(peak,active);return new Response(new ReadableStream({start(c){releases.push(()=>{active--;c.enqueue(new TextEncoder().encode('{"ok":true}'));c.close();});}}));}});
+ const reads=Array.from({length:8},(_,i)=>read(url(i+1)));const duplicate=read(url(1));await tick();assert.equal(calls,4);assert.equal(peak,4);
+ releases.splice(0).forEach(r=>r());await tick();assert.equal(calls,8);releases.splice(0).forEach(r=>r());
+ const responses=await Promise.all([...reads,duplicate]);assert.equal(calls,8);for(const r of responses)assert.deepEqual(await r.json(),{ok:true});assert.equal(peak,4);
+});
+
+test('detail cache is shared by readers, bounded and expires',async()=>{
+ let time=1000,calls=0;const read=createCatalogueFetch({now:()=>time,cacheMs:100,maxEntries:2,fetchImpl:async()=>{calls++;return json({calls});}});
+ await read(url(1));await read(url(1));assert.equal(calls,1);await read(url(2));await read(url(3));await read(url(1));assert.equal(calls,4);time+=101;await read(url(1));assert.equal(calls,5);
+});
+
+test('network, malformed and HTTP failures are cached briefly then can recover',async()=>{
+ for(const mode of ['network','invalid','http']){let time=1000,calls=0;const read=createCatalogueFetch({now:()=>time,failureMs:100,fetchImpl:async()=>{calls++;if(calls>1)return json({ok:true});if(mode==='network')throw Error('offline');return mode==='invalid'?new Response('not json'):new Response('',{status:500});}});
+ for(let i=0;i<2;i++)await read(url(1)).catch(()=>null);assert.equal(calls,1,mode);time+=101;assert.deepEqual(await (await read(url(1))).json(),{ok:true});assert.equal(calls,2);}
+});
+
+test('Retry-After applies to different AniMap paths and the large streamed map without affecting other providers',async()=>{
+ let time=1000,calls=[];const read=createCatalogueFetch({now:()=>time,failureMs:10,fetchImpl:async u=>{calls.push(String(u));return calls.length===1?new Response('',{status:429,headers:{'Retry-After':'120'}}):json({ok:true});}});
+ assert.equal((await read(url(1))).status,429);assert.equal((await read(url(2))).status,429);assert.equal((await read('https://animap.id/api/v1/map')).status,429);assert.equal(calls.length,1);
+ await read('https://graphql.anilist.co',{method:'POST',body:'{"query":"x"}'});assert.equal(calls.length,2);time+=120001;assert.equal((await read(url(2))).status,200);assert.equal(calls.length,3);
+});
+
+test('HTTP-date cooldown is shared and the longest outstanding provider deadline wins',async()=>{
+ let time=Date.parse('2026-11-22T01:00:00Z'),calls=0;const read=createCatalogueFetch({now:()=>time,fetchImpl:async()=>{calls++;return new Response('',{status:503,headers:{'Retry-After':new Date(time+90000).toUTCString()}});}});
+ await read(url(1));time+=60001;assert.equal((await read(url(2))).status,503);assert.equal(calls,1);time+=30000;await read(url(2));assert.equal(calls,2);
+});
+
+test('one aborted viewer does not cancel the shared lookup needed by another viewer',async()=>{
+ let resolve,calls=0;const controller=new AbortController();const read=createCatalogueFetch({fetchImpl:()=>{calls++;return new Promise(r=>{resolve=r;});}});
+ const a=read(url(1),{signal:controller.signal});const b=read(url(1));await tick();controller.abort();await assert.rejects(a,{name:'AbortError'});resolve(json({ok:true}));assert.deepEqual(await (await b).json(),{ok:true});assert.equal(calls,1);
+});
+
+test('an abandoned queued lookup does not dispatch and queue overflow fails promptly',async()=>{
+ let calls=0,resolve;const read=createCatalogueFetch({concurrency:1,maxPending:1,fetchImpl:()=>{calls++;return new Promise(r=>{resolve=r;});}});
+ const first=read(url(1));await tick();const c=new AbortController();const second=read(url(2),{signal:c.signal});const overflow=await read(url(3));assert.equal(overflow.status,503);c.abort();await assert.rejects(second,{name:'AbortError'});resolve(json({ok:true}));await first;await tick();assert.equal(calls,1);
+});
+
+test('positive cache byte budget and malformed/oversized bodies cannot grow without bound',async()=>{
+ let calls=0;const read=createCatalogueFetch({maxCacheBytes:16,fetchImpl:async()=>{calls++;return json({payload:'longer than sixteen bytes'});}});await read(url(1));await read(url(1));assert.equal(calls,2);
+ const oversized=createCatalogueFetch({fetchImpl:async()=>new Response('x'.repeat(128001))});await assert.rejects(oversized(url(1)));
+});
+
+test('GraphQL requests deduplicate only identical bodies and full map stays streamed rather than buffered',async()=>{
+ let calls=0;const read=createCatalogueFetch({fetchImpl:async u=>{calls++;return json({data:{value:calls}});}});const gql='https://graphql.anilist.co';await read(gql,{method:'POST',body:'a'});await read(gql,{method:'POST',body:'a'});await read(gql,{method:'POST',body:'b'});assert.equal(calls,2);
+ await read('https://animap.id/api/v1/map');await read('https://animap.id/api/v1/map');assert.equal(calls,4,'map ownership/single-flight remains with the existing streamed reader');
+});
+
+test('acquisition, authenticated endpoints and artwork bytes bypass the public metadata cache',async()=>{
+ let calls=0;const read=createCatalogueFetch({fetchImpl:async()=>{calls++;return json({calls});}});
+ for(const u of ['http://shoko/api/v3/AniDB/1','https://animap.id/api/v1/file/abc','https://cdn.anidb.net/images/main/1.jpg']){await read(u);await read(u);}assert.equal(calls,6);
+ await read(url(1),{headers:{Authorization:'private'}});await read(url(1),{headers:{Authorization:'private'}});assert.equal(calls,8);
+});
+
+test('seasonal and title/poster readers reuse the same bounded exact AniDB payload',async()=>{
+ const {createSeasonalCatalogue}=await import('../src/catalogue/seasonal-catalogue.mjs');
+ const {createAniDbDisplayReader}=await import('../src/catalogue/anidb-display-reader.mjs');
+ const calls=[];let active=0,peak=0;
+ const fetchImpl=createCatalogueFetch({fetchImpl:async u=>{calls.push(String(u));if(String(u).endsWith('/api/v1/map'))return json({lastUpdate:'2026-11-22',data:Array.from({length:6},(_,i)=>({title:'Title '+i,type:'TV',animeSeason:{year:2026,season:'FALL'},sources:['https://anidb.net/anime/'+(i+1)]}))});active++;peak=Math.max(peak,active);await tick();active--;return json({anidb_id:Number(String(u).split('/').at(-1)),title:'Title',type:'TV Series',restricted:false,tags:[]});}});
+ const catalogue=createSeasonalCatalogue({fetchImpl});const display=createAniDbDisplayReader({fetchImpl});
+ const [a,b,c]=await Promise.all([catalogue.read({year:2026,season:'FALL',limit:4}),catalogue.read({year:2026,season:'FALL',limit:4,after:2}),display.read({anidbId:1})]);
+ assert.equal(a.items.length,4);assert.equal(b.items.length,4);assert.equal(c.state,'display');assert.equal(calls.filter(u=>u.endsWith('/api/v1/map')).length,1);assert.equal(calls.filter(u=>u===url(1)).length,1);assert.equal(calls.length,7);assert.ok(peak<=4);
+});
