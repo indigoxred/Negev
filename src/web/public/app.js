@@ -319,11 +319,11 @@ const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
   : `/api/catalogue/posters/anidb/${item.anidbId}`;
 function posterImage(item, className = '') {
   const poster = document.createElement('img');
-  poster.src = posterUrl(item);
   poster.alt = '';
   poster.loading = 'lazy';
   if (className) poster.className = className;
   attachPosterRecovery(poster);
+  poster.src = posterUrl(item);
   return poster;
 }
 function renderRoute() {

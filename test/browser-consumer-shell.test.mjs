@@ -782,6 +782,7 @@ test('signed-in consumer routes render real shell with search, library and reque
     let failedDiscoverContinuation = false;
     let failedAiringContinuation = false;
     let posterGets = 0, posterHeadReads = 0;
+    const posterRequests = [];
     const server = createServer(async (request, response) => {
       const path = new URL(request.url, 'http://localhost').pathname;
       response.setHeader('Content-Security-Policy',
@@ -789,12 +790,14 @@ test('signed-in consumer routes render real shell with search, library and reque
           .searchParams.has('english') ? " 'unsafe-inline'" : ''}; ` +
         "style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'");
       if (path === '/api/catalogue/posters/anidb/4158') {
+        posterRequests.push(request.method);
         response.setHeader('Cache-Control','no-store');
         if (request.method === 'HEAD') posterHeadReads++;
         else posterGets++;
         if (request.method === 'HEAD' || posterGets === 1) {
           response.writeHead(503,{'Retry-After':'1'});response.end();
         } else {
+          response.setHeader('Cache-Control','private, max-age=3600');
           // A tiny image fixture proves native load/error events, not AniDB validation.
           response.setHeader('Content-Type','image/svg+xml');
           response.end('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"><rect width="1" height="1" fill="red"/></svg>');
@@ -1446,8 +1449,16 @@ test('signed-in consumer routes render real shell with search, library and reque
       const base = `http://127.0.0.1:${server.address().port}`;
       const discover = await dump(`${base}/#/discover?q=Pale`, join(dir, 'discover'));
       assert.match(discover, /Pale Cocoon/);
-      assert.equal(posterGets,2,'one native GET retry follows the transient failure');
+      const probeIndex=posterRequests.indexOf('HEAD');
+      assert.ok(probeIndex>0 && posterRequests[0]==='GET',
+        'a native image failure is followed by the status probe');
+      assert.ok(posterRequests.slice(probeIndex+1).includes('GET'),
+        'a native image GET follows the cooldown probe');
+      assert.ok(posterGets>=2);
       assert.equal(posterHeadReads,1,'one HEAD probe reads the cooldown');
+      console.log('Native poster recovery request sequence:',JSON.stringify(posterRequests));
+      assert.match(discover, /<span[^>]*class="[^"]*\bhas-poster\b[^"]*"[^>]*>[^<]*<img[^>]*src="\/api\/catalogue\/posters\/anidb\/4158"/,
+        'the exact poster must remain present and fire its native load handler');
       assert.doesNotMatch(discover, /<img[^>]*src="\/api\/catalogue\/posters\/anidb\/4158"[^>]*missing-art/);
       assert.doesNotMatch(discover, /Availability not checked/);
       assert.match(discover, /id="view-discover" class="page-view"/);
