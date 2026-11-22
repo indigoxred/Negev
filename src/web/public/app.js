@@ -735,7 +735,7 @@ async function loadRequestView(view, append = false, silent = false) {
   const list = byId(watching ? 'watch-list' : 'request-list');
   const more = byId(watching ? 'more-watches' : 'more-requests');
   const priorDetails = !append && !silent ? expandedRequestDetails(list) : null;
-  const expandedGroups = silent && !watching && !append
+  let expandedGroups = !watching && !append
     ? new Set([...list.querySelectorAll('details.request-group[open]')]
       .map((group) => group.dataset.requestGroup)) : new Set();
   if (!append && !silent) {
@@ -753,6 +753,8 @@ async function loadRequestView(view, append = false, silent = false) {
         state.requestScope !== scope) return;
     // Read at commit time: respect sections toggled while the poll was pending.
     const openDetails = append ? new Map() : silent ? expandedRequestDetails(list) : priorDetails;
+    if (silent && !watching && !append) expandedGroups = new Set([...list.querySelectorAll('details.request-group[open]')]
+      .map(group => group.dataset.requestGroup));
     if (!append) {
       list.replaceChildren();
       state.nextBeforeId[view] = null;

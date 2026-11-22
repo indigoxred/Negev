@@ -502,6 +502,12 @@ test('title and library controls recover from pending and failed reads without d
       assert.equal(await evaluate("document.querySelectorAll('#request-list .request-row').length"), 2);
       assert.equal(await evaluate("document.querySelector('#request-list')?.textContent.includes('Older completed title')"), false);
       newHistoryRequest = false;
+      await evaluate("document.querySelector('#request-list [data-request-group=completed]').open=true;document.querySelector('[data-request-id=\"7\"] .request-more').open=true;document.querySelector('[data-request-id=\"7\"] .request-technical').open=true");
+      await evaluate("document.querySelector('#refresh-requests').click()");
+      await until("document.querySelector('#request-list')?.textContent.includes('Ready to watch')");
+      assert.equal(await evaluate("document.querySelector('#request-list [data-request-group=completed]').open"),true,'manual Refresh preserves the opened Completed group');
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-more').open"),true,'manual Refresh preserves the opened card');
+      assert.equal(await evaluate("document.querySelector('[data-request-id=\"7\"] .request-technical').open"),true,'manual Refresh preserves nested technical details');
       await navigate("#/library");
       await until("document.querySelector('#library-list')?.textContent.includes('Updated title')");
       assert.ok(firstLibraryReads > libraryReadsBeforeReturn,

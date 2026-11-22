@@ -1,3 +1,4 @@
+import { createCatalogueFetch } from '../catalogue/catalogue-fetch.mjs';
 import { createBonusOwnershipReader } from '../acquisition/bonus-ownership.mjs';
 import { cachedRegularCoverage } from './card-coverage.mjs';
 import { createReleasePreviews } from '../requests/release-previews.mjs';
@@ -247,19 +248,20 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     directAvailability = openDirectAvailabilityQueue(dbPath);
     if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
     const metadata = createMetadataLimiter();
-    const cataloguePosters = createPosterReader({ fetchImpl, now });
+    const catalogueFetch = createCatalogueFetch({ fetchImpl, now });
+    const cataloguePosters = createPosterReader({ fetchImpl: catalogueFetch, now });
     const shokoPosters = createShokoPosterReader({ baseUrl: shokoBaseUrl,
       apiKey: shokoApiKey, fetchImpl, now });
-    const displayReader = createAniDbDisplayReader({ fetchImpl, now });
-    const mapFacts = createAniDbMapFactsReader({ fetchImpl, now });
-    const groupRegistry = createAniDbGroupReader({ fetchImpl, now });
+    const displayReader = createAniDbDisplayReader({ fetchImpl: catalogueFetch, now });
+    const mapFacts = createAniDbMapFactsReader({ fetchImpl: catalogueFetch, now });
+    const groupRegistry = createAniDbGroupReader({ fetchImpl: catalogueFetch, now });
     const readGroupRegistry = () => groupRegistry.read();
-    const rawDetailReader = createAniMapRawDetailReader({ fetchImpl, now });
-    const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl, now });
-    scoreCache = openMappedScoreCache({ dbPath, fetchImpl, now });
-    rankings = openAniListRankingCache({ dbPath, fetchImpl, now });
+    const rawDetailReader = createAniMapRawDetailReader({ fetchImpl: catalogueFetch, now });
+    const weeklySchedule = createAniDbWeeklySchedule({ fetchImpl: catalogueFetch, now });
+    scoreCache = openMappedScoreCache({ dbPath, fetchImpl: catalogueFetch, now });
+    rankings = openAniListRankingCache({ dbPath, fetchImpl: catalogueFetch, now });
     seasonalSnapshot = openSeasonalSnapshot(dbPath);
-    const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl, now,
+    const seasonalCatalogue = createSeasonalCatalogue({ fetchImpl: catalogueFetch, now,
       readSchedule: weeklySchedule.read, scoreCache, rankings,
       snapshotStore: seasonalSnapshot });
     const titleSource = anidbTitleDump ? createAniDbTitleSource({ fetchImpl, now,
@@ -643,7 +645,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, anidbId, fetchImpl,
           timeoutMs: 4_000,
         })),
-        readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl,
+        readArchive: () => readArchiveRelatedTitles({ anidbId, fetchImpl: catalogueFetch,
           timeoutMs: 4_000,
           titleForId: (id) => titleSource?.getTitle(id) ?? null }),
       }),

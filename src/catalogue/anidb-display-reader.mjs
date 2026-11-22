@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
@@ -40,7 +41,7 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (response.status !== 200) return unavailable();
+      if (response.status !== 200) return withCatalogueRetry(unavailable(), response);
       const data = await readBoundedJson(response, 96_000);
       if (data?.anidb_id !== anidbId || typeof data.restricted !== 'boolean' ||
           typeof data.title !== 'string' || !data.title.trim() ||
@@ -69,15 +70,15 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
           ? data.episodecount : null,
         description: cleanDescription(data.description),
         tags: tags.slice(0, 8).map((tag) => tag.trim()) };
-    } catch { return unavailable(); }
+    } catch (error) { return withCatalogueRetry(unavailable(), error); }
   };
   const pump = () => {
     while (active < concurrency && pending.length) {
       const job = pending.shift();
       active++;
       fetchRecord(job.anidbId).then((value) => {
-        cache.set(job.anidbId, { value, expiresMs: now() +
-          (value.state === 'display' ? 86_400_000 : 600_000) });
+        cache.set(job.anidbId, { value, expiresMs: value.state === 'display' ? now() + 86_400_000 :
+          catalogueRetryAt(value) ?? now() + 600_000 });
         while (cache.size > 200) cache.delete(cache.keys().next().value);
         inflight.delete(job.anidbId);
         job.resolve(value);

@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { readAniDbPoster } from './anidb-poster.mjs';
 
 // Lazy poster reads are separate from Shoko metadata and capped so a full
@@ -31,7 +32,8 @@ export function createPosterReader({ fetchImpl = fetch, now = Date.now,
         const size = result.state === 'image' ? result.bytes.length : 0;
         if (size <= maxCacheBytes) {
           cache.set(job.anidbId, { result, size,
-            expiresMs: now() + (result.state === 'image' ? 86_400_000 : 600_000) });
+            expiresMs: result.state === 'image' ? now() + 86_400_000 :
+              catalogueRetryAt(result) ?? now() + 600_000 });
           cacheBytes += size;
           while (cache.size > 500 || cacheBytes > maxCacheBytes) {
             drop(cache.keys().next().value);

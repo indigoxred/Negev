@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const seasons = new Map([['WINTER', 'Winter'], ['SPRING', 'Spring'],
@@ -21,7 +22,7 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
         method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
-      if (response.status !== 200) return { state: 'unavailable' };
+      if (response.status !== 200) return withCatalogueRetry({ state: 'unavailable' }, response);
       const data = await readBoundedJson(response, 128_000);
       if (!Array.isArray(data?.sources) || data.sources.length > 100 ||
           !data.sources.includes(`https://anidb.net/anime/${anidbId}`)) {
@@ -41,7 +42,7 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
         duration.value <= 86_400 ? Math.round(duration.value / 60) : null;
       return { state: 'facts', anidbId, season, year,
         status: statuses.get(data.status) ?? null, studio, durationMinutes };
-    } catch { return { state: 'unavailable' }; }
+    } catch (error) { return withCatalogueRetry({ state: 'unavailable' }, error); }
   };
   return { read({ anidbId }) {
     if (!Number.isSafeInteger(anidbId) || anidbId < 1 || anidbId > 2_147_483_647) {
@@ -51,8 +52,8 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
     if (hit && hit.expiresMs > now()) return Promise.resolve(hit.value);
     if (pending.has(anidbId)) return pending.get(anidbId);
     const result = read(anidbId).then((value) => {
-      cache.set(anidbId, { value, expiresMs: now() +
-        (value.state === 'facts' ? 6 * 60 * 60_000 : 60_000) });
+      cache.set(anidbId, { value, expiresMs: value.state === 'facts' ? now() + 6 * 60 * 60_000 :
+        catalogueRetryAt(value) ?? now() + 60_000 });
       while (cache.size > 200) cache.delete(cache.keys().next().value);
       return value;
     }).finally(() => pending.delete(anidbId));

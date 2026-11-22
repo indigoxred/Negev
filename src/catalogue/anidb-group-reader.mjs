@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const normalize = value => typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase() : '';
@@ -30,19 +31,19 @@ export function createAniDbGroupReader({ fetchImpl = fetch, now = Date.now, time
     if (expiresMs > now()) return Promise.resolve(cached);
     if (pending) return pending;
     pending = (async () => {
-      const controller = new AbortController(); let timer;
+      const controller = new AbortController(); let timer, retryAt = null;
       try {
         const result = await Promise.race([
           (async () => {
             const response = await fetchImpl('https://animap.id/api/anidb/groups', {
               method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' }, signal: controller.signal });
-            if (response.status !== 200) return null;
+            if (response.status !== 200) { retryAt = catalogueRetryAt(response); return null; }
             return indexGroups(await readBoundedJson(response, 8_000_000));
-          })().catch(() => null),
-          new Promise(resolve => { timer = setTimeout(() => { controller.abort(); resolve(null); }, timeoutMs); }),
+          })().catch(error => { retryAt = catalogueRetryAt(error); return null; }),
+          new Promise(resolve => { timer = setTimeout(() => { retryAt = now() + 1_000; controller.abort(); resolve(null); }, timeoutMs); }),
         ]);
         cached = result ?? neutral;
-        expiresMs = now() + (result ? 6 * 60 * 60_000 : 60_000);
+        expiresMs = result ? now() + 6 * 60 * 60_000 : retryAt ?? now() + 60_000;
         return cached;
       } finally { clearTimeout(timer); pending = null; }
     })();

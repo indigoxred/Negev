@@ -1,3 +1,4 @@
+import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
@@ -75,6 +76,7 @@ export function openAniListRankingCache({ dbPath, fetchImpl = fetch,
   const cached = new Map();
   const inflight = new Map();
   const lastAttempt = new Map();
+  const retryAfter = new Map();
   let closed = false;
   const snapshot = (scope) => {
     if (cached.has(scope)) return cached.get(scope);
@@ -115,13 +117,14 @@ export function openAniListRankingCache({ dbPath, fetchImpl = fetch,
           body: JSON.stringify({ query: query(scope) }),
           signal: AbortSignal.timeout(timeoutMs),
         });
-        if (response.status !== 200) throw new Error('AniList unavailable');
+        if (response.status !== 200) throw withCatalogueRetry(new Error('AniList unavailable'), response);
         const value = decode(await readBoundedJson(response, 100_000));
         const checkedMs = now();
         if (closed || !Number.isSafeInteger(checkedMs) || checkedMs < 0) return;
         save.run(scope, checkedMs, JSON.stringify(value));
         cached.set(scope, { ...value, checkedMs });
-      } catch { /* Keep the last good ranking through source outages. */ }
+        retryAfter.delete(scope);
+      } catch (error) { const until = catalogueRetryAt(error); if(until !== null)retryAfter.set(scope, until); /* Keep the last good ranking. */ }
     })().finally(() => inflight.delete(scope));
     inflight.set(scope, promise);
     return promise;
@@ -136,7 +139,8 @@ export function openAniListRankingCache({ dbPath, fetchImpl = fetch,
         return { state: 'ready', ...value };
       }
       const recent = lastAttempt.get(scope);
-      if (recent === undefined || recent > time || recent + RETRY_MS <= time) {
+      const deferred = retryAfter.get(scope);
+      if (recent === undefined || recent > time || (deferred === undefined ? recent + RETRY_MS : deferred) <= time) {
         if (value) void refresh(scope);
         else await refresh(scope);
       }
