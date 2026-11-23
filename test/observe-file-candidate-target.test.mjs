@@ -99,7 +99,7 @@ test('one registered episode playable on another episode card of its show has al
       partId: 600, storageKey: '1:2:5', presentation: 'alternate_card' } });
 });
 
-test('a registered episode on its Shoko segment card has exact alternate-card proof', async () => {
+test('a registered episode on its own Shoko segment card has linked proof', async () => {
   const single = { ...candidate, pairs: [candidate.pairs[0]],
     identities: [candidate.identities[0]] };
   const target = { anidbId: 42, episodeId: 1001, kind: 'series' };
@@ -116,7 +116,7 @@ test('a registered episode on its Shoko segment card has exact alternate-card pr
   assert.deepEqual(await observeFileCandidateTarget(input), {
     state: 'available', fileId: 51,
     proof: { fileId: 51, libraryId: 102, ratingKey: 500,
-      partId: 600, storageKey: '1:2:5', presentation: 'alternate_card' },
+      partId: 600, storageKey: '1:2:5' },
   });
   for (const changed of [
     { itemGuid: 'tv.plex.agents.custom.shoko://episode/e555p0' },
