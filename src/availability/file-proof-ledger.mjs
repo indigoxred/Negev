@@ -44,6 +44,9 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         `DELETE FROM file_availability_proofs AS f WHERE EXISTS(SELECT 1 FROM plex_card_observations c,json_each(CASE WHEN json_valid(c.identity_signature) THEN c.identity_signature ELSE '[]' END,'$[1]') p
         WHERE c.library_id=f.library_id AND c.rating_key=f.rating_key AND json_extract(p.value,'$[0]')=f.part_id AND json_extract(p.value,'$[9]')>1)`);
     }
+    // A sparse payload index keeps the component arm of source invalidation
+    // in SQLite's multi-index OR plan instead of scanning every scalar proof.
+    db.exec('CREATE INDEX IF NOT EXISTS file_proof_component_payload ON file_availability_proofs(components_json) WHERE components_json IS NOT NULL');
     db.exec('CREATE INDEX IF NOT EXISTS file_proof_components ON file_availability_proofs(anidb_id,episode_id) WHERE components_json IS NOT NULL');
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_episode
       ON file_availability_proofs(anidb_id,episode_id,verified_ms DESC)`);

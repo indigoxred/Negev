@@ -57,6 +57,7 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
       if (!columns.has(name)) db.exec(`ALTER TABLE direct_availability_targets
         ADD COLUMN ${name} ${declaration}`);
     }
+    db.exec("CREATE INDEX IF NOT EXISTS direct_component_proofs ON direct_availability_targets(anidb_id,episode_id) WHERE state='available' AND proof_components_json IS NOT NULL");
     // Older positive rows have no durable file/card witness. Recheck them
     // before displaying Available under the proof-aware invalidation policy.
     db.exec(`UPDATE direct_availability_targets SET state='pending',
