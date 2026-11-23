@@ -23,7 +23,8 @@ export function createRecordArrivalProof({ inventory, proofs, cursor,
           saved = proofs.observeGuarded({ anidbId: target.anidbId,
             episodeId: target.episodeId, proof,
             revision: { source: { updated: source.updated,
-              observedMs: source.observedMs }, card: outcome.cardRevision },
+              observedMs: source.observedMs }, card: outcome.cardRevision,
+              ...(Array.isArray(proof.parts)?{sources:proof.parts.map(p=>{const s=inventory.getFile(p.fileId);return{fileId:p.fileId,updated:s?.updated,observedMs:s?.observedMs};})}:{}) },
             checkedMs: observedMs });
         }
       } catch { /* Fall back to the bounded file pass. */ }

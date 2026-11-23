@@ -268,7 +268,7 @@ export function openDirectAvailabilityQueue(dbPath) {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const change = proof && cardChanged.get(proof.libraryId,
           proof.ratingKey);
-        const fileChange = proof && shokoChanged.get(proof.fileId);
+        const fileChange = proof && (proof.parts ?? [proof]).map(part=>shokoChanged.get(part.fileId)).find(change=>change?.id>receipt.shokoChangeId);
         if (fileChange && fileChange.id > receipt.shokoChangeId) {
           releaseChanged.run(checkedMs, receipt.target.anidbId,
             receipt.target.episodeId, receipt.observedMs, receipt.version);

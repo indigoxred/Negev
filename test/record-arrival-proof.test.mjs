@@ -38,3 +38,5 @@ test('unindexed or changed sources keep their retry instead of saving unguarded 
   record({ fileId: 51 }, { anidbId: 42, episodeId: 1001 });
   assert.deepEqual(prioritized, [{ fileId: 51, observedMs: 101 }]);
 });
+
+test('a composite arrival passes every source generation to the canonical recorder',()=>{let saved;const record=createRecordArrivalProof({inventory:{getFile:id=>({state:'linked',updated:'2026-11-23T00:00:00Z',observedMs:id})},proofs:{observeGuarded:x=>{saved=x;return{state:'recorded'}},getCurrent:()=>({state:'unknown'})},cursor:{confirmRecentFile:()=>({state:'unchanged'}),prioritizeFile:()=>{}},now:()=>100});const parts=[7,8].map((fileId,i)=>({fileId,libraryId:102,ratingKey:500,partId:600+i,mediaId:700,partIndex:i,partCount:2,storageKey:'1:'+(2+i)+':5'}));record({...parts[0],parts},{anidbId:42,episodeId:1001},{multipart:true,cardRevision:{observedMs:90,identitySignature:'exact'}});assert.deepEqual(saved.revision.sources,[{fileId:7,updated:'2026-11-23T00:00:00Z',observedMs:7},{fileId:8,updated:'2026-11-23T00:00:00Z',observedMs:8}]);});

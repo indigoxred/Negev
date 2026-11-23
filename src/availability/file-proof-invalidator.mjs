@@ -12,6 +12,7 @@ export function createFileProofInvalidator(db) {
     const columns = db.prepare('PRAGMA table_info(file_availability_proofs)').all();
     if (!['file_id', 'library_id', 'rating_key', 'verified_ms'].every((name) =>
       columns.some((column) => column.name === name))) return null;
+    if (columns.some(c=>c.name==='components_json') && sql.includes('WHERE file_id=?')) sql=sql.replace('WHERE file_id=?',"WHERE file_id=?1 OR (components_json IS NOT NULL AND EXISTS(SELECT 1 FROM json_each(components_json) p WHERE json_extract(p.value,'$.fileId')=?1))");
     return db.prepare(sql);
   };
   return {
