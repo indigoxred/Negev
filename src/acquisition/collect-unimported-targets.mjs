@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
 
 // Four-target bounded first-time Shoko observation. Each missing local episode
@@ -7,7 +8,7 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 export async function collectUnimportedTargets({ anidbId, episodeIds,
   readEpisode } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
-      episodeIds.length < 1 || episodeIds.length > 50 ||
+      episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       typeof readEpisode !== 'function') {

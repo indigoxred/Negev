@@ -122,6 +122,23 @@ export function requestPresentation(progress, kind,
     note: attentionNote, group: attention ? 'attention' :
       watching ? 'watching' : 'completed',
   };
+  const scheduledToday = progress.scheduledToday;
+  const todayNumbers = scheduledToday?.pendingEpisodeNumbers;
+  if (watching && !attention && progress.state === 'saved' &&
+      progress.waitingForRelease === true && Number.isSafeInteger(nowMs) && nowMs >= 0 &&
+      scheduledToday?.asOf === new Date(nowMs).toISOString().slice(0,10) &&
+      scheduledToday.targetCount === progress.targetCount &&
+      scheduledToday.verifiedTargets === publicCount &&
+      Array.isArray(todayNumbers) && todayNumbers.length > 0 &&
+      todayNumbers.length === progress.targetCount - publicCount &&
+      new Set(todayNumbers).size === todayNumbers.length &&
+      todayNumbers.every(number => Number.isSafeInteger(number) && number > 0)) {
+    const plural = todayNumbers.length > 1;
+    return { stage: plural ? "Waiting for today's episodes" : "Waiting for today's episode",
+      detail: (publicCount > 0 ? `${publicCount} requested episodes are playable in Plex. ` : '') +
+        `Episode${plural ? 's' : ''} ${todayNumbers.join(', ')} ${plural ? 'are' : 'is'} scheduled for today.`,
+      note: 'Watching for a suitable release.', group: 'watching' };
+  }
   if (publicCount > 0) return { stage: 'Partly available',
     detail: `${publicCount} of ${progress.targetCount} requested ${targetName} playable in Plex.`,
     note: attentionNote || (progress.oneTimeAcquisitionComplete === true

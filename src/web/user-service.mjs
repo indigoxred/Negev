@@ -746,7 +746,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
               ...positivesByTitle.get(item.anidbId) });
           }
           const releaseControl=requests.getReleaseControl(item.id,checkedMs);
-          const local = progress.read(item.id,{availableEpisodeIds:coverage?.availableEpisodeIds??[]});
+          const availableEpisodeIds = coverage?.availableEpisodeIds ?? [];
+          const local = progress.read(item.id,{availableEpisodeIds});
+          const scheduledToday = watchingSchedules.pendingToday(item, availableEpisodeIds);
           if(coverage){const {availableEpisodeIds,...publicCoverage}=coverage;coverage=publicCoverage;}
           return { ...item,
             title: titleSource?.getTitle(item.anidbId) ??
@@ -760,10 +762,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
                 ? {mode:c.mode,phase:c.phase,expiresMs:c.expiresMs??null}:null;})(),
             englishTitle: englishTitles[index],
             requesterName: ownerNames.get(item.requesterId) ?? `User #${item.requesterId}`,
-            progress: coverage?.verifiedTargets > 0
-            ? { ...local, publicAvailability: 'verified_recently',
-              publicVerifiedTargets: coverage.verifiedTargets }
-            : local };
+            progress: { ...local,
+              ...(coverage?.verifiedTargets > 0 ? { publicAvailability: 'verified_recently',
+                publicVerifiedTargets: coverage.verifiedTargets } : {}),
+              ...(scheduledToday ? { scheduledToday } : {}) } };
         }) };
       },
       searchTitles: async ({ query, page }) => {

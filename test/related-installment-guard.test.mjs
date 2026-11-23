@@ -144,3 +144,10 @@ test('trusted text never hides conflicting season coordinates inside aliases or 
  const input={anidbId:468,requestedTitle:'Example Season 2',requestedAliases:['Example Second Season','Example S03 Final Season'],related:{state:'related_titles',anidbId:468,items:[{anidbId:424,title:'Example',relation:'Prequel'}]}};
  for(const file of ['Example S03 Final Season - 01.mkv','[Example Second Season] Example Season 01 - 01.mkv','Other Second Season - 01.mkv'])assert.deepEqual(checkRelatedInstallment({...input,releaseTitle:'Example Season 2 [Batch]',fileNames:[file]}),{state:'held',reason:'related_installment_mismatch'},file);
 });
+
+for(const ending of [' (2025)',' [2025]',' 2025'])for(const word of ['Second','Final','Spring'])test(`trusted ${word} Season${ending} protects following episode coordinates only`,()=>{
+ const input={anidbId:42,requestedTitle:'Example Season 2',requestedAliases:['Example '+word+' Season'+ending],related:{state:'related_titles',anidbId:42,items:[{anidbId:41,title:'Example',relation:'Prequel'}]},releaseTitle:'Example Season 2 [1080p]'};
+ assert.equal(checkRelatedInstallment({...input,fileNames:['Example '+word+' Season - 01.mkv','Example '+word+' Season - 02.mkv']}).state,'related_title_clear');
+ for(const tag of ['S01E01','Season 1','1st Season','S03E01'])assert.equal(checkRelatedInstallment({...input,fileNames:['Example '+word+' Season '+tag+' - 01.mkv']}).reason,'related_installment_mismatch');
+ assert.equal(checkRelatedInstallment({...input,fileNames:['Other '+word+' Season - 01.mkv']}).state,'held');
+});

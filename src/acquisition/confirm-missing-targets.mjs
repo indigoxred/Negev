@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { evaluateExactAvailability } from '../availability/exact-availability.mjs';
 
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
@@ -10,7 +11,7 @@ export async function confirmMissingTargets({ request, episodeIds,
   readEvidence, publicLibraryIds, firstTimePolicy = 'strict',
   now = Date.now } = {}) {
   if (!validId(request?.id) || !validId(request.anidbId) ||
-      !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > 50 ||
+      !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||

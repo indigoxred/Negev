@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { matchesTrustedReleaseTitle } from './plan-torrent-targets.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -20,7 +21,7 @@ const maskTrustedSeasonWords = (name, titles) => {
       start: leadingGroup + match.index, end: leadingGroup + match.index + match[0].length }));
   let masked = name;
   for (const title of titles) {
-    const words = seasonTitleText(title).toLocaleLowerCase('en').match(/[\p{L}\p{N}]+/gu) ?? [];
+    const words = seasonTitleText(title).replace(/(?:\s*\((?:19|20)\d{2}\)|\s*\[(?:19|20)\d{2}\]|\s+(?:19|20)\d{2})\s*$/u, '').toLocaleLowerCase('en').match(/[\p{L}\p{N}]+/gu) ?? [];
     if (words.length < 2 || words.at(-1) !== 'season') continue;
     for (let i = 0; i <= tokens.length - words.length; i++) {
       if (!words.every((word, j) => tokens[i + j].word === word)) continue;
@@ -57,7 +58,7 @@ export function checkRelatedInstallment({ anidbId, requestedTitle, requestedAlia
       requestedAliases.some(title => typeof title !== 'string' || title.length > 500) ||
       related?.state !== 'related_titles' || related.anidbId !== anidbId ||
       !Array.isArray(related.items) || related.items.length > 50 ||
-      !Array.isArray(fileNames) || fileNames.length < 1 || fileNames.length > 50 ||
+      !Array.isArray(fileNames) || fileNames.length < 1 || fileNames.length > MAX_ACQUISITION_VIDEOS ||
       fileNames.some((name) => typeof name !== 'string' || !name.trim()) ||
       (releaseTitle !== undefined && typeof releaseTitle !== 'string') ||
       related.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||

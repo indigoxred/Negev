@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { localPath, validMount } from '../availability/known-card-availability.mjs';
@@ -49,9 +50,9 @@ export async function observePureMoveImport({ move, target, shokoMount,
   const files = Array.isArray(manifestFiles) ? manifestFiles.filter((file) =>
     Array.isArray(file.episodeIds) && file.scope !== 'bonus') : null;
   if (!validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||
-      target.episodeIds.length < 1 || target.episodeIds.length > 100 ||
+      target.episodeIds.length < 1 || target.episodeIds.length > MAX_ACQUISITION_TARGETS ||
       target.episodeIds.some((id) => !validId(id)) ||
-      !Array.isArray(files) || files.length < 1 || files.length > 100 ||
+      !Array.isArray(files) || files.length < 1 || files.length > MAX_ACQUISITION_VIDEOS ||
       files.some((file) => !Array.isArray(file.episodeIds) ||
         file.episodeIds.length < 1 || file.episodeIds.some((id) => !validId(id)) ||
         !validId(file.size) || !/^\d+$/.test(file.dev) ||

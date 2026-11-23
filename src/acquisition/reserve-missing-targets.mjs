@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
 
 const held = (reason, episodeId) => ({ state: 'held', reason,
@@ -12,7 +13,7 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
   if (!validId(request?.id) || !validId(request.anidbId) || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
       request.episodeIds.some((id) => !validId(id)) ||
-      !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > 50 ||
+      !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id) || !request.episodeIds.includes(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' || !candidate.guid ||

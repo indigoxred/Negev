@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
@@ -386,11 +387,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
               /[\x00-\x1f\x7f]/.test(preview.identityTitle) ||
               !matchesTrustedReleaseTitle(candidate.title, preview.identityTitle))) ||
           !Array.isArray(preview.episodeIds) ||
-          preview.episodeIds.length < 1 || preview.episodeIds.length > 50 ||
+          preview.episodeIds.length < 1 || preview.episodeIds.length > MAX_ACQUISITION_TARGETS ||
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
           preview.episodeIds.some((id) => !request.episodeIds.includes(id)) ||
           !Array.isArray(preview.files) || preview.files.length < 1 ||
-          preview.files.length > 50) continue;
+          preview.files.length > MAX_ACQUISITION_VIDEOS) continue;
       // Current exact public proof makes this release unnecessary. Inspect
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.

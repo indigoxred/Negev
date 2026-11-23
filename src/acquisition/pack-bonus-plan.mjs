@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { isPackBonusVideo } from './pack-bonus-name.mjs';
@@ -128,7 +129,7 @@ export async function planPackBonuses({ request, detail, files, related,
   }
   // Main identity may have been recovered from a bonus-looking name above.
   // Allocate optional slots only after the complete main/subtitle set is known.
-  let slots=Math.max(0,100-mainFiles.filter(f=>['video','subtitle'].includes(torrentFileKind(f.name))).length);
+  let slots=Math.max(0,MAX_TORRENT_FILES-mainFiles.filter(f=>['video','subtitle'].includes(torrentFileKind(f.name))).length);
   selectedBytes=mainFiles.filter(f=>torrentFileKind(f.name)==='video').reduce((sum,f)=>sum+f.size,0);
   const bounded=[];
   for(const file of bonusFiles){

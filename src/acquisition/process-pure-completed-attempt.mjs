@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { stagingSavePath } from './staging-save-path.mjs';
@@ -45,7 +46,7 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
       start?.torrentHash !== attempt.torrentHash ||
       request?.id !== attempt.requestId || request.status !== 'held' ||
       request.anidbId !== attempt.anidbId ||
-      !Array.isArray(plan) || plan.length < 1 || plan.length > 50) {
+      !Array.isArray(plan) || plan.length < 1 || plan.length > MAX_ACQUISITION_VIDEOS) {
     return held('invalid_batch_plan');
   }
   const planned = new Map();

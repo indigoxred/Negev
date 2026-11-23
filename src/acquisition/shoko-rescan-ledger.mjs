@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -143,7 +144,7 @@ export function openShokoRescanLedger(dbPath) {
           const manifest = JSON.parse(row.manifestJson);
           const videos = manifest?.files?.filter((file) =>
             file.scope !== 'bonus' && Array.isArray(file.episodeIds));
-          return videos?.length > 0 && videos.length <= 50 &&
+          return videos?.length > 0 && videos.length <= MAX_ACQUISITION_VIDEOS &&
             typeof manifest.torrentHash === 'string' &&
             /^[a-f0-9]{40}$/i.test(manifest.torrentHash) &&
             videos.every((file) => validId(file.size) &&
