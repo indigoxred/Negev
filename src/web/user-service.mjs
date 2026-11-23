@@ -350,7 +350,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const observeDisplayPublic = async (target) => {
       const live = await observeCurrentPublic(target);
       if (live?.state === 'available') {
-        queueCompositeObservation({queue:directAvailability,target,result:live,nowMs:now()});
+        queueCompositeObservation({queue:directAvailability,target,result:live,nowMs:now(),canonicalAvailable:fileProofs?.getCurrent(target).state==='available'});
         return live;
       }
       const hasShokoFile = target.kind === 'series' &&
