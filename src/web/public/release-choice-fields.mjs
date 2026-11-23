@@ -72,6 +72,8 @@ function subtitleLanguageDeclarations(title) {
         // field: English audio must never imply English subtitles.
         const audio=Math.max(words.lastIndexOf('audio'),words.lastIndexOf('dub'),words.lastIndexOf('dubbed'));
         if(audio>=0)words=words.slice(audio+1);
+        const only=words.lastIndexOf('only');
+        if(only>=0&&languages.has(words[only+1]))field.only=true;
         words=words.filter(w=>w!=='only');
         const start=words.findIndex(w=>languages.has(w));
         if(start>=0&&!field.complete)words=words.slice(start);
