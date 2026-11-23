@@ -1,15 +1,13 @@
+import { findTestBrowser, browserSkipReason } from './helpers/browser-executable.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const browser = [process.env.NEGEV_TEST_BROWSER,
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean).find(existsSync);
+const browser = findTestBrowser();
 const staticRoot = new URL('../src/web/public/', import.meta.url);
 const assets = new Map([
   ['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
@@ -789,7 +787,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
 }
 
 test('signed-in consumer routes render real shell with search, library and requests',
-  { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+  { skip: browser ? false : browserSkipReason }, async () => {
     const submittedRequests = [];
     let allowAdult = true;
     let airingPreference = { mode: 'library', trackedAnidbIds: [] };

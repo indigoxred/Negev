@@ -1,6 +1,7 @@
+import { findTestBrowser, browserSkipReason } from './helpers/browser-executable.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -9,14 +10,7 @@ import { fileURLToPath } from 'node:url';
 const sourcePath = process.env.NEGEV_AUTH_SOURCE
   ?? fileURLToPath(new URL('../src/web/public/app.js', import.meta.url));
 const source = readFileSync(sourcePath, 'utf8');
-const browsers = [
-  process.env.NEGEV_TEST_BROWSER,
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  '/usr/bin/google-chrome',
-  '/usr/bin/chromium',
-].filter(Boolean);
-const browser = browsers.find((path) => existsSync(path));
+const browser = findTestBrowser();
 
 function listener(formId, nextMarker) {
   const start = source.indexOf(`byId('${formId}').addEventListener('submit'`);
@@ -26,7 +20,7 @@ function listener(formId, nextMarker) {
 }
 
 test('browser completes successful login and registration submit transitions',
-  { skip: browser ? false : 'No Chrome or Edge browser installed' }, () => {
+  { skip: browser ? false : browserSkipReason }, () => {
     const login = listener('login-form', "byId('register-form').addEventListener");
     const register = listener('register-form', "byId('signout').addEventListener");
     const html = `<!doctype html><meta charset="utf-8">

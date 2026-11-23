@@ -1,17 +1,17 @@
+import { findTestBrowser, browserSkipReason } from './helpers/browser-executable.mjs';
 import { preferenceEditorReady, preferenceSaveReady } from './helpers/preference-readiness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync,readFileSync,mkdtempSync,writeFileSync,rmSync } from 'node:fs';
+import { readFileSync,mkdtempSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-const browser=[process.env.NEGEV_TEST_BROWSER,'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','/usr/bin/google-chrome','/usr/bin/chromium'].filter(Boolean).find(existsSync);
+const browser = findTestBrowser();
 const source=['release-choice-fields.mjs','release-row.mjs','release-dialog.mjs'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8').replace(/^import .*;$/gm,'').replaceAll('export ','')).join('\n');
 const css=['style.css','consumer.css'].map(name=>readFileSync(new URL('../src/web/public/'+name,import.meta.url),'utf8')).join('\n');
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search',
-  {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+  {skip:browser?false:browserSkipReason},()=>{
     const dir=mkdtempSync(join(tmpdir(),'negev-release-browser-'));
     try{
       const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><div id="request-list"></div><pre id="result">pending</pre><script>
@@ -160,7 +160,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: AniDB evidence visibility',
- {skip:browser?false:'No Chrome or Edge browser installed'},async()=>{
+ {skip:browser?false:browserSkipReason},async()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-registration-browser-'));let child,socket,closed;const wait=ms=>new Promise(r=>setTimeout(r,ms));
  try{
   const html=`<!doctype html><meta charset="utf-8"><style>${css} dialog{max-height:430px;overflow:auto}.release-compact-row{min-height:110px}</style><pre id="result">pending</pre><script>
@@ -210,7 +210,7 @@ const tick=()=>new Promise(r=>setTimeout(r,20));const until=async fn=>{for(let i
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: Pick during inspection',
- {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ {skip:browser?false:browserSkipReason},()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-pick-pending-'));
  try{
  const html=`<!doctype html><meta charset="utf-8"><pre id="result">pending</pre><script>${source}
@@ -229,7 +229,7 @@ test('release dialog preserves manual choice through polling and offers alternat
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: global group indicator',
- {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ {skip:browser?false:browserSkipReason},()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-global-group-'));
  try{
  const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
@@ -246,7 +246,7 @@ test('release dialog preserves manual choice through polling and offers alternat
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: rejected file listing',
- {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ {skip:browser?false:browserSkipReason},()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-inspection-list-'));
  try{
  const html=`<!doctype html><meta charset="utf-8"><pre id="result">pending</pre><script>${source}
@@ -263,7 +263,7 @@ test('release dialog preserves manual choice through polling and offers alternat
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: preference readiness race',
- {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ {skip:browser?false:browserSkipReason},()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-preference-race-'));
  try{
  const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
@@ -311,7 +311,7 @@ test('release dialog preserves manual choice through polling and offers alternat
 });
 
 test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: queued receipt',
- {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ {skip:browser?false:browserSkipReason},()=>{
  const dir=mkdtempSync(join(tmpdir(),'negev-auto-receipt-'));
  try{
  const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
