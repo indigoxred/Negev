@@ -70,7 +70,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  click('Pick');await tick();
  const saved=document.querySelector('dialog').textContent.includes('Request #1 submitted')&&chooseCalls===1;
  const savedLink=document.querySelector('dialog a[href="#/requests?requestId=1"]')?.textContent==='View request';
- click('Close');control={mode:'auto',phase:'selecting',revision:10};
+ click('Close');control={mode:'auto',phase:'consumed',revision:10};
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
  const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use likely match')&&!document.querySelector('dialog').textContent.toLowerCase().includes('registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
  click('Use likely match');await tick();
@@ -79,10 +79,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const futurePreferences=document.querySelector('dialog .release-prefer-future input').getBoundingClientRect().width>0&&[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Save group').getBoundingClientRect().width>0;
  const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&/[0-9]+ episodes? requested · Auto-Pick/.test(document.querySelector('dialog').textContent)&&document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden;
  dialog.close();
- alternativeRegistration='confirmed';control={mode:'auto',phase:'selecting',revision:1};
+ alternativeRegistration='confirmed';control={mode:'auto',phase:'consumed',revision:1};
  await dialog.open({requestId:1,title:'Verified example',mode:'auto'});
  const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified files');dialog.close();
- alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
+ alternativeRegistration='unknown';control={mode:'auto',phase:'consumed',revision:1};
  await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
  const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
  control={mode:'manual',phase:'selecting',revision:1};inspectionFailure='release_search_expired';
@@ -122,7 +122,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  click('Show more releases');await tick();
  const packPage=searchUrls.at(-1).includes('packsOnly=false')&&searchUrls.at(-1).includes('offset=50');
  const packReadOnly=previewWrites===beforePack;draftDialog.close();
- completedMode=false;delegatedMode=true;control={mode:'auto',phase:'selecting',revision:1,preference:{group:'SubsPlease'}};
+ completedMode=false;delegatedMode=true;control={mode:'auto',phase:'consumed',revision:1,preference:{group:'SubsPlease'}};
  await dialog.open({requestId:1,title:'Airing Example',mode:'auto'});
  const groupFeedback=document.querySelector('dialog').textContent.includes('Preferred group: SubsPlease')&&document.querySelector('dialog').textContent.includes('Until ');
  dialog.close();let lateInspectionGuard=true;delegatedMode=false;
