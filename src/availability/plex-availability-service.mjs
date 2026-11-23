@@ -118,7 +118,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         knownCards: [{ libraryId: proof.libraryId,
           ratingKey: proof.ratingKey, kind }],
         shokoMount, plexMount, plexMounts,
-        readShoko: async () => shoko, readPlex: async () => card });
+        readShoko: shoko ? async () => shoko : readShoko, readPlex: async () => card });
       if (rechecked.state !== 'available' ||
           rechecked.proof?.fileId !== proof.fileId ||
           rechecked.proof?.partId !== proof.partId ||
@@ -266,7 +266,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         cardIndex: index, shokoMount, plexMount, plexMounts,
         readShoko: shoko ? async () => shoko : readShoko,
         readPlex: readCard });
-      return publicResult(result, includeProof);
+      return publicResult(includeProof && result.multipart === true
+        ? await indexProvenGuidCard(result, target, shoko) : result, includeProof);
     },
     close() { index.close(); },
   };
