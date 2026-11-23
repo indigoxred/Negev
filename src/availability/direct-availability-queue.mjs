@@ -105,7 +105,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     WHERE anidb_id=? AND episode_id=? AND version=?`);
   const promote = db.prepare(`UPDATE direct_availability_targets SET
     priority=1,interactive_until_ms=?,due_ms=MIN(due_ms,?)
-    WHERE anidb_id=? AND episode_id=? AND state='pending' AND interactive_until_ms=0`);
+    WHERE anidb_id=? AND episode_id=? AND state='pending' AND (interactive_until_ms=0 OR interactive_until_ms<=?)`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
     state=?,due_ms=?,priority=?,interactive_until_ms=0,verified_ms=?,proof_file_id=?,proof_library_id=?,
     proof_rating_key=?,proof_part_id=?,proof_presentation=?
@@ -142,12 +142,13 @@ export function openDirectAvailabilityQueue(dbPath) {
       const rank = priority === 'reconcile' ? 0 : 1;
       const old = find.get(anidbId, episodeId);
       const interactiveUntil = priority === 'interactive' ? observedMs + 60_000 : 0;
-      // Coalesce clicks without cancelling a live worker or extending priority.
+      // Coalesce clicks within a window without cancelling a live worker.
+      // A later explicit check may renew an expired window; no retry renews it.
       if (priority === 'interactive' && old?.state === 'checking' && old.dueMs > observedMs) {
         return { state: 'unchanged' };
       }
       if (priority === 'interactive' && old?.state === 'pending') {
-        const updated = promote.run(interactiveUntil, observedMs, anidbId, episodeId);
+        const updated = promote.run(interactiveUntil, observedMs, anidbId, episodeId, observedMs);
         return { state: updated.changes === 1 ? 'queued' : 'unchanged' };
       }
       const changed = !old || observedMs > old.observedMs ||

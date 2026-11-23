@@ -619,8 +619,21 @@ test('expired interactive priority cannot indefinitely overtake older background
     ctx.queue.enqueue({anidbId:100,episodeId:1000,observedMs:100,priority:'event'});
     const target={anidbId:42,episodeId:1001};
     ctx.queue.enqueue({...target,observedMs:200,priority:'interactive'});
-    ctx.queue.enqueue({...target,observedMs:60201,priority:'interactive'});
+    // No new check: the original window must expire.
     ctx.reopen();
     assert.deepEqual(ctx.queue.claimNext({nowMs:60201}).target,{anidbId:100,episodeId:1000});
   });
+});
+
+test('a later explicit check can renew an expired pending window without extending a live one',async()=>{
+ await fixture(async ctx=>{
+ const target={anidbId:42,episodeId:1001};ctx.queue.enqueue({anidbId:100,episodeId:1000,observedMs:100,priority:'event'});ctx.queue.enqueue({...target,observedMs:200,priority:'interactive'});assert.equal(ctx.queue.enqueue({...target,observedMs:300,priority:'interactive'}).state,'unchanged');assert.equal(ctx.queue.enqueue({...target,observedMs:60201,priority:'interactive'}).state,'queued');ctx.reopen();const claim=ctx.queue.claimNext({nowMs:60202});assert.deepEqual(claim.target,target);ctx.queue.recordResult({claim,state:'unknown',checkedMs:60203});assert.deepEqual(ctx.queue.claimNext({nowMs:60204}).target,{anidbId:100,episodeId:1000});
+ });
+});
+
+test('actual guarded worker card-change hold reaches the paced scheduler and succeeds on its next turn',async()=>{
+ const {createDirectAvailabilityScheduler}=await import('../src/availability/direct-availability-scheduler.mjs');
+ await fixture(async ctx=>{
+ const index=openPlexCardIndex(ctx.dbPath),target={anidbId:42,episodeId:1001};let clock=100,first=true;const card=()=>({libraryId:102,ratingKey:500,kind:'episode',observedMs:clock,parts:[{libraryId:102,partId:600,size:5,plexPath:'/source-pure/one.mkv'}]});index.recordCard(card());ctx.queue.enqueue({...target,observedMs:clock,priority:'interactive'});const worker=createDirectAvailabilityWorker({queue:ctx.queue,now:()=>clock,requireProof:true,observeTarget:async()=>{if(first){first=false;index.forgetCard({libraryId:102,ratingKey:500,observedMs:++clock});}return{state:'available',proof:{fileId:51,libraryId:102,ratingKey:500,partId:600}}}});const timers=[],outcomes=[];const scheduler=createDirectAvailabilityScheduler({runOnce:async()=>{const r=await worker.runOnce();outcomes.push(r);return r},initialDelayMs:1000,activeDelayMs:10000,idleDelayMs:60000,setTimer:(fn,delay)=>{timers.push({fn,delay});return timers.length},clearTimer:()=>{}});try{scheduler.start();clock=1100;await timers.shift().fn();assert.equal(outcomes[0].reason,'card_changed');assert.equal(timers[0].delay,10000);clock=11100;index.recordCard(card());await timers.shift().fn();assert.equal(outcomes[1].state,'checked');assert.equal(ctx.queue.getStatus({...target,nowMs:clock}).state,'available');}finally{await scheduler.close();index.close();}
+ });
 });
