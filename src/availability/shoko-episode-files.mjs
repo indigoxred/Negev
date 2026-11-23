@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { readLocalFileRanges } from './shoko-file-ranges.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
@@ -101,6 +102,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
   const files = [];
   let incomplete = false;
   let unscopedUserEpisodeVerified;
+  let rangeReads = 0;
   for (const file of episode.Files) {
     if (!validId(file?.ID) || !Number.isSafeInteger(file.Size) || file.Size <= 0 ||
         file.IsIgnored !== false || !Array.isArray(file.Hashes) ||
@@ -148,6 +150,11 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
     const episodeIds = refs.map((ref) => ref.AnidbEpisodeID);
     let identity = evaluatePreview({ status: 200, release: file.Release },
       { ed2k, size: file.Size, animeId: anidbId, episodeIds });
+    if (identity.reason === 'invalid_response' && purpose === 'availability' && file.Release.ProviderName === 'AniDB' && rangeReads < 8 && refs.some(ref => ref.PercentageStart === 0 && ref.PercentageEnd === 0)) {
+      rangeReads++;
+      const release = await readLocalFileRanges({ base, apiKey, file, anidbId, ed2k, fetchImpl, timeoutMs });
+      if (release) identity = evaluatePreview({ status: 200, release }, { ed2k, size: file.Size, animeId: anidbId, episodeIds });
+    }
     if (identity.state !== 'accepted' && purpose === 'availability' &&
         file.Release.ProviderName === 'User' && file.Release.ID == null) {
       const coverage = userCoverage(refs);

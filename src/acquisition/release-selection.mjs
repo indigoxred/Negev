@@ -212,6 +212,11 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       return updated;
     } finally {inFlight.delete(id);}
   };
+  const queueAuto=(id,revision)=>{
+    const request=requests.getRequest(id),control=snapshot(id);
+    if(request?.status!=='held'||control.mode!=='auto'||control.phase!=='selecting'||control.revision!==revision) return held('stale_release_selection');
+    wake(id);return {state:'updated',requestId:id,queued:true,control};
+  };
   const decide=(id,action,revision)=>{
     const current=snapshot(id);
     if(current.revision!==revision||current.phase!=='proposal'||!['better','registered'].includes(action)) return held('stale_release_selection');
@@ -227,5 +232,5 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const updated=requests.updateReleasePreference(id,revision,preference,now());
     if(updated.state==='updated')wake(id);return updated;
   };
-  return {search,inspect,begin,choose,auto,decide,snapshot,context,setPreference};
+  return {search,inspect,begin,choose,auto,queueAuto,decide,snapshot,context,setPreference};
 }

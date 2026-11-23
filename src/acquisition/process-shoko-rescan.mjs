@@ -20,7 +20,7 @@ const exactLink = (item, anidbId, episodeIds,
 
 export async function processShokoRescan({ item, ledger, importRoot,
   shokoMount, shokoSourcePath = null, readQueue, readFile, rescan,
-  verifyPlex, hydrateMetadata = null, readUnrecognized = null, readMetadata = null, nowMs } = {}) {
+  verifyPlex, hydrateMetadata = null, readUnrecognized = null, readMetadata = null, nowMs, now = () => nowMs } = {}) {
   const { attemptId, requestId, anidbId, publishedMs, manifest } = item ?? {};
   const videos = manifest?.files?.filter((file) =>
     file.scope !== 'bonus' && Array.isArray(file.episodeIds));
@@ -52,7 +52,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
       typeof ledger?.delayAttempt !== 'function' ||
       typeof ledger?.endAttempt !== 'function' ||
       typeof readQueue !== 'function' || typeof readFile !== 'function' ||
-      typeof rescan !== 'function' || typeof verifyPlex !== 'function' ||
+      typeof now !== 'function' || typeof rescan !== 'function' || typeof verifyPlex !== 'function' ||
       (hydrateMetadata !== null && typeof hydrateMetadata !== 'function') ||
       (readUnrecognized !== null && typeof readUnrecognized !== 'function') ||
       (readMetadata !== null && typeof readMetadata !== 'function')) {
@@ -270,6 +270,8 @@ export async function processShokoRescan({ item, ledger, importRoot,
     let result;
     try { result = await rescan({ fileId: file.ID }); }
     catch { result = null; }
+    ledger.recordDispatchResult?.({attemptId,fileName:video.name,fileId:file.ID,
+      result:result?.state==='accepted'?'accepted':'unconfirmed',nowMs:Math.max(nowMs,now())});
     dispatched++;
     notePending(result?.state === 'accepted' ? 'rescan_requested' : 'rescan_unconfirmed');
   }

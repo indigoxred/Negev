@@ -102,6 +102,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     const run = async () => {
       const { action, revision } = body;
       const commits = ['choose', 'auto', 'better', 'registered'].includes(action);
+      let autoPrepared;
       if (commits) {
         // A parallel tab may have already saved this command or watch. Resolve
         // that success before inspecting now-owned files or changing a draft.
@@ -110,6 +111,21 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
         const existing = existingSubmission(prepared, session.input);
         if (existing) return session.committed = existing;
         if (prepared.state !== 'prepared') return reject(prepared);
+        if (action === 'auto') autoPrepared = prepared;
+      }
+      if (action === 'auto') {
+        if (before.revision !== revision || before.mode !== 'auto' || before.phase !== 'selecting') return reject(held('stale_release_selection'));
+        // Explicit Auto saves scope; the existing durable request worker owns
+        // comparison and proposals before ordinary guarded acquisition.
+        const saved = requests.submit({ ...autoPrepared.submission, initialReleaseControl: { ...before } });
+        if (!saved.requestId) return reject(saved);
+        session.committed = { state: 'updated', requestId: saved.requestId,
+          created: saved.created, queued: true, control: requests.getReleaseControl(saved.requestId, now()) };
+        if (saved.created) {
+          onCommitted({ ...saved, requesterId: userId, anidbId: session.input.anidbId });
+          wake(saved.requestId);
+        }
+        return session.committed;
       }
       const result = action === 'begin' ? selection.begin(id, body.mode, revision) :
         action === 'inspect' ? await selection.inspect(id, body.token) :

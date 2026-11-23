@@ -121,7 +121,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       if (rechecked.state !== 'available' ||
           rechecked.proof?.fileId !== proof.fileId ||
           rechecked.proof?.partId !== proof.partId ||
-          rechecked.proof?.storageKey !== proof.storageKey) return changedCard();
+          rechecked.proof?.storageKey !== proof.storageKey ||
+          (result.multipart && JSON.stringify(rechecked.proof?.parts) !== JSON.stringify(proof.parts))) return changedCard();
       index.recordCard({ libraryId: proof.libraryId,
         ratingKey: proof.ratingKey, kind, parts: card.parts,
         observedMs: now() });

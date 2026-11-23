@@ -88,7 +88,12 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     });
     const send = (method, params = {}) => new Promise((resolve, reject) => {
       const id = ++nextId;
-      pending.set(id, { resolve, reject });
+      const timeout = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error('Browser command timed out: '+method+' '+String(params.expression ?? params.url ?? '').slice(0, 240)));
+      }, 30_000);
+      pending.set(id, { resolve: value => { clearTimeout(timeout); resolve(value); },
+        reject: error => { clearTimeout(timeout); reject(error); } });
       socket.send(JSON.stringify({ id, method, params }));
     });
     const settled = async () => {

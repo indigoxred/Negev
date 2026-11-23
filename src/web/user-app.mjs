@@ -1358,9 +1358,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         b.action==='inspect'?await releaseSelection.inspect(id,b.token):
         b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision,b.preferFutureGroup??false):
         b.action==='preference'?await releaseSelection.setPreference(id,b.group,b.revision,b.audio):
-        b.action==='auto'?await releaseSelection.auto(id,b.revision):
+        b.action==='auto'?releaseSelection.queueAuto(id,b.revision):
         releaseSelection.decide(id,b.action,b.revision);
       if(result?.state==='held') return reply.code(409).send(result);
+      if(result?.queued===true&&result.state==='updated')return reply.code(202).send({...result,control:publicControl(result.control)});
       if(request.params.previewId&&result?.state!=='updated'&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
       return result?.control?{...result,control:publicControl(result.control),context:await request.releaseSelector.context?.(id)}:result;
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}

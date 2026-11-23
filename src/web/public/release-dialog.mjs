@@ -114,11 +114,19 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           'Only currently airing titles can set a preferred group. An existing preference can still be cleared.';
         results.replaceChildren();buttons(false);return;
       }
-      const submitted = existing || control.phase === 'chosen' || control.phase === 'consumed';
+      const queuedAuto = Boolean(requestId) && control?.mode === 'auto' && control.phase === 'selecting';
+      const submitted = queuedAuto || existing || control.phase === 'chosen' || control.phase === 'consumed';
       dialog.classList.toggle('is-submitted', submitted);
       modes.hidden = actions.hidden = submitted;
       if(submitted) { preferLabel.hidden = preferenceEditor.hidden = true; }
       else { dialog.insertBefore(preferLabel,status);dialog.insertBefore(preferenceEditor,status); }
+      if(queuedAuto&&!existing) {
+        status.textContent='Request #'+requestId+' submitted';status.className='release-confirmation';
+        results.replaceChildren(element('p','Auto-Pick is comparing eligible releases. Your request is saved; you can close this window.'));
+        const view=element('a','View request','button primary');view.href='#/requests?requestId='+requestId;view.addEventListener('click',()=>dialog.close());results.append(view);
+        expiryTimer=setTimeout(async()=>{if(!current())return;try{await refresh();if(current())showControl();}catch{if(current())showControl();}},2000);
+        return;
+      }
       if(existing) {
         modes.hidden=actions.hidden=preferLabel.hidden=preferenceEditor.hidden=true;results.replaceChildren();
         status.textContent='Request #'+requestId+' already submitted';status.className='release-confirmation';
@@ -245,7 +253,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       try{await refresh();if(current())showControl();}catch{/* The durable save already succeeded; optional details may be retried later. */}
       return;
     }
-    try{await refresh();if(!current())return;showControl();if(preferenceOnly||existing||control.phase==='proposal'||control.phase==='chosen')return;
+    try{await refresh();if(!current())return;showControl();if(preferenceOnly||existing||control.phase==='proposal'||control.phase==='chosen'||(requestId&&control.mode==='auto'&&control.phase==='selecting'))return;
       if(mode==='auto')await runAuto();else await search();
     }catch(e){if(current())status.textContent=errorText(e);}
   };

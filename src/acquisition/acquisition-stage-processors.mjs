@@ -35,7 +35,7 @@ const held = (reason) => ({ state: 'held', reason });
 export function createAcquisitionStageProcessors({ requests, acquisitions,
   handoffs, pureMoves = null, recognitionRecoveries = null,
   shokoRescans = null, pureMode = false,
-  discoverCandidates, previewCandidate, loadDetail, hydrateMetadata = null,
+  discoverCandidates, previewCandidate, loadDetail, hydrateMetadata = null, selectAutoRelease,
   releaseQueries, readEvidence, readPublicCoverage, observePublicTarget,
   publicSections, prowlarr,
   stagingHostPath, qbitStagingRoot, holdingRoot, importRoot, inspectMounts,
@@ -161,7 +161,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         return held('rescan_unavailable');
       }
       return processShokoRescan({ item, ledger: shokoRescans,
-        importRoot, shokoMount, shokoSourcePath, nowMs: now(), hydrateMetadata,
+        importRoot, shokoMount, shokoSourcePath, nowMs: now(), now, hydrateMetadata,
         readMetadata: (target) => readShokoEpisodeMetadata({
           baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,...target,fetchImpl:providerFetchImpl}),
         readUnrecognized: ({fileId}) => readShokoUnrecognizedFile({
@@ -231,6 +231,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       const process = createAcquisitionRequestProcessor({
         readRequest: (id) => requests.getRequest(id),
         readReleaseControl: requests.getReleaseControl?.bind(requests),
+        selectAutoRelease,
         consumeReleaseChoice: requests.consumeReleaseChoice?.bind(requests),
         checkPreferredRelease: requests.checkPreferredRelease?.bind(requests),
         getPreferredFallback: requests.getPreferredFallback?.bind(requests),

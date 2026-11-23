@@ -70,7 +70,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  click('Pick');await tick();
  const saved=document.querySelector('dialog').textContent.includes('Request #1 submitted')&&chooseCalls===1;
  const savedLink=document.querySelector('dialog a[href="#/requests?requestId=1"]')?.textContent==='View request';
- click('Close');control={mode:'auto',phase:'selecting',revision:10};
+ click('Close');control={mode:'auto',phase:'consumed',revision:10};
  await dialog.open({requestId:1,title:'Example',mode:'auto'});
  const prompt=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('dialog').textContent.includes('Use likely match')&&!document.querySelector('dialog').textContent.toLowerCase().includes('registered release')&&document.querySelector('dialog').textContent.includes('five minutes');
  click('Use likely match');await tick();
@@ -79,10 +79,10 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  const futurePreferences=document.querySelector('dialog .release-prefer-future input').getBoundingClientRect().width>0&&[...document.querySelectorAll('dialog button')].find(b=>b.textContent==='Save group').getBoundingClientRect().width>0;
  const autoFeedback=[...document.querySelectorAll('dialog .release-mode-actions button')].find(b=>b.textContent==='Auto-Pick').classList.contains('primary')&&/[0-9]+ episodes? requested · Auto-Pick/.test(document.querySelector('dialog').textContent)&&document.querySelector('dialog .release-mode-actions').hidden&&document.querySelector('dialog .release-search-actions').hidden;
  dialog.close();
- alternativeRegistration='confirmed';control={mode:'auto',phase:'selecting',revision:1};
+ alternativeRegistration='confirmed';control={mode:'auto',phase:'consumed',revision:1};
  await dialog.open({requestId:1,title:'Verified example',mode:'auto'});
  const confirmedPrompt=document.querySelector('dialog').textContent.includes('Use verified release')&&document.querySelector('dialog').textContent.includes('Previously verified files');dialog.close();
- alternativeRegistration='unknown';control={mode:'auto',phase:'selecting',revision:1};
+ alternativeRegistration='unknown';control={mode:'auto',phase:'consumed',revision:1};
  await dialog.open({requestId:1,title:'Unknown example',mode:'auto'});
  const unknownPrompt=document.querySelector('dialog').textContent.includes('Use alternative release')&&!document.querySelector('dialog .registration-confirmed');dialog.close();
  control={mode:'manual',phase:'selecting',revision:1};inspectionFailure='release_search_expired';
@@ -122,7 +122,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  click('Show more releases');await tick();
  const packPage=searchUrls.at(-1).includes('packsOnly=false')&&searchUrls.at(-1).includes('offset=50');
  const packReadOnly=previewWrites===beforePack;draftDialog.close();
- completedMode=false;delegatedMode=true;control={mode:'auto',phase:'selecting',revision:1,preference:{group:'SubsPlease'}};
+ completedMode=false;delegatedMode=true;control={mode:'auto',phase:'consumed',revision:1,preference:{group:'SubsPlease'}};
  await dialog.open({requestId:1,title:'Airing Example',mode:'auto'});
  const groupFeedback=document.querySelector('dialog').textContent.includes('Preferred group: SubsPlease')&&document.querySelector('dialog').textContent.includes('Until ');
  dialog.close();let lateInspectionGuard=true;delegatedMode=false;
@@ -146,13 +146,14 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
   lateInspectionGuard&&=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('[role=status]').textContent.includes('better release')&&!document.querySelector('[role=status]').textContent.includes('Late inspection failure');dialog.close();
  }
  document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,futurePreferences,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback,preferenceLoadingSafe,preferenceOnly,preferenceAudioPreserved,preferenceNoAcquisition});
-})().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
+})().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.stack;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
       const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',
         `--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
+      assert.ok(!match[1].startsWith('ERROR'),match[1]);
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
       assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,futurePreferences:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true,preferenceLoadingSafe:true,preferenceOnly:true,preferenceAudioPreserved:true,preferenceNoAcquisition:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
@@ -306,5 +307,22 @@ test('release dialog preserves manual choice through polling and offers alternat
  {scenario:'overwrite',enabledOnlyGuard:true,visibleAtMount:false,transientSaved:true,confirmationRetained:false,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'},
  {scenario:'ignored',enabledOnlyGuard:true,visibleAtMount:false,transientSaved:false,confirmationRetained:true,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'},
  {scenario:'ready',enabledOnlyGuard:true,visibleAtMount:false,transientSaved:false,confirmationRetained:true,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'}]);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: queued receipt',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-auto-receipt-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ let control={mode:'auto',phase:'selecting',revision:2},reads=0,writes=0;
+ const api=async(url,options={})=>{if(!options.method){reads++;return{control,context:{}};}writes++;return{state:'updated',queued:true,requestId:42,control};};
+ (async()=>{const picker=createReleaseDialog({api,element});await picker.open({requestId:42,title:'Example',mode:'auto'});
+ const d=document.querySelector('dialog[open]');const receipt=d.textContent.includes('Request #42 submitted')&&d.textContent.includes('you can close this window');
+ const modesHidden=d.querySelector('.release-mode-actions').hidden;const href=d.querySelector('a').getAttribute('href');picker.close();const before=reads;
+ setTimeout(()=>document.querySelector('#result').textContent=JSON.stringify({receipt,modesHidden,href,writes,pollsAfterClose:reads-before}),2100);
+ })().catch(e=>document.querySelector('#result').textContent='ERROR '+e.stack);</script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-800));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),{receipt:true,modesHidden:true,href:'#/requests?requestId=42',writes:0,pollsAfterClose:0});
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
