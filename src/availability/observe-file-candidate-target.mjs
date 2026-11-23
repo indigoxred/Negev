@@ -62,7 +62,7 @@ export async function observeFileCandidateTarget({ candidate, target,
       ...(validId(candidate.anidbFileId) ?
         { anidbFileId: candidate.anidbFileId } : {}),
       anidbId: target.anidbId,
-      episodeIds, coverage: episodeIds.map((episodeId) => ({
+      episodeIds, coverage: candidate.coverage ?? episodeIds.map((episodeId) => ({
         episodeId, start: 0, end: 100 })), size: candidate.size,
       sourcePaths: candidate.sourcePaths }] };
   return observeIndexedTarget({ target, publicLibraryIds, cardIndex,

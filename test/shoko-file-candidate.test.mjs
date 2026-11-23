@@ -82,12 +82,10 @@ test('an AniDB-flagged existing file remains eligible for exact Plex availabilit
   { state: 'unavailable' });
 });
 
-test('unrecognized, partial, and contradictory files cannot nominate episodes', async () => {
+test('unrecognized and contradictory files cannot nominate episodes', async () => {
   for (const changed of [
     { ...file, SeriesIDs: [] },
     { ...file, Release: { ...file.Release, IsCorrupted: 'true' } },
-    { ...file, Release: { ...file.Release, CrossReferences: [
-      { ...refs[0], PercentageStart: 0, PercentageEnd: 50 }, refs[1]] } },
     { ...file, Release: { ...file.Release, CrossReferences: [refs[0]] } },
     { ...file, Release: { ...file.Release, CrossReferences: [
       { ...refs[0], PercentageStart: null }, refs[1]] } },

@@ -88,7 +88,9 @@ test('over-budget gaps and malformed timestamps never advance the cursor', async
     pageSize: 1, maxPages: 2, readPage: async ({ page }) => ({
       state: 'page', page, total: 3,
       items: [cursor(page === 1 ? 3 : 2, page === 1 ? 3 : 2)] }) });
-  assert.deepEqual(gap, { state: 'held', reason: 'recent_gap_exceeds_budget' });
+  assert.equal(gap.state, 'continuing');
+  assert.deepEqual(gap.fileIds, [2, 3]);
+  assert.equal(gap.continuation.page, 3);
   const malformed = await readShokoRecentPage({ baseUrl: 'http://shoko.local/',
     apiKey: 'private-test-key', fetchImpl: async () => json({ Total: 1,
       List: [{ ID: 1, Imported: '2026-10-13T10:00:00' }] }) });

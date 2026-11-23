@@ -46,3 +46,16 @@ test('a complete parent page wraps and awaits the next cycle', async () => {
   assert.deepEqual(await worker.runOnce(), { state: 'page', afterId: 0 });
   assert.deepEqual(events, [{ expectedTvdbId: 100, nextTvdbId: 0 }]);
 });
+
+test('a held first parent is retried after the healthy second parent gets a turn', async () => {
+  let cursor=0;const visited=[];
+  const worker=createParentWatchWorker({parents:{getCursor:()=>cursor,
+    listActive:({afterTvdbId})=>[{tvdbId:100},{tvdbId:200}].filter(x=>x.tvdbId>afterTvdbId).slice(0,1),
+    advanceCursor:({nextTvdbId})=>{cursor=nextTvdbId;return {state:'advanced'}}},
+    requests:{},mapReader:{read:async()=>({})},loadDetail:async()=>{},readRelations:async()=>{},
+    today:()=> '2026-11-24',now:()=>100,
+    reconcile:async({parent})=>{visited.push(parent.tvdbId);return parent.tvdbId===100?
+      {state:'held',reason:'parent_mapping_missing'}:{state:'reconciled'}}});
+  for(let i=0;i<4;i++)await worker.runOnce();
+  assert.deepEqual(visited,[100,200,100]);
+});

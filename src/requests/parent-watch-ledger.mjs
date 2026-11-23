@@ -33,6 +33,10 @@ export function openParentWatchLedger(dbPath) {
       id INTEGER PRIMARY KEY CHECK(id=1),
       after_tvdb_id INTEGER NOT NULL CHECK(after_tvdb_id>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS parent_watch_frontiers (tvdb_id INTEGER PRIMARY KEY REFERENCES parent_watches(tvdb_id), evidence TEXT NOT NULL CHECK(length(evidence)<=2000000)) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS parent_watch_relation_evidence (
+      tvdb_id INTEGER NOT NULL REFERENCES parent_watches(tvdb_id),anidb_id INTEGER NOT NULL CHECK(anidb_id>0),
+      evidence TEXT NOT NULL CHECK(length(evidence)<=20000),PRIMARY KEY(tvdb_id,anidb_id)) STRICT`);
     db.exec('INSERT INTO parent_watch_cursor(id,after_tvdb_id) VALUES (1,0) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const parent = db.prepare('SELECT * FROM parent_watches WHERE tvdb_id=?');
@@ -133,6 +137,30 @@ export function openParentWatchLedger(dbPath) {
           (anidb_id,tvdb_id,request_id,recorded_ms) VALUES (?,?,?,?)`)
           .run(anidbId, tvdbId, requestId, nowMs);
         return { state: 'recorded', created: true };
+      });
+    },
+    getRelationFrontier(tvdbId) {
+      if (!validId(tvdbId)) throw new TypeError('Invalid parent ID');
+      const row = db.prepare('SELECT evidence FROM parent_watch_frontiers WHERE tvdb_id=?').get(tvdbId);
+      if (!row) return null;
+      const metadata = JSON.parse(row.evidence);
+      const relations = db.prepare('SELECT anidb_id,evidence FROM parent_watch_relation_evidence WHERE tvdb_id=? ORDER BY anidb_id')
+        .all(tvdbId).map(item=>[item.anidb_id,JSON.parse(item.evidence)]);
+      return {...metadata,relations};
+    },
+    saveRelationFrontier(tvdbId, evidence) {
+      if (!validId(tvdbId)) throw new TypeError('Invalid parent ID');
+      return transact(() => {
+        db.prepare('DELETE FROM parent_watch_relation_evidence WHERE tvdb_id=?').run(tvdbId);
+        if (evidence === null) db.prepare('DELETE FROM parent_watch_frontiers WHERE tvdb_id=?').run(tvdbId);
+        else {
+          const {relations,...metadata}=evidence;
+          const encoded=JSON.stringify(metadata);
+          if(encoded.length>2000000)throw new TypeError('Relation frontier too large');
+          db.prepare('INSERT INTO parent_watch_frontiers VALUES (?,?) ON CONFLICT(tvdb_id) DO UPDATE SET evidence=excluded.evidence').run(tvdbId,encoded);
+          const insert=db.prepare('INSERT INTO parent_watch_relation_evidence VALUES (?,?,?)');
+          for(const [id,value] of relations)insert.run(tvdbId,id,JSON.stringify(value));
+        }
       });
     },
     getCursor() { return cursor.get().tvdbId; },

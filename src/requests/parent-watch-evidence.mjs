@@ -34,7 +34,7 @@ export function mapParentInstallments({ map, tvdbId } = {}) {
     : held('parent_mapping_missing');
 }
 
-function validRelations(value, id) {
+export function validRelations(value, id) {
   return value?.state === 'related_titles' && value.anidbId === id &&
     Array.isArray(value.items) && value.items.length <= 50 &&
     value.items.every((item) => validId(item?.anidbId) &&
@@ -45,7 +45,7 @@ function validRelations(value, id) {
 // A direct sequel is candidate watch evidence only when the target confirms
 // the reverse prequel. Its own complete AniDB detail and release state are
 // checked before any request is submitted.
-export async function confirmedSequelIds({ sourceId, readRelations } = {}) {
+export async function confirmedSequelIds({ sourceId, readRelations, branchOffset = 0 } = {}) {
   if (!validId(sourceId) || typeof readRelations !== 'function') {
     throw new TypeError('Invalid sequel evidence request');
   }
@@ -54,14 +54,19 @@ export async function confirmedSequelIds({ sourceId, readRelations } = {}) {
   catch { return held('relation_unavailable'); }
   if (!validRelations(source, sourceId)) return held('relation_unavailable');
   const confirmed = [];
-  for (const item of source.items) {
+  const heldIds = [];
+  const offset = Number.isSafeInteger(branchOffset) && branchOffset >= 0
+    ? branchOffset % Math.max(1, source.items.length) : 0;
+  const branches = [...source.items.slice(offset), ...source.items.slice(0, offset)];
+  for (const item of branches) {
     if (item.relation !== 'Sequel' || item.anidbId === sourceId) continue;
     let target;
     try { target = await readRelations(item.anidbId); }
-    catch { return held('relation_unavailable'); }
-    if (!validRelations(target, item.anidbId)) return held('relation_unavailable');
+    catch { heldIds.push(item.anidbId); continue; }
+    if (!validRelations(target, item.anidbId)) { heldIds.push(item.anidbId); continue; }
     if (target.items.some((related) => related.anidbId === sourceId &&
         related.relation === 'Prequel')) confirmed.push(item.anidbId);
   }
-  return { state: 'confirmed', anidbIds: confirmed.sort((a, b) => a - b) };
+  return { state: 'confirmed', anidbIds: confirmed.sort((a, b) => a - b),
+    ...(heldIds.length ? { heldIds } : {}) };
 }

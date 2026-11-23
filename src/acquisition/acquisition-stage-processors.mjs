@@ -1,3 +1,4 @@
+import { openQualityInspectionRetry } from './quality-inspection-retry.mjs';
 import { processBonusImport } from './process-bonus-import.mjs';
 import { createBonusOwnershipReader } from './bonus-ownership.mjs';
 import { readShokoEpisodeMetadata } from './shoko-episode-metadata.mjs';
@@ -33,6 +34,7 @@ const held = (reason) => ({ state: 'held', reason });
 // does not create a timer or perform I/O. The caller must still prove installed
 // availability, path, credential and Import gates before starting a pipeline.
 export function createAcquisitionStageProcessors({ requests, acquisitions,
+  qualityInspectionRetry = openQualityInspectionRetry(),
   handoffs, pureMoves = null, recognitionRecoveries = null,
   shokoRescans = null, pureMode = false,
   discoverCandidates, previewCandidate, loadDetail, hydrateMetadata = null, selectAutoRelease,
@@ -228,7 +230,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         const ownership = await checkOwnership(request?.anidbId);
         if (ownership) return ownership;
       }
-      const process = createAcquisitionRequestProcessor({
+      const process = createAcquisitionRequestProcessor({ qualityInspectionRetry, now,
         readRequest: (id) => requests.getRequest(id),
         readReleaseControl: requests.getReleaseControl?.bind(requests),
         selectAutoRelease,

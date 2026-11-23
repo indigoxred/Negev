@@ -3,6 +3,7 @@ import { readLocalFileRanges } from './shoko-file-ranges.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
+import { normalizeShokoCoverage } from './shoko-coverage.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -11,25 +12,6 @@ const validPath = (value) => typeof value === 'string' &&
   path.posix.isAbsolute(value) && path.posix.normalize(value) === value &&
   !value.includes('\0') && !value.includes('\r') && !value.includes('\n') &&
   !value.includes('\\');
-const userCoverage = (refs) => {
-  const seen = new Set();
-  const coverage = [];
-  for (const ref of refs) {
-    const id = ref?.AnidbEpisodeID;
-    const start = ref?.PercentageStart;
-    const end = ref?.PercentageEnd;
-    if (!validId(id) || seen.has(id) ||
-        !Object.hasOwn(ref, 'PercentageStart') ||
-        !Object.hasOwn(ref, 'PercentageEnd') ||
-        ((start === null) !== (end === null)) ||
-        (start !== null && (!Number.isFinite(start) ||
-          !Number.isFinite(end) || start < 0 || end > 100 ||
-          start >= end))) return null;
-    seen.add(id);
-    coverage.push({ episodeId: id, start: start ?? 0, end: end ?? 100 });
-  }
-  return coverage;
-};
 
 // A single-episode, read-only Shoko observation. The availability-only mode
 // accepts a Shoko User link as local episode evidence so the separate Plex
@@ -128,7 +110,8 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
         refs.some((ref) => (ref?.AnidbAnimeID !== anidbId &&
           !(unscopedUserRef && ref.AnidbAnimeID === null)) ||
           !validId(ref.AnidbEpisodeID)) ||
-        !refs.some((ref) => ref.AnidbEpisodeID === episodeId)) {
+        !refs.some((ref) => ref.AnidbEpisodeID === episodeId) ||
+        new Set(refs.map(ref=>ref.AnidbEpisodeID)).size !== refs.length) {
       incomplete = true; continue;
     }
     if (unscopedUserRef) {
@@ -147,17 +130,25 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       }
       if (!unscopedUserEpisodeVerified) { incomplete = true; continue; }
     }
-    const episodeIds = refs.map((ref) => ref.AnidbEpisodeID);
-    let identity = evaluatePreview({ status: 200, release: file.Release },
-      { ed2k, size: file.Size, animeId: anidbId, episodeIds });
-    if (identity.reason === 'invalid_response' && purpose === 'availability' && file.Release.ProviderName === 'AniDB' && rangeReads < 8 && refs.some(ref => ref.PercentageStart === 0 && ref.PercentageEnd === 0)) {
+    let release=file.Release;
+    if (purpose === 'availability' && release.ProviderName === 'AniDB' &&
+        rangeReads < 8 && refs.some(ref=>ref.PercentageStart===0 && ref.PercentageEnd===0)) {
       rangeReads++;
-      const release = await readLocalFileRanges({ base, apiKey, file, anidbId, ed2k, fetchImpl, timeoutMs });
-      if (release) identity = evaluatePreview({ status: 200, release }, { ed2k, size: file.Size, animeId: anidbId, episodeIds });
+      release=await readLocalFileRanges({base,apiKey,file,anidbId,ed2k,fetchImpl,timeoutMs}) ?? release;
     }
+    const normalized=purpose==='availability' ? normalizeShokoCoverage(release.CrossReferences) : null;
+    if (purpose==='availability') {
+      if (!normalized) { incomplete=true; continue; }
+      const active=release.CrossReferences.filter((_,i)=>normalized[i].start<normalized[i].end);
+      if (!active.some(ref=>ref.AnidbEpisodeID===episodeId)) { incomplete=true; continue; }
+      release={...release,CrossReferences:active};
+    }
+    const episodeIds = release.CrossReferences.map((ref) => ref.AnidbEpisodeID);
+    let identity = evaluatePreview({ status: 200, release },
+      { ed2k, size: file.Size, animeId: anidbId, episodeIds });
     if (identity.state !== 'accepted' && purpose === 'availability' &&
         file.Release.ProviderName === 'User' && file.Release.ID == null) {
-      const coverage = userCoverage(refs);
+      const coverage = normalizeShokoCoverage(release.CrossReferences);
       if (coverage) identity = { state: 'accepted', fileId: null,
         coverage, releaseEvidence: 'shoko_user_link' };
     }

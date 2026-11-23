@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
-import { createUserService } from '../src/web/user-service.mjs';
+import { createUserService } from './helpers/scoped-user-service.mjs';
 
 async function checkDirectMovie(plexGuid, expected) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-direct-movie-'));

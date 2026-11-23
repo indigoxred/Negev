@@ -41,6 +41,11 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
       feed_interval_ms INTEGER NOT NULL CHECK(feed_interval_ms>0),
       rush_until_ms INTEGER NOT NULL DEFAULT 0 CHECK(rush_until_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS rss_watch_pages (
+      id INTEGER PRIMARY KEY,indexer_id INTEGER NOT NULL,guid_hash TEXT NOT NULL,
+      title TEXT NOT NULL,published_ms INTEGER,observed_ms INTEGER NOT NULL,
+      after_request_id INTEGER NOT NULL DEFAULT 0,through_request_id INTEGER NOT NULL,
+      UNIQUE(indexer_id,guid_hash)) STRICT`);
   } catch (error) { db.close(); throw error; }
   const state = db.prepare('SELECT last_success_ms FROM rss_feed_state WHERE indexer_id=?');
   const insertState = db.prepare(`INSERT INTO rss_feed_state VALUES (?,?)
@@ -48,7 +53,7 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
   const insertSeen = db.prepare('INSERT OR IGNORE INTO rss_seen VALUES (?,?,?)');
   const watches = db.prepare(`SELECT r.id,r.title,r.anidb_id AS anidbId FROM requests r
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
-    WHERE r.status='held' AND r.cancelled_ms IS NULL AND
+    WHERE r.id>? AND r.id<=? AND r.status='held' AND r.cancelled_ms IS NULL AND
       r.monitor_future=1 AND r.watch_closed=0 AND s.request_id IS NULL AND
       r.title IS NOT NULL
     ORDER BY r.id LIMIT 500`);
@@ -70,6 +75,34 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
   const cap = db.prepare(`DELETE FROM rss_seen WHERE indexer_id=? AND guid_hash NOT IN
     (SELECT guid_hash FROM rss_seen WHERE indexer_id=?
       ORDER BY observed_ms DESC LIMIT 2000)`);
+  // Each drain matches one durable release against at most 500 request rows.
+  // Keep the release until every pre-existing eligible watch has been visited.
+  const processPage = () => {
+    const job = db.prepare('SELECT * FROM rss_watch_pages ORDER BY id LIMIT 1').get();
+    if (!job) return { woken: new Map(), pending: false };
+    const active = watches.all(job.after_request_id, job.through_request_id);
+    const woken = new Map();
+    for (const request of active) {
+      let aliases=[];
+      try { aliases=aliasesForId(request.anidbId); } catch { /* Exact-ID aliases optional. */ }
+      const terms=trustedReleaseQueries(request.title,Array.isArray(aliases)?aliases:[]);
+      if (!terms.some(term=>matchesTitle(term,job.title))) continue;
+      const timing=rush.run(request.id,job.observed_ms,job.observed_ms+24*60*60_000);
+      const queue=wake.run(job.observed_ms,request.id,job.observed_ms);
+      db.prepare('INSERT OR IGNORE INTO rss_release_wakes VALUES(?,?,?,?,?,?,?)')
+        .run(request.id,job.indexer_id,job.guid_hash,job.title,job.published_ms,job.observed_ms,queue.changes);
+      if(timing.changes===1 || queue.changes===1)woken.set(request.id,[job.title]);
+    }
+    if(active.length===500)db.prepare('UPDATE rss_watch_pages SET after_request_id=? WHERE id=?').run(active.at(-1).id,job.id);
+    else db.prepare('DELETE FROM rss_watch_pages WHERE id=?').run(job.id);
+    return {woken,pending:Boolean(db.prepare('SELECT 1 FROM rss_watch_pages LIMIT 1').get())};
+  };
+  const notify = woken => {
+    for(const [id,releaseTitles] of woken) {
+      try { Promise.resolve(onWake(id,{releaseTitles})).catch(()=>{}); } catch { /* Durable deadline remains. */ }
+    }
+  };
+
   return {
     getPollIntervalMs({ nowMs = Date.now() } = {}) {
       if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
@@ -92,45 +125,38 @@ export function openReleaseFeedLedger(dbPath, { aliasesForId = () => [], onWake 
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
         const seeded = Boolean(state.get(indexerId));
-        const active = seeded ? watches.all() : [];
-        const terms = active.map((request) => {
-          let aliases = [];
-          try { aliases = aliasesForId(request.anidbId); } catch { /* Title remains usable. */ }
-          return { id: request.id, terms: trustedReleaseQueries(request.title,
-            Array.isArray(aliases) ? aliases : []) };
-        });
-        const woken = new Set();
-        const wakeTitles = new Map();
         let newItems = 0;
         for (const item of items) {
-          if (insertSeen.run(indexerId, hashGuid(item.guid), nowMs).changes === 0) continue;
-          if (!seeded) continue;
+          const guidHash=hashGuid(item.guid);
+          if(insertSeen.run(indexerId,guidHash,nowMs).changes===0 || !seeded)continue;
           newItems++;
-          for (const request of terms) {
-            if (!request.terms.some((term) => matchesTitle(term, item.title))) continue;
-            const titles = wakeTitles.get(request.id) ?? new Set();
-            if (titles.size < 32) titles.add(item.title);
-            wakeTitles.set(request.id,titles);
-            const timing = rush.run(request.id, nowMs,
-              nowMs + 24 * 60 * 60_000);
-            const queue = wake.run(nowMs, request.id, nowMs);
-            db.prepare('INSERT OR IGNORE INTO rss_release_wakes VALUES(?,?,?,?,?,?,?)')
-              .run(request.id,indexerId,hashGuid(item.guid),item.title,item.publishedMs,nowMs,queue.changes);
-            if (timing.changes === 1 || queue.changes === 1) woken.add(request.id);
-          }
+          db.prepare(`INSERT OR IGNORE INTO rss_watch_pages
+            (indexer_id,guid_hash,title,published_ms,observed_ms,through_request_id)
+            VALUES (?,?,?,?,?,COALESCE((SELECT MAX(id) FROM requests),0))`)
+            .run(indexerId,guidHash,item.title,item.publishedMs,nowMs);
         }
+        const page=processPage();
         insertState.run(indexerId, nowMs);
         prune.run(indexerId, Math.max(0, nowMs - 14 * 24 * 60 * 60_000));
         cap.run(indexerId, indexerId);
         db.prepare('DELETE FROM rss_release_wakes WHERE observed_ms<?').run(Math.max(0,nowMs-30*86400000));
         db.exec('COMMIT'); begun = false;
-        for (const id of woken) { try { Promise.resolve(onWake(id,{releaseTitles:[...(wakeTitles.get(id) ?? [])]})).catch(() => {}); } catch { /* Durable deadline remains. */ } }
+        notify(page.woken);
         return { state: seeded ? 'processed' : 'seeded', newItems,
-          wokenRequests: woken.size };
+          wokenRequests: page.woken.size };
       } catch (error) {
         if (begun) db.exec('ROLLBACK');
         throw error;
       }
+    },
+    hasPendingWatches() { return Boolean(db.prepare('SELECT 1 FROM rss_watch_pages LIMIT 1').get()); },
+    drainPendingWatches() {
+      let page;
+      db.exec('BEGIN IMMEDIATE');
+      try { page=processPage();db.exec('COMMIT'); }
+      catch(error){db.exec('ROLLBACK');throw error;}
+      notify(page.woken);
+      return {state:'processed',wokenRequests:page.woken.size,pending:page.pending};
     },
     close() { db.close(); },
   };

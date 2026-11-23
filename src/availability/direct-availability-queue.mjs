@@ -1,11 +1,17 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createWitnessRevisions } from './witness-revisions.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validProof = (proof) => validId(proof?.fileId) &&
   validId(proof.libraryId) && validId(proof.ratingKey) &&
   validId(proof.partId) &&
-  [undefined, 'alternate_card'].includes(proof.presentation);
+  [undefined, 'alternate_card'].includes(proof.presentation) &&
+  (proof.parts === undefined || (Array.isArray(proof.parts) && proof.parts.length>=2 && proof.parts.length<=8 &&
+    proof.parts.every((part,i)=>[part?.fileId,part?.libraryId,part?.ratingKey,part?.partId,part?.mediaId].every(validId) &&
+      part.libraryId===proof.libraryId && part.ratingKey===proof.ratingKey && part.mediaId===proof.mediaId &&
+      part.partIndex===i && part.partCount===proof.parts.length) &&
+    ['fileId','partId'].every(key=>new Set(proof.parts.map(part=>part[key])).size===proof.parts.length)));
 const positiveLifetimeMs = 30 * 60_000;
 const retryMs = 5 * 60_000;
 const freshEventRetryMs = 30_000;
@@ -15,8 +21,8 @@ const leaseMs = 10 * 60_000;
 
 // Shoko changes invalidate cached public proof. Inventory alone never creates
 // an Available status; only the exact public Plex observer can do that.
-export function openDirectAvailabilityQueue(dbPath) {
-  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
+export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => true } = {}) {
+  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' || typeof evidenceTrusted !== 'function') {
     throw new TypeError('Durable direct availability database required');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -46,6 +52,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       ['proof_file_id', 'INTEGER'], ['proof_library_id', 'INTEGER'],
       ['proof_rating_key', 'INTEGER'], ['proof_part_id', 'INTEGER'],
       ['proof_presentation', "TEXT CHECK(proof_presentation IN ('alternate_card'))"],
+      ['proof_components_json','TEXT'],
     ]) {
       if (!columns.has(name)) db.exec(`ALTER TABLE direct_availability_targets
         ADD COLUMN ${name} ${declaration}`);
@@ -79,6 +86,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     db.exec(`CREATE INDEX IF NOT EXISTS direct_availability_priority_due
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
+  const witnessRevisions=createWitnessRevisions(db);
   const find = db.prepare(`SELECT observed_ms AS observedMs,due_ms AS dueMs,
     version,state,interactive_until_ms AS interactiveUntilMs,verified_ms AS verifiedMs,
     proof_presentation AS proofPresentation FROM direct_availability_targets
@@ -108,7 +116,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     WHERE anidb_id=? AND episode_id=? AND state='pending' AND (interactive_until_ms=0 OR interactive_until_ms<=?)`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
     state=?,due_ms=?,priority=?,interactive_until_ms=0,verified_ms=?,proof_file_id=?,proof_library_id=?,
-    proof_rating_key=?,proof_part_id=?,proof_presentation=?
+    proof_rating_key=?,proof_part_id=?,proof_presentation=?,proof_components_json=?
     WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);
   const latestChange = db.prepare(`SELECT COALESCE(MAX(id),0) AS id
@@ -161,6 +169,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       return { state: changed ? 'queued' : 'unchanged' };
     },
     getStatus({ anidbId, episodeId, nowMs }) {
+      if (!evidenceTrusted()) return {state:'unknown'};
       if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
         throw new TypeError('Invalid availability status query');
       }
@@ -173,6 +182,7 @@ export function openDirectAvailabilityQueue(dbPath) {
         : { state: 'unknown' };
     },
     getCoverage({ anidbId, episodeIds, nowMs }) {
+      if (!evidenceTrusted()) return {verifiedTargets:0,targetCount:episodeIds?.length ?? 0};
       if (!validId(anidbId) || !validTime(nowMs) ||
           !Array.isArray(episodeIds) ||
           episodeIds.length > 10_000 || episodeIds.some((id) => !validId(id)) ||
@@ -188,6 +198,7 @@ export function openDirectAvailabilityQueue(dbPath) {
         targetCount: episodeIds.length };
     },
     getRecentAvailableIds({ anidbId, nowMs }) {
+      if (!evidenceTrusted()) return [];
       if (!validId(anidbId) || !validTime(nowMs)) {
         throw new TypeError('Invalid availability coverage query');
       }
@@ -212,7 +223,7 @@ export function openDirectAvailabilityQueue(dbPath) {
           episodeId: row.episodeId }, observedMs: row.observedMs,
           version: row.version + 1, priority: row.priority,
           startedMs: nowMs, changeId,
-          shokoChangeId };
+          shokoChangeId,witnessVersion:witnessRevisions.version() };
       } catch (error) { if (begun) db.exec('ROLLBACK'); throw error; }
     },
     // A file-centric worker may reserve a few other episodes from the same
@@ -242,7 +253,7 @@ export function openDirectAvailabilityQueue(dbPath) {
             episodeId: target.episodeId }, observedMs: row.observedMs,
             version: row.version + 1, priority: row.priority,
             startedMs: nowMs, changeId,
-            shokoChangeId });
+            shokoChangeId,witnessVersion:witnessRevisions.version() });
         }
         db.exec('COMMIT'); begun = false;
         return receipts;
@@ -296,6 +307,10 @@ export function openDirectAvailabilityQueue(dbPath) {
           db.exec('COMMIT'); begun = false;
           return { state: 'held', reason: 'card_changed' };
         }
+        if(proof && (proof.parts??[proof]).some(part=>witnessRevisions.changed(part,receipt.witnessVersion??0))){
+          releaseChanged.run(checkedMs,receipt.target.anidbId,receipt.target.episodeId,receipt.observedMs,receipt.version);
+          db.exec('COMMIT');begun=false;return {state:'held',reason:'source_generation_changed'};
+        }
         const recentRetry = state === 'unknown' && receipt.priority === 1 &&
           checkedMs - receipt.observedMs < recentEventRetryMs;
         const updated = record.run(state, dueMs, recentRetry ? 1 : 0,
@@ -303,6 +318,7 @@ export function openDirectAvailabilityQueue(dbPath) {
           proof?.fileId ?? null, proof?.libraryId ?? null,
           proof?.ratingKey ?? null, proof?.partId ?? null,
           proof?.presentation ?? null,
+          proof?.parts ? JSON.stringify(proof.parts) : null,
           receipt.target.anidbId, receipt.target.episodeId,
           receipt.observedMs, receipt.version);
         db.exec('COMMIT'); begun = false;

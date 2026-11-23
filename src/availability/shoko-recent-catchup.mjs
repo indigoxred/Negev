@@ -68,21 +68,23 @@ export async function readShokoRecentPage({ baseUrl, apiKey, page = 1,
   } catch { return { state: 'unavailable' }; }
 }
 
-// At most five pages plus one first-page recheck. Any inconsistent observation
-// holds the watermark; returned IDs must be journalled before saving newest.
+// At most five data pages and two head checks per slice. Stable partial
+// slices journal positive IDs plus their frontier without moving the watermark.
 export async function scanShokoRecentSince({ readPage, since,
-  pageSize = 100, maxPages = 5 } = {}) {
+  pageSize = 100, maxPages = 5, continuation = null } = {}) {
   if (typeof readPage !== 'function' || !validCursor(since) ||
       !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100 ||
       !Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 5) {
     throw new TypeError('Invalid recent Shoko scan');
   }
-  let total;
-  let firstHead;
-  let previous;
-  let newest;
+  let total = continuation?.total;
+  let firstHead = continuation?.head;
+  let previous = continuation?.previous;
+  let newest = continuation?.newest;
+  const startPage = continuation?.page ?? 1;
   const seen = new Set();
   const found = [];
+  let headUnavailable = false;
   const pageFrom = async (page) => {
     try { return await readPage({ page, pageSize }); }
     catch { return { state: 'unavailable' }; }
@@ -90,12 +92,20 @@ export async function scanShokoRecentSince({ readPage, since,
   const verifyHead = async () => {
     if (!firstHead) return false;
     const latest = await pageFrom(1);
+    headUnavailable = latest?.state !== 'page';
+    if (headUnavailable) return false;
     return latest?.state === 'page' && latest.page === 1 && latest.total === total &&
       Array.isArray(latest.items) && latest.items.length === firstHead.length &&
       latest.items.every((item, index) => validCursor(item) &&
         compare(item, firstHead[index]) === 0);
   };
-  for (let page = 1; page <= maxPages; page++) {
+  if (continuation && (!validCursor(continuation.since) || compare(continuation.since, since) !== 0 ||
+      !Number.isSafeInteger(startPage) || startPage < 2 ||
+      !validCursor(previous) || !validCursor(newest) || !Array.isArray(firstHead) ||
+      !await verifyHead())) return { ...held('recent_head_changed'), restart: !headUnavailable };
+  const complete = (fileIds) => ({ state: 'complete', fileIds, newest,
+    ...(continuation ? { since, resumed: true } : {}) });
+  for (let page = startPage; page < startPage + maxPages; page++) {
     const result = await pageFrom(page);
     if (result?.state !== 'page' || result.page !== page ||
         !Number.isSafeInteger(result.total) || result.total < 0 ||
@@ -123,14 +133,17 @@ export async function scanShokoRecentSince({ readPage, since,
       if (compare(item, since) <= 0) {
         if (!await verifyHead()) return held('recent_head_changed');
         if (compare(newest, since) < 0) return held('recent_head_older');
-        return { state: 'complete', fileIds: found.reverse(), newest };
+        return complete(found.reverse());
       }
       found.push(item.fileId);
     }
     if (page * pageSize >= total) {
       if (!await verifyHead()) return held('recent_head_changed');
-      return { state: 'complete', fileIds: found.reverse(), newest };
+      return complete(found.reverse());
     }
   }
-  return held('recent_gap_exceeds_budget');
+  if (!await verifyHead()) return { ...held('recent_head_changed'), restart: !headUnavailable };
+  return { state: 'continuing', fileIds: found.reverse(), newest, since,
+    continuation: { total, head: firstHead, previous, newest, since,
+      page: startPage + maxPages } };
 }

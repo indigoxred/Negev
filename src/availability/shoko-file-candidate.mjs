@@ -3,6 +3,7 @@ import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { normalizeShokoFile } from './shoko-file-page.mjs';
 import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
+import { normalizeShokoCoverage, localRangeRelease } from './shoko-coverage.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -62,11 +63,11 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
         tmdbMovieIds });
     }
   }
-  const refs = file.Release.CrossReferences;
+  const rawRefs = file.Release.CrossReferences;
   const linked = new Set(item.pairs.map(pairKey));
   const userLink = file.Release.ProviderName === 'User' &&
     file.Release.ID == null;
-  const referenceKeys = refs.map((ref) => {
+  const referenceKeys = rawRefs.map((ref) => {
     if (validId(ref?.AnidbAnimeID)) {
       return `${ref.AnidbAnimeID}:${ref.AnidbEpisodeID}`;
     }
@@ -75,21 +76,19 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
       pair.episodeId === ref.AnidbEpisodeID);
     return matches.length === 1 ? pairKey(matches[0]) : null;
   });
-  if (refs.some((ref) => !ref ||
-      !Object.hasOwn(ref, 'PercentageStart') ||
-      !Object.hasOwn(ref, 'PercentageEnd') ||
-      ref.PercentageStart !== 0 ||
-      ![0, 100].includes(ref.PercentageEnd)) ||
-      referenceKeys.some((key) => !linked.has(key)) ||
-      new Set(referenceKeys).size !== refs.length) {
+  if (referenceKeys.some((key) => !linked.has(key)) ||
+      new Set(referenceKeys).size !== rawRefs.length) {
     return unavailable();
   }
-  // AniDB may link an episode at 0–0: it identifies the release but says
-  // that the file contains none of that episode. Keep the complete raw link
-  // check above, then nominate only episodes with full coverage for Plex proof.
-  const activeRefs = refs.filter((ref) => ref.PercentageEnd === 100);
+  const animeIds = new Set(item.pairs.map(pair=>pair.anidbId));
+  const release = file.Release.ProviderName === 'AniDB' && animeIds.size === 1
+    ? localRangeRelease(file,[...animeIds][0]) ?? file.Release : file.Release;
+  const refs=release.CrossReferences;
+  const coverage=normalizeShokoCoverage(refs);
+  if(!coverage) return unavailable();
+  const activeRefs = refs.filter((_,i) => coverage[i].start < coverage[i].end);
   const activeKeys = new Set(referenceKeys.filter((_, index) =>
-    refs[index].PercentageEnd === 100));
+    coverage[index].start < coverage[index].end));
   const activePairs = item.pairs.filter((pair) => activeKeys.has(pairKey(pair)));
   const activeIdentities = identities.filter((identity) =>
     activeKeys.has(pairKey(identity)));
@@ -105,7 +104,7 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
       return unavailable();
     }
     const decision = evaluatePreview({ status: 200,
-      release: { ...file.Release, CrossReferences: activeRefs } },
+      release: { ...release, CrossReferences: activeRefs } },
       { ed2k: digest, size: file.Size, animeId: [...animeIds][0],
         episodeIds: activePairs.map((pair) => pair.episodeId) });
     if (decision.state !== 'accepted') return unavailable();
@@ -133,5 +132,7 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
   return { state: 'candidate', fileId, updated: item.updated,
     size: file.Size,
     anidbFileId, releaseEvidence, pairs: activePairs,
+    ...(coverage.some(r=>r.start>0 || (r.end>0 && r.end<100))
+      ? {coverage:coverage.filter(r=>r.start<r.end)} : {}),
     identities: activeIdentities, sourcePaths };
 }

@@ -1,3 +1,4 @@
+import { transientInspectionFailure } from './quality-inspection-retry.mjs';
 import { randomUUID } from 'node:crypto';
 import { assessRelease, compareReleases } from './release-preference.mjs';
 import { releaseFacts, releaseCoverageHint, matchesReleaseFilters, validReleaseFilters, DEFAULT_RELEASE_FILTERS } from '../web/public/release-choice-fields.mjs';
@@ -206,10 +207,11 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       const coverage=await readPublicCoverage(request);
       const available=new Set([...(coverage.availableEpisodeIds??[]),...(coverage.uncertainEpisodeIds??[])]);
       const preferPack=found.releaseState==='completed'&&request.kind==='series'&&request.episodeIds.filter(x=>!available.has(x)).length>1;
-      const inspected=[];
+      const inspected=[],transient=[];
       for(const c of found.items.filter(c=>c.eligible).sort((a,b)=>compareReleases(
         receipt(id,a.token).candidate,receipt(id,b.token).candidate,{preferSeasonPack:preferPack})).slice(0,3)) {
         const preview=await inspect(id,c.token,coverage);
+        if(transientInspectionFailure(preview))transient.push(receipt(id,c.token).candidate);
         if(preview?.state!=='preflight'||preview.episodeIds.every(x=>available.has(x))||
           preview.episodeIds.some(x=>(coverage.uncertainEpisodeIds??[]).includes(x))) continue;
         if(preferPack&&request.episodeIds.some(x=>!available.has(x)&&!preview.episodeIds.includes(x))) continue;
@@ -217,7 +219,8 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       }
       const proposal=chooseReleaseProposal(inspected);
       const proposed=proposal.selection??proposal.registered;
-      if(proposal.state==='empty'||found.searchIncomplete===true&&
+      if(proposal.state==='empty'||transient.some(c=>assessRelease(c).quality>assessRelease(proposed.candidate).quality&&
+          (!c.targetedEpisode||!Number.isSafeInteger(c.targetEpisodeId)||proposed.preview.episodeIds.includes(c.targetEpisodeId)))||found.searchIncomplete===true&&
           (publicRelease(proposed.candidate).resolution??0)<1080) {
         // No interactive decision is useful; normal bounded acquisition can
         // continue through later candidate pages without waiting on this tab.

@@ -10,11 +10,12 @@ import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
 import { openFileBackfillCursor } from
   '../src/availability/file-backfill-cursor.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
-import { createUserService } from '../src/web/user-service.mjs';
+import { createUserService, primeSavedScope } from './helpers/scoped-user-service.mjs';
 
 test('review service reads recent saved public proofs without starting backfill', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-proof-review-'));
   const dbPath = path.join(root, 'state.sqlite');
+  primeSavedScope({dbPath,localRoot:root,shokoBaseUrl:'http://shoko:8111/',plexBaseUrl:'http://plex:32400/'});
   let service;
   try {
     const proofs = openFileProofLedger(dbPath, {
@@ -69,6 +70,7 @@ test('review service reads recent saved public proofs without starting backfill'
 test('service restart retains recent broad proof and resumes its scan', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-backfill-restart-'));
   const dbPath = path.join(root, 'state.sqlite');
+  primeSavedScope({dbPath,localRoot:root,shokoBaseUrl:'http://shoko:8111/',plexBaseUrl:'http://plex:32400/'});
   const inventory = { listFileHintIds: ({ afterFileId, limit }) =>
     [2, 5, 9].filter((id) => id > afterFileId).slice(0, limit) };
   let cursor = openFileBackfillCursor(dbPath);

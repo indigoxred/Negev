@@ -28,16 +28,19 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
     state.lastAttemptMs === null ? clock :
       Math.min(state.nextPollMs ?? clock,state.lastAttemptMs + cadence));
   const tick = async () => {
+    let pageWakes=0;
+    try { pageWakes=feedLedger.drainPendingWatches?.().wokenRequests ?? 0; }
+    catch { lastResult={state:'unavailable'};schedule(300_000);return; }
     let cadence;
     try { cadence = feedLedger.getPollIntervalMs({ nowMs:now() }); }
     catch { lastResult={state:'unavailable'};schedule(300_000);return; }
     if (cadence === null) {
-      lastResult={state:'idle'};schedule(60_000);return;
+      lastResult={state:'idle'};schedule(feedLedger.hasPendingWatches?.() ? 1000 : 60_000);return;
     }
     if (!Number.isSafeInteger(cadence) || cadence < 1 || cadence > 86_400_000) {
       lastResult={state:'unavailable'};schedule(300_000);return;
     }
-    let wokenRequests = 0, attempted = false;
+    let wokenRequests = pageWakes, attempted = false;
     for (const indexerId of indexerIds) {
       if (stopped) return;
       const state=feeds.get(indexerId);
@@ -69,7 +72,7 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
     if (attempted) lastResult={state:[...feeds.values()].some(f=>f.failures>0)
       ? 'unavailable' : 'checked',wokenRequests};
     const nextDueMs=Math.min(...[...feeds.values()].map(state=>due(state,cadence,now())));
-    schedule(Math.min(recheckMs,Math.max(1,nextDueMs-now())));
+    schedule(feedLedger.hasPendingWatches?.() ? 1000 : Math.min(recheckMs,Math.max(1,nextDueMs-now())));
   };
   return {
     start() {

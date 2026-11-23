@@ -118,6 +118,16 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
       return validId(fileId) && !stopping ? resolutions.get(fileId) ?? null : null;
     },
     acknowledgeLinkedObservation,
+    snapshotPendingPathResolutions() {
+      return stopping ? [] : [...detected].map(([key,sequence])=>({key,sequence}));
+    },
+    acknowledgeLinkedPathObservation({token,fileId,path,result}={}) {
+      if(stopping||!validId(fileId)||!token||arrivalKey(path)!==token.key||
+          detected.get(token.key)!==token.sequence||result?.state!=='recorded_file'||
+          result.recognition!=='linked')return {state:'held'};
+      detected.delete(token.key);forgetPathResolutions(token.key);
+      pendingOnlyDebt=false;return {state:'resolved'};
+    },
     accept(target, args) {
       if (stopping) return { state: 'held', reason: 'consumer_stopping' };
       if (target === 'file:detected' || idEvents.has(target)) bumpGeneration();

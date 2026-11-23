@@ -247,8 +247,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);
-    directAvailability = openDirectAvailabilityQueue(dbPath);
-    if (titleCheck) titleChecks = openTitleCheckLedger(dbPath);
+    directAvailability = openDirectAvailabilityQueue(dbPath, { evidenceTrusted: () => !plex || plexObserver?.isScopeCurrent() === true });
+    if (titleCheck) titleChecks = openTitleCheckLedger(dbPath, { requireProof: true, evidenceTrusted: () => !plex || plexObserver?.isScopeCurrent() === true });
     const metadata = createMetadataLimiter();
     const catalogueFetch = createCatalogueFetch({ fetchImpl, now });
     const cataloguePosters = createPosterReader({ fetchImpl: catalogueFetch, now });
@@ -277,7 +277,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     };
     if (plex) {
       plexObserver = createPlexAvailabilityService({ dbPath,
-        shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now });
+        shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now, enforceScope: true });
     }
     if (fileBackfill) {
       // Resume the saved sweep and bounded proofs after restart. Accepted
@@ -286,8 +286,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     }
     if (plex && fileProofLifetimeMs !== null) {
       fileProofs = openFileProofLedger(dbPath, {
-        positiveLifetimeMs: fileProofLifetimeMs, now });
+        positiveLifetimeMs: fileProofLifetimeMs, now, evidenceTrusted: () => plexObserver?.isScopeCurrent() === true });
     }
+    if (plexObserver) void plexObserver.ensureScope();
     let recentImportUntilMs = 0;
     const acquisitionCoverageCache = new Map();
     const enqueueChangedFile = ({ before, after, observedMs,
@@ -415,7 +416,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const titleWorker = titleChecks ? createTitleCheckWorker({
       ledger: titleChecks, now,
       loadDetail: (input) => metadata.run(() => loadDetail(input)),
-      observeTarget: (target) => observeCurrentPublic(target),
+      observeTarget: (target) => observeCurrentPublic(target, undefined, true),
     }) : null;
     const hydrator = createCatalogueHydrator({
       isKnownTitle: confirmKnownTitle,
@@ -552,6 +553,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return result;
     } : undefined;
     const readRequestCoverage = async (request) => {
+      if(!plexObserver||(await plexObserver.ensureScope()).state!=='ready') throw new Error('Public scope unverified');
       const { anidbId, episodeIds } = request;
       const checkedMs = now();
       const cached = recentPublicCoverage({ episodeIds, includeIds: true,
@@ -561,7 +563,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return verifyCachedPositiveCoverage({ request, cached,
         cache: acquisitionCoverageCache, now,
         ownedEpisodeIds:episodeIds.filter(episodeId=>inventory.getObservedFileIds({anidbId,episodeId}).length>0),
-        readRevision:target=>JSON.stringify([
+        readRevision:target=>JSON.stringify([plexObserver.getScopeGeneration(),
           inventory.getObservedFileIds(target).map(fileId=>[fileId,inventory.getFile(fileId)?.observedMs]),
           directAvailability.getObservation(target)?.observedMs]),
         readShoko:target=>readShokoEpisodeFiles({baseUrl:shokoBaseUrl,apiKey:shokoApiKey,...target,purpose:'availability',fetchImpl}),
@@ -995,11 +997,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
       }
       return track((async () => {
+        const pathTokens=eventConsumer?.snapshotPendingPathResolutions()??[];
         const startingRevision = inventory.getFile(fileId)?.observedMs;
         const startingGeneration = startingRevision === undefined ?
           eventConsumer?.getState().generation : null;
         const result = await metadata.run(() => readShokoOneFile({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl,
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includePaths:pathTokens.length>0,
         }));
         if (inventory.getFile(fileId)?.observedMs !== startingRevision ||
             (startingRevision === undefined &&
@@ -1014,6 +1017,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           handle: (change) => enqueueChangedFile({ ...change, priority: 'event' }),
         });
         if (delivery.state === 'held') return delivery;
+        for(const token of pathTokens)for(const path of result.observedPaths??[]) {
+          eventConsumer.acknowledgeLinkedPathObservation({token,fileId,path,result:{...saved,recognition:inventory.getFile(fileId)?.state}});
+        }
         return saved;
       })());
     };
@@ -1075,6 +1081,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ? [...plex.publicSections.episode, ...plex.publicSections.movie]
         : [...plex.publicSections.episode];
       return track((async () => {
+        if((await plexObserver.ensureScope()).state!=='ready') return {state:'held',reason:'public_probe_unverified'};
         const metadataCache = new Map();
         const observation = await metadata.run(() => collectTargetScopedUncertain({ ...input,
         publicLibraryIds, now,
@@ -1091,6 +1098,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })());
     };
     return { app,
+      ensurePublicAvailabilityScope: () => plexObserver ? track(plexObserver.ensureScope()) : Promise.resolve({state:'ready'}),
       cachedReleaseAliases: (anidbId) =>
         titleSource?.releaseQueries(anidbId) ?? [],
       hasRecentArrival: () => now() < recentImportUntilMs,

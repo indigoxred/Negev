@@ -8,11 +8,11 @@ const held = () => ({ state: 'held', reason: 'invalid_exact_proof' });
 // Positive evidence from the internal exact Shoko/public Plex same-file
 // observer. A stale proof is retained as history, never presented as current.
 export function openFileProofLedger(dbPath, { positiveLifetimeMs,
-  now = Date.now, discardPriorProofs = false } = {}) {
+  now = Date.now, discardPriorProofs = false, evidenceTrusted = () => true } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
       !Number.isSafeInteger(positiveLifetimeMs) ||
       positiveLifetimeMs < 1 || positiveLifetimeMs > 7 * 24 * 60 * 60_000 ||
-      typeof now !== 'function' || typeof discardPriorProofs !== 'boolean') {
+      typeof now !== 'function' || typeof discardPriorProofs !== 'boolean' || typeof evidenceTrusted !== 'function') {
     throw new TypeError('Invalid file proof ledger configuration');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -169,6 +169,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       if (!validId(anidbId) || !validId(episodeId)) {
         throw new TypeError('Invalid file proof target');
       }
+      if (!evidenceTrusted()) return {state:'unknown'};
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId,episodeId);
@@ -183,6 +184,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     },
     getRecentAvailableIds({ anidbId } = {}) {
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      if (!evidenceTrusted()) return [];
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId);
@@ -192,6 +194,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     },
     getCurrentTitleCard({ anidbId } = {}) {
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      if (!evidenceTrusted()) return null;
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId);
@@ -201,6 +204,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         ratingKey: card.ratingKey } : null;
     },
     listCurrentTitles({ afterAnidbId = 0, limit = 20 } = {}) {
+      if (!evidenceTrusted()) return {items:[],nextAfterAnidbId:null};
       const nowMs = now();
       if (!Number.isSafeInteger(afterAnidbId) || afterAnidbId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||

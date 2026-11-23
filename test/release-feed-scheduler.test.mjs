@@ -107,3 +107,16 @@ test('failed read or acceptance in the first indexer cannot stop later feeds',as
   setTimer:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimer:()=>{}});
  try{scheduler.start();const timer=timers.shift();clock+=timer.ms;await timer.fn();assert.deepEqual(read,[1,2,3]);assert.deepEqual(accepted,[2,3]);assert.equal(scheduler.getLastResult().wokenRequests,1)}finally{await scheduler.stop()}
 });
+
+test('durable watch pages drain promptly between feed polls', async () => {
+ const timers=[];let drains=0,pending=true,reads=0;
+ const scheduler=createReleaseFeedScheduler({indexerIds:[5],now:()=>60000,
+  feedLedger:{getPollIntervalMs:()=>3600000,accept:()=>({wokenRequests:0}),
+   drainPendingWatches:()=>{drains++;return {wokenRequests:0}},hasPendingWatches:()=>pending},
+  readFeed:async()=>{reads++;return {state:'feed',items:[]}},
+  setTimer:(fn,ms)=>{timers.push({fn,ms});return timers.length},clearTimer:()=>{}});
+ scheduler.start();await timers.shift().fn();
+ assert.equal(drains,1);assert.equal(timers.at(-1).ms,1000);
+ pending=false;await timers.shift().fn();assert.equal(drains,2);assert.equal(reads,1);
+ await scheduler.stop();
+});

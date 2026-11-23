@@ -1,3 +1,4 @@
+import { openQualityInspectionRetry } from './quality-inspection-retry.mjs';
 import { createAcquisitionStageProcessors } from
   './acquisition-stage-processors.mjs';
 import { openAcquisitionPipeline } from './acquisition-pipeline.mjs';
@@ -21,7 +22,8 @@ export function openAcquisitionRuntime(options = {}) {
     sessionGate, allowedAnidbIds,
     ownershipGate = null,
     fetchImpl = fetch, now = Date.now, ...providers } = options;
-  const stages = createAcquisitionStageProcessors({
+  const qualityInspectionRetry = openQualityInspectionRetry(dbPath);
+  const stages = createAcquisitionStageProcessors({ qualityInspectionRetry,
     ...providers, acquisitions, recognitionRecoveries, shokoRescans,
     ownershipGate,
     providerFetchImpl: fetchImpl, now });
@@ -34,8 +36,9 @@ export function openAcquisitionRuntime(options = {}) {
     // first-time request check. The four stages remain strictly serial.
     requestPageLimit: 1, ...stages });
   const scheduler = createPipelineScheduler({ pipeline, now });
+  let stopPromise;
   return { start: () => scheduler.start(),
-    stop: () => scheduler.stop(),
+    stop: () => stopPromise ??= (async () => { await scheduler.stop(); qualityInspectionRetry.close(); })(),
     wakeRequest: (requestId) => {
       const request = providers.requests?.getRequest(requestId);
       if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);

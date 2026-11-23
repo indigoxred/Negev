@@ -39,8 +39,8 @@ export function createCatalogueHydrator({ isKnownTitle, loadDetail, ledger, requ
       if (detail?.state === 'details') {
         if (detail.anidbId !== anidbId) return { state: 'held', reason: 'invalid_detail_evidence' };
         if (detail.complete !== true) return { state: 'pending', reason: 'detail_pagination_required' };
-        if (!isCompleteAniDbDetail(detail, anidbId)) return { state: 'held', reason: 'invalid_detail_evidence' };
-        if ((missingEpisodeId === undefined ||
+        if (!isCompleteAniDbDetail(detail, anidbId, { allowEmptySeries: true })) return { state: 'held', reason: 'invalid_detail_evidence' };
+        if (detail.total > 0 && (missingEpisodeId === undefined ||
             detail.episodes.some((episode) => episode.id === missingEpisodeId)) &&
             (missingEpisodeNumber === undefined || detail.episodes.some(episode =>
               episode.type === 'Episode' && Number(episode.number) === missingEpisodeNumber))) {

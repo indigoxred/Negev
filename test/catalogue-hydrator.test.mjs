@@ -202,3 +202,13 @@ test('RSS can request missing episode-number metadata without inventing an AniDB
  assert.equal((await hydrator.load({anidbId:1234,missingEpisodeNumber:2})).reason,'refresh_queued');assert.equal(posts,1);
  assert.equal((await hydrator.load({anidbId:1234,missingEpisodeNumber:2})).reason,'active_refresh');assert.equal(posts,1);
 }));
+
+test('known valid zero-episode series can request hydration without becoming requestable', async () => withLedger(async ledger => {
+  let posts=0;
+  const hydrator=createCatalogueHydrator({isKnownTitle:async()=>true,
+    loadDetail:async()=>({...detail,total:0,episodes:[]}),ledger,
+    requestHydration:async()=>{posts++;return {state:'queued'}},now:()=>nowMs});
+  const result=await hydrator.load({anidbId:1234,missingEpisodeNumber:1});
+  assert.equal(result.reason,'refresh_queued');assert.equal(posts,1);
+  assert.notEqual(result.requestable,true);
+}));
