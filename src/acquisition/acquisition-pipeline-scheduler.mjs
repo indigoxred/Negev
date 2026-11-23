@@ -233,6 +233,9 @@ export function createPipelineScheduler({ pipeline,
     stop() {
       if (!stopping) {
         closed = true;
+        // Stop admission before draining a live batch; its active claim keeps
+        // the ledgers open until pipeline.close() below finishes shutdown.
+        if (typeof pipeline.beginShutdown === 'function') pipeline.beginShutdown();
         if (timer !== undefined) clearTimer(timer);
         timer = undefined;
         stopping = (async () => {

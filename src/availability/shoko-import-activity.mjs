@@ -16,7 +16,9 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
   target, getHandoff, getPureMove, ownedSubtree = '',
   withFingerprint = false, now = Date.now, fetchImpl = fetch,
-  timeoutMs = 10_000, maxBaselineEntries = 256 } = {}) {
+  // Pure manifests can contain 500 selected files plus their directories.
+  // Keep the existing hard inventory ceiling and conservative unknown state.
+  timeoutMs = 10_000, maxBaselineEntries = getPureMove ? 1_000 : 256 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username ||

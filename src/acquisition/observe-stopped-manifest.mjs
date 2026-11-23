@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateStoppedManifest } from './evaluate-stopped-manifest.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
@@ -62,7 +63,7 @@ export async function observeStoppedManifest({
     return held('incomplete_path_outside_staging');
   }
   if (!Array.isArray(files) || !Array.isArray(filesAfter) ||
-      files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
+      files.length > MAX_TORRENT_FILES || filesAfter.length > MAX_TORRENT_FILES) return held('invalid_file_manifest');
   if (before.hash !== after.hash || before.category !== after.category ||
       before.save_path !== after.save_path || before.state !== after.state ||
       before.progress !== after.progress || before.downloaded !== after.downloaded ||
@@ -74,7 +75,7 @@ export async function observeStoppedManifest({
   if (fingerprint(files) !== fingerprint(filesAfter)) return held('manifest_changed');
   if (expectedFiles !== undefined) {
     if (!Array.isArray(expectedFiles) || expectedFiles.length < 1 ||
-        expectedFiles.length > 500 || expectedFiles.some((file) =>
+        expectedFiles.length > MAX_TORRENT_FILES || expectedFiles.some((file) =>
           typeof file?.name !== 'string' || !file.name ||
           !Number.isSafeInteger(file.size) || file.size < 1)) {
       throw new TypeError('Invalid expected torrent files');

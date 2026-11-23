@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from '../acquisition/torrent-file-limits.mjs';
 import { evaluateHandoffEvidence } from
   '../acquisition/handoff-evidence.mjs';
 
@@ -85,7 +86,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
           typeof manifest.holdingPath !== 'string' ||
           manifest.holdingPath.split('/').at(-1) !== prefix ||
           !Array.isArray(manifest.files) || manifest.files.length < 1 ||
-          manifest.files.length > 100 ||
+          manifest.files.length > MAX_TORRENT_FILES ||
           manifest.files.some((file) => !relative(file?.name) ||
             !validId(file.size)) ||
           new Set(manifest.files.map((file) => file.name)).size !==

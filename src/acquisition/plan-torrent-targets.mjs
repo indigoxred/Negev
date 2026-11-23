@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
@@ -192,7 +193,7 @@ export function planTorrentTargets({ request, detail, prepared,
       new Set(request.episodeIds).size !== request.episodeIds.length ||
       prepared?.state !== 'prepared_stopped' ||
       !Array.isArray(prepared.files) || prepared.files.length < 1 ||
-      prepared.files.length > 500) return held('invalid_planning_evidence');
+      prepared.files.length > MAX_TORRENT_FILES) return held('invalid_planning_evidence');
   const requested = new Set(request.episodeIds);
   const titleMatched = matchesTrustedReleaseTitle(releaseTitle,
     trustedTitle, detail.title) || allowTitleMetadataVariation === true &&

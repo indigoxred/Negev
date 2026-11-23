@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateCompletion } from './evaluate-completion.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
@@ -81,7 +82,7 @@ export async function observeTorrentCompletion({
     return held('incomplete_path_outside_staging');
   }
   if (!Array.isArray(files) || !Array.isArray(filesAfter) ||
-      files.length > 500 || filesAfter.length > 500) return held('invalid_file_manifest');
+      files.length > MAX_TORRENT_FILES || filesAfter.length > MAX_TORRENT_FILES) return held('invalid_file_manifest');
   const beforeCompletion = evaluateCompletion({ torrent: before, files, expected });
   const afterCompletion = evaluateCompletion({ torrent: after, files: filesAfter, expected });
   const sameOwner = before.hash === after.hash &&

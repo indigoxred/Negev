@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { isPackBonusVideo } from './pack-bonus-name.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
@@ -53,7 +54,7 @@ export function evaluateStoppedManifest({ torrent, files, expected,
       torrent.auto_tmm !== false || torrent.force_start !== false) {
     return held('not_pristine_stopped');
   }
-  if (!Array.isArray(files) || files.length < 1 || files.length > 500) return held('invalid_file_manifest');
+  if (!Array.isArray(files) || files.length < 1 || files.length > MAX_TORRENT_FILES) return held('invalid_file_manifest');
 
   const indexes = new Set();
   const names = new Set();

@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { createHash } from 'node:crypto';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 
@@ -76,7 +77,7 @@ function safeSegment(node) {
 }
 
 function addFile(files, name, size) {
-  if (!Number.isSafeInteger(size) || size < 1 || files.length >= 500 ||
+  if (!Number.isSafeInteger(size) || size < 1 || files.length >= MAX_TORRENT_FILES ||
       files.some((file) => file.name.toLowerCase() === name.toLowerCase())) {
     throw new TypeError('Invalid torrent file list');
   }
@@ -95,7 +96,7 @@ function v1Files(info) {
     addFile(files, name, size);
     pieceBytes = size;
   } else {
-    if (list.kind !== 'list' || list.value.length < 1 || list.value.length > 500) {
+    if (list.kind !== 'list' || list.value.length < 1 || list.value.length > MAX_TORRENT_FILES) {
       throw new TypeError('Invalid v1 files');
     }
     for (const entry of list.value) {

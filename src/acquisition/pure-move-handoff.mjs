@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { constants } from 'node:fs';
 import { lstat, mkdir, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
@@ -56,7 +57,7 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
       typeof recordIntent !== 'function' || typeof renameFile !== 'function') {
     throw new TypeError('Invalid pure move configuration');
   }
-  if (!Array.isArray(files) || files.length < 1 || files.length > 100 ||
+  if (!Array.isArray(files) || files.length < 1 || files.length > MAX_TORRENT_FILES ||
       files.some((file) => !validName(file?.name) ||
         !['video', 'subtitle'].includes(torrentFileKind(file.name)) ||
         !Number.isSafeInteger(file.size) || file.size < 1 ||

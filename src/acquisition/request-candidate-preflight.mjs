@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
@@ -111,7 +112,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (prepared?.state !== 'prepared_stopped') {
     return held(prepared?.reason ?? 'torrent_preflight_unavailable');
   }
-  if (includeFileListing && Array.isArray(prepared.files) && prepared.files.length <= 500) {
+  if (includeFileListing && Array.isArray(prepared.files) && prepared.files.length <= MAX_TORRENT_FILES) {
     inspectedFiles = prepared.files.map(file => ({name:file.name,size:file.size,type:torrentFileKind(file.name)}));
   }
   if (!firstQuery || !verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
