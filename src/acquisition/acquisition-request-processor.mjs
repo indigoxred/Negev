@@ -499,8 +499,14 @@ export function createAcquisitionRequestProcessor({ readRequest,
       retryAtMs:transientFailure||nextIndex<ordered.length||missingIds.some(id=>!deferredEpisodes.has(id))?
         Math.min(groupWait.retryAtMs,now()+60_000):groupWait.retryAtMs,
       nextCandidateOffset:nextIndex<ordered.length?nextIndex:0,nextCandidateFingerprint:cursor};
-    if (!selected && transientFailure) return { ...held('release_preflight_unavailable'),
-      nextCandidateOffset: qualityInspectionRetry.pending(request,now()) ? 0 : nextIndex < ordered.length ? nextIndex : 0,
+    // A finished pack sweep must reach its next normal phase once the
+    // bounded provider retry is spent; otherwise its failed pack is a permanent hold.
+    const packRetrySpent = preferSeasonPack && !fallbackPhase &&
+      nextIndex >= ordered.length && !qualityInspectionRetry.pending(request,now());
+    if (!selected && transientFailure && !packRetrySpent) return { ...held('release_preflight_unavailable'),
+      // Durable failure hints protect a later downgrade. Finish this bounded
+      // sweep before retrying its prefix, so healthy later releases get a turn.
+      nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
       nextCandidateFingerprint: cursor };
     if (!selected && preferSeasonPack && !fallbackPhase) {
       const exhausted = nextIndex >= ordered.length;

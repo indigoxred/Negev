@@ -25,3 +25,71 @@ test('malformed first stronger response uses same bounded guard',async()=>{const
 test('older 480p remains a usable fallback once the temporary stronger check budget is spent',async()=>{const x=fixture({discoverCandidates:async()=>({state:'candidates',requestId:4,anidbId:42,releaseState:'airing',items:[high,{...low,title:'[Group] Example - 01 DVD 480p'}]})});assert.equal((await x.process({requestId:4})).state,'held');x.time(181000);assert.equal((await x.process({requestId:4})).state,'stopped_observed');assert.deepEqual(x.submitted,['low'])});
 import {createHash} from 'node:crypto';
 test('saved pre-fix cursor cannot skip unresolved stronger candidate after upgrade',async()=>{const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');const x=fixture();const candidateFingerprint=hash(['quality-policy-v5',1001])+':'+[high,low].map(c=>hash([c.indexerId,c.guid])).join(',')+'|';assert.equal((await x.process({requestId:4,candidateOffset:1,candidateFingerprint})).state,'held');assert.deepEqual(x.submitted,[])});
+
+test('failed inspection pages advance without starving a later healthy 1080p release',async()=>{
+  const candidates=Array.from({length:7},(_,i)=>({...high,guid:`high-${i}`,seeders:30-i}));
+  const inspected=[];
+  const x=fixture({discoverCandidates:async()=>({state:'candidates',requestId:4,anidbId:42,releaseState:'airing',items:[...candidates,low]}),previewCandidate:async({candidate})=>{
+    inspected.push(candidate.guid);
+    return candidate.guid==='high-6'?preflight:{state:'held',reason:'provider_unavailable'};
+  }});
+  let cursor={requestId:4};
+  for(let page=0;page<2;page++){
+    const result=await x.process(cursor);
+    assert.equal(result.state,'held');
+    assert.equal(result.nextCandidateOffset,(page+1)*3);
+    cursor={requestId:4,candidateOffset:result.nextCandidateOffset,candidateFingerprint:result.nextCandidateFingerprint};
+  }
+  assert.equal((await x.process(cursor)).state,'stopped_observed');
+  assert.deepEqual(inspected,candidates.map(c=>c.guid));
+  assert.deepEqual(x.submitted,['high-6']);
+});
+
+test('maximum candidate sweep and restart retain fair pages and bounded older fallback',async t=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'negev-quality-pages-')),db=path.join(dir,'db.sqlite');
+  let requests=openRequestLedger(db),queue=openAcquisitionRequestQueue(db),retry=openQualityInspectionRetry(db);
+  t.after(async()=>{retry.close();queue.close();requests.close();await rm(dir,{recursive:true,force:true})});
+  const saved=requests.submit({requesterId:1,requestKey:'desired',intent:{state:'ready',anidbId:42,kind:'series',title:'Example',episodeIds:[1001],monitorFuture:false},nowMs:1000});
+  const id=saved.requestId,candidates=Array.from({length:49},(_,i)=>({...high,guid:`high-${i}`,seeders:100-i}));
+  let clock=1000;const inspected=[],submitted=[];
+  const run=()=>createAcquisitionPageWorker({queue,now:()=>clock,limit:1,processRequest:createAcquisitionRequestProcessor({
+    qualityInspectionRetry:retry,requireReleasePolicy:true,readRequest:id=>requests.getRequest(id),
+    discoverCandidates:async()=>({state:'candidates',requestId:id,anidbId:42,releaseState:'airing',items:[...candidates,low]}),
+    previewCandidate:async({candidate})=>{inspected.push(candidate.guid);return candidate.guid==='low'?{...preflight,requestId:id}:{state:'held',reason:'provider_unavailable'}},
+    loadDetail:async()=>detail,submitCandidate:async({candidate})=>{submitted.push(candidate.guid);return{state:'stopped_observed',attemptId:1}},now:()=>clock,
+  })}).runOnce({priorityRequestId:id});
+  for(let page=0;page<100&&submitted.length===0;page++){
+    const result=await run();assert.equal(result.results.length,1);
+    const recorded=queue.getResult(id);
+    if(page===5){retry.close();queue.close();requests.close();requests=openRequestLedger(db);queue=openAcquisitionRequestQueue(db);retry=openQualityInspectionRetry(db)}
+    if(submitted.length===0)clock=Math.max(clock+1000,recorded.nextDueMs);
+  }
+  assert.deepEqual(inspected.slice(0,49),candidates.map(c=>c.guid));
+  assert.deepEqual(submitted,['low']);
+  assert.ok(clock-1000<=900000,`fallback took ${clock-1000}ms`);
+  assert.equal(queue.getScanStartedMs(id),1000);
+});
+
+test('completed pack provider failures release the normal episode fallback after bounded retries and restart',async t=>{
+  const dir=await mkdtemp(path.join(tmpdir(),'negev-quality-pack-')),db=path.join(dir,'db.sqlite');
+  let requests=openRequestLedger(db),queue=openAcquisitionRequestQueue(db),retry=openQualityInspectionRetry(db);
+  t.after(async()=>{retry.close();queue.close();requests.close();await rm(dir,{recursive:true,force:true})});
+  const saved=requests.submit({requesterId:1,requestKey:'desired',intent:{state:'ready',anidbId:42,kind:'series',title:'Example',episodeIds:[1001,1002],monitorFuture:false},nowMs:1000});
+  const id=saved.requestId,pack={...high,guid:'pack',title:'[Group] Example Complete Batch 1080p'};
+  let clock=1000;const submitted=[],inspected=[];
+  const run=()=>createAcquisitionPageWorker({queue,now:()=>clock,limit:1,processRequest:createAcquisitionRequestProcessor({
+    qualityInspectionRetry:retry,requireReleasePolicy:true,preferShokoPreview:true,readRequest:id=>requests.getRequest(id),
+    discoverCandidates:async()=>({state:'candidates',requestId:id,anidbId:42,releaseState:'completed',items:[pack,low]}),
+    previewCandidate:async({candidate})=>{inspected.push(candidate.guid);return candidate.guid==='pack'?{state:'held',reason:'provider_unavailable'}:{...preflight,requestId:id,shokoPreview:'exact'}},
+    loadDetail:async()=>({...detail,total:2,episodes:[...detail.episodes,{id:1002,number:2,type:'Episode'}]}),
+    submitCandidate:async({candidate})=>{submitted.push(candidate.guid);return{state:'stopped_observed',attemptId:1}},now:()=>clock,
+  })}).runOnce({priorityRequestId:id});
+  for(let page=0;page<20&&submitted.length===0;page++){
+    await run();const recorded=queue.getResult(id);
+    if(page===0){assert.deepEqual(submitted,[]);retry.close();queue.close();requests.close();requests=openRequestLedger(db);queue=openAcquisitionRequestQueue(db);retry=openQualityInspectionRetry(db)}
+    if(submitted.length===0)clock=Math.max(clock+1000,recorded.nextDueMs);
+  }
+  assert.deepEqual(submitted,['low']);
+  assert.ok(inspected.includes('pack'));
+  assert.ok(clock-1000<=900000,`completed fallback took ${clock-1000}ms`);
+});

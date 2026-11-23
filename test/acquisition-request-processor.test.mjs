@@ -1266,9 +1266,19 @@ test('a v1 quality cursor revisits candidates skipped by transient provider fail
   const result = await process({ requestId: 4, candidateOffset: 1,
     scanStartedMs: 100,
     candidateFingerprint: `${oldFingerprint}:${oldOrder}|` });
-  // The failed strongest candidate is retried within its bounded quality window.
-  assert.equal(result.nextCandidateOffset, 0);
+  // Upgrade revisits the skipped candidate, then lets the remaining page run.
+  // Its durable quality hint survives until the bounded sweep returns to it.
+  assert.equal(result.nextCandidateOffset, 1);
   assert.deepEqual(seen, ['candidate-1']);
+  const second = await process({ requestId: 4,
+    candidateOffset: result.nextCandidateOffset,
+    candidateFingerprint: result.nextCandidateFingerprint });
+  assert.equal(second.nextCandidateOffset, 0);
+  const third = await process({ requestId: 4,
+    candidateOffset: second.nextCandidateOffset,
+    candidateFingerprint: second.nextCandidateFingerprint });
+  assert.equal(third.reason, 'release_preflight_unavailable');
+  assert.deepEqual(seen, ['candidate-1', 'candidate-2', 'candidate-1']);
 });
 
 test('seeder ranking churn cannot starve a later candidate', async () => {
