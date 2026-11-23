@@ -99,7 +99,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     FROM direct_availability_targets WHERE anidb_id=? AND episode_id=?
     AND due_ms<=?`);
   const claim = db.prepare(`UPDATE direct_availability_targets SET
-    state='checking',due_ms=?,version=version+1,priority=0,interactive_until_ms=0,verified_ms=NULL,
+    state='checking',due_ms=?,version=version+1,priority=0,verified_ms=NULL,
     proof_file_id=NULL,proof_library_id=NULL,proof_rating_key=NULL,
     proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND version=?`);
@@ -107,7 +107,7 @@ export function openDirectAvailabilityQueue(dbPath) {
     priority=1,interactive_until_ms=?,due_ms=MIN(due_ms,?)
     WHERE anidb_id=? AND episode_id=? AND state='pending' AND interactive_until_ms=0`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
-    state=?,due_ms=?,priority=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
+    state=?,due_ms=?,priority=?,interactive_until_ms=0,verified_ms=?,proof_file_id=?,proof_library_id=?,
     proof_rating_key=?,proof_part_id=?,proof_presentation=?
     WHERE anidb_id=? AND episode_id=?
     AND observed_ms=? AND version=? AND state='checking'`);

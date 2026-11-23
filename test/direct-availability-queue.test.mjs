@@ -609,7 +609,7 @@ test('interactive proof advances past event backlog, survives restart and coales
     const claim=ctx.queue.claimNext({nowMs:500});
     assert.deepEqual(claim.target,target);
     assert.equal(ctx.queue.enqueue({...target,observedMs:600,priority:'interactive'}).state,'unchanged');
-    assert.equal(ctx.queue.recordResult({claim,state:'unknown',checkedMs:700}).state,'recorded');
+    assert.equal(ctx.queue.retryBusy({claim,nowMs:700}).reason,'metadata_busy');const retry=ctx.queue.claimNext({nowMs:701});assert.deepEqual(retry.target,target);assert.equal(ctx.queue.recordResult({claim:retry,state:'unknown',checkedMs:702}).state,'recorded');
     assert.deepEqual(ctx.queue.claimNext({nowMs:701}).target,{anidbId:100,episodeId:1000});
   });
 });
