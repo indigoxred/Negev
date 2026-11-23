@@ -114,7 +114,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
           'Only currently airing titles can set a preferred group. An existing preference can still be cleared.';
         results.replaceChildren();buttons(false);return;
       }
-      const queuedAuto = Boolean(requestId) && control.mode === 'auto' && control.phase === 'selecting';
+      const queuedAuto = Boolean(requestId) && control?.mode === 'auto' && control.phase === 'selecting';
       const submitted = queuedAuto || existing || control.phase === 'chosen' || control.phase === 'consumed';
       dialog.classList.toggle('is-submitted', submitted);
       modes.hidden = actions.hidden = submitted;
