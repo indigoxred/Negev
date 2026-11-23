@@ -174,6 +174,52 @@ export function openAcquisitionRequestQueue(dbPath,
       WHERE state='held' AND reason='availability_unverified' AND coverage_policy_revision=0
         AND checked_ms IS NOT NULL AND next_due_ms>checked_ms+60000;
       UPDATE acquisition_request_checks SET coverage_policy_revision=1 WHERE coverage_policy_revision=0`);
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some(column => column.name === 'request_scope_policy_revision')) {
+      db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN
+        request_scope_policy_revision INTEGER NOT NULL DEFAULT 0
+        CHECK(request_scope_policy_revision>=0)`);
+    }
+    // Old chosen-release checks could mistake a selected subset's public
+    // coverage for the entire request. Revisit only retained, exact subset
+    // evidence once; a fresh worker must establish full-request coverage.
+    // Never release an active claim or override cancellation. A suspension
+    // still blocks acquisition while retaining the repaired cache for resume.
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const legacySubsetChecks = db.prepare(`SELECT c.request_id AS requestId,
+          r.release_control AS releaseControl
+        FROM acquisition_request_checks c JOIN requests r ON r.id=c.request_id
+        WHERE c.request_scope_policy_revision=0 AND c.state='held'
+          AND c.reason='request_fully_available' AND r.status='held'
+          AND r.cancelled_ms IS NULL`).all();
+      const scopeTargets = db.prepare(`SELECT t.episode_id AS episodeId
+        FROM request_targets rt JOIN targets t ON t.id=rt.target_id
+        JOIN requests r ON r.id=rt.request_id
+        WHERE rt.request_id=? AND t.anidb_id=r.anidb_id`);
+      const revisitSubset = db.prepare(`UPDATE acquisition_request_checks SET
+          reason='request_scope_recheck',next_due_ms=0,candidate_offset=0,
+          candidate_fingerprint=NULL,decision_ms=NULL,scan_started_ms=NULL,
+          scan_scope=NULL,scan_target_count=NULL
+        WHERE request_id=? AND request_scope_policy_revision=0
+          AND state='held' AND reason='request_fully_available'`);
+      for (const row of legacySubsetChecks) {
+        let control;
+        try { control = JSON.parse(row.releaseControl); } catch { continue; }
+        const selected = control?.selection?.preview?.episodeIds;
+        if (!['chosen', 'consumed'].includes(control?.phase) ||
+            !Array.isArray(selected) || selected.length === 0 ||
+            selected.some(id => !validId(id)) ||
+            new Set(selected).size !== selected.length) continue;
+        const targets = new Set(scopeTargets.all(row.requestId).map(row => row.episodeId));
+        if (selected.length < targets.size && selected.every(id => targets.has(id))) {
+          revisitSubset.run(row.requestId);
+        }
+      }
+      db.exec(`UPDATE acquisition_request_checks SET request_scope_policy_revision=1
+        WHERE request_scope_policy_revision=0`);
+      db.exec('COMMIT');
+    } catch (error) { db.exec('ROLLBACK'); throw error; }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -210,9 +256,9 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision,coverage_policy_revision)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,coverage_policy_revision=1,
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision,coverage_policy_revision,request_scope_policy_revision)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1) ON CONFLICT(request_id) DO UPDATE SET
+    pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=1,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,
@@ -559,7 +605,9 @@ export function openAcquisitionRequestQueue(dbPath,
               nextCandidateOffset < 0 || nextCandidateOffset > 50)) ||
           (nextCandidateFingerprint !== null &&
             !validCandidateFingerprint(nextCandidateFingerprint)) ||
-          (retryAtMs!==null&&(!validTime(retryAtMs)||retryAtMs<checkedMs||retryAtMs>checkedMs+7_200_000))||
+          (retryAtMs !== null && (!validTime(retryAtMs) ||
+            (retryAtMs < checkedMs && reason !== 'preferred_group_wait') ||
+            retryAtMs > checkedMs + 7_200_000)) ||
           !validTime(checkedMs) || !validTime(checkedMs + RETRY_DELAY_MS)) {
         throw new TypeError('Invalid acquisition check result');
       }
@@ -608,7 +656,10 @@ export function openAcquisitionRequestQueue(dbPath,
       const elapsed = checkedMs - (emptySinceMs ?? checkedMs);
       const emptyDelayMs = elapsed >= 7 * 86_400_000 ? 86_400_000 :
         elapsed >= 86_400_000 ? 6 * 3_600_000 : 3_600_000;
-      const nextDueMs = reason==='availability_check_pending' ? checkedMs+COVERAGE_CONTINUATION_MS : reason==='preferred_group_wait'&&retryAtMs!==null?retryAtMs:reason === 'interrupted_attempt_present'
+      // A valid group deadline can expire while the processor is working.
+      // Record that completed check as ready now instead of stranding its claim.
+      const preferredRetryMs = retryAtMs === null ? null : Math.max(checkedMs, retryAtMs);
+      const nextDueMs = reason==='availability_check_pending' ? checkedMs+COVERAGE_CONTINUATION_MS : reason==='preferred_group_wait'&&preferredRetryMs!==null?preferredRetryMs:reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
           ['related_title_unavailable',
