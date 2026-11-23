@@ -42,6 +42,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       .all().map((column) => column.name));
     for (const [name, declaration] of [
       ['priority', 'INTEGER NOT NULL DEFAULT 0 CHECK(priority IN (0,1))'],
+      ['interactive_until_ms', 'INTEGER NOT NULL DEFAULT 0'],
       ['proof_file_id', 'INTEGER'], ['proof_library_id', 'INTEGER'],
       ['proof_rating_key', 'INTEGER'], ['proof_part_id', 'INTEGER'],
       ['proof_presentation', "TEXT CHECK(proof_presentation IN ('alternate_card'))"],
@@ -79,28 +80,32 @@ export function openDirectAvailabilityQueue(dbPath) {
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
   const find = db.prepare(`SELECT observed_ms AS observedMs,due_ms AS dueMs,
-    version,state,verified_ms AS verifiedMs,
+    version,state,interactive_until_ms AS interactiveUntilMs,verified_ms AS verifiedMs,
     proof_presentation AS proofPresentation FROM direct_availability_targets
     WHERE anidb_id=? AND episode_id=?`);
   const insert = db.prepare(`INSERT INTO direct_availability_targets
-    (anidb_id,episode_id,observed_ms,due_ms,version,priority,state,verified_ms)
-    VALUES (?,?,?, ?,1,?,'pending',NULL)`);
+    (anidb_id,episode_id,observed_ms,due_ms,version,priority,state,verified_ms,interactive_until_ms)
+    VALUES (?,?,?, ?,1,?,'pending',NULL,?)`);
   const replace = db.prepare(`UPDATE direct_availability_targets SET
-    observed_ms=?,due_ms=?,version=version+1,priority=?,
+    observed_ms=?,due_ms=?,version=version+1,priority=?,interactive_until_ms=?,
     state='pending',verified_ms=NULL,proof_file_id=NULL,
     proof_library_id=NULL,proof_rating_key=NULL,proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND observed_ms<=?`);
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
     observed_ms AS observedMs,version,priority FROM direct_availability_targets
-    WHERE due_ms<=? ORDER BY priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
+    WHERE due_ms<=? ORDER BY CASE WHEN interactive_until_ms>? THEN 1 ELSE 0 END DESC,
+      priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
   const dueTarget = db.prepare(`SELECT observed_ms AS observedMs,version,priority
     FROM direct_availability_targets WHERE anidb_id=? AND episode_id=?
     AND due_ms<=?`);
   const claim = db.prepare(`UPDATE direct_availability_targets SET
-    state='checking',due_ms=?,version=version+1,priority=0,verified_ms=NULL,
+    state='checking',due_ms=?,version=version+1,priority=0,interactive_until_ms=0,verified_ms=NULL,
     proof_file_id=NULL,proof_library_id=NULL,proof_rating_key=NULL,
     proof_part_id=NULL
     WHERE anidb_id=? AND episode_id=? AND version=?`);
+  const promote = db.prepare(`UPDATE direct_availability_targets SET
+    priority=1,interactive_until_ms=?,due_ms=MIN(due_ms,?)
+    WHERE anidb_id=? AND episode_id=? AND state='pending' AND interactive_until_ms=0`);
   const record = db.prepare(`UPDATE direct_availability_targets SET
     state=?,due_ms=?,priority=?,verified_ms=?,proof_file_id=?,proof_library_id=?,
     proof_rating_key=?,proof_part_id=?,proof_presentation=?
@@ -131,16 +136,25 @@ export function openDirectAvailabilityQueue(dbPath) {
     },
     enqueue({ anidbId, episodeId, observedMs, priority = 'reconcile' }) {
       if (!validId(anidbId) || !validId(episodeId) || !validTime(observedMs) ||
-          !['reconcile', 'event'].includes(priority)) {
+          !['reconcile', 'event', 'interactive'].includes(priority)) {
         throw new TypeError('Invalid Shoko availability observation');
       }
-      const rank = priority === 'event' ? 1 : 0;
+      const rank = priority === 'reconcile' ? 0 : 1;
       const old = find.get(anidbId, episodeId);
+      const interactiveUntil = priority === 'interactive' ? observedMs + 60_000 : 0;
+      // Coalesce clicks without cancelling a live worker or extending priority.
+      if (priority === 'interactive' && old?.state === 'checking' && old.dueMs > observedMs) {
+        return { state: 'unchanged' };
+      }
+      if (priority === 'interactive' && old?.state === 'pending') {
+        const updated = promote.run(interactiveUntil, observedMs, anidbId, episodeId);
+        return { state: updated.changes === 1 ? 'queued' : 'unchanged' };
+      }
       const changed = !old || observedMs > old.observedMs ||
         (rank === 1 && observedMs === old.observedMs);
-      if (!old) insert.run(anidbId, episodeId, observedMs, observedMs, rank);
+      if (!old) insert.run(anidbId, episodeId, observedMs, observedMs, rank, interactiveUntil);
       else if (changed) {
-        replace.run(observedMs, observedMs, rank,
+        replace.run(observedMs, observedMs, rank, interactiveUntil,
           anidbId, episodeId, observedMs);
       }
       return { state: changed ? 'queued' : 'unchanged' };
@@ -185,7 +199,7 @@ export function openDirectAvailabilityQueue(dbPath) {
       let begun = false;
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
-        const row = due.get(nowMs);
+        const row = due.get(nowMs, nowMs);
         if (!row) { db.exec('COMMIT'); begun = false; return { state: 'idle' }; }
         const changeId = latestChange.get().id;
         const shokoChangeId = latestShokoChange.get().id;

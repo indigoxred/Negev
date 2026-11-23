@@ -594,3 +594,33 @@ test('a clock rollback cannot save a future availability proof', async () => {
 });
 
 test('a change to the second multipart file rejects an in-flight direct result',async()=>{await fixture(async ctx=>{const target={anidbId:42,episodeId:1001};ctx.queue.enqueue({...target,observedMs:100});const claim=ctx.queue.claimNext({nowMs:100});const db=new DatabaseSync(ctx.dbPath);db.prepare('INSERT INTO shoko_file_change_events(file_id,observed_ms) VALUES(8,101)').run();db.close();const parts=[7,8].map((fileId,i)=>({fileId,libraryId:102,ratingKey:500,partId:600+i}));assert.equal(ctx.queue.recordResult({claim,state:'available',checkedMs:102,proof:{...parts[0],parts}}).reason,'shoko_changed');assert.equal(ctx.queue.getStatus({...target,nowMs:102}).state,'unknown');});});
+
+
+test('interactive proof advances past event backlog, survives restart and coalesces active clicks', async () => {
+  await fixture(async ctx => {
+    for(let i=0;i<150;i++)ctx.queue.enqueue({anidbId:100+i,episodeId:1000+i,observedMs:100,priority:'event'});
+    const target={anidbId:42,episodeId:1001};
+    ctx.queue.enqueue({...target,observedMs:200,priority:'event'});
+    ctx.queue.enqueue({...target,observedMs:300,priority:'interactive'});
+    const observed=ctx.queue.getObservation(target);
+    ctx.queue.enqueue({...target,observedMs:400,priority:'interactive'});
+    assert.deepEqual(ctx.queue.getObservation(target),observed);
+    ctx.reopen();
+    const claim=ctx.queue.claimNext({nowMs:500});
+    assert.deepEqual(claim.target,target);
+    assert.equal(ctx.queue.enqueue({...target,observedMs:600,priority:'interactive'}).state,'unchanged');
+    assert.equal(ctx.queue.recordResult({claim,state:'unknown',checkedMs:700}).state,'recorded');
+    assert.deepEqual(ctx.queue.claimNext({nowMs:701}).target,{anidbId:100,episodeId:1000});
+  });
+});
+
+test('expired interactive priority cannot indefinitely overtake older background events',async()=>{
+  await fixture(async ctx=>{
+    ctx.queue.enqueue({anidbId:100,episodeId:1000,observedMs:100,priority:'event'});
+    const target={anidbId:42,episodeId:1001};
+    ctx.queue.enqueue({...target,observedMs:200,priority:'interactive'});
+    ctx.queue.enqueue({...target,observedMs:60201,priority:'interactive'});
+    ctx.reopen();
+    assert.deepEqual(ctx.queue.claimNext({nowMs:60201}).target,{anidbId:100,episodeId:1000});
+  });
+});
