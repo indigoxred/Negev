@@ -37,7 +37,7 @@ export function openAvailabilityScope(dbPath) {
           'plex_card_retries','plex_card_removals']) if(exists(name)) db.exec(`DELETE FROM ${name}`);
         db.prepare('INSERT INTO availability_scope(id,signature,generation) VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET signature=excluded.signature,generation=excluded.generation').run(signature,generation);
         db.exec('COMMIT');return {state:prior?'changed':'initialized',generation};
-      }catch(error){db.exec('ROLLBACK');throw error;}
+      }catch(error){try{db.exec('ROLLBACK');}catch{}throw error;}
     },
     close(){db.close();},
   };

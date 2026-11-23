@@ -17,12 +17,15 @@ const canonicalCandidate = (candidate) => candidate?.state !== 'candidate'
           : identity.tmdbMovieIds })).sort((a, b) =>
         compareText(JSON.stringify(a), JSON.stringify(b)))
       : candidate.identities,
+    coverage: Array.isArray(candidate.coverage) ? [...candidate.coverage].sort((a,b)=>
+      a.episodeId-b.episodeId || a.start-b.start || a.end-b.end) : candidate.coverage == null
+      ? candidate.pairs?.map(pair=>({episodeId:pair.episodeId,start:0,end:100})).sort((a,b)=>a.episodeId-b.episodeId) : candidate.coverage,
     sourcePaths: Array.isArray(candidate.sourcePaths)
       ? [...candidate.sourcePaths].sort() : candidate.sourcePaths };
 const fingerprint = (candidate) => createHash('sha256').update(JSON.stringify([
   candidate.fileId, candidate.updated, candidate.size,
   candidate.anidbFileId, candidate.releaseEvidence,
-  candidate.pairs, candidate.identities, candidate.sourcePaths,
+  candidate.pairs, candidate.identities, candidate.sourcePaths, candidate.coverage,
 ])).digest('hex');
 
 // Source-only, bounded Shoko files per tick. A fresh exact observation is a
