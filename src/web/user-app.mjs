@@ -1339,7 +1339,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   });
   for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.get(route,{preHandler:requireUser},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
-    return {state:'selection',control:publicControl(request.releaseSelector.snapshot(id)),context:await request.releaseSelector.context?.(id)};
+    const cached=request.query.context==='cached';
+    if(Object.keys(request.query).some(key=>key!=='context')||(request.query.context!==undefined&&!cached))return reply.code(400).send({error:'Invalid selection context'});
+    return {state:'selection',control:publicControl(request.releaseSelector.snapshot(id)),context:cached?request.releaseSelector.contextSnapshot?.(id):await request.releaseSelector.context?.(id)};
   });
   for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.post(route,{preHandler:writeGuards,
     config:{rateLimit:{max:30,timeWindow:'1 minute'}}},async(request,reply)=>{
@@ -1363,7 +1365,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       if(result?.state==='held') return reply.code(409).send(result);
       if(result?.queued===true&&result.state==='updated')return reply.code(202).send({...result,control:publicControl(result.control)});
       if(request.params.previewId&&result?.state!=='updated'&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
-      return result?.control?{...result,control:publicControl(result.control),context:await request.releaseSelector.context?.(id)}:result;
+      return result?.control?{...result,control:publicControl(result.control),context:b.action==='begin'&&b.mode==='auto'?request.releaseSelector.contextSnapshot?.(id):await request.releaseSelector.context?.(id)}:result;
     } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Diagnostic only: no Unknown observation may authorize acquisition.

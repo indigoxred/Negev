@@ -87,7 +87,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       if(document.activeElement!==groupInput)groupInput.value=ctx.preferredGroup??'';
       preferenceSummary.textContent=ctx.preferredGroup?'Preferred group: '+ctx.preferredGroup:'Edit future release preference';
     };
-    const refresh=async()=>{const data=await api(`${basePath()}/release-choice`);control=data.control;updateContext(data.context);return control;};
+    const refresh=async(cachedContext=false)=>{const data=await api(`${basePath()}/release-choice${cachedContext?'?context=cached':''}`);control=data.control;updateContext(data.context);return control;};
     const buttons=value=>{busy=value;for(const input of [auto,manual,searchButton,quality,audio,packsOnly,query,preferFuture,saveGroup,clearGroup,groupInput])input.disabled=value;
       if(preferenceOnly&&!value){groupInput.disabled=saveGroup.disabled=!confirmedAiring;clearGroup.disabled=!control?.preference?.group;}};
     const selectionSummary=selection=>{
@@ -222,7 +222,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
     const runAuto=async()=>{
       if(busy||existing||preferenceOnly)return;buttons(true);version++;rowVersion++;evidenceQueue.clear();statusOwner=null;actions.hidden=true;preferLabel.hidden=true;setMode('auto');status.className='muted';
       try{
-        await refresh();
+        await refresh(true);
         if(control.phase==='proposal'){showControl();return;}
         if(control.phase!=='selecting'||control.mode!=='auto') {
           const begun=await command({action:'begin',mode:'auto'});control=begun.control;
@@ -253,7 +253,7 @@ export function createReleaseDialog({api,element,onSaved=()=>{}}) {
       try{await refresh();if(current())showControl();}catch{/* The durable save already succeeded; optional details may be retried later. */}
       return;
     }
-    try{await refresh();if(!current())return;showControl();if(preferenceOnly||existing||control.phase==='proposal'||control.phase==='chosen'||(requestId&&control.mode==='auto'&&control.phase==='selecting'))return;
+    try{await refresh(mode==='auto'&&!preferenceOnly&&!existing);if(!current())return;showControl();if(preferenceOnly||existing||control.phase==='proposal'||control.phase==='chosen'||(requestId&&control.mode==='auto'&&control.phase==='selecting'))return;
       if(mode==='auto')await runAuto();else await search();
     }catch(e){if(current())status.textContent=errorText(e);}
   };
