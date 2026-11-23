@@ -146,13 +146,14 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
   lateInspectionGuard&&=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('[role=status]').textContent.includes('better release')&&!document.querySelector('[role=status]').textContent.includes('Late inspection failure');dialog.close();
  }
  document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,futurePreferences,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback,preferenceLoadingSafe,preferenceOnly,preferenceAudioPreserved,preferenceNoAcquisition});
-})().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.message;});
+})().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.stack;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
       const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',
         `--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],
         {encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
+      assert.ok(!match[1].startsWith('ERROR'),match[1]);
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
       assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,futurePreferences:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true,preferenceLoadingSafe:true,preferenceOnly:true,preferenceAudioPreserved:true,preferenceNoAcquisition:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
