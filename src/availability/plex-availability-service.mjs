@@ -19,7 +19,8 @@ const changedCard = () => ({ state: 'unknown',
   reason: 'card_changed_during_observation' });
 const publicResult = (result, includeProof) => includeProof ||
   result?.state !== 'available' ? result :
-  { state: 'available', fileId: result.fileId };
+  { state: 'available', fileId: result.fileId,
+    ...(result.multipart === true ? { multipart: true } : {}) };
 const validSections = (sections) => sections &&
   ['episode', 'movie'].every((kind) => Array.isArray(sections[kind]) &&
     sections[kind].length <= 20 && sections[kind].every((id) => validId(id)) &&
