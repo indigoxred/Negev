@@ -1,4 +1,4 @@
-import { MAX_TORRENT_FILES } from '../acquisition/torrent-file-limits.mjs';
+import { MAX_TORRENT_FILES, MAX_ACQUISITION_TARGETS } from '../acquisition/torrent-file-limits.mjs';
 import { evaluateHandoffEvidence } from
   '../acquisition/handoff-evidence.mjs';
 
@@ -30,7 +30,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
       (ownedSubtree !== '' && (!relative(ownedSubtree) ||
         ownedSubtree.includes('/'))) ||
       !validId(target?.anidbId) || !Array.isArray(target.episodeIds) ||
-      target.episodeIds.length < 1 || target.episodeIds.length > 50 ||
+      target.episodeIds.length < 1 || target.episodeIds.length > MAX_ACQUISITION_TARGETS ||
       target.episodeIds.some((id) => !validId(id))) {
     throw new TypeError('Invalid pending Import attribution');
   }

@@ -69,3 +69,16 @@ test('textual episode-title revisions recheck both cached title and season misma
   cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>102});for(const [guid,result]of cases)assert.deepEqual(cache.get({request,candidate:{...candidate,guid}}),{state:'held',reason:result.reason});
  }finally{cache.close();await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('v298 season and video-budget negatives recheck while fresh decisions remain reusable',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-year-pack-cache-')),dbPath=path.join(dir,'state.sqlite');let cache=openCandidateCheckCache(dbPath,{now:()=>100});cache.close();
+ const key=c=>createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses',request.id,request.anidbId,request.kind,[...request.episodeIds],c.indexerId,request.title,c.guid,c.title,c.size,c.sourceQuery,c.targetEpisodeId])).digest('hex');
+ const cases=[['year',{state:'held',reason:'related_installment_mismatch',_relatedGuardRevision:'trusted-title-season-v2'}],['pack',{state:'held',reason:'video_budget_exceeded'}]];
+ const db=new DatabaseSync(dbPath);for(const [guid,result]of cases){const c={...candidate,guid};db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(key(c),42,'[1001]',JSON.stringify(result),100,21600100);}db.close();
+ cache=openCandidateCheckCache(dbPath,{now:()=>101});try{
+  for(const [guid,old]of cases){const c={...candidate,guid};assert.equal(cache.get({request,candidate:c}),null);cache.put({request,candidate:c,result:{state:'held',reason:old.reason}});}
+  cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>102});
+  for(const [guid,old]of cases)assert.deepEqual(cache.get({request,candidate:{...candidate,guid}}),{state:'held',reason:old.reason});
+ }finally{cache.close();await rm(dir,{recursive:true,force:true});}
+});

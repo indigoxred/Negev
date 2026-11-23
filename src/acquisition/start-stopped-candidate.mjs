@@ -1,3 +1,5 @@
+import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { createHash } from 'node:crypto';
 import { readBoundedJson } from '../http/bounded-response.mjs';
@@ -62,6 +64,17 @@ export async function startStoppedCandidate({
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
+  if (plannedFiles.length > 50 || attempt.episodeIds.length > 50) {
+    if (typeof loadDetail !== 'function') return held('detail_unavailable');
+    const detail = await collectAniDbDetail({ anidbId: request.anidbId, loadPage: loadDetail });
+    if (detail.state !== 'details' || detail.kind !== request.kind) return held('detail_unavailable');
+    if (request.kind !== 'series' || inferReleaseState({ ...detail,
+        today: new Date(now()).toISOString().slice(0,10) }).state !== 'completed') {
+      return held('large_pack_requires_completed_series');
+    }
+    const regular = new Set(detail.episodes.filter(e => e.type === 'Episode').map(e => e.id));
+    if (attempt.episodeIds.some(id => !regular.has(id))) return held('file_plan_mismatch');
+  }
   let bonusFiles=ledger.getBonusPlan?.(attemptId)??[];
   let extensions;
   if (readVideoExtensions) {

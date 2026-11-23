@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { collectUnimportedTargets } from './collect-unimported-targets.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -10,7 +11,7 @@ export async function collectTargetScopedUncertain({ anidbId, episodeIds,
   kind, publicLibraryIds, readEpisode, probePublic,
   now = Date.now } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
-      episodeIds.length < 1 || episodeIds.length > 50 ||
+      episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       !['series', 'movie'].includes(kind) ||

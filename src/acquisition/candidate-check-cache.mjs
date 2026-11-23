@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-const relatedGuardRevision = 'trusted-title-season-v2';
+const relatedGuardRevision = 'trusted-title-season-v3';
+const packBudgetRevision = 'completed-pack-capacity-v1';
 const titleIdentityRevision = 'literal-season-title-v1';
 const deterministic = new Set(['release_title_mismatch', 'shoko_preview_wrong_identity',
   'targeted_result_wrong_episode', 'shoko_video_format_unsupported',
@@ -51,6 +52,9 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
             result._relatedGuardRevision !== relatedGuardRevision) return null;
         if (result.state === 'held' && result.reason === 'release_title_mismatch' &&
             result._titleIdentityRevision !== titleIdentityRevision) return null;
+        if (result.state === 'held' && result.reason === 'video_budget_exceeded' &&
+            result._packBudgetRevision !== packBudgetRevision) return null;
+        delete result._packBudgetRevision;
         delete result._relatedGuardRevision;
         delete result._titleIdentityRevision;
         return result;
@@ -63,6 +67,7 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
         .map(key => [key, result[key]]));
       if (result.reason === 'related_installment_mismatch') safe._relatedGuardRevision = relatedGuardRevision;
       if (result.reason === 'release_title_mismatch') safe._titleIdentityRevision = titleIdentityRevision;
+      if (result.reason === 'video_budget_exceeded') safe._packBudgetRevision = packBudgetRevision;
       const json = JSON.stringify(safe);
       if (Buffer.byteLength(json) > 64_000) return;
       const checkedMs = now();

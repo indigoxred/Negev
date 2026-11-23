@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from '../acquisition/torrent-file-limits.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { readImportRootState } from './import-root-state.mjs';
 import { readImportRootInventory } from './import-root-inventory.mjs';
@@ -44,7 +45,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
          typeof getHandoff !== 'function' ||
          !Number.isSafeInteger(target?.anidbId) || target.anidbId < 1 ||
          !Array.isArray(target.episodeIds) ||
-         target.episodeIds.length < 1 || target.episodeIds.length > 50 ||
+         target.episodeIds.length < 1 || target.episodeIds.length > MAX_ACQUISITION_TARGETS ||
          target.episodeIds.some((id) => !Number.isSafeInteger(id) || id < 1))) ||
       (getPureMove !== undefined && typeof getPureMove !== 'function') ||
       typeof now !== 'function' ||

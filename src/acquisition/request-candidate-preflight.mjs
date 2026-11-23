@@ -1,3 +1,4 @@
+import { createReadDeadline } from './read-deadline.mjs';
 import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
@@ -24,9 +25,10 @@ export async function previewRequestCandidate({ requestId, candidate,
   readVideoExtensions, offlineLookup, offlineCache, inspectCorrespondence,
   readBonusOwnership, allowRestrictedBonuses = false,
   pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  prepare = prepareStoppedCandidate } = {}) {
+  maxFilenamePreviewMs = 30_000, prepare = prepareStoppedCandidate } = {}) {
   let inspectedFiles;
   const held = reason => ({state:'held',reason,...(inspectedFiles?{inspectedFiles}:{})});
+  if (!Number.isSafeInteger(maxFilenamePreviewMs) || maxFilenamePreviewMs < 1 || maxFilenamePreviewMs > 30_000) return held('invalid_preflight');
   if (typeof includeFileListing !== 'boolean') return held('invalid_preflight');
   if (!validId(requestId) || typeof readRequest !== 'function' ||
       typeof loadDetail !== 'function' || typeof prepare !== 'function' ||
@@ -151,9 +153,10 @@ export async function previewRequestCandidate({ requestId, candidate,
       return held('shoko_video_format_unsupported');
     }
   }
-  let shokoPreview, shokoPreviewConflict;
+  let shokoPreview, shokoPreviewConflict, filenameBudgetExpired = false;
   if (offlineLookup) {
     const verdicts = [], predictionOffsets = [];
+    const budget = plan.plannedFiles.length > 50 ? createReadDeadline(maxFilenamePreviewMs) : null;
     for (const file of plan.plannedFiles) {
       const filename = basename(file.name);
       if (!Array.isArray(file.episodeIds) || file.episodeIds.length !== 1 ||
@@ -163,7 +166,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       }
       let result = offlineCache?.get(filename);
       if (!result) {
-        try { result = await offlineLookup({ filename }); }
+        try { result = budget ? await budget.read(() => offlineLookup({ filename })) : await offlineLookup({ filename }); }
         catch { result = { status: 0 }; }
         offlineCache?.set(filename, result);
       }
@@ -190,6 +193,7 @@ export async function previewRequestCandidate({ requestId, candidate,
         verdicts.push(verdict.state==='accepted'?'exact':'uncertain');
       }
     }
+    filenameBudgetExpired = budget?.expired === true;
     if(verdicts.includes('conflicting')) {
       if(predictionOffsets.length<2||new Set(predictionOffsets).size!==1) return held('shoko_preview_wrong_identity');
       shokoPreviewConflict='absolute_number_offset';
@@ -203,7 +207,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     if (scope.state !== 'scope_confirmed') return held('absolute_numbering_unverified');
   }
   if (!verifiedIdentity && shokoPreview !== 'exact') {
-    return held('release_title_mismatch');
+    return held(filenameBudgetExpired ? 'metadata_reader_busy' : 'release_title_mismatch');
   }
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(prepared.expected?.hash) ||
       !Number.isSafeInteger(prepared.totalBytes) || prepared.totalBytes < 1 ||

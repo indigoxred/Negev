@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { createBonusPackLedger } from './bonus-pack-ledger.mjs';
 import { createHash } from 'node:crypto';
 import { releaseReservationGate } from './release-control.mjs';
@@ -12,7 +13,7 @@ const validHash = (value) => typeof value === 'string' &&
   /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(value);
 
 function canonicalFilePlan(plannedFiles) {
-  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > 50) {
+  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > MAX_ACQUISITION_VIDEOS) {
     throw new TypeError('Invalid acquisition file plan');
   }
   const names = new Set();
@@ -22,7 +23,7 @@ function canonicalFilePlan(plannedFiles) {
         torrentFileKind(file.name) !== 'video' ||
         !Number.isSafeInteger(file.size) || file.size < 1 || file.size > 1024 ** 4 ||
         !Array.isArray(file.episodeIds) || file.episodeIds.length < 1 ||
-        file.episodeIds.length > 50 || file.episodeIds.some((id) => !validId(id))) {
+        file.episodeIds.length > MAX_ACQUISITION_TARGETS || file.episodeIds.some((id) => !validId(id))) {
       throw new TypeError('Invalid acquisition file plan');
     }
     const nameKey = file.name.toLowerCase();
@@ -328,7 +329,7 @@ export function openAcquisitionLedger(dbPath) {
           typeof candidate.guid !== 'string' || !candidate.guid ||
           candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
           !Array.isArray(episodeIds) || episodeIds.length < 1 ||
-          episodeIds.length > 50 || episodeIds.some((id) => !validId(id)) ||
+          episodeIds.length > MAX_ACQUISITION_TARGETS || episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid candidate target inspection');
       }
@@ -356,7 +357,7 @@ export function openAcquisitionLedger(dbPath) {
           typeof candidate.guid !== 'string' || !candidate.guid ||
           candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
           !Array.isArray(episodeIds) || episodeIds.length < 1 ||
-          episodeIds.length > 50 || episodeIds.some((id) => !validId(id)) ||
+          episodeIds.length > MAX_ACQUISITION_TARGETS || episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid observed candidate lookup');
       }
@@ -392,7 +393,7 @@ export function openAcquisitionLedger(dbPath) {
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
           !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
-          !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > 50 ||
+          !Array.isArray(episodeIds) || episodeIds.length === 0 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
           episodeIds.some((id) => !validId(id)) ||
           new Set(episodeIds).size !== episodeIds.length) {
         throw new TypeError('Invalid acquisition reservation');

@@ -1,3 +1,5 @@
+import { createReadDeadline } from './read-deadline.mjs';
+import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
 import { prepareStoppedCandidate } from './prepare-stopped-candidate.mjs';
 import { reserveMissingTargets } from './reserve-missing-targets.mjs';
@@ -17,8 +19,8 @@ import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 const held = (reason) => ({ state: 'held', reason });
 
 function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
-  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > 50 ||
-      !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > 50) return false;
+  if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > MAX_ACQUISITION_VIDEOS ||
+      !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS) return false;
   const plannedByName = new Map();
   const plannedTargets = new Set();
   for (const file of plannedFiles) {
@@ -148,7 +150,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   // The final server boundary cannot trust stale or forged preflight fields.
   const mapped = planTorrentTargets({ request, detail, prepared:mainPrepared,
     releaseTitle: candidate.title, trustedTitle: identityQuery,
-    allowTitleMetadataVariation: !verifiedIdentity });
+    allowTitleMetadataVariation: !verifiedIdentity, today: new Date(now()).toISOString().slice(0,10) });
   if (mapped.state !== 'planned_targets') return mapped;
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;
@@ -165,12 +167,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     offset:mapped.absoluteOffset, related, readRelatedTitles, loadDetail }) : null;
   if (!verifiedIdentity || absolute && scope.state !== 'scope_confirmed') {
     if (typeof offlineLookup !== 'function') return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
+    const budget = selectedFiles.length > 50 ? createReadDeadline() : null;
     for (const file of selectedFiles) {
       if (file.episodeIds.length !== 1) return held('release_title_mismatch');
       const filename = basename(file.name);
       let preview;
-      try { preview = await offlineLookup({ filename }); }
+      try { preview = budget ? await budget.read(() => offlineLookup({ filename })) : await offlineLookup({ filename }); }
       catch { return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch'); }
+      if (budget?.expired) return held('metadata_reader_busy');
       if (evaluateOfflinePreview(preview, { animeId: request.anidbId,
         episodeIds: file.episodeIds, filename }).state !== 'accepted') {
         return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');

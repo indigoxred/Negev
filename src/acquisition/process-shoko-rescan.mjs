@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { validMount } from '../availability/known-card-availability.mjs';
 
@@ -26,7 +27,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
   if (![attemptId, requestId, anidbId].every(validId) ||
       !Number.isSafeInteger(publishedMs) || publishedMs < 0 ||
       !Number.isSafeInteger(nowMs) || nowMs < publishedMs ||
-      !Array.isArray(videos) || videos.length < 1 || videos.length > 50 ||
+      !Array.isArray(videos) || videos.length < 1 || videos.length > MAX_ACQUISITION_VIDEOS ||
       typeof manifest.torrentHash !== 'string' ||
       !/^[a-f0-9]{40}$/i.test(manifest.torrentHash) ||
       !videos.every((file) => typeof file.name === 'string' && file.name &&

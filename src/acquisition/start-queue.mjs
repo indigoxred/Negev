@@ -52,8 +52,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     // Revisit only pre-correction title decisions once. Fresh genuine conflicts
     // retain their normal terminal review; an existing start intent still wins.
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
-      WHERE state='held' AND reason='related_installment_mismatch' AND title_policy_revision=0 AND checked_ms IS NOT NULL;
-      UPDATE start_checks SET title_policy_revision=1 WHERE title_policy_revision=0`);
+      WHERE state='held' AND reason='related_installment_mismatch' AND title_policy_revision<2 AND checked_ms IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM acquisition_starts s WHERE s.attempt_id=start_checks.attempt_id);
+      UPDATE start_checks SET title_policy_revision=2 WHERE title_policy_revision<2`);
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
       WHERE state='held' AND reason='provider_unavailable' AND checked_ms IS NOT NULL`);
     // Earlier builds treated a busy metadata reader as a thirty-minute hold.
@@ -81,8 +82,8 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
     (attempt_id,version,state,reason,checked_ms,next_due_ms,title_policy_revision,storage_policy_revision)
-    VALUES (?,1,NULL,NULL,NULL,NULL,1,1) ON CONFLICT(attempt_id) DO UPDATE SET
-    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,title_policy_revision=1,storage_policy_revision=1`);
+    VALUES (?,1,NULL,NULL,NULL,NULL,2,1) ON CONFLICT(attempt_id) DO UPDATE SET
+    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,title_policy_revision=2,storage_policy_revision=1`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,version,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM start_checks WHERE attempt_id=?`);

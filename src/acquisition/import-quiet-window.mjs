@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = () => ({ state: 'held', reason: 'import_quiet_window_unverified' });
 const healthyFeed = (value) => value?.state === 'connected' &&
@@ -116,7 +117,7 @@ export async function observeImportQuietWindow({ anidbId, episodeIds,
   readActivity, readFeedState, readScopedFeedState, wait, now = Date.now,
   minQuietMs = 120_000, requireFingerprint = false, trace } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
-      episodeIds.length < 1 || episodeIds.length > 50 ||
+      episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       [readActivity, readFeedState, wait, now]

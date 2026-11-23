@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from '../acquisition/torrent-file-limits.mjs';
 import { basename } from 'node:path';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 
@@ -91,10 +92,10 @@ export function createAniDbCorrespondence({ fetchImpl = fetch,
   };
   return async ({ anidbId, torrentHash, files, filenamePrediction = false } = {}) => {
     if (!validId(anidbId) || !hex(torrentHash, 40) && !hex(torrentHash, 64) ||
-        !Array.isArray(files) || files.length < 1 || files.length > 50 ||
+        !Array.isArray(files) || files.length < 1 || files.length > MAX_ACQUISITION_VIDEOS ||
         files.some((file) => typeof file?.name !== 'string' || file.name.length > 1000 ||
           !validId(file.size) || !Array.isArray(file.episodeIds) ||
-          file.episodeIds.length < 1 || file.episodeIds.length > 50 ||
+          file.episodeIds.length < 1 || file.episodeIds.length > MAX_ACQUISITION_TARGETS ||
           file.episodeIds.some((id) => !validId(id)))) {
       return { state: 'unknown', files: [] };
     }

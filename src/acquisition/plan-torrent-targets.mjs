@@ -1,5 +1,6 @@
-import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
+import { MAX_TORRENT_FILES, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import path from 'node:path';
+import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { isOptionalClip, torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
@@ -180,7 +181,8 @@ function completePackNumbers(files, wantedNumbers, { allowAbsolute = false } = {
 // Provisional filename-to-AniDB episode mapping. A successful plan permits
 // only a stopped candidate reservation; it never proves registered video bytes.
 export function planTorrentTargets({ request, detail, prepared,
-  releaseTitle, trustedTitle, allowTitleMetadataVariation = false } = {}) {
+  releaseTitle, trustedTitle, allowTitleMetadataVariation = false,
+  today = new Date().toISOString().slice(0, 10) } = {}) {
   if (!Number.isSafeInteger(request?.id) || request.id < 1 ||
       request.status !== 'held' ||
       !['series', 'movie'].includes(request.kind) ||
@@ -220,9 +222,15 @@ export function planTorrentTargets({ request, detail, prepared,
       videos.push(file);
     }
   }
-  if (videos.length < 1 || videos.length > 50 ||
+  if (videos.length < 1 || videos.length > MAX_ACQUISITION_VIDEOS ||
       !Number.isSafeInteger(totalBytes) || totalBytes > MAX_VIDEO_BYTES) {
     return held('video_budget_exceeded');
+  }
+  // The enlarged capacity is for established completed series only. Unknown
+  // schedules and Airing catch-up retain the former per-attempt boundary.
+  if (videos.length > 50 && (request.kind !== 'series' ||
+      inferReleaseState({ ...detail, today }).state !== 'completed')) {
+    return held('large_pack_requires_completed_series');
   }
   if (request.kind === 'movie') {
     if (videos.length !== 1 || request.episodeIds.length !== 1 ||

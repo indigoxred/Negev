@@ -1,3 +1,4 @@
+import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { collectUnimportedTargets } from './collect-unimported-targets.mjs';
 
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
@@ -19,7 +20,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
   publicLibraryIds, readEpisode, readPublic, readImport,
   now = Date.now } = {}) {
   if (!validId(anidbId) || !Array.isArray(episodeIds) ||
-      episodeIds.length < 1 || episodeIds.length > 50 ||
+      episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS ||
       episodeIds.some((id) => !validId(id)) ||
       new Set(episodeIds).size !== episodeIds.length ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length < 1 ||
