@@ -61,21 +61,39 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
   const receipts=new Map();
   const inFlight=new Map();
   const contexts=new Map();
+  const contextReads=new Map();
   const snapshot=id=>requests.getReleaseControl(id,now());
   const save=(id,revision,next)=>requests.updateReleaseControl(id,revision,next,now());
   const remember=(id,request,releaseState)=>{
     contexts.set(id,{completedSeries:request.kind==='series'&&releaseState==='completed',confirmedAiring:request.kind==='series'&&request.monitorFuture&&!request.watchClosed&&releaseState==='airing',until:now()+300_000});
     while(contexts.size>100)contexts.delete(contexts.keys().next().value);
   };
-  const context=async id=>{
-    const request=requests.getRequest(id);let saved=contexts.get(id);
-    if(!saved||saved.until<=now()){
+  const contextValue=(id,request,saved)=>({
+    completedSeries:saved?.completedSeries===true,
+    confirmedAiring:saved?.confirmedAiring===true,
+    preferredWait:request?.preview?null:requests.getPreferredWait?.(id,now())??null,
+    preferredGroup:snapshot(id)?.preference?.group??null,
+  });
+  const context=id=>{
+    const request=requests.getRequest(id),saved=contexts.get(id);
+    if(saved?.until>now())return Promise.resolve(contextValue(id,request,saved));
+    if(contextReads.has(id))return contextReads.get(id);
+    const pending=(async()=>{
       let state='unknown';try{if(loadDetail){const detail=await loadDetail({anidbId:request.anidbId,page:1});
         if(detail?.state==='details')state=inferReleaseState({...detail,today:new Date(now()).toISOString().slice(0,10)}).state;}}
       catch{/* Preference controls stay hidden until metadata is known. */}
-      remember(id,request,state);saved=contexts.get(id);
-    }
-    return {completedSeries:saved.completedSeries,confirmedAiring:saved.confirmedAiring,preferredWait:request.preview?null:requests.getPreferredWait?.(id,now())??null,preferredGroup:snapshot(id).preference?.group??null};
+      remember(id,request,state);
+      return contextValue(id,request,contexts.get(id));
+    })().finally(()=>contextReads.delete(id));
+    contextReads.set(id,pending);return pending;
+  };
+  // Optional Auto display hints cannot delay durable request commitment.
+  // Warm one background context at a time and coalesce repeated snapshots.
+  const contextSnapshot=id=>{
+    const request=requests.getRequest(id),saved=contexts.get(id);
+    const current=saved?.until>now()?saved:null;
+    if(!current&&contextReads.size<1)void context(id).catch(()=>{});
+    return contextValue(id,request,current);
   };
   const makePreference=(id,group,audio)=>{
     if(!validPreferredGroup(group))return null;
@@ -232,5 +250,5 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const updated=requests.updateReleasePreference(id,revision,preference,now());
     if(updated.state==='updated')wake(id);return updated;
   };
-  return {search,inspect,begin,choose,auto,queueAuto,decide,snapshot,context,setPreference};
+  return {search,inspect,begin,choose,auto,queueAuto,decide,snapshot,context,contextSnapshot,setPreference};
 }

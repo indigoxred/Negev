@@ -24,8 +24,8 @@ const selection={candidate,preview,registration:'unknown'};
 let holdInspection=false,releaseInspection;let inspectionFailure="torrent_preflight_unavailable",inspectionCalls=0;let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[],lastPreferenceAudio=null;
 let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false,preferredFlag=false;
 const api=async(url,options={})=>{
- if(url.endsWith('/release-choice')&&!options.method&&holdExistingRead)return new Promise((resolve,reject)=>{releaseExistingRead={resolve,reject};});
- if(url.endsWith('/release-choice')&&!options.method)return {control,context:{completedSeries:completedMode,confirmedAiring:!completedMode,preferredGroup:control.preference?.group??null,...(delegatedMode?{preferredGroup:'SubsPlease',preferredWait:{group:'SubsPlease',deadlineMs:Date.now()+7200000}}:{})}};
+ if(url.split('?')[0].endsWith('/release-choice')&&!options.method&&holdExistingRead)return new Promise((resolve,reject)=>{releaseExistingRead={resolve,reject};});
+ if(url.split('?')[0].endsWith('/release-choice')&&!options.method)return {control,context:{completedSeries:completedMode,confirmedAiring:!completedMode,preferredGroup:control.preference?.group??null,...(delegatedMode?{preferredGroup:'SubsPlease',preferredWait:{group:'SubsPlease',deadlineMs:Date.now()+7200000}}:{})}};
  if(url.includes('offset=50')&&!failedMore){failedMore=true;throw new Error('Temporary indexer outage');}
  if(url.includes('/releases'))searchUrls.push(url);
  if(url.includes('/releases'))return url.includes('offset=50')
@@ -170,7 +170,7 @@ const base={guid:'one',indexerId:1,title:'[Group] Example 1080p',size:1000,seede
 const items=['likely','previously_verified','unknown','mixed',...Array.from({length:10},(_,i)=>'hidden'+i)].map((state,i)=>({...base,guid:state,title:'[Group] '+state+' 1080p',token:state}));
 let inspected=[],inspectedAt=[],commands=[],inFlight=0,maxInFlight=0;
 const api=async(url,options={})=>{
- if(!options.method&&url.endsWith('/release-choice'))return{control:{mode:'manual',phase:'selecting',revision:1},context:{}};
+ if(!options.method&&url.split('?')[0].endsWith('/release-choice'))return{control:{mode:'manual',phase:'selecting',revision:1},context:{}};
  if(url.includes('/releases'))return{state:'candidates',items,nextOffset:null};
  const body=url.includes('/release-inspection?')?{action:'inspect',token:new URL(url,'http://local').searchParams.get('token')}:JSON.parse(options.body);commands.push(body.action);if(body.action!=='inspect')throw Error('Browsing attempted a mutation');
  inspected.push(body.token);inspectedAt.push(performance.now());inFlight++;maxInFlight=Math.max(maxInFlight,inFlight);await new Promise(r=>setTimeout(r,10));inFlight--;
@@ -275,7 +275,7 @@ test('release dialog preserves manual choice through polling and offers alternat
  let finishInitial,finishSearch,reads=0,posts=[];let control={mode:'manual',phase:'selecting',revision:1};
  const response=()=>({control,context:{confirmedAiring:true,preferredGroup:control.preference?.group??null}});
  const api=async(url,options={})=>{
-   if(url.endsWith('/release-choice')&&!options.method){if(++reads===1)return new Promise(resolve=>finishInitial=()=>resolve(response()));return response();}
+   if(url.split('?')[0].endsWith('/release-choice')&&!options.method){if(++reads===1)return new Promise(resolve=>finishInitial=()=>resolve(response()));return response();}
    if(url.includes('/releases')){const result={state:'candidates',items:[],nextOffset:null,confirmedAiring:true};return scenario==='overwrite'?result:new Promise(resolve=>finishSearch=()=>resolve(result));}
    const body=JSON.parse(options.body);posts.push(body);control={...control,revision:control.revision+1,preference:{group:body.group,audio:body.audio}};return {state:'updated',...response()};
  };
