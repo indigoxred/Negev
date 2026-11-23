@@ -9,8 +9,8 @@ import {openFileProofLedger} from '../src/availability/file-proof-ledger.mjs';
 import {openPlexCardIndex} from '../src/availability/plex-card-index.mjs';
 const target={anidbId:42,episodeId:1001};
 const proof={fileId:7,libraryId:102,ratingKey:500,partId:600};
-const config={serverIdentity:'synthetic-server',episodeLibraryIds:[102],movieLibraryIds:[],shokoMount:{appRoot:'/pure',localRoot:'C:\\media'},plexMounts:[{appRoot:'/anime',localRoot:'C:\\media'}]};
-for (const [name,change] of [['server',{serverIdentity:'different-server'}],['section',{episodeLibraryIds:[103]}],['mount',{plexMounts:[{appRoot:'/anime',localRoot:'C:\\new-media'}]}]]) test(`changed ${name} retires proofs and fences claims; unchanged restart preserves`,()=>{
+const config={serverIdentity:'synthetic-server',episodeLibraryIds:[102],movieLibraryIds:[],shokoMount:{appRoot:'/pure',localRoot:path.join(os.tmpdir(),'negev-media')},plexMounts:[{appRoot:'/anime',localRoot:path.join(os.tmpdir(),'negev-media')}]};
+for (const [name,change] of [['server',{serverIdentity:'different-server'}],['section',{episodeLibraryIds:[103]}],['mount',{plexMounts:[{appRoot:'/anime',localRoot:path.join(os.tmpdir(),'negev-new-media')}]}]]) test(`changed ${name} retires proofs and fences claims; unchanged restart preserves`,()=>{
  const dir=mkdtempSync(path.join(os.tmpdir(),'scope-evidence-'));const dbPath=path.join(dir,'state.sqlite');
  const queue=openDirectAvailabilityQueue(dbPath);const files=openFileProofLedger(dbPath,{positiveLifetimeMs:1000,now:()=>100});
  let scope=openAvailabilityScope(dbPath);
