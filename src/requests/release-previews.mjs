@@ -14,7 +14,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
   let sequence = Number.MAX_SAFE_INTEGER;
   const prune = () => {
     for (const [key, session] of sessions) {
-      if (session.expiresMs <= now() && !session.pending) {
+      if (session.expiresMs <= now() && !session.pending && !session.inspections) {
         sessions.delete(key);
         drafts.delete(session.id);
       }
@@ -23,7 +23,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
   const access = (token, userId) => {
     prune();
     const session = sessions.get(token);
-    return session?.input.requesterId === userId ? session.id : null;
+    return session?.input.requesterId === userId && session.expiresMs > now() ? session.id : null;
   };
   const atCapacity = userId => sessions.size >= 100 ||
     [...sessions.values()].filter(s => s.input.requesterId === userId).length >= 10;
@@ -96,7 +96,18 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       return existingSubmission({ state: 'held', reason: 'awaiting_availability_evidence',
         requestId: session.committed.requestId, created: false }, session.input) ?? held('request_missing');
     }
-    if (session.pending) return session.pending;
+    if (body.action === 'inspect') {
+      // Inspection is read-only. Receipt-level preflight already coalesces the
+      // same token; unrelated receipts and mutations must keep their own results.
+      session.inspections = (session.inspections ?? 0) + 1;
+      try {
+        const result = await selection.inspect(id, body.token);
+        return session.expiresMs <= now() ? held('release_preview_expired') : result;
+      } finally { session.inspections--; }
+    }
+    const commandKey = JSON.stringify([body.action, body.revision, body.token,
+      body.mode, body.group, body.audio, body.preferFutureGroup ?? false]);
+    if (session.pending) return session.pendingKey === commandKey ? session.pending : held('release_search_in_progress');
     const before = session.control;
     const reject = result => { session.control = before; return result; };
     const run = async () => {
@@ -128,7 +139,6 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
         return session.committed;
       }
       const result = action === 'begin' ? selection.begin(id, body.mode, revision) :
-        action === 'inspect' ? await selection.inspect(id, body.token) :
         action === 'choose' ? await selection.choose(id, body.token, revision, body.preferFutureGroup ?? false) :
         action === 'auto' ? await selection.auto(id, revision) :
         action === 'preference' ? await selection.setPreference(id, body.group, revision, body.audio) :
@@ -181,10 +191,11 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       }
       return session.committed;
     };
+    session.pendingKey = commandKey;
     session.pending = run();
     try { return await session.pending; }
     catch (error) { if (!session.committed) session.control = before; throw error; }
-    finally { session.pending = null; }
+    finally { session.pending = null; session.pendingKey = null; }
   };
   return { open, access, command, selection, readRequest: adapter.getRequest };
 }

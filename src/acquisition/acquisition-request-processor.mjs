@@ -84,12 +84,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
         episodeIds:pinned.preview.episodeIds});
       if(owned?.torrentHash===pinned.preview.torrentHash&&
           sameReleaseFiles(owned.files,pinned.preview.files)) {
-        consumeReleaseChoice?.(requestId,control.revision);pinned=null;
+        if(consumeReleaseChoice?.(requestId,control.revision)===false)return held('release_choice_changed');pinned=null;
       }
     }
     if(pinned) {
       if(pinned.preview.episodeIds.some(id=>!request.episodeIds.includes(id))) return held('release_choice_changed');
-      request={...request,episodeIds:[...pinned.preview.episodeIds]};
       candidateOffset=0;candidateFingerprint=null;
     }
     let recoveredTargets = new Set();
@@ -141,6 +140,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
       if (coverage.verifiedTargets === request.episodeIds.length) {
         if(pinned) consumeReleaseChoice?.(requestId,control.revision);
         return { ...held('request_fully_available'), nextCandidateOffset: 0 };
+      }
+    }
+    // Completion belongs to the whole saved request, not one chosen release.
+    // Once that release is already satisfied, continue its remaining targets.
+    if(pinned) {
+      if(pinned.preview.episodeIds.every(id=>exactAvailable.has(id))) {
+        if(consumeReleaseChoice?.(requestId,control.revision)===false)return held('release_choice_changed');
+        pinned=null;
+      } else {
+        request={...request,episodeIds:[...pinned.preview.episodeIds]};
       }
     }
     let found, expiredFallback;
