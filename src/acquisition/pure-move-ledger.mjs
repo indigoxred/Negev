@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -16,7 +17,7 @@ function canonical(input) {
       path.basename(input.stagingRoot) !== input.torrentHash ||
       path.basename(input.holdingPath) !==
         `negev-${input.attemptId}-${input.torrentHash.slice(0, 16)}` ||
-      !Array.isArray(input.files) || input.files.length < 1 || input.files.length > 100) {
+      !Array.isArray(input.files) || input.files.length < 1 || input.files.length > MAX_TORRENT_FILES) {
     return null;
   }
   const names = new Set();
@@ -183,7 +184,7 @@ export function openPureMoveLedger(dbPath) {
     },
     recordContentPresent({ attemptId, files, nowMs }) {
       if (!validId(attemptId) || !validTime(nowMs) ||
-          !Array.isArray(files) || files.length < 1 || files.length > 100 ||
+          !Array.isArray(files) || files.length < 1 || files.length > MAX_TORRENT_FILES ||
           files.some((file) => typeof file?.name !== 'string' ||
             !validId(file.fileId) ||
             typeof file.releaseEvidence !== 'string' ||

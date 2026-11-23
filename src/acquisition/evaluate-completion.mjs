@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const COMPLETE_STATES = new Set(['uploading', 'pausedUP', 'queuedUP', 'stalledUP', 'forcedUP', 'stoppedUP']);
@@ -18,7 +19,7 @@ export function evaluateCompletion({ torrent, files, expected }) {
   if (!COMPLETE_STATES.has(torrent.state) || torrent.progress !== 1 || torrent.amount_left !== 0) {
     return held('incomplete');
   }
-  if (!Array.isArray(files) || files.length === 0 || files.length > 500) return held('invalid_file_manifest');
+  if (!Array.isArray(files) || files.length === 0 || files.length > MAX_TORRENT_FILES) return held('invalid_file_manifest');
 
   const selected = [];
   const subtitles = [];

@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { stagingSavePath } from './staging-save-path.mjs';
 import { stopCompletedTorrent } from './stop-completed-torrent.mjs';
@@ -90,7 +91,7 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
         (planned.get(file.name).size !== undefined &&
           planned.get(file.name).size !== file.size)) ||
       new Set(completed.files.map((file) => file.name)).size !== selectedCount ||
-      !Array.isArray(completed.subtitles) || completed.subtitles.length > 50) {
+      !Array.isArray(completed.subtitles) || completed.files.length + completed.subtitles.length > MAX_TORRENT_FILES) {
     return held('manifest_or_budget_mismatch');
   }
   // Release suitability is decided before acquisition. Missing language tags

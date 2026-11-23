@@ -87,6 +87,30 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     }).catch(() => {});
     return task;
   };
+  // Pure mode only renames selected files; the legacy hashing/copy path stays
+  // one attempt per turn. Serialize claims and preserve stage fairness even
+  // when a backlog is large or a provider is failing.
+  const runMediaBatch = async (worker, afterEach = () => {}) => {
+    const beganMs = now();
+    const results = [];
+    const limit = pureMode ? 10 : 1;
+    for (let index = 0; index < limit; index++) {
+      if (closed && index > 0) break;
+      const result = await worker.runOnce();
+      if (result?.state !== 'processed') return results.length > 0
+        ? { ...results.at(-1), processedCount: results.length, results } : result;
+      results.push(result);
+      await afterEach(result);
+      if (now() - beganMs >= 5_000 ||
+          ['provider_http_error', 'provider_http_403', 'provider_timeout',
+            'provider_transport', 'provider_invalid_response', 'provider_unavailable',
+            'authentication_unavailable', 'authentication_backoff',
+            'stop_outcome_unknown', 'torrent_unavailable', 'torrent_unavailable_after_stop']
+            .includes(result.result?.reason)) break;
+    }
+    return results.length === 1 ? results[0] :
+      { ...results.at(-1), processedCount: results.length, results };
+  };
   return {
     initialize() {
       if (closed) return Promise.resolve(held('pipeline_closed'));
@@ -177,18 +201,19 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     }) } : {}),
     tickCompletions: () => run({ runOnce: async () => {
       if(bonusWorker)void run(bonusWorker,'bonus').catch(()=>{});
-      const result = await completionWorker.runOnce();
-      if (result?.result?.reason === 'media_retired' &&
-          Number.isSafeInteger(result.attemptId)) {
-        const attempt = acquisitions.getAttempt(result.attemptId);
-        if (Number.isSafeInteger(attempt?.requestId)) {
-          requestQueue.wakeAfterMediaRetirement({
-            requestId: attempt.requestId, nowMs: now() });
+      return runMediaBatch(completionWorker, async (result) => {
+        if (result?.result?.reason === 'media_retired' &&
+            Number.isSafeInteger(result.attemptId)) {
+          const attempt = acquisitions.getAttempt(result.attemptId);
+          if (Number.isSafeInteger(attempt?.requestId)) {
+            requestQueue.wakeAfterMediaRetirement({
+              requestId: attempt.requestId, nowMs: now() });
+          }
         }
-      }
-      return result;
+      });
     } }),
-    tickPublish: () => run(publishWorker),
+    tickPublish: () => run({ runOnce: () => runMediaBatch(publishWorker) }),
+    beginShutdown() { closed = true; },
     close() {
       if (!closing) {
         closed = true;

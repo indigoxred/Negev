@@ -1,3 +1,4 @@
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { constants } from 'node:fs';
 import { chmod, lstat, open, readdir, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
@@ -18,6 +19,7 @@ async function syncDirectory(directory) {
 }
 
 export async function inspectPureMoveTree(root, files) {
+  if (!Array.isArray(files) || files.length < 1 || files.length > MAX_TORRENT_FILES) return false;
   const expected = new Map(files.map((file) => [file.name, file]));
   const expectedDirs = new Set();
   for (const name of expected.keys()) {
@@ -27,7 +29,7 @@ export async function inspectPureMoveTree(root, files) {
   const found = new Set();
   const seenDirs = new Set();
   async function walk(directory, prefix, depth) {
-    if (depth > 32 || found.size > 100 || seenDirs.size > 200) return false;
+    if (depth > 32 || found.size > MAX_TORRENT_FILES || seenDirs.size > expectedDirs.size) return false;
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const name = prefix ? `${prefix}/${entry.name}` : entry.name;
       const target = path.join(directory, entry.name);

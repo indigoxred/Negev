@@ -17,6 +17,12 @@ const validTransfer = (value) => value &&
   ['active', 'stalled', 'queued', 'paused'].includes(value.transferState);
 const RETRY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
+// These are failed observations, not evidence of changed ownership or files.
+const TRANSIENT_PROVIDER_REASONS = [
+  'provider_http_error', 'provider_unavailable', 'provider_timeout',
+  'provider_transport', 'provider_invalid_response',
+  'torrent_unavailable', 'torrent_unavailable_after_stop', 'stop_outcome_unknown',
+];
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
 // Pure-move completion only reads bounded qBittorrent metadata until the
 // torrent is complete; it does not hash or copy video bytes on this retry.
@@ -93,6 +99,14 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
         WHERE state='held' AND reason IN
         ('media_read_budget_exhausted','tracks_unavailable',
          'subtitle_coverage_unverified')`);
+    }
+    // Existing temporary-provider waits should use the same one-minute policy.
+    // MIN never postpones a due row; outcomes and active claims are untouched.
+    if (pureMode) {
+      const reasons = TRANSIENT_PROVIDER_REASONS.map(() => '?').join(',');
+      db.prepare(`UPDATE ${checksTable} SET next_due_ms=MIN(next_due_ms,checked_ms+?)
+        WHERE state='held' AND checked_ms IS NOT NULL AND next_due_ms IS NOT NULL
+          AND reason IN (${reasons})`).run(SESSION_RETRY_MS, ...TRANSIENT_PROVIDER_REASONS);
     }
     db.exec(`INSERT INTO ${cursorTable} VALUES (1,0,1) ON CONFLICT(id) DO NOTHING`);
   } catch (error) { db.close(); throw error; }
@@ -218,7 +232,9 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
           ['file_lookup_inconclusive',
             'file_offline_lookup_inconclusive'].includes(reason)
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
-        const delay = ['provider_http_403', 'authentication_backoff',
+        const temporaryProviderFailure = pureMode &&
+          TRANSIENT_PROVIDER_REASONS.includes(reason);
+        const delay = temporaryProviderFailure || ['provider_http_403', 'authentication_backoff',
           'authentication_unavailable', 'completion_transition', 'torrent_not_stopped',
           'torrent_still_present', 'staging_not_empty',
           'media_retirement_pending', 'media_retirement_unavailable']
