@@ -53,14 +53,39 @@ export function releaseFacts(title = '') {
 // foreign track alongside English, multi-subs or absent tags is not an exclusion.
 function subtitleLanguageDeclarations(title) {
   title=title.normalize('NFKD').replace(/\p{M}/gu,'');
-  const language='(?:english|eng|en|japanese|jpn|jap|ja|german|deutsch|deu|ger|de|french|francais|fra|fre|fr|spanish|espanol|spa|esp|es|russian|rus|ru|italian|ita|it|portuguese|por|pt|hindi|hin|tamil|tam|telugu|tel|ukrainian|ukr|korean|kor|ko|chinese|chi|zho|zh|polish|pol|pl|arabic|ara|ar)';
-  const list=language+'(?:(?:[ ._/,+&-]+|[ ._-]+and[ ._-]+)'+language+')*';
-  const before=new RegExp(String.raw`\b(only[ ._-]+)?(${list})[ ._-]+(?:subs?|subtitles?)\b([ ._-]+only\b)?`,'gi');
-  const after=new RegExp(String.raw`\b(only[ ._-]+)?(?:subs?|subtitles?)[ ._:-]+(${list})\b([ ._-]+only\b)?`,'gi');
-  const declarations=[...title.matchAll(before),...title.matchAll(after)];
-  const english=match=>/\b(?:english|eng|en)\b/i.test(match[2]);
-  return {excludesEnglish:declarations.some(match=>(match[1]||match[3])&&!english(match)),
-    includesEnglish:declarations.some(english)};
+  const languages=new Set('english eng en japanese jpn jap ja german deutsch deu ger de french francais fra fre fr spanish espanol spa esp es russian rus ru italian ita it portuguese por pt hindi hin tamil tam telugu tel ukrainian ukr korean kor ko chinese chi zho zh polish pol pl arabic ara ar'.split(' '));
+  const modifiers=new Set('sdh cc closed captions hearing impaired full forced signs songs'.split(' '));
+  // Capture the complete field, including unknown languages/modifiers. A
+  // recognised suffix after an unknown list member cannot prove exclusion.
+  const before=/([^\[\]\r\n:;()]+?)[ ._-]+(?:subs?|subtitles?)\b([ ._-]+only\b)?/gi;
+  const after=/\b(only[ ._-]+)?(?:subs?|subtitles?)[ ._:-]+([^\[\]\r\n:;()]+?)(?:[ ._-]+(only)\b|(?=$|[\[\]\r\n:;()]))/gi;
+  const fields=[...title.matchAll(before)].map(m=>({text:m[1],complete:m.index>0&&'[('.includes(title[m.index-1]),only:Boolean(m[2])||/^\s*only\b/i.test(m[1])}));
+  fields.push(...[...title.matchAll(after)].map(m=>({text:m[2],complete:true,only:Boolean(m[1]||m[3])})));
+  let includesEnglish=false,excludesEnglish=false;
+  for(const field of fields){
+    const units=field.text.replace(/[._-]/g,' ').split(/\s*(?:[/,+&]|\band\b)\s*/i);
+    let known=true,english=false,hasLanguage=false;
+    for(const [i,unit] of units.entries()){
+      let words=unit.toLowerCase().match(/[a-z]+/g)??[];
+      if(i===0){
+        // Unbracketed titles can precede a declaration. Audio is a separate
+        // field: English audio must never imply English subtitles.
+        const audio=Math.max(words.lastIndexOf('audio'),words.lastIndexOf('dub'),words.lastIndexOf('dubbed'));
+        if(audio>=0)words=words.slice(audio+1);
+        words=words.filter(w=>w!=='only');
+        const start=words.findIndex(w=>languages.has(w));
+        if(start>=0&&!field.complete)words=words.slice(start);
+      }
+      if(!words.length){known=false;continue;}
+      for(const word of words){
+        if(languages.has(word)){hasLanguage=true;if(['english','eng','en'].includes(word))english=true;}
+        else if(!modifiers.has(word)&&word!=='only')known=false;
+      }
+    }
+    includesEnglish ||= english;
+    excludesEnglish ||= field.only&&hasLanguage&&known&&!english;
+  }
+  return {excludesEnglish,includesEnglish};
 }
 export function releaseLanguageSuitability(title, { allowEnglishDub = false } = {}) {
   title = (typeof title === 'string' ? title : '').replaceAll('_', ' ');

@@ -99,3 +99,27 @@ test('only budget-deferred episodes request a continuation; actual uncertainty r
  const first=await verifyCachedPositiveCoverage(options);assert.deepEqual(first.pendingEpisodeIds,[1002]);assert.deepEqual(first.uncertainEpisodeIds,[1001,1002]);clock+=1000;
  const second=await verifyCachedPositiveCoverage(options);assert.equal(second.pendingEpisodeIds,undefined);assert.deepEqual(second.availableEpisodeIds,[1002]);assert.deepEqual(second.uncertainEpisodeIds,[1001]);
 });
+
+test('expired uncertainty is visited work, never usable availability or a fresh continuation',async()=>{
+ const cache=new Map();let clock=100;const ids=Array.from({length:32},(_,i)=>1001+i),r={anidbId:42,kind:'series',episodeIds:ids},calls=[];const options={request:r,cached:{targetCount:32,verifiedTargets:32,availableEpisodeIds:ids},cache,maxChecks:1,now:()=>clock,readShoko:async({episodeId})=>{calls.push(episodeId);return {state:'unavailable'}},readPublic:async()=>{throw Error('no positive proof')}};
+ let result;for(let i=0;i<32;i++){result=await verifyCachedPositiveCoverage(options);clock+=1000;}
+ assert.equal(calls.length,32);assert.equal(result.pendingEpisodeIds,undefined);assert.equal(result.verifiedTargets,0);assert.equal(result.uncertainEpisodeIds.length,32);
+ clock+=1800000;await verifyCachedPositiveCoverage(options);assert.equal(calls.length,33,'a later scheduled pass obtains fresh evidence');
+});
+
+test('changed revisions and scope are revisited without extending expired proof',async()=>{
+ const cache=new Map();let clock=100,revision=0;const calls=[];const options={request,cached,cache,maxChecks:1,now:()=>clock,readRevision:({episodeId})=>episodeId===1001?revision:0,readShoko:async({episodeId})=>{calls.push(episodeId);return {state:'unavailable'}},readPublic:async()=>({state:'unknown'})};
+ await verifyCachedPositiveCoverage(options);clock+=6000;revision++;await verifyCachedPositiveCoverage(options);assert.ok(calls.includes(1001));const end=await verifyCachedPositiveCoverage(options);assert.equal(end.pendingEpisodeIds,undefined);assert.equal(end.verifiedTargets,0);
+ const extra={...request,episodeIds:[...request.episodeIds,1003]};await verifyCachedPositiveCoverage({...options,request:extra,cached:{targetCount:3,verifiedTargets:3,availableEpisodeIds:extra.episodeIds}});assert.ok(calls.includes(1003));
+});
+
+test('a slow coverage pass stops rapid continuation at its bounded deadline while retaining uncertainty',async()=>{
+ const cache=new Map();let clock=100;const calls=[];const options={request,cached,cache,maxChecks:1,now:()=>clock,readShoko:async({episodeId})=>{calls.push(episodeId);return {state:'unavailable'}},readPublic:async()=>({state:'unknown'})};await verifyCachedPositiveCoverage(options);clock+=900001;const r=await verifyCachedPositiveCoverage(options);assert.equal(r.pendingEpisodeIds,undefined);assert.equal(r.uncertainEpisodeIds.length,2);assert.equal(calls.length,1);
+});
+
+test('sweep capacity cannot discard active progress and restart provider reads forever',async()=>{
+ const cache=new Map();let calls=0;const options={request,cached,cache,maxChecks:1,now:()=>100,readShoko:async()=>{calls++;return {state:'unavailable'}},readPublic:async()=>({state:'unknown'})};
+ for(let id=1;id<=64;id++)await verifyCachedPositiveCoverage({...options,request:{...request,id,anidbId:42+id}});
+ const overflow=await verifyCachedPositiveCoverage({...options,request:{...request,id:65,anidbId:107}});assert.equal(overflow.pendingEpisodeIds,undefined);assert.equal(overflow.uncertainEpisodeIds.length,2);assert.equal(calls,64);
+ const first=await verifyCachedPositiveCoverage({...options,request:{...request,id:1,anidbId:43}});assert.equal(first.pendingEpisodeIds,undefined);assert.equal(calls,65);
+});

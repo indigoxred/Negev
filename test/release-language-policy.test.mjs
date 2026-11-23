@@ -35,3 +35,10 @@ test('foreign subtitle declarations including English and unlabelled burned-in r
   const c=candidate(tag);assert.equal(assessRelease(c).eligible,true,tag);assert.equal(matchesReleaseFilters(c,{quality:'all',audio:'japanese_dual'}),true,tag);
  }
 });
+
+test('whole subtitle clauses preserve English and unknown list members or modifiers',()=>{
+ for(const tag of ['English / Dutch / German Subtitles Only','English SDH / German Subtitles Only','English / Klingon / German Subtitles Only','English Hearing Impaired / German Subtitles Only','Subtitles: English / Dutch / German Only','Only English SDH / German Subs','Klingon / German Subtitles Only','German / Klingon Subtitles Only','Klingon German Subtitles Only','Mystery SDH German Subtitles Only']){
+  const c=candidate('[Japanese Audio] ['+tag+']');assert.equal(assessRelease(c).eligible,true,tag);assert.equal(matchesReleaseFilters(c,{quality:'bd1080',audio:'japanese_dual'}),true,tag);
+ }
+ for(const tag of ['English Audio German Subtitles Only','German / French SDH Subtitles Only','Subs: German / French Only','German Subtitles Only [English Audio]'])assert.equal(assessRelease(candidate(tag)).eligible,false,tag);
+});
