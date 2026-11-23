@@ -98,3 +98,7 @@ test('pending title runner can begin shortly after startup without overlap', asy
     }), TypeError);
   }
 });
+
+for(const reason of ['card_changed','shoko_changed'])test(reason+' retries ready durable work at the active pace',async()=>{
+ const timers=[];const scheduler=createDirectAvailabilityScheduler({runOnce:async()=>({state:'held',reason}),activeDelayMs:10000,idleDelayMs:60000,setTimer:(fn,delay)=>{timers.push({fn,delay});return timers.length},clearTimer:()=>{}});scheduler.start();await timers.shift().fn();assert.equal(timers[0].delay,10000);await scheduler.close();
+});
