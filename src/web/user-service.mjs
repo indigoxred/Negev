@@ -1,3 +1,4 @@
+import { queueCompositeObservation } from '../availability/queue-composite-observation.mjs';
 import { createWatchingScheduleReader } from './watching-schedule.mjs';
 import { createCatalogueFetch } from '../catalogue/catalogue-fetch.mjs';
 import { createBonusOwnershipReader } from '../acquisition/bonus-ownership.mjs';
@@ -348,7 +349,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     };
     const observeDisplayPublic = async (target) => {
       const live = await observeCurrentPublic(target);
-      if (live?.state === 'available') return live;
+      if (live?.state === 'available') {
+        queueCompositeObservation({queue:directAvailability,target,result:live,nowMs:now()});
+        return live;
+      }
       const hasShokoFile = target.kind === 'series' &&
         inventory.getObservedFileIds(target).length > 0;
       const file = hasShokoFile ? fileProofs?.getCurrent(target) : null;

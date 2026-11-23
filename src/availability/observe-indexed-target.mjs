@@ -150,6 +150,7 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
       if (fallback.length > 0) result = await checkCards(fallback);
     }
     return result.state === 'available' && !includeProof
-      ? { state: 'available', fileId: result.fileId } : result;
+      ? { state: 'available', fileId: result.fileId,
+        ...(result.multipart === true ? { multipart: true } : {}) } : result;
   } catch { return unknown('observer_incomplete'); }
 }

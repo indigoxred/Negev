@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { compositeComponents, pruneCompositeProofs } from './multipart-proof-components.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -35,6 +36,15 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         TEXT NOT NULL DEFAULT 'exact'
         CHECK(presentation IN ('exact','alternate_card'))`);
     }
+    if (!db.prepare('PRAGMA table_info(file_availability_proofs)').all().some(c=>c.name==='components_json')) {
+      db.exec('ALTER TABLE file_availability_proofs ADD COLUMN components_json TEXT');
+      // v300 could not retain all witnesses. Retire only legacy scalar cache
+      // rows whose indexed Part belongs to an explicitly multipart Media.
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE name='plex_card_observations'").get()) db.exec(
+        `DELETE FROM file_availability_proofs AS f WHERE EXISTS(SELECT 1 FROM plex_card_observations c,json_each(CASE WHEN json_valid(c.identity_signature) THEN c.identity_signature ELSE '[]' END,'$[1]') p
+        WHERE c.library_id=f.library_id AND c.rating_key=f.rating_key AND json_extract(p.value,'$[0]')=f.part_id AND json_extract(p.value,'$[9]')>1)`);
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS file_proof_components ON file_availability_proofs(anidb_id,episode_id) WHERE components_json IS NOT NULL');
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_episode
       ON file_availability_proofs(anidb_id,episode_id,verified_ms DESC)`);
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_file
@@ -49,10 +59,10 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     if (discardPriorProofs) db.exec('DELETE FROM file_availability_proofs');
   } catch (error) { db.close(); throw error; }
   const upsert = db.prepare(`INSERT INTO file_availability_proofs
-    (anidb_id,episode_id,file_id,library_id,rating_key,part_id,verified_ms,presentation)
-    VALUES (?,?,?,?,?,?,?,?) ON CONFLICT DO UPDATE SET
+    (anidb_id,episode_id,file_id,library_id,rating_key,part_id,verified_ms,presentation,components_json)
+    VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT DO UPDATE SET
       verified_ms=excluded.verified_ms,
-      presentation=excluded.presentation
+      presentation=excluded.presentation,components_json=excluded.components_json
     WHERE excluded.verified_ms>=file_availability_proofs.verified_ms`);
   const current = db.prepare(`SELECT verified_ms AS verifiedMs,presentation
     FROM file_availability_proofs WHERE anidb_id=? AND episode_id=?
@@ -75,6 +85,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     ORDER BY (presentation='exact') DESC,verified_ms DESC,
       library_id,rating_key LIMIT 1`);
   let sourceStillCurrent;
+  const prune = (anidbId=null,episodeId=null) => pruneCompositeProofs(db,anidbId,episodeId);
   return {
     observe({ anidbId, episodeId, proof, checkedMs } = {}) {
       const observedNow = now();
@@ -83,11 +94,11 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
           !validId(proof.ratingKey) || !validId(proof.partId) ||
           !validTime(checkedMs) || !validTime(observedNow) ||
           checkedMs > observedNow ||
-          ![undefined, 'alternate_card'].includes(proof.presentation)) return held();
+          (![undefined, 'alternate_card'].includes(proof.presentation) || proof.parts !== undefined)) return held();
       const identity = [anidbId, episodeId, proof.fileId,
         proof.libraryId, proof.ratingKey, proof.partId];
       const saved = upsert.run(...identity, checkedMs,
-        proof.presentation ?? 'exact');
+        proof.presentation ?? 'exact',null);
       return { state: saved.changes === 1 ? 'recorded' : 'stale' };
     },
     observeGuarded({ anidbId, episodeId, proof, revision,
@@ -134,6 +145,11 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
             AND f.observed_ms=? AND e.anidb_id=? AND e.episode_id=?
             AND c.observed_ms=? AND c.identity_signature=?
             AND p.part_id=? AND p.candidate_key=? LIMIT 1`);
+        const components = compositeComponents(proof,revision,checkedMs);
+        if (proof.parts !== undefined && !components) { db.exec('ROLLBACK'); return held(); }
+        if (components && components.some(part=>!sourceStillCurrent.get(part.libraryId,part.ratingKey,part.fileId,part.sourceUpdated,part.sourceObservedMs,anidbId,episodeId,card.observedMs,card.identitySignature,part.partId,part.storageKey))) {
+          db.exec('ROLLBACK'); return {state:'held',reason:'source_generation_changed'};
+        }
         const currentSource = sourceStillCurrent.get(proof.libraryId,
           proof.ratingKey, proof.fileId, source.updated, source.observedMs,
           anidbId, episodeId, card.observedMs, card.identitySignature,
@@ -144,7 +160,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         }
         const saved = upsert.run(anidbId, episodeId, proof.fileId,
           proof.libraryId, proof.ratingKey, proof.partId, checkedMs,
-          proof.presentation ?? 'exact');
+          proof.presentation ?? 'exact',components ? JSON.stringify(components) : null);
         db.exec('COMMIT');
         return { state: saved.changes === 1 ? 'recorded' : 'stale' };
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -155,6 +171,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       }
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
+      prune(anidbId,episodeId);
       const row = current.get(anidbId, episodeId, nowMs,
         nowMs - positiveLifetimeMs);
       if (!validTime(row?.verifiedMs)) return { state: 'unknown' };
@@ -168,6 +185,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
+      prune(anidbId);
       const rows = positiveForAnime.all(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return rows.length > 10_000 ? [] : rows.map((row) => row.episodeId);
@@ -176,6 +194,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
+      prune(anidbId);
       const card = currentTitleCard.get(anidbId,
         nowMs - positiveLifetimeMs, nowMs);
       return card ? { libraryId: card.libraryId,
@@ -186,6 +205,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       if (!Number.isSafeInteger(afterAnidbId) || afterAnidbId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||
           !validTime(nowMs)) throw new TypeError('Invalid library browse page');
+      prune();
       const rows = currentTitles.all(afterAnidbId,
         nowMs - positiveLifetimeMs, nowMs, limit + 1);
       const items = rows.slice(0, limit).map(({ anidbId,
