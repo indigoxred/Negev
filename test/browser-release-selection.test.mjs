@@ -308,3 +308,20 @@ test('release dialog preserves manual choice through polling and offers alternat
  {scenario:'ready',enabledOnlyGuard:true,visibleAtMount:false,transientSaved:false,confirmationRetained:true,posts:[{action:'preference',group:'Group'}],storedGroup:'Group'}]);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('release dialog preserves manual choice through polling and offers alternatives only in Auto search: queued receipt',
+ {skip:browser?false:'No Chrome or Edge browser installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'negev-auto-receipt-'));
+ try{
+ const html=`<!doctype html><meta charset="utf-8"><style>${css}</style><pre id="result">pending</pre><script>${source}
+ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;};
+ let control={mode:'auto',phase:'selecting',revision:2},reads=0,writes=0;
+ const api=async(url,options={})=>{if(!options.method){reads++;return{control,context:{}};}writes++;return{state:'updated',queued:true,requestId:42,control};};
+ (async()=>{const picker=createReleaseDialog({api,element});await picker.open({requestId:42,title:'Example',mode:'auto'});
+ const d=document.querySelector('dialog[open]');const receipt=d.textContent.includes('Request #42 submitted')&&d.textContent.includes('you can close this window');
+ const modesHidden=d.querySelector('.release-mode-actions').hidden;const href=d.querySelector('a').getAttribute('href');picker.close();const before=reads;
+ setTimeout(()=>document.querySelector('#result').textContent=JSON.stringify({receipt,modesHidden,href,writes,pollsAfterClose:reads-before}),2100);
+ })().catch(e=>document.querySelector('#result').textContent='ERROR '+e.stack);</script>`;
+ const file=join(dir,'test.html');writeFileSync(file,html);const dom=execFileSync(browser,['--headless=new','--no-first-run','--disable-gpu','--disable-dev-shm-usage','--no-sandbox',`--user-data-dir=${join(dir,'profile')}`,'--virtual-time-budget=5000','--dump-dom',pathToFileURL(file).href],{encoding:'utf8',timeout:25000,stdio:['ignore','pipe','ignore'],windowsHide:true});const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-800));assert.deepEqual(JSON.parse(match[1].replaceAll('&quot;','"')),{receipt:true,modesHidden:true,href:'#/requests?requestId=42',writes:0,pollsAfterClose:0});
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

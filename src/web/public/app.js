@@ -958,6 +958,9 @@ function renderRequestStatus(status, presentation) {
     'request-note'));
 }
 function requestItemPresentation(item) {
+  if(requestNeedsReleaseChoice(item)&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='auto') {
+    return {stage:'Choosing a release',detail:'Auto-Pick is comparing eligible releases.',note:'Your request is saved; you can leave this page.',group:'active'};
+  }
   if(requestNeedsReleaseChoice(item)&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='manual') {
     return {stage:'Choose a release',detail:'Open Manual Pick to finish this request.',note:'Automatic grabbing is paused for this selection.',group:'active'};
   }

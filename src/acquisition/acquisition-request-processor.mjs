@@ -23,7 +23,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   discoverCandidates, previewCandidate, loadDetail, submitCandidate,
   readPublicCoverage, inspectCandidateTargets, readRecoveredTargets,
   readRelatedTitles, releaseQueries = async () => [],
-  readReleaseControl, consumeReleaseChoice, readChosenAttempt,
+  readReleaseControl, selectAutoRelease, consumeReleaseChoice, readChosenAttempt,
   checkPreferredRelease, getPreferredFallback, closePreferredWaits,
   preferRegisteredCorrespondence = false,
   preferShokoPreview = false, requireReleasePolicy = false,
@@ -37,7 +37,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         typeof readRecoveredTargets !== 'function') ||
       (readRelatedTitles !== undefined &&
         typeof readRelatedTitles !== 'function') ||
-      [readReleaseControl,consumeReleaseChoice,readChosenAttempt,checkPreferredRelease,getPreferredFallback,closePreferredWaits].some(fn=>fn!==undefined&&typeof fn!=='function') ||
+      [readReleaseControl,selectAutoRelease,consumeReleaseChoice,readChosenAttempt,checkPreferredRelease,getPreferredFallback,closePreferredWaits].some(fn=>fn!==undefined&&typeof fn!=='function') ||
       typeof preferRegisteredCorrespondence!=='boolean' ||
       typeof preferShokoPreview !== 'boolean' ||
       typeof releaseQueries !== 'function' ||
@@ -67,7 +67,16 @@ export function createAcquisitionRequestProcessor({ readRequest,
         new Set(request.episodeIds).size !== request.episodeIds.length) {
       return held('request_unavailable');
     }
-    const control = readReleaseControl?.(requestId,now());
+    let control = readReleaseControl?.(requestId,now());
+    if (control?.mode === 'auto' && control.phase === 'selecting' && selectAutoRelease) {
+      let decision;
+      try { decision = await selectAutoRelease(requestId, control.revision); }
+      catch { return held('metadata_reader_busy'); }
+      if (decision?.state !== 'updated') return held('metadata_reader_busy');
+      request = await readRequest(requestId);
+      if (request?.status !== 'held') return held('request_unavailable');
+      control = readReleaseControl(requestId, now());
+    }
     if(control && ['selecting','proposal'].includes(control.phase)) return held('release_selection_pending');
     let pinned=control?.phase==='chosen'?control.selection:null;
     if(pinned&&readChosenAttempt) {

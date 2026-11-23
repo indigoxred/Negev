@@ -40,6 +40,16 @@ export function openShokoRescanLedger(dbPath) {
       updated_ms INTEGER NOT NULL CHECK(updated_ms>=first_seen_ms),
       PRIMARY KEY(attempt_id,file_name)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_rescan_events (
+      id INTEGER PRIMARY KEY,
+      attempt_id INTEGER NOT NULL,
+      file_name TEXT NOT NULL,
+      file_id INTEGER NOT NULL CHECK(file_id>0),
+      event TEXT NOT NULL CHECK(event IN ('observed','dispatch','accepted','unconfirmed','linked','unresolved')),
+      observed_ms INTEGER NOT NULL CHECK(observed_ms>=0),
+      UNIQUE(attempt_id,file_name,event),
+      FOREIGN KEY(attempt_id,file_name) REFERENCES shoko_rescan_files(attempt_id,file_name)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_recovery_observations (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
       state TEXT NOT NULL,reason TEXT NOT NULL,observed_ms INTEGER NOT NULL
@@ -99,6 +109,11 @@ export function openShokoRescanLedger(dbPath) {
     ON CONFLICT(attempt_id) DO UPDATE SET status=excluded.status,
       next_due_ms=excluded.next_due_ms,updated_ms=excluded.updated_ms
       WHERE status IN ('pending','review')`);
+  const appendEvent = db.prepare(`INSERT OR IGNORE INTO shoko_rescan_events
+    (attempt_id,file_name,file_id,event,observed_ms) VALUES (?,?,?,?,?)`);
+  const eventRows = db.prepare(`SELECT id,attempt_id AS attemptId,file_name AS fileName,
+    file_id AS fileId,event,observed_ms AS observedMs FROM shoko_rescan_events
+    WHERE attempt_id=? AND id>? ORDER BY id LIMIT ?`);
   const transact = (fn) => {
     db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); db.exec('COMMIT'); return result; }
@@ -176,6 +191,7 @@ export function openShokoRescanLedger(dbPath) {
           ? { state: prior.status, firstSeenMs: prior.firstSeenMs }
           : held('shoko_file_changed');
         insertFile.run(attemptId, fileName, fileId, nowMs, nowMs);
+        appendEvent.run(attemptId,fileName,fileId,'observed',nowMs);
         upsertAttempt.run(attemptId, nowMs + 60_000, nowMs);
         return { state: 'observed', firstSeenMs: nowMs };
       });
@@ -192,8 +208,27 @@ export function openShokoRescanLedger(dbPath) {
         }
         if (updateFile.run('dispatched', nowMs, attemptId, fileName,
           fileId, 'observed').changes !== 1) return held('rescan_state_changed');
+        appendEvent.run(attemptId,fileName,fileId,'dispatch',nowMs);
         upsertAttempt.run(attemptId, nowMs + 60_000, nowMs);
         return { state: 'dispatched' };
+      });
+    },
+    listEvents({ attemptId, afterEventId = 0, limit = 200 }) {
+      if (!validId(attemptId) || !Number.isSafeInteger(afterEventId) || afterEventId<0 || !Number.isSafeInteger(limit) || limit<1 || limit>500) throw new TypeError('Invalid rescan event page');
+      return eventRows.all(attemptId,afterEventId,limit);
+    },
+    recordDispatchResult({ attemptId, fileName, fileId, result, nowMs }) {
+      if (!validId(attemptId)||!validId(fileId)||typeof fileName!=='string'||!validTime(nowMs)||!['accepted','unconfirmed'].includes(result)) throw new TypeError('Invalid rescan dispatch result');
+      return transact(()=>{
+        const prior=fileRow.get(attemptId,fileName);
+        const dispatch=db.prepare("SELECT observed_ms FROM shoko_rescan_events WHERE attempt_id=? AND file_name=? AND file_id=? AND event='dispatch'").get(attemptId,fileName,fileId);
+        if(!prior||prior.fileId!==fileId||!dispatch||nowMs<dispatch.observed_ms) return held('rescan_not_confirmed');
+        // One actual request has one result. A duplicate callback cannot add a
+        // contradictory receipt or authorise another outbound request.
+        const recorded=db.prepare("SELECT event FROM shoko_rescan_events WHERE attempt_id=? AND file_name=? AND event IN ('accepted','unconfirmed')").get(attemptId,fileName);
+        if(recorded)return {state:recorded.event};
+        appendEvent.run(attemptId,fileName,fileId,result,nowMs);
+        return {state:result};
       });
     },
     markLinked({ attemptId, fileName, fileId, nowMs }) {
@@ -202,8 +237,10 @@ export function openShokoRescanLedger(dbPath) {
       return transact(() => {
         const prior = fileRow.get(attemptId, fileName);
         if (!prior || prior.fileId !== fileId) return held('rescan_file_changed');
-        if (prior.status !== 'linked') updateFile.run('linked', nowMs,
-          attemptId, fileName, fileId, prior.status);
+        if (prior.status !== 'linked') {
+          updateFile.run('linked', nowMs, attemptId, fileName, fileId, prior.status);
+          appendEvent.run(attemptId,fileName,fileId,'linked',nowMs);
+        }
         upsertAttempt.run(attemptId, nowMs, nowMs);
         return { state: 'linked' };
       });
@@ -217,6 +254,7 @@ export function openShokoRescanLedger(dbPath) {
             prior.status !== 'dispatched') return held('rescan_state_changed');
         updateFile.run('unresolved', nowMs, attemptId, fileName,
           fileId, 'dispatched');
+        appendEvent.run(attemptId,fileName,fileId,'unresolved',nowMs);
         upsertAttempt.run(attemptId, nowMs, nowMs);
         return { state: 'unresolved' };
       });

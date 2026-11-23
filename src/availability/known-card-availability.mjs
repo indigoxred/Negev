@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { combinedMultipartProof } from './multipart-availability.mjs';
 import { evaluateExactAvailability } from './exact-availability.mjs';
 import { provePhysicalPlexPart } from './physical-plex-part.mjs';
 
@@ -160,6 +161,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
           provenParts.push({ fileId: file.fileId, libraryId: part.libraryId,
             ratingKey: part.ratingKey, partId: part.partId,
             storageKey: witness.storageKey,
+            ...(part.mediaId !== undefined ? { mediaId: part.mediaId,
+              partIndex: part.partIndex, partCount: part.partCount } : {}),
             ...(part.cardType === 'episode' && part.itemGuid !== episodeGuid
               ? { presentation: 'alternate_card' } : {}) });
         } else if (['file_unavailable', 'file_changed'].includes(witness?.reason)) {
@@ -173,9 +176,12 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
       episodeIds: file.episodeIds, coverage: file.coverage,
       storageKey: `unmatched:${file.fileId}` });
   }
-  const result = evaluateExactAvailability({ target,
+  let result = evaluateExactAvailability({ target,
     shoko: { state: 'ok', complete: true, files },
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds });
+  if (result.state === 'held' && result.reason === 'partial_episode') {
+    result = combinedMultipartProof({ target, files, provenParts }) ?? result;
+  }
   // A registered playable file is positive proof even if a sibling could
   // not be parsed. A partial Shoko response cannot support a negative claim.
   if (shoko.complete === false && result.state !== 'available') {
@@ -184,6 +190,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   // One known card cannot establish a complete negative observation.
   if (result.state === 'absent') return unknown('observer_incomplete');
   if (result.state === 'available') {
+    if (result.multipart) return result;
     const proof = provenParts.find((part) => part.fileId === result.fileId &&
       Number.isSafeInteger(part.ratingKey) && part.ratingKey > 0 &&
       Number.isSafeInteger(part.partId) && part.partId > 0);

@@ -39,7 +39,7 @@ export function parsePlexCardParts({ item, containerLibraryId,
     if (!Array.isArray(media?.Part) || media.Part.length === 0 || media.Part.length > 20) {
       return unavailable();
     }
-    for (const part of media.Part) {
+    for (const [partIndex, part] of media.Part.entries()) {
       const partId = positive(part?.id);
       const size = positive(part?.size);
       if (partId === null || size === null || !validPath(part.file) || seen.has(partId)) {
@@ -47,6 +47,8 @@ export function parsePlexCardParts({ item, containerLibraryId,
       }
       seen.add(partId);
       parts.push({ partId, plexPath: part.file, size,
+        ...(media.Part.length > 1 && positive(media.id) !== null
+          ? { mediaId: positive(media.id), partIndex, partCount: media.Part.length } : {}),
         libraryId: positive(libraryId), cardType: expectedType,
         itemGuid, showGuid, externalGuids });
     }

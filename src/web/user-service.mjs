@@ -1236,6 +1236,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             observeCurrentPublic(target, undefined, true),
           readPublicCoverage: readRequestCoverage,
           discoverCandidates, previewCandidate, releaseQueries,
+          selectAutoRelease: releaseSelection ? (id, revision) => releaseSelection.auto(id, revision) : undefined,
           hydrateMetadata: shokoHydration ? hydrateAndWake : null,
           loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
             loadPage: async ({ page }) => {
