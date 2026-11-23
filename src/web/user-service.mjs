@@ -348,10 +348,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         observedShoko, { includeProof }));
     };
     const observeDisplayPublic = async (target) => {
-      const live = await observeCurrentPublic(target);
+      const live = await observeCurrentPublic(target,undefined,true);
       if (live?.state === 'available') {
-        queueCompositeObservation({queue:directAvailability,target,result:live,nowMs:now(),canonicalAvailable:fileProofs?.getCurrent(target).state==='available'});
-        return live;
+        const canonical=fileProofs?.getCurrent(target);
+      queueCompositeObservation({queue:directAvailability,target,result:live,nowMs:now(),canonicalAvailable:canonical?.state==='available',canonicalPresentation:canonical?.presentation});
+        return live.proof?.presentation==='alternate_card'?{...live,presentation:'alternate_card'}:live;
       }
       const hasShokoFile = target.kind === 'series' &&
         inventory.getObservedFileIds(target).length > 0;
