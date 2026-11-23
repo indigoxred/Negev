@@ -11,17 +11,17 @@ import {createAcquisitionRequestProcessor} from '../src/acquisition/acquisition-
 import {verifyCachedPositiveCoverage} from '../src/acquisition/verify-cached-positive-coverage.mjs';
 import {createPipelineScheduler} from '../src/acquisition/acquisition-pipeline-scheduler.mjs';
 
-async function fixture(t,count){
+async function fixture(t,count,{outage=false}={}){
  const root=await mkdtemp(path.join(tmpdir(),'negev-coverage-continuation-')),dbPath=path.join(root,'db.sqlite');
  const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath),cleanups=[];
  const ids=Array.from({length:count},(_,i)=>1001+i),requestId=requests.submit({requesterId:1,requestKey:'desired-completed',nowMs:100,intent:{state:'ready',title:'Example',anidbId:42,kind:'series',monitorFuture:false,episodeIds:ids}}).requestId;
- let queue=openAcquisitionRequestQueue(dbPath),memo=new Map(),clock=1000;const reads=[],searches=[];
+ let queue=openAcquisitionRequestQueue(dbPath),memo=new Map(),clock=1000,unavailable=outage;const reads=[],searches=[];
  t.after(async()=>{for(const f of cleanups)await f();queue.close();acquisitions.close();requests.close();await rm(root,{recursive:true,force:true})});
  const processor=createAcquisitionRequestProcessor({readRequest:id=>requests.getRequest(id),now:()=>clock,
   discoverCandidates:async input=>{searches.push(input);throw Error('all episodes already exist; search is forbidden')},previewCandidate:async()=>{throw Error('no preview')},loadDetail:async()=>null,submitCandidate:async()=>{throw Error('no download')},
   readPublicCoverage:request=>verifyCachedPositiveCoverage({request,cached:{targetCount:count,verifiedTargets:count,availableEpisodeIds:ids},cache:memo,now:()=>clock,readRevision:()=>0,
-   readShoko:async({episodeId})=>{reads.push(episodeId);return {state:'ok',complete:true,files:[{fileId:episodeId}]}},readPublic:async()=>({state:'available'})})});
- return {dbPath,requestId,reads,searches,ids,cleanup:f=>cleanups.push(f),get clock(){return clock},set clock(v){clock=v},get queue(){return queue},reopen({cold=false}={}){queue.close();queue=openAcquisitionRequestQueue(dbPath);if(cold)memo=new Map()},worker:()=>createAcquisitionPageWorker({queue,processRequest:processor,now:()=>clock,limit:1})};
+   readShoko:async({episodeId})=>{reads.push(episodeId);return unavailable?{state:'unavailable'}:{state:'ok',complete:true,files:[{fileId:episodeId}]}},readPublic:async()=>({state:'available'})})});
+ return {setOutage:value=>{unavailable=value},dbPath,requestId,reads,searches,ids,cleanup:f=>cleanups.push(f),get clock(){return clock},set clock(v){clock=v},get queue(){return queue},reopen({cold=false}={}){queue.close();queue=openAcquisitionRequestQueue(dbPath);if(cold)memo=new Map()},worker:()=>createAcquisitionPageWorker({queue,processRequest:processor,now:()=>clock,limit:1})};
 }
 
 for(const count of [24,26,220])test('actual request queue/worker/scheduler finishes bounded '+count+'-episode coverage before proof expiry',async t=>{
@@ -49,4 +49,19 @@ test('upgrade brings old generic availability delays forward without changing un
  d.exec('ALTER TABLE acquisition_request_checks DROP COLUMN coverage_policy_revision');f.reopen();assert.equal(f.queue.getResult(f.requestId).nextDueMs,f.clock+60000);
  d.prepare('UPDATE acquisition_request_checks SET next_due_ms=? WHERE request_id=?').run(f.clock+1800000,f.requestId);f.reopen();assert.equal(f.queue.getResult(f.requestId).nextDueMs,f.clock+1800000,'fresh genuine uncertainty is not rearmed by every reopen');
  d.prepare("UPDATE acquisition_request_checks SET reason='no_safe_release',next_due_ms=? WHERE request_id=?").run(f.clock+1800000,f.requestId);f.reopen();assert.equal(f.queue.getResult(f.requestId).nextDueMs,f.clock+1800000);
+});
+
+for(const count of [26,220])test('real queue and scheduler finish an outage sweep then back off: '+count,async t=>{
+ const f=await fixture(t,count,{outage:true}),timers=new Map();let sequence=0,checks=0;const worker=f.worker();
+ const scheduler=createPipelineScheduler({now:()=>f.clock,setTimer:(fn,ms)=>{const id=++sequence;timers.set(id,{fn,ms});return id},clearTimer:id=>timers.delete(id),pipeline:{initialize:async()=>({state:'reconciled'}),close:()=>{},listMetadataRetries:()=>f.queue.listMetadataRetries({nowMs:f.clock}),tickCompletions:async()=>({state:'idle'}),tickPublish:async()=>({state:'idle'}),tickStarts:async()=>({state:'idle'}),tickRequests:async o=>{const r=await worker.runOnce(o);if(r.results.length)checks++;return r}}});f.cleanup(()=>scheduler.stop());await scheduler.start();
+ for(let i=0;i<1500&&checks<56&&f.queue.getResult(f.requestId)?.reason!=='availability_unverified';i++){const [id,timer]=timers.entries().next().value;timers.delete(id);f.clock+=timer.ms;await timer.fn();await new Promise(setImmediate);}
+ const r=f.queue.getResult(f.requestId);assert.equal(r.reason,'availability_unverified',JSON.stringify({checks,reads:f.reads.length,r}));assert.equal(r.nextDueMs,f.clock+1800000);assert.equal(f.reads.length,count);assert.equal(f.searches.length,0);
+ f.setOutage(false);f.clock=r.nextDueMs;for(let i=0;i<20&&f.queue.getResult(f.requestId).reason!=='request_fully_available';i++){await f.worker().runOnce({priorityRequestId:f.requestId});f.clock=f.queue.getResult(f.requestId).nextDueMs;}
+ assert.equal(f.queue.getResult(f.requestId).reason,'request_fully_available');assert.equal(f.reads.length,count*2);assert.equal(f.searches.length,0);
+});
+
+test('cold restart during a large outage sweep still finishes bounded work without recreating a request',async t=>{
+ const f=await fixture(t,220,{outage:true});for(let i=0;i<2;i++){await f.worker().runOnce({priorityRequestId:f.requestId});f.clock=f.queue.getResult(f.requestId).nextDueMs;}f.reopen({cold:true});
+ for(let i=0;i<20&&f.queue.getResult(f.requestId).reason!=='availability_unverified';i++){await f.worker().runOnce({priorityRequestId:f.requestId});f.clock=f.queue.getResult(f.requestId).nextDueMs;}
+ assert.equal(f.queue.getResult(f.requestId).reason,'availability_unverified');assert.equal(f.reads.length,252);assert.equal(f.searches.length,0);
 });

@@ -148,3 +148,9 @@ for(const mode of ['auto','manual'])for(const language of ['German','French','Sp
   const selected=await f.selection.choose(f.requestId,unfiltered.items[0].token,f.selection.snapshot(f.requestId).revision);assert.equal(selected.state,'held');assert.equal(selected.reason,'release_not_eligible');assert.deepEqual(f.added,[]);
  }
 });
+
+for(const mode of ['auto','manual'])for(const tag of ['English / Dutch / German Subtitles Only','English SDH / German Subtitles Only'])test('actual '+mode+' worker accepts complete multilingual clause: '+tag,async t=>{
+ const f=await fixture(t,{registered:true,items:[release('multilingual','[G] Example - 01 1080p [Japanese Audio] ['+tag+']')]});
+ if(mode==='manual'){const initial=f.selection.snapshot(f.requestId);const begun=f.selection.begin(f.requestId,'manual',initial.revision);const found=await f.selection.search(f.requestId);assert.equal(found.items.length,1);const inspected=await f.selection.inspect(f.requestId,found.items[0].token);assert.equal(inspected.state,'preflight');assert.equal((await f.selection.choose(f.requestId,found.items[0].token,begun.control.revision)).state,'updated');}
+ const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,['multilingual']);await f.run();assert.deepEqual(f.added,['multilingual']);
+});

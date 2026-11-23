@@ -1,3 +1,7 @@
+// Sweep progress is not availability evidence. Its lifetime is independent of
+// the short provider-uncertainty cache and is discarded with that cache.
+const sweepsByCache = new WeakMap();
+const SWEEP_LIMIT_MS = 15 * 60_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
 // Cached positives select which exact targets to inspect; they are not proof
@@ -26,17 +30,35 @@ export async function verifyCachedPositiveCoverage({ request, cached,
       timeoutMs < 1 || timeoutMs > 10_000) {
     throw new TypeError('Invalid cached positive coverage check');
   }
+  const protectedIds=[...new Set([...cached.availableEpisodeIds,...ownedEpisodeIds])].sort((a,b)=>a-b);
+  const scope=JSON.stringify([request.id??null,request.anidbId,request.kind,request.episodeIds,protectedIds]);
+  let sweeps=sweepsByCache.get(cache);
+  if(!sweeps){sweeps=new Map();sweepsByCache.set(cache,sweeps);}
+  let sweep=sweeps.get(scope);
+  for(const [key,value] of sweeps)if(key!==scope&&value.until<=now())sweeps.delete(key);
+  if(!sweep){
+    // Capacity cannot evict an unfinished sweep and make it spin from zero.
+    // Protect overflow scopes as uncertain until their normal later retry.
+    sweep={until:sweeps.size<64?now()+SWEEP_LIMIT_MS:0,visited:new Map()};
+    if(sweep.until)sweeps.set(scope,sweep);
+  }
+  const expired=now()>=sweep.until;
   const confirmed = new Set(), uncertain = new Set();
   const pending = [];
   const keyFor = (id) => request.anidbId + ':' + request.kind + ':' + id;
   const targetFor = (id) => ({ anidbId: request.anidbId, kind: request.kind, episodeId: id });
-  for (const id of new Set([...cached.availableEpisodeIds, ...ownedEpisodeIds])) {
+  for (const id of protectedIds) {
     const target = targetFor(id), saved = cache.get(keyFor(id));
     let revision;
     try { revision = readRevision(target); } catch { uncertain.add(id); continue; }
     if (saved && saved.until > now() && saved.revision === revision) {
+      sweep.visited.set(id,revision);
       if (saved.state === 'available') confirmed.add(id);
       else if (saved.state !== 'absent') uncertain.add(id);
+    } else if(expired||sweep.visited.has(id)&&sweep.visited.get(id)===revision){
+      // An expired result cannot prove availability or absence. It has still
+      // been observed this pass, so protect it without restarting the sweep.
+      uncertain.add(id);
     } else pending.push({ id, target, revision });
   }
   pending.sort((left, right) => (cache.get(keyFor(left.id))?.checkedMs ?? -1) -
@@ -70,6 +92,7 @@ export async function verifyCachedPositiveCoverage({ request, cached,
         if (readRevision(target) !== revision) state = 'uncertain';
       } catch { state = 'uncertain'; }
       finally { clearTimeout(timer); }
+      sweep.visited.set(id,revision);
       cache.delete(keyFor(id));
       cache.set(keyFor(id), { state, revision, checkedMs: now(), until: now() +
         (state === 'available' ? 300_000 : state === 'absent' ? 10_000 : 5_000) });
@@ -79,6 +102,7 @@ export async function verifyCachedPositiveCoverage({ request, cached,
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, selected.length) }, () => worker()));
+  if(!deferred.size)sweeps.delete(scope);
   const availableEpisodeIds = request.episodeIds.filter(id => confirmed.has(id));
   return { verifiedTargets: availableEpisodeIds.length,
     targetCount: request.episodeIds.length, availableEpisodeIds,
