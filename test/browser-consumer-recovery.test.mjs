@@ -1,16 +1,14 @@
+import { findTestBrowser, browserSkipReason } from './helpers/browser-executable.mjs';
 import { preferenceEditorReady, preferenceSaveReady } from './helpers/preference-readiness.mjs';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const browser = [process.env.NEGEV_TEST_BROWSER,
-  'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-  '/usr/bin/google-chrome', '/usr/bin/chromium'].filter(Boolean).find(existsSync);
+const browser = findTestBrowser();
 const root = new URL('../src/web/public/', import.meta.url);
 const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
   'card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
@@ -25,7 +23,7 @@ const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
-  { skip: browser ? false : 'No Chrome or Edge browser installed' }, async () => {
+  { skip: browser ? false : browserSkipReason }, async () => {
     let monitoredTitle = false;let seasonResult=null;
     let previewPending=false;let previewExisting=false;let previewOpens=0;const preferenceCommands=[];const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
