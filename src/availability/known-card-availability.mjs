@@ -163,7 +163,8 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
             storageKey: witness.storageKey,
             ...(part.mediaId !== undefined ? { mediaId: part.mediaId,
               partIndex: part.partIndex, partCount: part.partCount } : {}),
-            ...(part.cardType === 'episode' && part.itemGuid !== episodeGuid
+            ...(part.cardType === 'episode' && part.itemGuid !== episodeGuid &&
+                !segmentEpisodeGuid.test(part.itemGuid)
               ? { presentation: 'alternate_card' } : {}) });
         } else if (['file_unavailable', 'file_changed'].includes(witness?.reason)) {
           incompletePhysical = true;
