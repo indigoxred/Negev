@@ -32,15 +32,19 @@ export function createPlexIndexScheduler({ sections, tickPage, tickRecent,
   let position = 0;
   const visits = sources.map(() => 0);
   const recentOffsets = sources.map(() => 0);
+  const burstVisits = sources.map(() => 0);
   const runOnce = async () => {
     if (closed) return held('scheduler_closed');
     if (inFlight) return held('scheduler_busy');
     const current = position;
     const source = sources[current];
     position = (position + 1) % sources.length;
-    const burst = hasRecentArrival();
+    const arrival = hasRecentArrival();
+    // Reserve a full sweep/retry turn after three burst pages per source.
+    const burst = arrival && ++burstVisits[current] % 4 !== 0;
+    if (!arrival) burstVisits[current] = 0;
     if (!burst) visits[current]++;
-    const action = burst || visits[current] % recentEvery === 0 ? tickRecent : tickPage;
+    const action = burst || (!arrival && visits[current] % recentEvery === 0) ? tickRecent : tickPage;
     const input = burst ? { ...source, offset: recentOffsets[current] } : source;
     inFlight = Promise.resolve().then(() => action(input));
     try {

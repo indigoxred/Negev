@@ -171,3 +171,54 @@ test('a claimed installment retries a failed submit without duplicate requests',
     assert.equal(requests.countRequests(), 1);
     assert.equal(parents.listInstallments({ tvdbId: 100 })[0].requestId, 1);
   }));
+
+test('reciprocal traversal continues beyond its budget after ledger restart without unrelated acquisition', async () => {
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-frontier-')); const dbPath=path.join(dir,'db.sqlite');
+ let parents=openParentWatchLedger(dbPath); const requests=openRequestLedger(dbPath); const batches=[];
+ try {
+  parents.adopt({tvdbId:100,requesterId:7,sourceSeriesId:42,nowMs:1000});
+  for(let tick=0;tick<4;tick++) {
+   const reads=[];
+   await reconcileParentWatch({parent:parents.listActive()[0],map,parents,requests,
+    loadDetail:async({anidbId})=>detail(anidbId,anidbId===30?{}:{endDate:'2026-11-02'}),
+    readRelations:async id=>{reads.push(id);return {state:'related_titles',anidbId:id,items:[
+     ...(id>11?[{anidbId:id-1,relation:'Prequel'}]:[]),
+     ...(id<30?[{anidbId:id+1,relation:'Sequel'}]:[]),
+     {anidbId:999,relation:'Other'}]};},today:'2026-11-12',nowMs:2000+tick});
+   batches.push(reads);parents.close();parents=openParentWatchLedger(dbPath);
+  }
+  assert.ok(batches.every(reads=>reads.length<=12));
+  assert.deepEqual(parents.listInstallments({tvdbId:100}).map(x=>x.anidbId),[30]);
+ } finally {parents.close();requests.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('an unavailable first sequel cannot block a healthy reciprocal sibling', async () => withLedgers(async ({parents,requests})=>{
+ const result=await reconcileParentWatch({parent:parents.listActive()[0],map,parents,requests,
+  readRelations:async id=>id===12?{state:'unavailable'}:{state:'related_titles',anidbId:id,items:id===11?
+   [{anidbId:12,relation:'Sequel'},{anidbId:13,relation:'Sequel'}]:[{anidbId:11,relation:'Prequel'}]},
+  loadDetail:async({anidbId})=>detail(anidbId,anidbId===11?{endDate:'2026-11-02'}:{}),today:'2026-11-12',nowMs:2000});
+ assert.deepEqual(result.created,[13]);assert.ok(result.relationHolds.includes(11));
+}));
+
+test('expired persisted reciprocal evidence cannot create a new watch during an outage', async () => withLedgers(async ({parents,requests})=>{
+ const input={parent:parents.listActive()[0],map,parents,requests,today:'2026-11-12',
+  readRelations:async id=>({state:'related_titles',anidbId:id,items:[...(id>11?[{anidbId:id-1,relation:'Prequel'}]:[]),...(id<30?[{anidbId:id+1,relation:'Sequel'}]:[])]})};
+ await reconcileParentWatch({...input,loadDetail:async()=>({state:'unavailable'}),nowMs:2000});
+ const result=await reconcileParentWatch({...input,readRelations:async()=>({state:'unavailable'}),
+  loadDetail:async({anidbId})=>detail(anidbId,anidbId===11?{endDate:'2026-11-02'}:{}),nowMs:2000+86400001});
+ assert.deepEqual(result.created,[]);assert.equal(requests.countRequests(),0);
+}));
+
+test('a graph larger than old cache and candidate limits reaches its final exact sequel', async () => withLedgers(async ({parents,requests})=>{
+ let maxReads=0,maxDetails=0;
+ for(let tick=0;tick<30;tick++){
+  let reads=0,details=0;
+  await reconcileParentWatch({parent:parents.listActive()[0],map,parents,requests,today:'2026-11-12',nowMs:2000+tick,
+   readRelations:async id=>{reads++;return {state:'related_titles',anidbId:id,items:[
+    ...(id>11?[{anidbId:id-1,relation:'Prequel'}]:[]),...(id<250?[{anidbId:id+1,relation:'Sequel'}]:[])]}},
+   loadDetail:async({anidbId})=>{details++;return detail(anidbId,anidbId===250?{}:{endDate:'2026-11-02'})}});
+  maxReads=Math.max(maxReads,reads);maxDetails=Math.max(maxDetails,details);
+ }
+ assert.ok(maxReads<=12);assert.ok(maxDetails<=100);
+ assert.deepEqual(parents.listInstallments({tvdbId:100}).map(x=>x.anidbId),[250]);
+}));

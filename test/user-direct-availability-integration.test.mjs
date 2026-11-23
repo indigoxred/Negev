@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { openAccountLedger } from '../src/auth/account-ledger.mjs';
-import { createUserService } from '../src/web/user-service.mjs';
+import { createUserService, primeSavedScope } from './helpers/scoped-user-service.mjs';
 
 test('a signed-in user sees a manual Shoko import only after exact public Plex discovery', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-direct-status-'));

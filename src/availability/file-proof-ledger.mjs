@@ -8,11 +8,11 @@ const held = () => ({ state: 'held', reason: 'invalid_exact_proof' });
 // Positive evidence from the internal exact Shoko/public Plex same-file
 // observer. A stale proof is retained as history, never presented as current.
 export function openFileProofLedger(dbPath, { positiveLifetimeMs,
-  now = Date.now, discardPriorProofs = false } = {}) {
+  now = Date.now, discardPriorProofs = false, evidenceTrusted = () => true } = {}) {
   if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
       !Number.isSafeInteger(positiveLifetimeMs) ||
       positiveLifetimeMs < 1 || positiveLifetimeMs > 7 * 24 * 60 * 60_000 ||
-      typeof now !== 'function' || typeof discardPriorProofs !== 'boolean') {
+      typeof now !== 'function' || typeof discardPriorProofs !== 'boolean' || typeof evidenceTrusted !== 'function') {
     throw new TypeError('Invalid file proof ledger configuration');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -44,6 +44,9 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         `DELETE FROM file_availability_proofs AS f WHERE EXISTS(SELECT 1 FROM plex_card_observations c,json_each(CASE WHEN json_valid(c.identity_signature) THEN c.identity_signature ELSE '[]' END,'$[1]') p
         WHERE c.library_id=f.library_id AND c.rating_key=f.rating_key AND json_extract(p.value,'$[0]')=f.part_id AND json_extract(p.value,'$[9]')>1)`);
     }
+    // A sparse payload index keeps the component arm of source invalidation
+    // in SQLite's multi-index OR plan instead of scanning every scalar proof.
+    db.exec('CREATE INDEX IF NOT EXISTS file_proof_component_payload ON file_availability_proofs(components_json) WHERE components_json IS NOT NULL');
     db.exec('CREATE INDEX IF NOT EXISTS file_proof_components ON file_availability_proofs(anidb_id,episode_id) WHERE components_json IS NOT NULL');
     db.exec(`CREATE INDEX IF NOT EXISTS file_proof_episode
       ON file_availability_proofs(anidb_id,episode_id,verified_ms DESC)`);
@@ -169,6 +172,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
       if (!validId(anidbId) || !validId(episodeId)) {
         throw new TypeError('Invalid file proof target');
       }
+      if (!evidenceTrusted()) return {state:'unknown'};
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId,episodeId);
@@ -183,6 +187,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     },
     getRecentAvailableIds({ anidbId } = {}) {
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      if (!evidenceTrusted()) return [];
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId);
@@ -192,6 +197,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
     },
     getCurrentTitleCard({ anidbId } = {}) {
       if (!validId(anidbId)) throw new TypeError('Invalid file proof anime');
+      if (!evidenceTrusted()) return null;
       const nowMs = now();
       if (!validTime(nowMs)) throw new TypeError('Invalid file proof clock');
       prune(anidbId);
@@ -201,6 +207,7 @@ export function openFileProofLedger(dbPath, { positiveLifetimeMs,
         ratingKey: card.ratingKey } : null;
     },
     listCurrentTitles({ afterAnidbId = 0, limit = 20 } = {}) {
+      if (!evidenceTrusted()) return {items:[],nextAfterAnidbId:null};
       const nowMs = now();
       if (!Number.isSafeInteger(afterAnidbId) || afterAnidbId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50 ||

@@ -391,3 +391,22 @@ test('an arrival beyond the path limit requires full reconciliation after tracke
   assert.equal(consumer.getState().reconciliationNeeded, true);
   await consumer.close();
 });
+
+test('a missed hash can resolve only from the exact linked path observation and retains catch-up debt', async () => {
+ const consumer=createShokoEventConsumer({refreshFile:async()=>({state:'recorded_file',recognition:'linked'})});
+ const path={ManagedFolderID:1,RelativePath:'incoming.mkv'};
+ try {
+  consumer.accept('file:detected',[path]);
+  const [token]=consumer.snapshotPendingPathResolutions();
+  assert.equal(consumer.acknowledgeLinkedPathObservation({token,fileId:81,path:{...path,ManagedFolderID:2},result:{state:'recorded_file',recognition:'linked'}}).state,'held');
+  assert.equal(consumer.acknowledgeLinkedPathObservation({token,fileId:81,path,result:{state:'recorded_file',recognition:'provisional'}}).state,'held');
+  assert.equal(consumer.getArrivalState().pendingPaths,1);
+  assert.equal(consumer.acknowledgeLinkedPathObservation({token,fileId:81,path,result:{state:'recorded_file',recognition:'linked'}}).state,'resolved');
+  assert.equal(consumer.getArrivalState().pendingPaths,0);
+  assert.equal(consumer.getState().reconciliationNeeded,true);
+  assert.equal(consumer.acknowledgeReconciliation(consumer.getState().generation).state,'acknowledged');
+  consumer.accept('file:detected',[path]);
+  assert.equal(consumer.acknowledgeLinkedPathObservation({token,fileId:81,path,result:{state:'recorded_file',recognition:'linked'}}).state,'held');
+  assert.equal(consumer.getArrivalState().pendingPaths,1);
+ }finally{await consumer.close();}
+});

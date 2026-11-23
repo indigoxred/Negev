@@ -1266,7 +1266,8 @@ test('a v1 quality cursor revisits candidates skipped by transient provider fail
   const result = await process({ requestId: 4, candidateOffset: 1,
     scanStartedMs: 100,
     candidateFingerprint: `${oldFingerprint}:${oldOrder}|` });
-  assert.equal(result.nextCandidateOffset, 1);
+  // The failed strongest candidate is retried within its bounded quality window.
+  assert.equal(result.nextCandidateOffset, 0);
   assert.deepEqual(seen, ['candidate-1']);
 });
 

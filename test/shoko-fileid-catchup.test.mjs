@@ -50,5 +50,7 @@ test('changed head or a gap beyond the page budget does not advance', async () =
   assert.equal(moving.reason, 'file_id_head_changed');
   const gap = await scanShokoFileIdsSince({ sinceId: 1, pageSize: 2,
     maxPages: 1, readPage: async () => page([20088, 20087], 3) });
-  assert.equal(gap.reason, 'file_id_gap_exceeds_budget');
+  assert.equal(gap.state, 'continuing');
+  assert.deepEqual(gap.fileIds, [20087, 20088]);
+  assert.equal(gap.continuation.page, 2);
 });

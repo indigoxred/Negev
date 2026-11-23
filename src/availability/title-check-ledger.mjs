@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { createWitnessRevisions } from './witness-revisions.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -7,8 +8,9 @@ const positiveLifetimeMs = 30 * 60_000;
 
 // A title check is a durable, bounded read job. Its stored positive is never
 // media proof by itself; callers must use only recent exact observer results.
-export function openTitleCheckLedger(dbPath) {
-  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:') {
+export function openTitleCheckLedger(dbPath, { requireProof = false, evidenceTrusted = () => true } = {}) {
+  if (typeof dbPath !== 'string' || !dbPath || dbPath === ':memory:' ||
+    typeof requireProof !== 'boolean' || typeof evidenceTrusted !== 'function') {
     throw new TypeError('Durable title-check database required');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
@@ -44,16 +46,14 @@ export function openTitleCheckLedger(dbPath) {
       checked_ms INTEGER NOT NULL CHECK(checked_ms>=0),
       PRIMARY KEY(anidb_id,episode_id)
     ) STRICT`);
-    // Existing private ledgers predate the proof table. Only their latest
-    // generation can contribute an unexpired positive after this migration.
-    db.exec(`INSERT OR IGNORE INTO title_check_positive_proofs
-      (anidb_id,episode_id,checked_ms)
-      SELECT t.anidb_id,t.episode_id,t.checked_ms FROM title_check_targets t
-      JOIN title_check_jobs j ON j.anidb_id=t.anidb_id
-        AND j.generation=t.generation
-      WHERE t.state='available' AND t.checked_ms IS NOT NULL`);
+    if (!db.prepare('PRAGMA table_info(title_check_positive_proofs)').all()
+      .some(c => c.name === 'proof_json')) {
+      db.exec('ALTER TABLE title_check_positive_proofs ADD COLUMN proof_json TEXT');
+    }
+    if (requireProof) db.exec('DELETE FROM title_check_positive_proofs WHERE proof_json IS NULL');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
+  const witnessRevisions=createWitnessRevisions(db);
   const transaction = (work) => {
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -89,8 +89,8 @@ export function openTitleCheckLedger(dbPath) {
   const proofStatus = db.prepare(`SELECT checked_ms AS checkedMs
     FROM title_check_positive_proofs WHERE anidb_id=? AND episode_id=?`);
   const upsertProof = db.prepare(`INSERT INTO title_check_positive_proofs
-    (anidb_id,episode_id,checked_ms) VALUES (?,?,?)
-    ON CONFLICT(anidb_id,episode_id) DO UPDATE SET checked_ms=excluded.checked_ms
+    (anidb_id,episode_id,checked_ms,proof_json) VALUES (?,?,?,?)
+    ON CONFLICT(anidb_id,episode_id) DO UPDATE SET checked_ms=excluded.checked_ms,proof_json=excluded.proof_json
     WHERE checked_ms<=excluded.checked_ms`);
   const removeProof = db.prepare(`DELETE FROM title_check_positive_proofs
     WHERE anidb_id=? AND episode_id=? AND checked_ms<=?`);
@@ -130,6 +130,20 @@ export function openTitleCheckLedger(dbPath) {
     FROM title_check_positive_proofs WHERE anidb_id=?
       AND checked_ms>? AND checked_ms<=?
     ORDER BY episode_id LIMIT 10001`);
+  const eventId = (table) => db.prepare('SELECT 1 FROM sqlite_master WHERE name=?').get(table)
+    ? db.prepare(`SELECT COALESCE(MAX(id),0) AS id FROM ${table}`).get().id : 0;
+  const witnesses = (proof) => {
+    const parts = proof?.parts ?? (proof ? [proof] : []);
+    if (!Array.isArray(parts) || parts.length < 1 || parts.length > 8 ||
+      parts.some(p => ![p?.fileId,p?.libraryId,p?.ratingKey,p?.partId].every(validId))) return null;
+    if (proof.parts !== undefined && (parts.length < 2 || parts.some((p,i) =>
+      p.libraryId !== proof.libraryId || p.ratingKey !== proof.ratingKey ||
+      !validId(p.mediaId) || p.mediaId !== proof.mediaId || p.partIndex !== i ||
+      p.partCount !== parts.length) || ['fileId','partId'].some(k => new Set(parts.map(p=>p[k])).size !== parts.length))) return null;
+    return parts.map(({fileId,libraryId,ratingKey,partId})=>({fileId,libraryId,ratingKey,partId}));
+  };
+  const changed = (table, fence, sql, params) => eventId(table) > (fence ?? 0) &&
+    db.prepare(`SELECT 1 FROM ${table} WHERE id>? AND ${sql} LIMIT 1`).get(fence ?? 0,...params);
   const validReceipt = (receipt, state) =>
     receipt?.state === state && validId(receipt.anidbId) &&
     validId(receipt.generation) && validId(receipt.version);
@@ -174,6 +188,9 @@ export function openTitleCheckLedger(dbPath) {
         return { state: job.state === 'loading' ? 'claimed_page' : 'claimed_target',
           anidbId: job.anidbId, generation: job.generation,
           version: job.version + 1,
+          changeId: eventId('plex_card_change_events'),
+          shokoChangeId: eventId('shoko_file_change_events'),
+          witnessVersion: witnessRevisions.version(),
           ...(job.state === 'loading' ? { page: job.nextPage } :
             { episodeId: episode.episodeId, kind: job.kind }) };
       });
@@ -229,7 +246,7 @@ export function openTitleCheckLedger(dbPath) {
         return { state: 'recorded_page' };
       });
     },
-    recordTarget({ claim: receipt, status, checkedMs }) {
+    recordTarget({ claim: receipt, status, checkedMs, proof = null }) {
       if (!validReceipt(receipt, 'claimed_target') || !validId(receipt.episodeId) ||
           !['available', 'unknown'].includes(status) || !validTime(checkedMs)) {
         throw new TypeError('Invalid title target result');
@@ -240,12 +257,22 @@ export function openTitleCheckLedger(dbPath) {
             job.version !== receipt.version || job.state !== 'checking') {
           return { state: 'held', reason: 'stale_claim' };
         }
+        const parts = witnesses(proof);
+        if (status === 'available' && requireProof && !parts) status = 'unknown';
+        if (parts && parts.some(part =>
+          witnessRevisions.changed(part,receipt.witnessVersion ?? 0) ||
+          changed('plex_card_change_events',receipt.changeId,'library_id=? AND rating_key=?',[part.libraryId,part.ratingKey]) ||
+          changed('shoko_file_change_events',receipt.shokoChangeId,'file_id=?',[part.fileId]))) {
+          requeueJob.run(receipt.anidbId,receipt.generation);
+          return { state:'held', reason:'source_generation_changed' };
+        }
         if (recordTarget.run(status, checkedMs, receipt.anidbId,
           receipt.generation, receipt.episodeId).changes !== 1) {
           return { state: 'held', reason: 'stale_claim' };
         }
         if (status === 'available') {
-          upsertProof.run(receipt.anidbId, receipt.episodeId, checkedMs);
+          upsertProof.run(receipt.anidbId, receipt.episodeId, checkedMs,
+            parts ? JSON.stringify(parts) : null);
         } else {
           removeProof.run(receipt.anidbId, receipt.episodeId, checkedMs);
         }
@@ -309,10 +336,11 @@ export function openTitleCheckLedger(dbPath) {
       const retained = lastVerifiedCount.get(anidbId, nowMs);
       return { state: job.state, generation: job.generation,
         totalCount: job.totalCount, checkedCount: row.checkedCount,
-        recentAvailableCount: recent.count,
-        lastVerifiedAvailableCount: retained.count };
+        recentAvailableCount: evidenceTrusted() ? recent.count : 0,
+        lastVerifiedAvailableCount: evidenceTrusted() ? retained.count : 0 };
     },
     getTargetStatus({ anidbId, episodeId, nowMs }) {
+      if (!evidenceTrusted()) return {state:'unknown'};
       if (!validId(anidbId) || !validId(episodeId) || !validTime(nowMs)) {
         throw new TypeError('Invalid title target status query');
       }
@@ -324,6 +352,7 @@ export function openTitleCheckLedger(dbPath) {
         ? { state: 'available' } : { state: 'previously_available' };
     },
     getRecentAvailableIds({ anidbId, nowMs }) {
+      if (!evidenceTrusted()) return [];
       if (!validId(anidbId) || !validTime(nowMs)) {
         throw new TypeError('Invalid title coverage query');
       }

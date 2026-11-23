@@ -13,6 +13,8 @@ import { probeFirstTimePublicSections } from
 import { readPlexLibrarySources } from './plex-library-sources.mjs';
 import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
+import { openAvailabilityScope } from './availability-scope.mjs';
+import { readBoundedJson } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const changedCard = () => ({ state: 'unknown',
@@ -34,20 +36,65 @@ const validSections = (sections) => sections &&
 export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
   shokoApiKey, plexBaseUrl, plexToken, publicSections, shokoMount,
   plexMount, plexMounts, guidProbe = false, sourcePolicy = null,
-  fetchImpl = fetch, now = Date.now } = {}) {
+  fetchImpl = fetch, now = Date.now, enforceScope = false } = {}) {
   if (!validSections(publicSections) ||
       typeof shokoBaseUrl !== 'string' || !shokoBaseUrl ||
       typeof shokoApiKey !== 'string' || !shokoApiKey ||
       typeof plexBaseUrl !== 'string' || !plexBaseUrl ||
       typeof plexToken !== 'string' || !plexToken ||
       typeof fetchImpl !== 'function' || typeof now !== 'function' ||
-      typeof guidProbe !== 'boolean' ||
+      typeof guidProbe !== 'boolean' || typeof enforceScope !== 'boolean' ||
       (sourcePolicy !== null && (!Array.isArray(sourcePolicy) ||
         sourcePolicy.length < 1 || sourcePolicy.length > 4)) ||
       (guidProbe && publicSections.episode.length + publicSections.movie.length > 4)) {
     throw new TypeError('Invalid Plex availability service');
   }
   const index = openPlexCardIndex(dbPath);
+  const scope = enforceScope ? openAvailabilityScope(dbPath) : null;
+  let trustedUntil = -1, retryAfter = 0, scopeRead, closed = false, scopeGeneration = null;
+  const scopeAbort = new AbortController();
+  const isScopeCurrent = () => !closed && (!enforceScope || (now() >= 0 && now() < trustedUntil));
+  const ensureScope = () => {
+    if (closed) return Promise.resolve({state:'held',reason:'public_scope_unverified'});
+    if (isScopeCurrent()) return Promise.resolve({state:'ready'});
+    if (scopeRead) return scopeRead;
+    if (now() < retryAfter) return Promise.resolve({state:'held',reason:'public_scope_unverified'});
+    scopeRead = (async()=>{
+      try {
+        const url = new URL('/identity',plexBaseUrl);
+        const response = await fetchImpl(url,{method:'GET',redirect:'manual',
+          headers:{'X-Plex-Token':plexToken,Accept:'application/json'},
+          signal:AbortSignal.any([scopeAbort.signal,AbortSignal.timeout(10000)])});
+        const body=response.status===200 ? await readBoundedJson(response,100000) : null;
+        const machine=body?.MediaContainer?.machineIdentifier;
+        if (closed) throw new Error('Observer closed');
+        if(typeof machine!=='string' || !/^[A-Za-z0-9_-]{1,256}$/.test(machine)) throw new Error('Missing Plex server identity');
+        const endpoint = value => { const u=new URL(value); return u.origin+u.pathname; };
+        const reconciled=scope.reconcile({serverIdentity:JSON.stringify([machine,endpoint(plexBaseUrl),endpoint(shokoBaseUrl)]),
+          episodeLibraryIds:publicSections.episode,movieLibraryIds:publicSections.movie,
+          shokoMount,plexMounts:plexMounts ?? (plexMount?[plexMount]:[]),observedMs:now()});
+        scopeGeneration=reconciled.generation;
+        trustedUntil=now()+5*60000;retryAfter=0;
+        return {state:'ready'};
+      }catch {
+        trustedUntil=-1;retryAfter=now()+30000;
+        return {state:'held',reason:'public_scope_unverified'};
+      }finally {scopeRead=undefined;}
+    })();
+    return scopeRead;
+  };
+  const sameScope = generation => isScopeCurrent() && generation === scopeGeneration;
+  // Each operation receives its own captured generation. Every synchronous
+  // index access is fenced, including commits after asynchronous page/card or
+  // physical reads; an old server response cannot repopulate the new index.
+  const scopedIndex = generation => Object.fromEntries([
+    'getCursor','advanceCursor','recordCard','forgetCard','deferCard','nextRetry',
+    'clearRetry','scheduleOldestCardRecheck','lookupCards','lookupCardsByCandidateKey',
+    'getCardRevision',
+  ].filter(name=>typeof index[name]==='function').map(name=>[name,(...args)=>{
+    if(!sameScope(generation)) throw new Error('Public scope generation changed');
+    return index[name](...args);
+  }]));
   const allowed = ({ libraryId, kind }) =>
     ['episode', 'movie'].includes(kind) && publicSections[kind].includes(libraryId);
   const readCard = (input) => readPlexItemParts({ baseUrl: plexBaseUrl,
@@ -100,7 +147,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     elapsedMs: Math.max(0, Math.ceil(performance.now() - started)) });
   const readShoko = (input) => readShokoEpisodeFiles({ baseUrl: shokoBaseUrl,
     apiKey: shokoApiKey, ...input, purpose: 'availability', fetchImpl });
-  const indexProvenGuidCard = async (result, target, shoko) => {
+  const indexProvenGuidCard = async (result, target, shoko, generation) => {
     const proof = result?.proof;
     if (result?.state !== 'available' || !validId(proof?.libraryId) ||
         !validId(proof.ratingKey) || !validId(proof.partId) ||
@@ -124,6 +171,7 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
           rechecked.proof?.partId !== proof.partId ||
           rechecked.proof?.storageKey !== proof.storageKey ||
           (result.multipart && JSON.stringify(rechecked.proof?.parts) !== JSON.stringify(proof.parts))) return changedCard();
+      if(!sameScope(generation)) return changedCard();
       index.recordCard({ libraryId: proof.libraryId,
         ratingKey: proof.ratingKey, kind, parts: card.parts,
         observedMs: now() });
@@ -133,10 +181,15 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
     } catch { return changedCard(); }
   };
   return {
+    ensureScope,
+    isScopeCurrent,
+    getScopeGeneration:()=>isScopeCurrent() ? scopeGeneration : null,
     // Internal file-centric path: the caller must obtain this candidate from
     // a fresh Shoko file read. The exact Plex card and physical part are still
     // rechecked before returning proof.
-    observeFileCandidate({ candidate, target, budget } = {}) {
+    async observeFileCandidate({ candidate, target, budget } = {}) {
+      if ((await ensureScope()).state !== 'ready') return {state:'busy',reason:'public_scope_unverified'};
+      const generation=scopeGeneration;
       const shared = budget ?? { cardReads: 0, physicalProbes: 0 };
       if (!Number.isSafeInteger(shared.cardReads) || shared.cardReads < 0 ||
           shared.cardReads > 10 ||
@@ -162,12 +215,17 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       const publicLibraryIds = target?.kind === 'movie'
         ? [...publicSections.episode, ...publicSections.movie]
         : publicSections.episode;
-      return observeFileCandidateTarget({ candidate, target,
-        publicLibraryIds, cardIndex: index, readPlex: readBudgetedCard,
-        probeImpl: probeBudgeted, shokoMount, plexMount, plexMounts, now });
+      try {
+        const result=await observeFileCandidateTarget({ candidate, target,
+          publicLibraryIds, cardIndex: scopedIndex(generation), readPlex: readBudgetedCard,
+          probeImpl: probeBudgeted, shokoMount, plexMount, plexMounts, now });
+        return sameScope(generation)?result:changedCard();
+      }catch {return changedCard();}
     },
-    probeFirstTimeSections({ kind } = {}) {
-      return probeFirstTimePublicSections({ kind, publicSections,
+    async probeFirstTimeSections({ kind } = {}) {
+      if ((await ensureScope()).state !== 'ready') return {state:'busy',reason:'public_scope_unverified'};
+      const generation=scopeGeneration;
+      const result=await probeFirstTimePublicSections({ kind, publicSections,
         readPage: (input) => readPlexSectionKeys({
           baseUrl: plexBaseUrl, token: plexToken, ...input, fetchImpl }),
         ...(sourcePolicy === null ? {} : {
@@ -176,8 +234,12 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
             baseUrl: plexBaseUrl, token: plexToken, libraryIds, fetchImpl }),
         }),
       });
+      return sameScope(generation)?result:changedCard();
     },
     async tick({ libraryId, kind, includeLoad = false }) {
+      const verified=await ensureScope();
+      if (verified.state !== 'ready') return verified;
+      const generation=scopeGeneration,bound=scopedIndex(generation);
       if (!allowed({ libraryId, kind })) {
         return { state: 'held', reason: 'library_not_allowed' };
       }
@@ -185,35 +247,47 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
       const load = { sectionPages: 0, exactCardReads: 0,
         candidateProbes: 0 };
       const readers = indexReaders(load);
-      const worker = createPlexCardPageWorker({ libraryId, kind, index, now,
+      const worker = createPlexCardPageWorker({ libraryId, kind, index:bound, now,
         ...readers });
-      const page = await worker.tick();
+      let page;
+      try {page=await worker.tick();}catch {return changedCard();}
+      if(!sameScope(generation))return changedCard();
       // A changing addedAt page can invalidate every full sweep. Recheck one
       // older indexed card directly instead of treating a page omission as
       // proof of removal; the existing retry worker enforces the read cap.
-      index.scheduleOldestCardRecheck({ libraryId, kind, nowMs: now() });
-      const retry = await retryOnePlexCard({ libraryId, kind, index, now,
-        readCard: readers.readCard });
+      bound.scheduleOldestCardRecheck({ libraryId, kind, nowMs: now() });
+      let retry;
+      try {retry = await retryOnePlexCard({ libraryId, kind, index:bound, now,
+        readCard: readers.readCard });}catch{return changedCard();}
+      if(!sameScope(generation))return changedCard();
       const result = retry.state === 'no_due_retry' ? page :
         { ...page, retry: retry.state };
       return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
         result;
     },
     async scanRecent({ libraryId, kind, offset = 0, includeLoad = false }) {
+      const verified=await ensureScope();
+      if (verified.state !== 'ready') return verified;
+      const generation=scopeGeneration;
       if (!allowed({ libraryId, kind }) || ![0, 5, 10].includes(offset)) {
         return { state: 'held', reason: 'library_not_allowed' };
       }
       const started = performance.now();
       const load = { sectionPages: 0, exactCardReads: 0,
         candidateProbes: 0 };
-      const result = await indexPlexCardPage({ libraryId, kind, offset,
-        index, now, ...indexReaders(load) });
+      let result;
+      try {result=await indexPlexCardPage({ libraryId, kind, offset,
+        index:scopedIndex(generation), now, ...indexReaders(load) });}
+      catch{return changedCard();}
+      if(!sameScope(generation))return changedCard();
       return includeLoad ? { ...result, load: loadSnapshot(load, started) } :
         result;
     },
     // observedShoko is supplied only by the internal presence probe, after its
     // own Shoko read. Never accept this value from a client request body.
     async observeTarget(target, observedShoko, { includeProof = false } = {}) {
+      if ((await ensureScope()).state !== 'ready') return {state:'busy',reason:'public_scope_unverified'};
+      const generation=scopeGeneration;
       if (!validId(target?.anidbId) || !validId(target.episodeId) ||
           !['series', 'movie'].includes(target.kind)) {
         throw new TypeError('Invalid availability target');
@@ -254,21 +328,24 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
               knownCards: cards, shokoMount, plexMount, plexMounts,
               readShoko: async () => shoko, readPlex: readCard });
             if (result.state === 'available') {
+              if(!sameScope(generation))return changedCard();
               return publicResult(includeProof
-                ? await indexProvenGuidCard(result, target, shoko) : result,
+                ? await indexProvenGuidCard(result, target, shoko,generation) : result,
               includeProof);
             }
           }
         }
       }
-      const result = await observeIndexedTarget({ target, publicLibraryIds,
+      let result;
+      try {result = await observeIndexedTarget({ target, publicLibraryIds,
         includeProof,
-        cardIndex: index, shokoMount, plexMount, plexMounts,
+        cardIndex: scopedIndex(generation), shokoMount, plexMount, plexMounts,
         readShoko: shoko ? async () => shoko : readShoko,
-        readPlex: readCard });
+        readPlex: readCard });}catch{return changedCard();}
+      if(!sameScope(generation))return changedCard();
       return publicResult(includeProof && result.multipart === true
-        ? await indexProvenGuidCard(result, target, shoko) : result, includeProof);
+        ? await indexProvenGuidCard(result, target, shoko,generation) : result, includeProof);
     },
-    close() { index.close(); },
+    close() { closed=true; scopeAbort.abort(); index.close(); scope?.close(); },
   };
 }

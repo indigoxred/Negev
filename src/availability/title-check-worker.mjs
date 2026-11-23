@@ -49,7 +49,7 @@ export function createTitleCheckWorker({ ledger, loadDetail, observeTarget,
           }
           const status = result?.state === 'available' ? 'available' : 'unknown';
           const saved = ledger.recordTarget({ claim: receipt, status,
-            checkedMs: now() });
+            checkedMs: now(), proof: result?.proof ?? null });
           return saved.state === 'recorded_target'
             ? { state: 'target_checked', anidbId: receipt.anidbId,
               episodeId: receipt.episodeId, result: status } : saved;

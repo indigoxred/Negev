@@ -82,7 +82,7 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
   const totalSize = hasBodyTotal ? bodyTotal : responseTotal;
   const size = integer(container?.size);
   const metadata = container?.Metadata === undefined && size === 0 &&
-    totalSize === 0 && integer(offset) === 0 ? [] : container?.Metadata;
+    totalSize !== null && integer(offset) >= totalSize ? [] : container?.Metadata;
   if (integer(container?.librarySectionID) !== integer(libraryId) ||
       (!hasBodyStart && !hasResponseStart) ||
       (hasBodyStart && bodyStart !== integer(offset)) ||
@@ -91,7 +91,7 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
       (hasResponseTotal && responseTotal === null) ||
       (hasBodyTotal && hasResponseTotal && bodyTotal !== responseTotal) ||
       size === null || size > pageSize ||
-      (totalSize !== null && totalSize < offset + size) ||
+      (totalSize !== null && size > 0 && totalSize < offset + size) ||
       !Array.isArray(metadata) ||
       metadata.length !== size) return unavailable();
   const keys = [];

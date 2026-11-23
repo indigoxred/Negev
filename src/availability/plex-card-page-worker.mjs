@@ -27,7 +27,7 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
       new Set(page.keys).size !== page.keys.length ||
       (page.totalSize !== null &&
         (!Number.isSafeInteger(page.totalSize) ||
-          page.totalSize < offset + page.keys.length))) {
+          page.totalSize < 0 || (page.keys.length > 0 && page.totalSize < offset + page.keys.length)))) {
     return held('key_page_unavailable');
   }
   let processed = 0;

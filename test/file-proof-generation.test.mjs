@@ -1,3 +1,6 @@
+import { readFile, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -111,4 +114,20 @@ test('an on-demand composite check flows through the real durable worker into al
 
 test('unguarded composite proof is never accepted as an individual complete file',async()=>{const root=await mkdtemp(path.join(os.tmpdir(),'negev-composite-unguarded-')),dbPath=path.join(root,'state.sqlite'),proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:1000,now:()=>500});try{assert.equal(proofs.observe({...target,proof:{fileId:7,libraryId:102,ratingKey:500,partId:600,parts:[{fileId:7},{fileId:8}]},checkedMs:200}).state,'held');assert.equal(proofs.getCurrent(target).state,'unknown');}finally{proofs.close();await rm(root,{recursive:true,force:true})}});
 
-test('v300 scalar multipart cache is retired on migration while ordinary file proof survives',async()=>{const root=await mkdtemp(path.join(os.tmpdir(),'negev-composite-migration-')),dbPath=path.join(root,'state.sqlite'),index=openPlexCardIndex(dbPath);let proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:1000,now:()=>500});try{index.recordCard({libraryId:102,ratingKey:500,kind:'episode',observedMs:100,parts:[0,1].map(i=>({libraryId:102,partId:600+i,size:5,plexPath:'/pure/'+i+'.mkv',mediaId:700,partIndex:i,partCount:2}))});proofs.observe({...target,proof:{fileId:7,libraryId:102,ratingKey:500,partId:600},checkedMs:100});proofs.observe({anidbId:43,episodeId:1002,proof:{fileId:9,libraryId:102,ratingKey:501,partId:602},checkedMs:100});proofs.close();const db=new DatabaseSync(dbPath);db.exec('DROP INDEX file_proof_components; ALTER TABLE file_availability_proofs DROP COLUMN components_json');db.close();proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:1000,now:()=>500});assert.equal(proofs.getCurrent(target).state,'unknown');assert.equal(proofs.getCurrent({anidbId:43,episodeId:1002}).state,'available');}finally{proofs.close();index.close();await rm(root,{recursive:true,force:true})}});
+test('actual v300 scalar writer migrates against current multipart metadata while ordinary proof survives',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'negev-composite-migration-')),dbPath=path.join(root,'state.sqlite'),index=openPlexCardIndex(dbPath);let proofs;
+  try {
+    const source=await readFile(new URL('./fixtures/file-proof-ledger-v300.mjs.txt',import.meta.url));
+    assert.equal(createHash('sha256').update(source).digest('hex'),'36a63d0f3da3ac9cc77e1f4e675ad85f0cc0c922454aaac3a9323b9a55863897');
+    const writerPath=path.join(root,'writer-v300.mjs');await writeFile(writerPath,source);
+    const {openFileProofLedger:openOld}=await import(pathToFileURL(writerPath).href);
+    index.recordCard({libraryId:102,ratingKey:500,kind:'episode',observedMs:100,parts:[0,1].map(i=>({libraryId:102,partId:600+i,size:5,plexPath:'/pure/'+i+'.mkv',mediaId:700,partIndex:i,partCount:2}))});
+    proofs=openOld(dbPath,{positiveLifetimeMs:1000,now:()=>500});
+    proofs.observe({...target,proof:{fileId:7,libraryId:102,ratingKey:500,partId:600},checkedMs:100});
+    proofs.observe({anidbId:43,episodeId:1002,proof:{fileId:9,libraryId:102,ratingKey:501,partId:602},checkedMs:100});
+    proofs.close();proofs=null;
+    proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:1000,now:()=>500});
+    assert.equal(proofs.getCurrent(target).state,'unknown');
+    assert.equal(proofs.getCurrent({anidbId:43,episodeId:1002}).state,'available');
+  } finally {proofs?.close();index.close();await rm(root,{recursive:true,force:true});}
+});

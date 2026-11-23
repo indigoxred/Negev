@@ -35,6 +35,7 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       file_id INTEGER NOT NULL UNIQUE CHECK(file_id>0),
       retry_after_ms INTEGER NOT NULL DEFAULT 0 CHECK(retry_after_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_continuation (kind TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_recent_due
       ON shoko_recent_pending(retry_after_ms,seq)`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_fileid_cursor (
@@ -58,14 +59,75 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
   const insertPending = db.prepare(`INSERT OR IGNORE INTO shoko_recent_pending(file_id)
     VALUES (?)`);
   const nextPending = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
-    WHERE retry_after_ms<=? ORDER BY seq LIMIT 1`);
+    WHERE retry_after_ms<=? ORDER BY retry_after_ms,seq LIMIT 1`);
   const findPending = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
     WHERE file_id=?`);
   const removePending = db.prepare('DELETE FROM shoko_recent_pending WHERE file_id=?');
   const retryPending = db.prepare(`UPDATE shoko_recent_pending
     SET retry_after_ms=? WHERE file_id=?`);
+  const readContinuation = db.prepare('SELECT payload FROM shoko_recent_continuation WHERE kind=?');
+  const saveContinuation = db.prepare(`INSERT INTO shoko_recent_continuation(kind,payload)
+    VALUES (?,?) ON CONFLICT(kind) DO UPDATE SET payload=excluded.payload`);
+  const clearContinuation = db.prepare('DELETE FROM shoko_recent_continuation WHERE kind=?');
   const rollback = () => { db.exec('ROLLBACK'); };
   return {
+    getContinuation(kind) {
+      if (!['timestamp', 'fileid'].includes(kind)) throw new TypeError('Invalid continuation kind');
+      const row = readContinuation.get(kind);
+      return row ? JSON.parse(row.payload) : null;
+    },
+    clearContinuation(kind) {
+      if (!['timestamp', 'fileid'].includes(kind)) throw new TypeError('Invalid continuation kind');
+      clearContinuation.run(kind);
+    },
+    recordScanBatch(kind, batch) {
+      const timestamp = kind === 'timestamp';
+      const pendingIds = batch?.pendingFileIds ?? batch?.fileIds;
+      if (!['timestamp', 'fileid'].includes(kind) ||
+          !['complete', 'continuing'].includes(batch?.state) ||
+          !Array.isArray(batch.fileIds) || batch.fileIds.length > 500 ||
+          batch.fileIds.some((id) => !validId(id)) ||
+          new Set(batch.fileIds).size !== batch.fileIds.length ||
+          !Array.isArray(pendingIds) || pendingIds.some((id) => !batch.fileIds.includes(id)) ||
+          (timestamp ? !validCursor(batch.newest) || !validCursor(batch.since) :
+            !validId(batch.newestId) || (batch.sinceId !== null && !validId(batch.sinceId))) ||
+          (batch.state === 'continuing' && (!batch.continuation ||
+            JSON.stringify(batch.continuation).length > 20000))) return held('invalid_recent_batch');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const current = timestamp ? readCursor.get() : readFileIdCursor.get()?.fileId ?? null;
+        if (timestamp ? !current || compare(current, batch.since) !== 0 || compare(batch.newest, current) < 0 :
+            current !== batch.sinceId || (current !== null && batch.newestId < current)) {
+          rollback(); return held('stale_recent_batch');
+        }
+        const priorRow = readContinuation.get(kind);
+        const prior = priorRow ? JSON.parse(priorRow.payload) : null;
+        const sameHead = (value) => timestamp
+          ? validCursor(value?.newest) && compare(value.newest, batch.newest) === 0
+          : value?.newestId === batch.newestId;
+        if ((batch.state === 'complete' && (!batch.resumed || !prior || !sameHead(prior))) ||
+            (batch.state === 'continuing' && (!sameHead(batch.continuation) ||
+              (prior ? !sameHead(prior) : batch.fileIds.at(-1) !==
+                (timestamp ? batch.newest.fileId : batch.newestId))))) {
+          rollback(); return held('invalid_recent_batch');
+        }
+        let pending = countPending.get().total;
+        let added = 0;
+        for (const id of pendingIds) {
+          if (insertPending.run(id).changes) { pending++; added++; }
+          if (pending > maxPending) { rollback(); return held('recent_backlog_full'); }
+        }
+        if (batch.state === 'continuing') saveContinuation.run(kind, JSON.stringify(batch.continuation));
+        else {
+          if (timestamp) updateCursor.run(batch.newest.importedNs, batch.newest.fileId);
+          else if (current === null) insertFileIdCursor.run(batch.newestId);
+          else updateFileIdCursor.run(batch.newestId);
+          clearContinuation.run(kind);
+        }
+        db.exec('COMMIT');
+        return { state: batch.state === 'continuing' ? 'continuing' : 'recorded', added };
+      } catch (error) { rollback(); throw error; }
+    },
     getCapacity() { return { pending: countPending.get().total, maxPending }; },
     getCursor() {
       const saved = readCursor.get();

@@ -40,19 +40,23 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
           return held('recent_backlog_full');
         }
         const batch = await scanShokoRecentSince({ readPage, since,
-          pageSize, maxPages });
-        const saved = batch.state === 'complete' ? ledger.recordBatch(batch) : batch;
+          pageSize, maxPages, continuation: ledger.getContinuation?.('timestamp') });
+        if (batch.restart) ledger.clearContinuation?.('timestamp');
+        const saved = batch.state === 'continuing' || batch.resumed
+          ? ledger.recordScanBatch('timestamp', batch) : batch.state === 'complete' ? ledger.recordBatch(batch) : batch;
         let fileIdSaved = { state: 'recorded', added: 0 };
         if (readFileIdPage) {
           const fileIdBatch = await scanShokoFileIdsSince({
             readPage: readFileIdPage, sinceId: ledger.getFileIdCursor(),
-            pageSize, maxPages });
-          if (fileIdBatch.state !== 'complete') fileIdSaved = fileIdBatch;
+            pageSize, maxPages, continuation: ledger.getContinuation?.('fileid') });
+          if (fileIdBatch.restart) ledger.clearContinuation?.('fileid');
+          if (!['complete', 'continuing'].includes(fileIdBatch.state)) fileIdSaved = fileIdBatch;
           else {
             const pendingFileIds = fileIdBatch.fileIds.filter((id) =>
               !isKnownFileId(id));
-            fileIdSaved = ledger.recordFileIdBatch({ ...fileIdBatch,
-              pendingFileIds });
+            fileIdSaved = fileIdBatch.state === 'continuing' || fileIdBatch.resumed
+              ? ledger.recordScanBatch('fileid', { ...fileIdBatch, pendingFileIds })
+              : ledger.recordFileIdBatch({ ...fileIdBatch, pendingFileIds });
           }
         }
         if (fileIdSaved.state !== 'recorded') return fileIdSaved;

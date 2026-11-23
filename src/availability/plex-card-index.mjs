@@ -206,8 +206,16 @@ export function openPlexCardIndex(dbPath) {
       AND c.observed_ms<? AND NOT EXISTS (
         SELECT 1 FROM plex_sweep_keys k WHERE k.library_id=c.library_id
           AND k.kind=c.kind AND k.pass_num=? AND k.rating_key=c.rating_key)`);
-  const prunePasses = db.prepare(`DELETE FROM plex_sweep_passes
-    WHERE library_id=? AND kind=? AND pass_num<?`);
+  // Retire superseded generations incrementally. Keep the current and prior
+  // pass, the only pair eligible to establish stable omission proof.
+  const retireSweepKeys = db.prepare(`DELETE FROM plex_sweep_keys WHERE rowid IN
+    (SELECT rowid FROM plex_sweep_keys WHERE library_id=? AND kind=? AND pass_num<?
+      ORDER BY pass_num,ordinal LIMIT 100)`);
+  const retireEmptyPass = db.prepare(`DELETE FROM plex_sweep_passes WHERE rowid IN
+    (SELECT p.rowid FROM plex_sweep_passes p WHERE library_id=? AND kind=?
+      AND pass_num<? AND NOT EXISTS (SELECT 1 FROM plex_sweep_keys k
+        WHERE k.library_id=p.library_id AND k.kind=p.kind AND k.pass_num=p.pass_num)
+      ORDER BY pass_num LIMIT 1)`);
   const candidateQueries = new Map();
   const identityQueries = new Map();
   const sizeCandidates = (libraryCount) => {
@@ -425,7 +433,8 @@ export function openPlexCardIndex(dbPath) {
           (pageKeys !== undefined && (!Array.isArray(pageKeys) ||
             pageKeys.length > 5 || pageKeys.some((key) => !validId(key)) ||
             new Set(pageKeys).size !== pageKeys.length ||
-            !Number.isSafeInteger(totalSize) || totalSize < expectedOffset + pageKeys.length ||
+            !Number.isSafeInteger(totalSize) || totalSize < 0 ||
+            (pageKeys.length > 0 && totalSize < expectedOffset + pageKeys.length) ||
             !Number.isSafeInteger(observedMs) || observedMs < 0))) {
         throw new TypeError('Invalid Plex cursor advance');
       }
@@ -476,10 +485,14 @@ export function openPlexCardIndex(dbPath) {
                     clearRetry.run(libraryId, row.ratingKey);
                   }
                 }
-                prunePasses.run(libraryId, kind, pass.passNum - 1);
               }
             }
           }
+        }
+        const latest = latestPass.get(libraryId, kind);
+        if (latest) {
+          retireSweepKeys.run(libraryId, kind, latest.passNum - 1);
+          retireEmptyPass.run(libraryId, kind, latest.passNum - 1);
         }
         saveCursor.run(libraryId, kind, nextOffset);
         db.exec('COMMIT'); begun = false;

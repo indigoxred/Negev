@@ -13,7 +13,7 @@ import { openTitleCheckLedger } from '../src/availability/title-check-ledger.mjs
 import { openFileProofLedger } from '../src/availability/file-proof-ledger.mjs';
 import { openDirectAvailabilityQueue } from '../src/availability/direct-availability-queue.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
-import { createUserService } from '../src/web/user-service.mjs';
+import { createUserService, primeSavedScope } from './helpers/scoped-user-service.mjs';
 
 const origin = 'http://localhost:3000';
 const auth = (cookie, csrfToken) => ({ cookie, origin, 'x-negev-csrf': csrfToken });
@@ -79,6 +79,7 @@ test('paced provisional recheck discovers a Shoko link with unchanged file times
 test('a first title view counts a complete multi-page regular season from current proof', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-season-roster-'));
   const dbPath = path.join(dir, 'negev.sqlite');
+  primeSavedScope({dbPath,localRoot:dir});
   let clock = 1_000;
   let expireDuringPageRead = false;
   const accounts = openAccountLedger(dbPath, { now: () => clock });
@@ -1344,6 +1345,7 @@ test('opt-in title check survives the HTTP action and advances by explicit ticks
 test('request history reflects recent title-check proof and loses it on expiry', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-title-progress-'));
   const dbPath = path.join(dir, 'negev.sqlite');
+  primeSavedScope({dbPath,localRoot:dir});
   const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
   const owner = await accounts.bootstrapAdmin({ username: 'Owner',
     password: 'long-owner-passphrase' });
@@ -1360,7 +1362,7 @@ test('request history reflects recent title-check proof and loses it on expiry',
     anidbId: 42, kind: 'movie', page: 1, total: 1,
     nextPage: null, episodes: [{ id: 1001 }] }, checkedMs: 903 });
   const target = titles.claimNext({ nowMs: 904 });
-  titles.recordTarget({ claim: target, status: 'available', checkedMs: 905 });
+  titles.recordTarget({ claim: target, status: 'available', checkedMs: 905,proof:{fileId:10,libraryId:102,ratingKey:20,partId:30} });
   titles.close();
   let clock = 1_000;
   const service = await createUserService({ dbPath,
@@ -1455,6 +1457,7 @@ test('request history reflects recent title-check proof and loses it on expiry',
 test('opt-in file proof contributes to request progress and expires without Plex reads', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-file-progress-'));
   const dbPath = path.join(dir, 'negev.sqlite');
+  primeSavedScope({dbPath,localRoot:dir});
   const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
   const owner = await accounts.bootstrapAdmin({ username: 'Owner',
     password: 'long-owner-passphrase' });

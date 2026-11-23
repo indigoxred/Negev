@@ -33,6 +33,13 @@ const base = { candidate, publicLibraryIds: [102],
       showGuid: 'tv.plex.agents.custom.shoko://show/99' }] }),
 };
 
+test('partial candidate coverage is retained and never promoted to a full episode',async()=>{
+  const result=await observeFileCandidateTarget({...base,candidate:{...candidate,
+    coverage:[{episodeId:1001,start:0,end:50},{episodeId:1002,start:0,end:100}]},
+    target:{anidbId:42,episodeId:1001,kind:'series'}});
+  assert.notEqual(result.state,'available');
+});
+
 test('one Shoko file candidate can prove two distinct exact public episode cards', async () => {
   for (const [episodeId, ratingKey] of [[1001, 500], [1002, 501]]) {
     const result = await observeFileCandidateTarget({ ...base,

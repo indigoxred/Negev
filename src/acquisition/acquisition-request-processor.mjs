@@ -1,3 +1,4 @@
+import { openQualityInspectionRetry, transientInspectionFailure } from './quality-inspection-retry.mjs';
 import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
@@ -27,6 +28,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
   checkPreferredRelease, getPreferredFallback, closePreferredWaits,
   preferRegisteredCorrespondence = false,
   preferShokoPreview = false, requireReleasePolicy = false,
+  qualityInspectionRetry = openQualityInspectionRetry(),
   maxPreflights = 3, now = Date.now } = {}) {
   if ([readRequest, discoverCandidates, previewCandidate, loadDetail,
     submitCandidate].some((fn) => typeof fn !== 'function') ||
@@ -260,21 +262,21 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // order and append newcomers so churn cannot starve an older candidate.
     // A rotated episode search may promote an unvisited release. Promote it
     // within the unvisited suffix without repeating already inspected items.
-    // A saved v1 cursor may have consumed a strong release during a transient
+    // A pre-retry-policy cursor may have consumed a strong release during a transient
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
-      [preferSeasonPack ? 'quality-policy-season-pack-v3' :
-        requireReleasePolicy ? 'quality-policy-v5' :
+      [preferSeasonPack ? 'quality-policy-season-pack-v4' :
+        requireReleasePolicy ? 'quality-policy-v6' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const fallbackFingerprint = preferSeasonPack ? createHash('sha256')
-      .update(JSON.stringify(['quality-policy-episode-fallback-v3',
+      .update(JSON.stringify(['quality-policy-episode-fallback-v4',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex') : null;
     const uncertainPackFingerprint = preferSeasonPack && preferShokoPreview ?
       createHash('sha256').update(JSON.stringify(
-        ['quality-policy-uncertain-pack-v3',
+        ['quality-policy-uncertain-pack-v4',
           ...[...request.episodeIds].sort((a, b) => a - b)]))
         .digest('hex') : null;
     const saved = typeof candidateFingerprint === 'string' &&
@@ -370,7 +372,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
       let preview;
       try { preview = await previewCandidate({ requestId, candidate,
         offlineCache }); }
-      catch { freshReads++; transientFailure = true; continue; }
+      catch { freshReads++; transientFailure = true;
+        if(requireReleasePolicy&&!pinned)qualityInspectionRetry.fail(request,candidate,now());
+        continue; }
       if(expiredFallback&&candidate.guid===expiredFallback.candidate.guid&&candidate.indexerId===expiredFallback.candidate.indexerId&& (preview?.state!=='preflight'||preview.torrentHash!==expiredFallback.preview.torrentHash||
           !sameReleaseFiles(preview.files,expiredFallback.preview.files))){
         if(preview?.state==='preflight'||['release_title_mismatch','shoko_preview_wrong_identity','invalid_metainfo'].includes(preview?.reason))
@@ -384,12 +388,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
         return held(preview?.state==='held'?preview.reason:'release_choice_changed');
       }
       if (preview?.cacheHit !== true) freshReads++;
-      if (preview?.state === 'held' && ['provider_unavailable',
-        'torrent_preflight_unavailable', 'related_title_unavailable',
-        'shoko_settings_unavailable', 'metadata_reader_busy', 'detail_unavailable',
-        'candidate_changed', 'torrent_unavailable'].includes(preview.reason)) {
+      if (transientInspectionFailure(preview)) {
         transientFailure = true;
-      }
+        if(requireReleasePolicy&&!pinned)qualityInspectionRetry.fail(request,candidate,now());
+      } else if(requireReleasePolicy&&!pinned&&preview?.state==='held'&&['related_installment_mismatch','release_title_mismatch','shoko_preview_wrong_identity','invalid_metainfo','release_not_eligible','ambiguous_or_unrequested_video'].includes(preview.reason))qualityInspectionRetry.resolve(request,candidate);
       if (preview?.state !== 'preflight' ||
           preview.requestId !== requestId ||
           preview.anidbId !== request.anidbId ||
@@ -409,7 +411,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
           preview.episodeIds.some((id) => !request.episodeIds.includes(id)) ||
           !Array.isArray(preview.files) || preview.files.length < 1 ||
-          preview.files.length > MAX_ACQUISITION_VIDEOS) continue;
+          preview.files.length > MAX_ACQUISITION_VIDEOS) {
+        if(requireReleasePolicy&&!pinned&&preview?.state==='preflight'){qualityInspectionRetry.fail(request,candidate,now());transientFailure=true;}
+        continue;
+      }
+      if(requireReleasePolicy&&!pinned)qualityInspectionRetry.resolve(request,candidate);
       // Current exact public proof makes this release unnecessary. Inspect
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.
@@ -494,7 +500,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         Math.min(groupWait.retryAtMs,now()+60_000):groupWait.retryAtMs,
       nextCandidateOffset:nextIndex<ordered.length?nextIndex:0,nextCandidateFingerprint:cursor};
     if (!selected && transientFailure) return { ...held('release_preflight_unavailable'),
-      nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+      nextCandidateOffset: qualityInspectionRetry.pending(request,now()) ? 0 : nextIndex < ordered.length ? nextIndex : 0,
       nextCandidateFingerprint: cursor };
     if (!selected && preferSeasonPack && !fallbackPhase) {
       const exhausted = nextIndex >= ordered.length;
@@ -521,6 +527,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
         (publicRelease(selected.candidate).resolution??0) < 1080) {
       return { ...held('release_search_incomplete'),
         nextCandidateOffset: 0 };
+    }
+    if(requireReleasePolicy&&!pinned&&qualityInspectionRetry.protects(request,selected.candidate,selected.preview.episodeIds,now())) {
+      return {...held('release_preflight_unavailable'),nextCandidateOffset:0,nextCandidateFingerprint:cursor};
     }
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }

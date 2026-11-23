@@ -104,3 +104,23 @@ test('a same-ID trusted alias can wake an active request', async () => {
     assert.equal(result.wokenRequests, 1);
   } finally { feed?.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+test('a new feed release reaches matching watch 501 without reviving closed or suspended watches', async () => {
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-rss-pages-'));const dbPath=path.join(dir,'db.sqlite');let feed;
+ try {
+  const db=new DatabaseSync(dbPath);
+  db.exec(`CREATE TABLE requests(id INTEGER PRIMARY KEY,title TEXT,anidb_id INTEGER,status TEXT,cancelled_ms INTEGER,monitor_future INTEGER,watch_closed INTEGER);
+   CREATE TABLE acquisition_request_suspensions(request_id INTEGER);
+   CREATE TABLE acquisition_request_checks(request_id INTEGER PRIMARY KEY,state TEXT,reason TEXT,next_due_ms INTEGER);`);
+  const insert=db.prepare("INSERT INTO requests VALUES (?, ?, ?, 'held',NULL,1,0)");
+  for(let i=1;i<=502;i++)insert.run(i,i===501?'Target Anime':'Other Anime',i);
+  db.prepare('INSERT INTO acquisition_request_suspensions VALUES (?)').run(502);
+  db.close();const wakes=[];
+  feed=openReleaseFeedLedger(dbPath,{onWake:id=>wakes.push(id)});
+  feed.accept({indexerId:5,items:[],nowMs:1000});
+  feed.accept({indexerId:5,items:[{indexerId:5,guid:'later',title:'Target Anime 01',publishedMs:2000}],nowMs:2000});
+  feed.close();feed=openReleaseFeedLedger(dbPath,{onWake:id=>wakes.push(id)});
+  feed.drainPendingWatches();
+  assert.deepEqual(wakes,[501]);
+ }finally{feed?.close();await rm(dir,{recursive:true,force:true});}
+});
