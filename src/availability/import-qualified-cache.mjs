@@ -1,7 +1,7 @@
 import {DatabaseSync,backup} from 'node:sqlite';
 import {createHash} from 'node:crypto';
 import {mkdtemp,rm,chmod} from 'node:fs/promises';
-import os from 'node:os';import path from 'node:path';
+import path from 'node:path';
 import {availabilityScopeSignature,openAvailabilityScope} from './availability-scope.mjs';
 import {openPlexCardIndex} from './plex-card-index.mjs';
 import {openFileProofLedger} from './file-proof-ledger.mjs';
@@ -27,12 +27,12 @@ const fingerprint=db=>{
 const time=n=>Number.isSafeInteger(n)&&n>=0;
 export async function importQualifiedAvailability({dbPath,manifest,scope,positiveLifetimeMs,now=Date.now,probeImpl=probePhysicalCandidate}={}){
  const clock=now(),signature=availabilityScopeSignature(scope);
- if(typeof dbPath!=='string'||!dbPath||dbPath===':memory:'||typeof probeImpl!=='function'||
+ if(typeof dbPath!=='string'||!path.isAbsolute(dbPath)||typeof probeImpl!=='function'||
   !time(clock)||!Number.isSafeInteger(positiveLifetimeMs)||positiveLifetimeMs<1||positiveLifetimeMs>604800000||
   manifest?.formatVersion!==1||typeof manifest.migrationId!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(manifest.migrationId)||
   manifest.scopeSignature!==signature||!time(manifest.qualifiedAtMs)||manifest.qualifiedAtMs>clock||
   !Array.isArray(manifest.cards)||manifest.cards.length>20000||!Array.isArray(manifest.receipts)||manifest.receipts.length>50000)throw new TypeError('Invalid qualified cache manifest or current scope');
- const dir=await mkdtemp(path.join(os.tmpdir(),'negev-cache-upgrade-'));await chmod(dir,0o700);
+ const dir=await mkdtemp(path.join(path.dirname(dbPath),'.cache-upgrade-'));await chmod(dir,0o700);
  let live,staged,index,proofs,scopeLedger;
  try{
   live=new DatabaseSync(dbPath,{timeout:5000});const original=fingerprint(live),stagedPath=path.join(dir,'prepared.sqlite');await backup(live,stagedPath);await chmod(stagedPath,0o600);

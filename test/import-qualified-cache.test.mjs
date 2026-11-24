@@ -77,3 +77,9 @@ test('equal-time conflicting card snapshots abort instead of choosing one identi
  await assert.rejects(importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000}),/Conflicting/);
  assert.equal(f.db.prepare('SELECT identity_signature FROM plex_card_observations').get().identity_signature,JSON.stringify(signature));
 }));
+
+test('migration scratch files stay in the writable private database directory',async()=>fixture(async f=>{
+ const {readdir}=await import('node:fs/promises');let privateScratch=false;
+ await importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000,probeImpl:async()=>{privateScratch=(await readdir(f.root)).some(name=>name.startsWith('.cache-upgrade-'));return{state:'candidate',candidateKey:f.manifest.receipts[0].proof.storageKey}}});
+ assert.equal(privateScratch,true);assert.equal((await readdir(f.root)).some(name=>name.startsWith('.cache-upgrade-')),false);
+}));
