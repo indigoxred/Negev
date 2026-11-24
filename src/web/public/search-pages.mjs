@@ -87,8 +87,9 @@ export function createCataloguePrefetchBudget() {
 }
 
 // Separate from acquisition. Admit bounded catalogue reads, never retry errors.
-export function createCatalogueReadPacer({ now = Date.now,
+export function createCatalogueReadPacer({ now = Date.now, burst = 2,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  if(!Number.isSafeInteger(burst)||burst<1||burst>4)throw new TypeError('Invalid bounded read burst');
   let tail = Promise.resolve(), blockedUntil = 0;
   const starts = [];
   return {
@@ -104,7 +105,7 @@ export function createCatalogueReadPacer({ now = Date.now,
           const time = now();
           while (starts.length && starts[0] <= time - 60_000) starts.shift();
           const due = Math.max(blockedUntil, starts.length >= 10 ? starts[0] + 60_000 : 0,
-            starts.length >= 2 ? starts.at(-1) + 6000 : 0);
+            starts.length >= burst ? starts.at(-1) + 6000 : 0);
           if (due <= time) { starts.push(time); return read(); }
           await sleep(due - time);
         }

@@ -64,3 +64,12 @@ test('simultaneous search batches share a rate budget that leaves foreground dis
   for (const start of starts) assert.ok(starts.filter(time => time >= start && time < start + 60_000).length <= 10);
   assert.ok(starts[10] >= 60_000, 'background must leave 20 of the route’s 30 reads per minute for foreground');
 });
+
+test('small classification batches can use four immediate reads without raising the rolling limit',async()=>{
+ const {createCatalogueReadPacer}=await import('../src/web/public/search-pages.mjs');let time=0;const starts=[];
+ const pacer=createCatalogueReadPacer({burst:4,now:()=>time,sleep:async ms=>{time+=ms;}});
+ const verifier=createAdultSearchVerifier({pacer,readDisplay:async id=>{starts.push(time);return{state:'display',anidbId:id,restricted:false}}});
+ await verifier.verify(Array.from({length:14},(_,i)=>i+1),()=>{});
+ assert.deepEqual(starts.slice(0,4),[0,0,0,0]);
+ for(const start of starts)assert.ok(starts.filter(t=>t>=start&&t<start+60000).length<=10);
+});

@@ -1,7 +1,7 @@
 import { createCatalogueReadPacer } from './search-pages.mjs';
 
 export function createAdultSearchVerifier({ readDisplay, concurrency = 4,
-  pacer = createCatalogueReadPacer() }) {
+  pacer = createCatalogueReadPacer({burst:4}) }) {
   if (typeof readDisplay !== 'function' || !Number.isSafeInteger(concurrency) ||
       concurrency < 1 || concurrency > 8) {
     throw new TypeError('Invalid adult search verifier');
