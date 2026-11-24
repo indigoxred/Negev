@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { readBoundedJson, readBoundedBytes, cancelResponseBody } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 
@@ -55,7 +55,7 @@ export async function fetchProwlarrTorrentBytes({
     if (proxyUrl === undefined) {
       const found = await fetchImpl(search, { method: 'GET', headers, redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs) });
-      if (found.status !== 200) return held('provider_unavailable');
+      if (found.status !== 200) { await cancelResponseBody(found); return held('provider_unavailable'); }
       const releases = await readBoundedJson(found, 2_000_000);
       if (!Array.isArray(releases) || releases.length > 1_000) return held('provider_unavailable');
       const matches = releases.filter((item) => item?.guid === candidate.guid &&
@@ -77,29 +77,18 @@ export async function fetchProwlarrTorrentBytes({
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       let location;
       try { location = new URL(response.headers.get('location')); } catch {}
-      if (location?.protocol === 'magnet:') return held('magnet_only');
+      if (location?.protocol === 'magnet:') { await cancelResponseBody(response); return held('magnet_only'); }
     }
     if (response.status !== 200 ||
         !/^application\/x-bittorrent(?:\s*;|$)/i.test(response.headers.get('content-type') ?? '') ||
-        !response.body) return held('torrent_unavailable');
-    const length = Number(response.headers.get('content-length'));
-    if (Number.isFinite(length) && length > MAX_TORRENT_BYTES) {
-      await response.body.cancel().catch(() => {});
-      return held('torrent_too_large');
+        !response.body) { await cancelResponseBody(response); return held('torrent_unavailable'); }
+    let bytes;
+    try { bytes = await readBoundedBytes(response, MAX_TORRENT_BYTES); }
+    catch (error) {
+      if (error.message === 'Response exceeds byte limit') return held('torrent_too_large');
+      throw error;
     }
-    const chunks = [];
-    let total = 0;
-    for await (const chunk of response.body) {
-      total += chunk.byteLength;
-      if (total > MAX_TORRENT_BYTES) {
-        return held('torrent_too_large');
-      }
-      chunks.push(chunk);
-    }
-    if (total < 2) return held('invalid_torrent_bytes');
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    if (bytes.length < 2) return held('invalid_torrent_bytes');
     if (bytes[0] !== 100 || bytes.at(-1) !== 101) return held('invalid_torrent_bytes');
     return { state: 'torrent_bytes', bytes };
   } catch { return held('provider_unavailable'); }

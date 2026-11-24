@@ -7,8 +7,15 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
-import { processShokoRescan } from '../src/acquisition/process-shoko-rescan.mjs';
+import { processShokoRescan as runShokoRescan } from '../src/acquisition/process-shoko-rescan.mjs';
 import { openShokoRescanLedger } from '../src/acquisition/shoko-rescan-ledger.mjs';
+
+// Control-flow tests inject filesystem evidence; real journal/filesystem tests
+// live in shoko-rescan-physical-attribution.test.mjs.
+const processShokoRescan = options => runShokoRescan({...options,
+  item:{...options.item,manifest:{...options.item.manifest,files:options.item.manifest.files.map(file=>
+    ({...file,dev:'1',ino:'2',mtimeNs:'3'}))}},
+  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})});
 
 async function fixture({ policyBeforeAttempt = true } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-rescan-'));

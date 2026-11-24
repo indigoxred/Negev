@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -48,10 +48,14 @@ const options = (calls) => ({
   now: () => 200,
 } );
 
-test('the live stage sends one targeted Shoko rescan without qBittorrent', async () => {
+test('the live stage sends one targeted Shoko rescan without qBittorrent', async (t) => {
   const calls = [];
-  const root = path.join(tmpdir(), 'negev-rescan-stage');
+  const root = await mkdtemp(path.join(tmpdir(), 'negev-rescan-stage-'));
+  t.after(()=>rm(root,{recursive:true,force:true}));
   const importRoot = path.join(root, 'handoff', 'source', 'Negev');
+  const published=path.join(importRoot,'negev-7-aaaaaaaaaaaaaaaa','group','01.mkv');
+  await mkdir(path.dirname(published),{recursive:true});await writeFile(published,Buffer.alloc(1000));
+  const physical=await stat(published,{bigint:true});
   const stages = createAcquisitionStageProcessors({ ...options(calls),
     pureMode: true, importRoot, holdingRoot: path.join(root, 'handoff', 'holding'),
     pureMoves: { getIntent: () => null, recordIntent: () => ({}),
@@ -91,7 +95,8 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
   const result = await stages.processRescan({ item: {
     attemptId: 7, requestId: 1, anidbId: 42, publishedMs: 209,
     manifest: { torrentHash: 'a'.repeat(40), files: [
-      { name: 'group/01.mkv', size: 1000, episodeIds: [1001] },
+      { name: 'group/01.mkv', size: 1000, episodeIds: [1001],
+        dev:String(physical.dev),ino:String(physical.ino),mtimeNs:String(physical.mtimeNs) },
     ] },
   } });
   assert.equal(result.state, 'rescan_requested');

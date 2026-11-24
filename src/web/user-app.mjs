@@ -318,6 +318,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
               item.englishTitle.length > 500) ||
           !Number.isSafeInteger(item.verifiedEpisodeCount) ||
           item.verifiedEpisodeCount < 1 || item.verifiedEpisodeCount > 10_000 ||
+          item.chineseProduction !== undefined &&
+            typeof item.chineseProduction !== 'boolean' ||
           !Number.isSafeInteger(item.lastVerifiedMs) ||
           item.lastVerifiedMs < 0 || item.lastVerifiedMs > now()) ||
         page.nextAfterAnidbId !== null &&
@@ -331,6 +333,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       verifiedEpisodeCount: item.verifiedEpisodeCount,
       ...(validRegularCoverage(item.regularCoverage)?{regularCoverage:item.regularCoverage}:{}),
       lastVerifiedMs: item.lastVerifiedMs,
+      chineseProduction: item.chineseProduction === true,
     })), nextAfterAnidbId: page.nextAfterAnidbId };
   });
   app.get('/api/airing', { preHandler: requireUser,

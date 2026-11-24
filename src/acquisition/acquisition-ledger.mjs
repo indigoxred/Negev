@@ -74,6 +74,7 @@ export function openAcquisitionLedger(dbPath) {
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms),
       UNIQUE(indexer_id,candidate_digest)
     ) STRICT`);
+    db.exec('CREATE INDEX IF NOT EXISTS acquisition_attempts_by_request ON acquisition_attempts(request_id)');
     // A prior diagnostic ledger may lack the hash column. Such attempts stay
     // held; they are never upgraded into a second send.
     if (!db.prepare('PRAGMA table_info(acquisition_attempts)').all()
@@ -127,6 +128,17 @@ export function openAcquisitionLedger(dbPath) {
       status TEXT NOT NULL CHECK(status IN ('start_unknown','started_observed')),
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
+    ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(acquisition_starts)').all().some(c=>c.name==='send_token')) {
+      db.exec('ALTER TABLE acquisition_starts ADD COLUMN send_token TEXT');
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_start_rejections (
+      send_token TEXT PRIMARY KEY,
+      attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
+      torrent_hash TEXT NOT NULL,
+      manifest_digest TEXT NOT NULL,
+      rejected_ms INTEGER NOT NULL CHECK(rejected_ms>=0),
+      http_status INTEGER NOT NULL CHECK(http_status=403)
     ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_rejections (
       attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
@@ -956,11 +968,12 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'torrent_observed' };
       });
     },
-    beginStart({ attemptId, hash, manifestDigest, nowMs }) {
+    beginStart({ attemptId, hash, manifestDigest, nowMs, sendToken = null }) {
       if (!validId(attemptId) || typeof hash !== 'string' ||
           !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
           typeof manifestDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(manifestDigest) ||
           !validTime(nowMs)) throw new TypeError('Invalid start intent');
+      if(sendToken!==null && (typeof sendToken!=='string'|| !/^[a-f0-9-]{36}$/.test(sendToken))) throw new TypeError('Invalid start token');
       return transact(() => {
         const row = findAttempt.get(attemptId);
         if (!row) return held('attempt_missing');
@@ -981,7 +994,18 @@ export function openAcquisitionLedger(dbPath) {
           return { state: existing.status, sendNow: false };
         }
         insertStart.run(attemptId, normalizedHash, normalizedDigest, nowMs, nowMs);
+        db.prepare('UPDATE acquisition_starts SET send_token=? WHERE attempt_id=?').run(sendToken,attemptId);
         return { state: 'start_unknown', sendNow: true };
+      });
+    },
+    rejectStart({attemptId, hash, manifestDigest, sendToken, nowMs}) {
+      if(!validId(attemptId)||!validTime(nowMs)||typeof sendToken!=='string'||!/^[a-f0-9-]{36}$/.test(sendToken)) throw new TypeError('Invalid start rejection');
+      return transact(()=>{
+        const row=db.prepare("SELECT * FROM acquisition_starts WHERE attempt_id=? AND status='start_unknown' AND send_token=? AND torrent_hash=? AND manifest_digest=?").get(attemptId,sendToken,hash,manifestDigest);
+        if(!row||nowMs<row.updated_ms)return held('start_intent_changed');
+        db.prepare('INSERT INTO acquisition_start_rejections(send_token,attempt_id,torrent_hash,manifest_digest,rejected_ms,http_status) VALUES(?,?,?,?,?,403)').run(sendToken,attemptId,hash,manifestDigest,nowMs);
+        db.prepare('DELETE FROM acquisition_starts WHERE attempt_id=? AND send_token=?').run(attemptId,sendToken);
+        return {state:'start_rejected'};
       });
     },
     findPreviouslyVerifiedFile({ anidbId, torrentHash, file } = {}) {

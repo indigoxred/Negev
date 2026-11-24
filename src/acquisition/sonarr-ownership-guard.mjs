@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { readBoundedText, cancelResponseBody } from '../http/bounded-response.mjs';
 import { mapSonarrOwnership } from './sonarr-ownership-map.mjs';
 
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
@@ -31,7 +31,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
   let observation = null;
   let pending = null;
   const readMap = async (time) => {
-    if (cachedMap && mapCheckedMs + MAP_CACHE_MS > time) return cachedMap;
+    if (cachedMap && mapCheckedMs + MAP_CACHE_MS > time && Date.parse(cachedMap.generated_at) + MAX_MAP_AGE_MS > time) return cachedMap;
     const [mapResponse, digestResponse] = await Promise.all([
       fetchImpl(MAP_URL, { signal: AbortSignal.timeout(20_000),
         headers: { Accept: 'application/json' } }),
@@ -39,6 +39,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
         headers: { Accept: 'text/plain' } }),
     ]);
     if (mapResponse.status !== 200 || digestResponse.status !== 200) {
+      await Promise.all([cancelResponseBody(mapResponse),cancelResponseBody(digestResponse)]);
       throw new Error('Ownership map unavailable');
     }
     const [raw, checksum] = await Promise.all([
@@ -52,7 +53,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
     const generatedMs = Date.parse(map?.generated_at);
     if (map?.version !== 2 || !Number.isSafeInteger(generatedMs) ||
         generatedMs > time + 24 * 60 * 60_000 ||
-        generatedMs + MAX_MAP_AGE_MS < time) {
+        generatedMs + MAX_MAP_AGE_MS <= time) {
       throw new Error('Ownership map stale or unsupported');
     }
     cachedMap = map;
@@ -61,7 +62,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
   };
   const refresh = ({ force = true } = {}) => {
     if (pending) return pending;
-    if (!force && observation &&
+    if (!force && observation && Date.parse(cachedMap?.generated_at) + MAX_MAP_AGE_MS > now() &&
         observation.checkedMs + 30_000 > now()) {
       return Promise.resolve({ state: 'ready',
         monitoredSeries: observation.monitoredSeries,
@@ -79,11 +80,11 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
       let series;
       try {
         const response = await fetchImpl(`${base.origin}/api/v3/series`, {
-          signal: AbortSignal.timeout(8_000),
+          signal: AbortSignal.timeout(8_000), redirect: 'manual',
           headers: { 'X-Api-Key': sonarrApiKey,
             Accept: 'application/json' },
         });
-        if (response.status !== 200) throw new Error('Sonarr unavailable');
+        if (response.status !== 200) { await cancelResponseBody(response); throw new Error('Sonarr unavailable'); }
         series = JSON.parse(await readBoundedText(response, MAX_SONARR_BYTES));
       } catch { return held('sonarr_ownership_unavailable'); }
       const mapped = mapSonarrOwnership(map, series);
@@ -97,7 +98,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
   return {
     refresh,
     status(anidbId) {
-      if (!validId(anidbId) || !observation ||
+      if (!validId(anidbId) || !observation || Date.parse(cachedMap?.generated_at) + MAX_MAP_AGE_MS <= now() ||
           observation.checkedMs + OWNERSHIP_FRESH_MS <= now()) {
         return 'unavailable';
       }

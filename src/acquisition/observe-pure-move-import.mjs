@@ -14,7 +14,7 @@ const within = (root, candidate) => {
     !path.isAbsolute(relative);
 };
 
-async function probePureMovedFile({ filePath, allowedRoot, expectedSize }) {
+export async function probePureMovedFile({ filePath, allowedRoot, expectedSize }) {
   try {
     const [rootReal, fileReal, before] = await Promise.all([
       realpath(allowedRoot), realpath(filePath),

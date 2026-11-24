@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { readBoundedText, cancelResponseBody } from '../http/bounded-response.mjs';
 
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
 const CHECKSUM_URL = `${MAP_URL}.sha256`;
@@ -23,6 +23,7 @@ export function createVerifiedAniMapReader({ fetchImpl = fetch, now = Date.now }
         headers: { Accept: 'text/plain' } }),
     ]);
     if (mapResponse.status !== 200 || digestResponse.status !== 200) {
+      await Promise.all([cancelResponseBody(mapResponse),cancelResponseBody(digestResponse)]);
       throw new Error('AniMap release unavailable');
     }
     const [raw, checksum] = await Promise.all([
@@ -37,7 +38,7 @@ export function createVerifiedAniMapReader({ fetchImpl = fetch, now = Date.now }
     if (map?.version !== 2 || !Array.isArray(map.anime) ||
         map.anime.length < 1 || map.anime.length > 100_000 ||
         !Number.isSafeInteger(generatedMs) || generatedMs > time + 24 * 60 * 60_000 ||
-        generatedMs + MAX_MAP_AGE_MS < time) {
+        generatedMs + MAX_MAP_AGE_MS <= time) {
       throw new Error('AniMap release stale or unsupported');
     }
     cached = map;
@@ -50,7 +51,7 @@ export function createVerifiedAniMapReader({ fetchImpl = fetch, now = Date.now }
       if (!Number.isSafeInteger(time) || time < 0) {
         return Promise.reject(new TypeError('Invalid AniMap read time'));
       }
-      if (cached && checkedMs + MAP_CACHE_MS > time) return Promise.resolve(cached);
+      if (cached && checkedMs + MAP_CACHE_MS > time && Date.parse(cached.generated_at) + MAX_MAP_AGE_MS > time) return Promise.resolve(cached);
       if (pending) return pending;
       pending = fetchMap(time).finally(() => { pending = null; });
       return pending;

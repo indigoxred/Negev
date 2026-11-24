@@ -35,3 +35,12 @@ test('a mismatched digest or stale release fails closed', async () => {
       ? `${staleDigest}  animap.json\n` : staleBody) });
   await assert.rejects(stale.read());
 });
+
+test('cached map expires when its generation crosses the age limit', async () => {
+ let time=nowMs,calls=0;
+ const text=JSON.stringify({...map,generated_at:new Date(time-14*86400000+60000).toISOString()});
+ const sha=createHash('sha256').update(text).digest('hex');
+ const reader=createVerifiedAniMapReader({now:()=>time,fetchImpl:async url=>{calls++;return new Response(String(url).endsWith('.sha256')?`${sha}  animap.json\n`:text);}});
+ await reader.read();time+=60001;
+ await assert.rejects(reader.read(),/stale/);assert.equal(calls,4);
+});

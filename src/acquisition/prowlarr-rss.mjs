@@ -1,4 +1,4 @@
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { readBoundedText, cancelResponseBody } from '../http/bounded-response.mjs';
 
 const unavailable = (retryAfterMs) => ({ state: 'unavailable',
   ...(retryAfterMs === null ? {} : { retryAfterMs }) });
@@ -32,8 +32,19 @@ function xmlText(fragment) {
 }
 
 function field(body, name) {
-  const match = body.match(new RegExp(`<${name}\\s*>([\\s\\S]*?)<\\/${name}\\s*>`, 'i'));
-  return match ? xmlText(match[1]) : null;
+  const matches=[...body.matchAll(new RegExp(`<${name}\\b([^>]*)>([\\s\\S]*?)<\\/${name}\\s*>`, 'gi'))];
+  if(matches.length!==1)return null;
+  const [,attributes,value]=matches[0];
+  if(attributes.length>1024)return null;
+  const attr=/\s+([A-Za-z_][A-Za-z0-9_.:-]*)\s*=\s*(?:"([^"<>]*)"|'([^'<>]*)')/y;
+  const names=new Set();let offset=0;
+  while(offset<attributes.length) {
+    if(!attributes.slice(offset).trim())break;
+    attr.lastIndex=offset;const match=attr.exec(attributes);
+    if(!match||names.has(match[1])||names.size>=16||xmlText(match[2]??match[3])===null)return null;
+    names.add(match[1]);offset=attr.lastIndex;
+  }
+  return xmlText(value);
 }
 
 export async function readProwlarrRss({ baseUrl, apiKey, indexerId,
@@ -55,7 +66,7 @@ export async function readProwlarrRss({ baseUrl, apiKey, indexerId,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { 'X-Api-Key': apiKey, Accept: 'application/rss+xml, application/xml' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return unavailable(retryAfter(response));
+    if (response.status !== 200) { await cancelResponseBody(response); return unavailable(retryAfter(response)); }
     const xml = await readBoundedText(response, 2_000_000);
     if (/<!DOCTYPE|<!ENTITY/i.test(xml) ||
         !/<rss(?:\s[^>]*)?>/i.test(xml) || !/<\/rss\s*>\s*$/i.test(xml) ||
