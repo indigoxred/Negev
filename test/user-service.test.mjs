@@ -1409,7 +1409,11 @@ test('request history reflects recent title-check proof and loses it on expiry',
       url: '/api/requests', headers: { cookie } })).json().items[0].progress;
     const requestWithTitle = (await service.app.inject({ method: 'GET',
       url: '/api/requests', headers: { cookie } })).json().items[0];
-    assert.equal(requestWithTitle.englishTitle, 'English Example');
+    assert.equal(requestWithTitle.englishTitle, null, 'cold optional enrichment does not delay durable status');
+    await new Promise(resolve => setImmediate(resolve));
+    const warmRequest = (await service.app.inject({ method: 'GET',
+      url: '/api/requests', headers: { cookie } })).json().items[0];
+    assert.equal(warmRequest.englishTitle, 'English Example');
     const search = async () => (await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
     const season = async () => (await service.app.inject({ method: 'GET',

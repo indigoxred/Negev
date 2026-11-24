@@ -1,3 +1,4 @@
+import { durableControl, canonicalReleaseGuid, rememberLegacyControl } from './durable-release-candidate.mjs';
 import { initializePreferredReleases, validReleasePreference } from './preferred-release.mjs';
 // Private request-local intent, not an alternative download pipeline. Call
 // reservationGate inside the acquisition transaction so a stale worker cannot
@@ -7,6 +8,14 @@ export function initializeReleaseControl(db) {
     db.exec('ALTER TABLE requests ADD COLUMN release_control TEXT');
   }
   initializePreferredReleases(db);
+  // Idempotent in-place upgrade of saved identity, never candidate discovery.
+  // CAS preserves a simultaneous selection write on another connection.
+  for(const row of db.prepare(`SELECT id,release_control FROM requests WHERE release_control IS NOT NULL`).all()) {
+    let parsed;try{parsed=JSON.parse(row.release_control);}catch{continue;}
+    rememberLegacyControl(db,parsed);
+    const clean=JSON.stringify(durableControl(parsed));
+    db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?').run(clean,row.id,row.release_control);
+  }
 }
 export function sameReleaseFiles(left,right) {
   const normalize=files=>{
@@ -22,7 +31,14 @@ export function sameReleaseFiles(left,right) {
 export function readReleaseControl(db, id, nowMs) {
   const raw = db.prepare('SELECT release_control FROM requests WHERE id=?').get(id)?.release_control;
   if (!raw) return {mode:'auto',phase:'consumed',revision:0};
-  const control = JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  rememberLegacyControl(db,parsed);
+  const control = durableControl(parsed);
+  const clean = JSON.stringify(control);
+  if (clean !== raw) {
+    db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?').run(clean,id,raw);
+    return readReleaseControl(db,id,nowMs);
+  }
   if (control.mode === 'auto' && control.expiresMs <= nowMs &&
       ['proposal','selecting'].includes(control.phase)) {
     const next = {mode:'auto',phase:control.proposal ? 'chosen' : 'consumed',
@@ -59,7 +75,8 @@ export function updateReleaseControl(db,id,revision,next,nowMs) {
           row.status!=='torrent_observed'||selectedTargets.includes(row.episode_id))) {
     return {state:'held',reason:'release_already_processing'};
   }
-  const value={...next,...(next.preference===undefined&&current.preference!==undefined?{preference:current.preference}:{}),revision:revision+1};
+  rememberLegacyControl(db,next);
+  const value={...durableControl(next),...(next.preference===undefined&&current.preference!==undefined?{preference:current.preference}:{}),revision:revision+1};
   const changed=db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control IS ?')
     .run(JSON.stringify(value),id,row.release_control).changes;
   return changed ? {state:'updated',control:value} : {state:'held',reason:'stale_release_selection'};
@@ -90,7 +107,7 @@ export function releaseReservationGate(db,id,candidate,episodeIds,nowMs,prepared
   if (['selecting','proposal'].includes(control.phase)) return 'release_selection_pending';
   if (control.phase!=='chosen') return null;
   const s=control.selection;
-  if (s.candidate.indexerId!==candidate.indexerId || s.candidate.guid!==candidate.guid ||
+  if (s.candidate.indexerId!==candidate.indexerId || canonicalReleaseGuid(s.candidate.guid,s.candidate.indexerId)!==canonicalReleaseGuid(candidate.guid,candidate.indexerId) ||
       s.candidate.title!==candidate.title || s.candidate.size!==candidate.size ||
       episodeIds.some(id=>!s.preview.episodeIds.includes(id)) ||
       preparedHash?.toLowerCase()!==s.preview.torrentHash ||

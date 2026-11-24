@@ -340,6 +340,10 @@ test('opt-in Plex observer requires scoped public sections, mounts and a private
     NEGEV_PLEX_MEDIA_MOUNTS: JSON.stringify([{ appRoot: '/source-pure',
       localRoot: path.join(dataDir, 'media') }]) };
   const parsed = parseUserServerConfig(plex);
+  assert.throws(() => parseUserServerConfig({ ...plex,
+    NEGEV_PLEX_SECTIONS: JSON.stringify({
+      episode: Array.from({ length: 20 }, (_, i) => i + 1), movie: [21] }),
+  }), TypeError, 'startup must reject a scope the final observer cannot accept');
   assert.equal(parsed.plex.plexBaseUrl, plex.NEGEV_PLEX_URL);
   assert.equal(parsed.plex.plexTokenPath, plex.NEGEV_PLEX_TOKEN_FILE);
   assert.deepEqual(parsed.plex.publicSections, { episode: [102], movie: [9] });

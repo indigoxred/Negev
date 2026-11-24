@@ -85,7 +85,10 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
       }).finally(() => { active--; pump(); });
     }
   };
-  return { read({ anidbId }) {
+  return { peek({ anidbId }) {
+    const hit = cache.get(anidbId);
+    return hit && hit.expiresMs > now() ? hit.value : null;
+  }, read({ anidbId }) {
     if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
         anidbId > 2_147_483_647) throw new TypeError('Invalid AniDB ID');
     const hit = cache.get(anidbId);

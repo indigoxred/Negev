@@ -14,7 +14,7 @@ import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { episodeScheduleLabel, nextAirDateLabel, watchingNextAirLabel } from './episode-schedule.mjs';
-import { trackingAction, changeTrackedIds } from './airing-tracking-controls.mjs';
+import { trackingAction } from './airing-tracking-controls.mjs';
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonSelectionScope, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
@@ -45,8 +45,9 @@ const requestResponses = {
   preparing: createResponseEpoch(),
 };
 const displayCache = new Map();
+let classificationToken = 0;
 const adultSearchVerifier = createAdultSearchVerifier({ readDisplay: (id) =>
-  api(`/api/catalogue/${id}/display`) });
+  api(`/api/catalogue/${id}/display`, { signal: AbortSignal.timeout(30_000) }) });
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -56,11 +57,14 @@ const reviewResponses = createResponseEpoch();
 const detailResponses = createResponseEpoch();
 const libraryResponses = createResponseEpoch();
 const airingResponses = createResponseEpoch();
+const airingSeasonResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
 let nextReviewAttemptId = null;
 let detailPollTimer = null;
 let trackingPrefsPromise = null;
 let trackingSaving = false;
+let trackingPreferencesRevision = 0;
+let trackingMutationTail = Promise.resolve();
 const genreSelections = { season: new Set(), airing: new Set() };
 const dropdownSelector = '#identity[open], #tracked-titles[open], .genre-picker[open]';
 document.querySelector('.skip-link')?.addEventListener('click', event => {
@@ -154,19 +158,39 @@ async function ensureTrackingPreferences() {
   const userId = state.user?.id;
   if (!userId) return null;
   if (trackingPrefsPromise) return trackingPrefsPromise;
+  const session = sessionResponses.current();
+  const revision = trackingPreferencesRevision;
   const pending = api('/api/airing/preferences').then((preferences) => {
-    if (state.user?.id === userId) {
+    if (sessionResponses.isCurrent(session) && state.user?.id === userId &&
+        revision === trackingPreferencesRevision) {
       state.airingPreferences = preferences;
       updateTrackControls();
     }
-    return preferences;
+    return sessionResponses.isCurrent(session) ? state.airingPreferences : null;
   }).finally(() => {
     if (trackingPrefsPromise === pending) trackingPrefsPromise = null;
   });
   trackingPrefsPromise = pending;
   return trackingPrefsPromise;
 }
+async function changeTrackingPreferences(action) {
+  const session = sessionResponses.current();
+  trackingPreferencesRevision++;
+  trackingPrefsPromise = null;
+  const pending = trackingMutationTail.catch(() => {}).then(async () => {
+    if (!sessionResponses.isCurrent(session) || !state.user) return false;
+    const preferences = await api('/api/airing/preferences', {
+      method: 'PATCH', body: JSON.stringify(action) });
+    if (!sessionResponses.isCurrent(session)) return false;
+    trackingPreferencesRevision++;
+    state.airingPreferences = preferences;
+    return true;
+  });
+  trackingMutationTail = pending;
+  return pending;
+}
 function refreshTrackingAfterRequest() {
+  trackingPreferencesRevision++;
   state.airingPreferences = null;
   trackingPrefsPromise = null;
   updateTrackControls();
@@ -184,18 +208,19 @@ function makeTrackButton(item) {
   button.setAttribute('aria-label', `${button.textContent}: ${item.title}`);
   button.addEventListener('click', async () => {
     if (trackingSaving) return;
+    const session = sessionResponses.current();
+    const current = state.airingPreferences;
+    if (!current) return;
+    const action = current.trackedAnidbIds.includes(item.anidbId) ? 'untrack' : 'track';
     trackingSaving = true;
     updateTrackControls();
     try {
-      const current = await ensureTrackingPreferences();
-      if (!current) throw new Error('Tracking is unavailable right now');
-      state.airingPreferences = await api('/api/airing/preferences', {
-        method: 'PUT', body: JSON.stringify(changeTrackedIds(current, item.anidbId)) });
+      if (!await changeTrackingPreferences({ action, anidbId: item.anidbId })) return;
       updateTrackControls();
       renderTrackedTitles();
       if (state.routePage === 'airing' && current.mode === 'custom') void loadAiring();
-    } catch (error) { message(error.message, true); }
-    finally { trackingSaving = false; updateTrackControls(); }
+    } catch (error) { if (sessionResponses.isCurrent(session)) message(error.message, true); }
+    finally { if (sessionResponses.isCurrent(session)) { trackingSaving = false; updateTrackControls(); } }
   });
   if (!state.airingPreferences) void ensureTrackingPreferences().catch(() => {
     button.textContent = 'Tracking unavailable';
@@ -333,6 +358,7 @@ function renderRoute() {
   const librarySearchCleared = route.page === 'library' && route.query.length < 2 &&
     previousRoute?.page === 'library' && previousRoute.query.length >= 2;
   if (renderedHash !== location.hash) {
+    classificationToken++;
     message('');
     for (const menu of document.querySelectorAll(dropdownSelector)) menu.open = false;
     pendingScrollRestore = { hash: location.hash, y: routePositions.get(location.hash) ?? 0 };
@@ -466,6 +492,7 @@ async function api(url, options = {}) {
   const pacer = /^\/api\/seasons(?:\?|$)/.test(url) ? cataloguePacers.seasons :
     /^\/api\/library(?:\?|$)/.test(url) ? cataloguePacers.library : null;
   const userId = state.user?.id;
+  const session = sessionResponses.current();
   const read = async () => {
     const headers = { Accept: 'application/json', ...fetchOptions.headers };
     if (fetchOptions.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -476,12 +503,15 @@ async function api(url, options = {}) {
     if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
     if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
     if (!response.ok) {
+      if (response.status === 401 && !['/api/login', '/api/register'].includes(url) &&
+          sessionResponses.isCurrent(session)) clearWorkspace();
       const error = new Error(data.error || data.reason || 'Request failed ('+response.status+')');
-      error.status = response.status; error.reason = data.reason; error.field = data.field; throw error;
+      error.status = response.status; error.reason = data.reason; error.field = data.field;
+      error.retryAfter = response.headers?.get('Retry-After'); throw error;
     }
     return data;
   };
-  return pacer ? pacer.run(read, catalogueCurrent ?? (() => state.user?.id === userId)) : read();
+  return pacer ? pacer.run(read, catalogueCurrent ?? (() => sessionResponses.isCurrent(session) && state.user?.id === userId)) : read();
 }
 const releasePreviewSaved=new Map();
 const releaseDialog=createReleaseDialog({api,element,onSaved:data=>{
@@ -557,6 +587,7 @@ function showSession(data) {
     stopBrowsePageObserver('airing');
     libraryResponses.invalidate();
     airingResponses.invalidate();
+    airingSeasonResponses.invalidate();
     seasonalResponses.invalidate();
     state.selected = null;
     state.detailHydrationQueued.clear();
@@ -576,6 +607,9 @@ function showSession(data) {
     state.airingLoaded = false;
     state.airingPreferences = null;
     trackingPrefsPromise = null;
+    trackingPreferencesRevision++;
+    trackingMutationTail = Promise.resolve();
+    trackingSaving = false;
     airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
     genreSelections.airing.clear();
     genreSelections.season.clear();
@@ -640,6 +674,7 @@ function clearWorkspace() {
   detailPollTimer = null;
   libraryResponses.invalidate();
   airingResponses.invalidate();
+  airingSeasonResponses.invalidate();
   seasonalResponses.invalidate();
   dismissRequestDialogs();
   state.user = null;
@@ -660,6 +695,9 @@ function clearWorkspace() {
   state.airingLoaded = false;
   state.airingPreferences = null;
   trackingPrefsPromise = null;
+  trackingPreferencesRevision++;
+  trackingMutationTail = Promise.resolve();
+  trackingSaving = false;
   airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
   genreSelections.airing.clear();
   genreSelections.season.clear();
@@ -1223,7 +1261,7 @@ function stopBrowsePageObserver(view) {
 }
 function appendBrowsePageMarker(view, list, loadPage) {
   const session = sessionResponses.current();
-  const responses = view === 'discover' ? seasonalResponses : airingResponses;
+  const responses = view === 'discover' ? seasonalResponses : airingSeasonResponses;
   let epoch = responses.current();
   const route = location.hash;
   const current = () => sessionResponses.isCurrent(session) &&
@@ -1539,7 +1577,7 @@ function renderAiringFilterChips() {
   active.hidden=labels.length===0;
   if(labels.length){const clear=element('button','Clear filters','text-link');clear.type='button';clear.addEventListener('click',()=>{
     airingFilters={...airingFilters,year:0,season:'ALL',kind:'all',tag:''};
-    void loadCurrentAiring(sessionResponses.current(),airingResponses.invalidate(),state.user?.id);
+    void loadCurrentAiring(sessionResponses.current(),airingSeasonResponses.invalidate(),state.user?.id);
   });active.append(clear);}
 }
 let airingBrowseAfter = 0;
@@ -1566,9 +1604,9 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
   if (tag) params.set('tag', tag);
   if (after) params.set('after', String(after));
   try {
-    const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && airingResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
+    const page = await api(`/api/seasons?${params}`, { catalogueCurrent: () => sessionResponses.isCurrent(session) && airingSeasonResponses.isCurrent(epoch) && state.user?.id === userId && location.hash === route });
     if (!sessionResponses.isCurrent(session) ||
-        !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        !airingSeasonResponses.isCurrent(epoch) || state.user?.id !== userId ||
         location.hash !== route) return;
     if (page.state === 'unavailable') {
       if (continuation) continuation.showError();
@@ -1611,7 +1649,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
     if (after === 0 && page.orderState === 'score_loading') {
       setTimeout(() => {
         if (sessionResponses.isCurrent(session) &&
-            airingResponses.isCurrent(epoch) &&
+            airingSeasonResponses.isCurrent(epoch) &&
             state.user?.id === userId && state.routePage === 'airing' &&
             airingBrowseAfter === 0) {
           void loadCurrentAiring(session, epoch, userId);
@@ -1627,7 +1665,7 @@ async function loadCurrentAiring(session, epoch, userId, after = 0,
     }
   } catch {
     if (!sessionResponses.isCurrent(session) ||
-        !airingResponses.isCurrent(epoch) || state.user?.id !== userId ||
+        !airingSeasonResponses.isCurrent(epoch) || state.user?.id !== userId ||
         location.hash !== route) return;
     if (continuation) continuation.showError();
     else notice.textContent = 'The ongoing-title list is unavailable. This week’s schedule is separate.';
@@ -1646,7 +1684,7 @@ byId('airing-form').addEventListener('submit', (event) => {
       !['newest', 'oldest', 'title_asc', 'title_desc', 'next_episode',
         'score_desc', 'popular_desc'].includes(sort)) return;
   airingFilters = { year, season, kind, tag, sort };
-  const epoch = airingResponses.invalidate();
+  const epoch = airingSeasonResponses.invalidate();
   void loadCurrentAiring(sessionResponses.current(), epoch, state.user?.id);
 });
 byId('airing-sort').addEventListener('change', () =>
@@ -1655,6 +1693,7 @@ async function loadAiring() {
   stopBrowsePageObserver('airing');
   const session = sessionResponses.current();
   const epoch = airingResponses.invalidate();
+  const seasonEpoch = airingSeasonResponses.invalidate();
   const userId = state.user?.id;
   const list = byId('airing-list');
   const notice = byId('airing-state');
@@ -1675,7 +1714,9 @@ async function loadAiring() {
     : state.airingPreferences.mode === 'custom'
     ? 'Your selected shows. Switch to All airing anime to track more.'
     : 'All ongoing shows. Use Track this title to build a custom list.';
-  void loadCurrentAiring(session, epoch, userId);
+  if (airingSeasonResponses.isCurrent(seasonEpoch)) {
+    void loadCurrentAiring(session, seasonEpoch, userId);
+  }
   notice.textContent = '';
   list.replaceChildren(element('p', 'Loading this week’s schedule…', 'muted'));
   try {
@@ -1727,22 +1768,22 @@ async function loadAiring() {
 }
 byId('airing-view-mode').addEventListener('change', async (event) => {
   const select = event.currentTarget;
+  const session = sessionResponses.current();
   const previous = state.airingPreferences;
   if (!previous) return;
   const mode = select.value;
   select.disabled = true;
   try {
-    state.airingPreferences = await api('/api/airing/preferences', {
-      method: 'PUT', body: JSON.stringify({ mode,
-        trackedAnidbIds: previous.trackedAnidbIds }) });
+    if (!await changeTrackingPreferences({ action: 'mode', mode })) return;
     renderTrackedTitles();
     updateTrackControls();
     state.airingLoaded = false;
     void loadAiring();
   } catch (error) {
+    if (!sessionResponses.isCurrent(session)) return;
     select.value = previous.mode;
     byId('airing-season-state').textContent = error.message;
-  } finally { select.disabled = false; }
+  } finally { if (sessionResponses.isCurrent(session)) select.disabled = false; }
 });
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('refresh-library').addEventListener('click', () => {
@@ -1824,6 +1865,7 @@ byId('login-form').addEventListener('submit', async (event) => {
     await api('/api/login', { method: 'POST', body: JSON.stringify({
       username: fields.get('username'), password: fields.get('password'),
     }) });
+    sessionResponses.invalidate();
     form.reset();
     if (await refreshSession()) message('Signed in. Search for a show or film.');
   } catch (error) { message(error.message, true); }
@@ -1846,8 +1888,14 @@ byId('register-form').addEventListener('submit', async (event) => {
   }
 });
 byId('signout').addEventListener('click', async () => {
+  const session = sessionResponses.current();
   try { await api('/api/logout', { method: 'POST', body: '{}' }); }
-  catch (error) { message(error.message, true); return; }
+  catch (error) {
+    if (error.status === 401) { if (!state.user) message('Signed out.'); return; }
+    if (sessionResponses.isCurrent(session)) message(error.message, true);
+    return;
+  }
+  if (!sessionResponses.isCurrent(session)) return;
   clearWorkspace();
   message('Signed out.');
 });
@@ -1871,6 +1919,7 @@ byId('chinese-toggle').addEventListener('click', () => {
     state.showChinese ? 'on' : 'off'); }
   catch { /* Choice still applies this session. */ }
   applyAdultVisibility();
+  void classifySearchCards(state.searchToken);
 });
 byId('english-title-toggle').addEventListener('click', () => {
   if (!state.user) return;
@@ -1880,12 +1929,19 @@ byId('english-title-toggle').addEventListener('click', () => {
   applyTitlePreference();
 });
 async function classifySearchCards(searchToken) {
-  const userId = state.user?.id;
+  const pass = ++classificationToken;
+  if (state.showAdult || !state.user) return;
+  const userId = state.user.id;
+  const session = sessionResponses.current();
+  const route = location.hash;
+  const current = () => pass === classificationToken && !state.showAdult && state.searchToken === searchToken &&
+    state.user?.id === userId && sessionResponses.isCurrent(session) && location.hash === route;
   const ids = [...document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')]
-    .filter((node) => node.dataset.adult === 'unknown')
+    .filter((node) => node.dataset.adult === 'unknown' &&
+      !hideChineseProduction(state.showChinese, node.dataset.chineseProduction === 'true'))
     .map((node) => Number(node.dataset.anidbId));
   await adultSearchVerifier.verify(ids, (id, adult) => {
-    if (state.searchToken !== searchToken || state.user?.id !== userId) return;
+    if (!current()) return;
     const item = state.searchItems.get(id);
     if (item) state.searchItems.set(id, { ...item, adult });
     for (const node of document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')) {
@@ -1898,7 +1954,7 @@ async function classifySearchCards(searchToken) {
       }
     }
     applyAdultVisibility();
-  });
+  }, { current });
 }
 byId('invite').addEventListener('click', async () => {
   try {

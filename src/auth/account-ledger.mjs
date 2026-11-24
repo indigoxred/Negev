@@ -136,6 +136,30 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
         return { mode, trackedAnidbIds: normalized };
       });
     },
+    // Apply one intent against the current row under the write lock. A mode
+    // change never replaces another tab's tracked list (or automatic tracking).
+    changeAiringPreferences({ userId, action, mode, anidbId, sessionVersion }) {
+      if (!validId(userId) || !['mode', 'track', 'untrack'].includes(action) ||
+          (sessionVersion !== undefined && !validId(sessionVersion)) ||
+          (action === 'mode' ? !['library', 'all', 'custom'].includes(mode) ||
+            anidbId !== undefined : !validId(anidbId) || anidbId > 2_147_483_647 ||
+            mode !== undefined)) throw new TypeError('Invalid Airing preference intent');
+      return transact(() => {
+        const user = findUser.get(userId);
+        if (!user || user.disabled || sessionVersion !== undefined &&
+            user.session_version !== sessionVersion) return null;
+        const row = findAiring.get(userId);
+        const ids = new Set(row ? JSON.parse(row.tracked_ids) : []);
+        if (action === 'track' && !ids.has(anidbId) && ids.size >= 200)
+          return held('tracking_limit');
+        if (action === 'track') ids.add(anidbId);
+        if (action === 'untrack') ids.delete(anidbId);
+        const nextMode = action === 'mode' ? mode : row?.mode ?? 'library';
+        const trackedAnidbIds = [...ids].sort((a, b) => a - b);
+        saveAiring.run(userId, nextMode, JSON.stringify(trackedAnidbIds));
+        return { mode: nextMode, trackedAnidbIds };
+      });
+    },
     async bootstrapAdmin({ username, password }) {
       if (!validUsername(username) || !validPassword(password)) {
         throw new TypeError('Invalid admin credentials');

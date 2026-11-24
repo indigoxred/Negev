@@ -1,3 +1,4 @@
+import { resolveProxyDescriptor } from './durable-release-candidate.mjs';
 import { readBoundedJson, readBoundedBytes, cancelResponseBody } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
@@ -52,6 +53,10 @@ export async function fetchProwlarrTorrentBytes({
 
   try {
     let proxyUrl = candidate.proxyUrl;
+    if(candidate.proxyDescriptor!==undefined) {
+      proxyUrl=resolveProxyDescriptor(candidate.proxyDescriptor,base,apiKey,candidate.indexerId);
+      if(!proxyUrl)return held('untrusted_proxy');
+    }
     if (proxyUrl === undefined) {
       const found = await fetchImpl(search, { method: 'GET', headers, redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs) });

@@ -84,6 +84,9 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     if (!intent.monitorFuture && missingIds.length === 0) {
       return held('already_available');
     }
+    if (releaseMode !== 'auto' && missingIds.length === 0) {
+      return held('release_selection_requires_targets');
+    }
     return ledger.submit({ requesterId, requestKey, commandKey, releaseMode,
       intent: { ...intent, episodeIds: missingIds, title }, nowMs: now() });
   };

@@ -4,6 +4,25 @@ import { createHeldRequestSubmitter } from '../src/requests/submit-held-request.
 
 const authorized = () => ({ active: true, adultAllowed: true });
 
+test('zero-target Manual and review requests are rejected without silently creating Auto watches', async () => {
+  let saved = 0;
+  const submit = createHeldRequestSubmitter({ authorizeRequester: authorized,
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => ({ state: 'details', anidbId: 42, title: 'Airing series',
+      kind: 'series', restricted: false, complete: true, page: 1, total: 1,
+      nextPage: null, airDate: '2026-11-01', endDate: null, episodeCount: 12,
+      episodes: [{ id: 99, number: 1, type: 'Episode', title: 'First', airDate: '2026-11-01' }] }),
+    recentlyAvailable: () => true,
+    ledger: { findSubmission: () => null, submit: () => { saved++; return { state: 'held', requestId: 1 }; } },
+    now: () => 1, today: () => '2026-11-03',
+  });
+  for (const releaseMode of ['manual', 'auto_review']) assert.deepEqual(await submit({
+    requesterId: 1, anidbId: 42, scope: 'installment', requestKey: releaseMode, releaseMode,
+  }), { state: 'held', reason: 'release_selection_requires_targets' });
+  assert.equal(saved, 0);
+  assert.equal((await submit({ requesterId: 1, anidbId: 42, scope: 'installment', requestKey: 'auto' })).requestId, 1);
+});
+
 test('held submission requires an explicit account policy', () => {
   assert.throws(() => createHeldRequestSubmitter({
     confirmKnownTitle: async () => true,

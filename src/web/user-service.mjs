@@ -275,6 +275,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       const display = await displayReader.read({ anidbId });
       return display.state === 'display' ? display.englishTitle : null;
     };
+    const cachedEnglishTitleFor = (anidbId) => {
+      const fromDump = titleSource?.getEnglishTitle(anidbId);
+      if (fromDump) return fromDump;
+      const display = displayReader.peek({ anidbId });
+      if (!display) void displayReader.read({ anidbId }).catch(() => {});
+      return display?.state === 'display' ? display.englishTitle : null;
+    };
     if (plex) {
       plexObserver = createPlexAvailabilityService({ dbPath,
         shokoBaseUrl, shokoApiKey, ...plex, fetchImpl, now, enforceScope: true });
@@ -722,13 +729,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       findActiveWatch: (input) => requests.findActiveWatch(input),
       findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
-        await titleSource?.refresh();
+        void titleSource?.refresh().catch(() => {});
         const target = input.requestId ? requests.getRequest(input.requestId) : null;
         const page = input.requestId ? { items: target &&
           (input.scope === 'all' || target.requesterId === input.requesterId) ? [target] : [], nextBeforeId: null }
           : requests.listRequests(input);
-        const englishTitles = await Promise.all(page.items.map((item) =>
-          englishTitleFor(item.anidbId)));
+        const englishTitles = page.items.map((item) => cachedEnglishTitleFor(item.anidbId));
         const ownerNames = input.scope === 'all'
           ? new Map((accounts.listUsers({ adminUserId: input.requesterId }).items ?? [])
             .map((user) => [user.id, user.username]))
@@ -809,10 +815,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         async ({ afterAnidbId, limit }) => {
           // Title artwork and names are optional display data. A temporary
           // AniDB outage must not hide already verified public Plex files.
-          await titleSource?.refresh();
+          void titleSource?.refresh().catch(() => {});
           const page = fileProofs.listCurrentTitles({ afterAnidbId, limit });
-          const englishTitles = await Promise.all(page.items.map((item) =>
-            englishTitleFor(item.anidbId)));
+          const englishTitles = page.items.map((item) => cachedEnglishTitleFor(item.anidbId));
           return { state: 'current_proofs',
             items: page.items.map((item, index) => ({ ...item,
               regularCoverage:libraryPresenceForTitle(item.anidbId).regularCoverage,

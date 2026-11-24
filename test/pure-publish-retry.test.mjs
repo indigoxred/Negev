@@ -8,6 +8,7 @@ import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs
 import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
 import { openHandoffPublishQueue } from '../src/acquisition/handoff-publish-queue.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { openAcquisitionRequestQueue } from '../src/acquisition/acquisition-request-queue.mjs';
 
 test('a moving pure file retries a reversible move after its staging permission is corrected', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-moving-retry-'));
@@ -38,10 +39,21 @@ test('a moving pure file retries a reversible move after its staging permission 
     queue = openHandoffPublishQueue(dbPath, { pureMode: true });
     const first = queue.claimNext({ nowMs: 1_000 });
     assert.equal(first.attemptId, attemptId);
+    const cutover = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.deepEqual(cutover.suspendForCutover({ requestId: request.requestId,
+        reason: 'cutover_review', nowMs: 1_000 }), { state: 'held', reason: 'request_inflight' });
+    } finally { cutover.close(); }
     assert.equal(queue.recordResult({ attemptId, version: first.version,
       state: 'held', reason: 'move_outcome_unknown', checkedMs: 1_001 }).state,
     'recorded');
     assert.equal(queue.getResult(attemptId).nextDueMs, 61_001);
+    const cutoverAfter = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.deepEqual(cutoverAfter.suspendForCutover({ requestId: request.requestId,
+        reason: 'cutover_review', nowMs: 1_002 }), { state: 'suspended' });
+      cutoverAfter.resumeSuspended({ requestId: request.requestId });
+    } finally { cutoverAfter.close(); }
     queue.close();
     const db = new DatabaseSync(dbPath);
     db.prepare('UPDATE pure_move_publish_checks SET next_due_ms=NULL WHERE attempt_id=?')

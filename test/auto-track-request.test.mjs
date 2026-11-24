@@ -6,8 +6,11 @@ test('only a saved airing series owned by the requester enters tracking', () => 
   let preferences = { mode: 'custom', trackedAnidbIds: [5] };
   const accounts = {
     getAiringPreferences: () => preferences,
-    setAiringPreferences: ({ mode, trackedAnidbIds }) => {
-      preferences = { mode, trackedAnidbIds };
+    changeAiringPreferences: ({ action, anidbId }) => {
+      assert.equal(action, 'track');
+      preferences = { ...preferences,
+        trackedAnidbIds: [...new Set([...preferences.trackedAnidbIds, anidbId])] };
+      return preferences;
     },
   };
   const request = { requesterId: 2, anidbId: 8, kind: 'series',

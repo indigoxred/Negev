@@ -72,9 +72,10 @@ test('a saved airing request is tracked for its requester without changing the A
     registerInvite: async () => null, createInvite: () => null,
     revokeSessions: () => false,
     getAiringPreferences: ({ userId }) => userId === 7 ? preferences : null,
-    setAiringPreferences: ({ userId, mode, trackedAnidbIds }) => {
+    changeAiringPreferences: ({ userId, action, mode, anidbId }) => {
       assert.equal(userId, 7);
-      preferences = { mode, trackedAnidbIds };
+      preferences = action === 'mode' ? { ...preferences, mode } :
+        { ...preferences, trackedAnidbIds: [...new Set([...preferences.trackedAnidbIds, anidbId])] };
       return preferences;
     } };
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
@@ -261,9 +262,10 @@ test('signed-in Airing preferences are owner scoped and require CSRF to change',
     getSessionUser: () => user, registerInvite: async () => null,
     createInvite: () => null, revokeSessions: () => false,
     getAiringPreferences: ({ userId }) => userId === 7 ? preference : null,
-    setAiringPreferences: ({ userId, mode, trackedAnidbIds }) => {
+    changeAiringPreferences: ({ userId, action, mode, anidbId }) => {
       assert.equal(userId, 7);
-      preference = { mode, trackedAnidbIds };
+      preference = action === 'mode' ? { ...preference, mode } :
+        { ...preference, trackedAnidbIds: [...new Set([...preference.trackedAnidbIds, anidbId])] };
       return preference;
     } };
   const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
@@ -293,10 +295,13 @@ test('signed-in Airing preferences are owner scoped and require CSRF to change',
     const session = await app.inject({ method: 'GET', url: '/api/session',
       headers: { cookie } });
     const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
-    assert.equal((await app.inject({ method: 'PUT', url: '/api/airing/preferences',
-      headers, payload: { mode: 'custom', trackedAnidbIds: [20] } })).statusCode, 404);
-    const saved = await app.inject({ method: 'PUT', url: '/api/airing/preferences',
-      headers, payload: { mode: 'custom', trackedAnidbIds: [19] } });
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/airing/preferences',
+      headers, payload: { action: 'track', anidbId: 20 } })).statusCode, 404);
+    const tracked = await app.inject({ method: 'PATCH', url: '/api/airing/preferences',
+      headers, payload: { action: 'track', anidbId: 19 } });
+    assert.equal(tracked.statusCode, 200, tracked.body);
+    const saved = await app.inject({ method: 'PATCH', url: '/api/airing/preferences',
+      headers, payload: { action: 'mode', mode: 'custom' } });
     assert.equal(saved.statusCode, 200, saved.body);
     assert.deepEqual(saved.json(), { mode: 'custom', trackedAnidbIds: [19] });
     const airing = await app.inject({ method: 'GET',
@@ -589,7 +594,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     listRequests: (input) => requestLedger.listRequests(input),
     listLibraryTitles: () => ({ state: 'current_proofs', items: [
       { anidbId: 1234, title: 'Example series', englishTitle: null,
-        verifiedEpisodeCount: 2, lastVerifiedMs: 950, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }],
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950, chineseProduction: false, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }],
     nextAfterAnidbId: null }),
     listAiringSchedule: async () => ({ state: 'ready', week: '2026-W45',
       checkedMs: 950, items: [{ anidbId: 1234, title: 'Example series',

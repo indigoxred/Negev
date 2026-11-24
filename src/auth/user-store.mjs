@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, open, readFile } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { openAccountLedger } from './account-ledger.mjs';
 
@@ -33,14 +33,21 @@ async function readSessionKey(keyPath) {
 }
 
 async function ensureSessionKey(keyPath) {
+  try { return await readSessionKey(keyPath); }
+  catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  const temporaryPath = `${keyPath}.${randomBytes(16).toString('hex')}.tmp`;
   let handle;
   try {
-    handle = await open(keyPath, 'wx', 0o600);
+    handle = await open(temporaryPath, 'wx', 0o600);
     await handle.writeFile(randomBytes(32));
     await handle.sync();
-  } catch (error) {
-    if (error?.code !== 'EEXIST') throw error;
-  } finally { await handle?.close(); }
+    await handle.close(); handle = null;
+    try { await link(temporaryPath, keyPath); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  } finally {
+    await handle?.close();
+    await unlink(temporaryPath).catch(error => { if (error?.code !== 'ENOENT') throw error; });
+  }
   return readSessionKey(keyPath);
 }
 

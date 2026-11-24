@@ -389,32 +389,34 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return accounts.getAiringPreferences({ userId: request.negevUser.id }) ??
       reply.code(404).send({ error: 'Account unavailable' });
   });
-  app.put('/api/airing/preferences', { preHandler: writeGuards,
+  // Older full-list clients cannot safely express an independent intent.
+  app.put('/api/airing/preferences', { preHandler: writeGuards }, async (request, reply) =>
+    reply.header('Cache-Control', 'no-store').code(409).send({
+      error: 'Refresh this page before changing Airing preferences.' }));
+  app.patch('/api/airing/preferences', { preHandler: writeGuards,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const body = request.body;
+    const modeAction = body?.action === 'mode';
     if (Object.keys(request.query).length ||
-        !allowedBody(body, ['mode', 'trackedAnidbIds']) ||
-        !['library', 'all', 'custom'].includes(body.mode) ||
-        !Array.isArray(body.trackedAnidbIds) ||
-        body.trackedAnidbIds.length > 200 ||
-        body.trackedAnidbIds.some((id) => !Number.isSafeInteger(id) ||
-          id < 1 || id > 2_147_483_647) ||
-        typeof accounts.setAiringPreferences !== 'function') {
-      return reply.code(400).send({ error: 'Invalid Airing preferences' });
+        !allowedBody(body, modeAction ? ['action', 'mode'] : ['action', 'anidbId']) ||
+        !['mode', 'track', 'untrack'].includes(body.action) ||
+        (modeAction ? !['library', 'all', 'custom'].includes(body.mode) :
+          !Number.isSafeInteger(body.anidbId) || body.anidbId < 1 ||
+          body.anidbId > 2_147_483_647) ||
+        typeof accounts.changeAiringPreferences !== 'function') {
+      return reply.code(400).send({ error: 'Invalid Airing preference change' });
     }
-    const previous = accounts.getAiringPreferences({ userId: request.negevUser.id });
-    if (!previous) return reply.code(404).send({ error: 'Account unavailable' });
-    const known = new Set(previous.trackedAnidbIds);
-    const additions = [...new Set(body.trackedAnidbIds)].filter((id) => !known.has(id));
-    if (additions.length > 20) return reply.code(400).send({ error: 'Track fewer titles at once' });
-    for (const anidbId of additions) {
-      if (!(await confirmKnownTitle({ anidbId }))) {
-        return reply.code(404).send({ error: 'Title not found' });
-      }
+    if (body.action === 'track' &&
+        !(await confirmKnownTitle({ anidbId: body.anidbId }))) {
+      return reply.code(404).send({ error: 'Title not found' });
     }
-    return accounts.setAiringPreferences({ userId: request.negevUser.id,
-      mode: body.mode, trackedAnidbIds: body.trackedAnidbIds });
+    const result = accounts.changeAiringPreferences({ userId: request.negevUser.id,
+      sessionVersion: request.negevUser.sessionVersion, ...body });
+    if (!result) return reply.code(401).send({ error: 'Sign in again to change tracking.' });
+    if (result.state === 'held') return reply.code(400).send({
+      error: 'You can track up to 200 titles. Stop tracking a title before adding another.' });
+    return result;
   });
   app.get('/api/seasons', { preHandler: requireUser,
     config: { rateLimit: { max: 12, timeWindow: '1 minute' } } },

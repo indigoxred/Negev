@@ -73,6 +73,24 @@ test('pure completion uses separate cursor and checks alongside legacy queue', a
   });
 });
 
+test('cutover suspension refuses an active pure completion claim until its result is recorded', async () => {
+  await fixture(async (ctx) => {
+    const pureMoves = openPureMoveLedger(ctx.dbPath);
+    const pureQueue = openCompletionQueue(ctx.dbPath, { pureMode: true });
+    const requestsQueue = openAcquisitionRequestQueue(ctx.dbPath);
+    try {
+      const claim = pureQueue.claimNext({ nowMs: 1_000 });
+      const requestId = ctx.requests.listRequests({ requesterId: 1 }).items[0].id;
+      assert.deepEqual(requestsQueue.suspendForCutover({ requestId,
+        reason: 'cutover_review', nowMs: 1_001 }), { state: 'held', reason: 'request_inflight' });
+      pureQueue.recordResult({ attemptId: claim.attemptId, pass: claim.pass,
+        state: 'held', reason: 'torrent_incomplete', checkedMs: 1_002 });
+      assert.deepEqual(requestsQueue.suspendForCutover({ requestId,
+        reason: 'cutover_review', nowMs: 1_003 }), { state: 'suspended' });
+    } finally { requestsQueue.close(); pureQueue.close(); pureMoves.close(); }
+  });
+});
+
 test('upgrade wakes obsolete media-scan holds without changing legacy or unrelated retries', async () => {
   await fixture(async (ctx) => {
     const moves = openPureMoveLedger(ctx.dbPath);

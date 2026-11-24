@@ -174,3 +174,37 @@ test('configured Prowlarr URL base scopes both search and proxy', async () => {
   assert.equal(result.state, 'torrent_bytes');
   assert.deepEqual(paths, ['/prowlarr/api/v1/search', '/prowlarr/3/download']);
 });
+
+test('an exact credential-free proxy descriptor uses the current key without discovery', async () => {
+ const calls=[];
+ const result=await fetchProwlarrTorrentBytes({...config,apiKey:'rotatedFakeKey',candidate:{...candidate,proxyDescriptor:{version:1,origin:'http://prowlarr.internal:9696',pathname:'/3/download',link:'abc123',file:'Example'}},fetchImpl:async(url)=>{
+  calls.push(new URL(url));return new Response(bytes,{headers:{'content-type':'application/x-bittorrent'}});
+ }});
+ assert.equal(result.state,'torrent_bytes');
+ assert.equal(calls.length,1);
+ assert.equal(calls[0].pathname,'/3/download');
+ assert.equal(calls[0].searchParams.get('apikey'),'rotatedFakeKey');
+});
+
+
+test('rejecting HTTP status, redirect and content type cancels unread metainfo bodies', async () => {
+ for(const status of [302,403,500,200]) {
+  let cancelled=0;
+  const response=new Response(new ReadableStream({cancel(){cancelled++;}}),{status,headers:{'content-type':'text/plain',...(status===302?{location:'https://evil.invalid/'}:{})}});
+  const result=await fetchProwlarrTorrentBytes({...config,candidate:{...candidate,proxyUrl:proxy},fetchImpl:async()=>response});
+  assert.equal(result.state,'held');assert.equal(cancelled,1);
+ }
+});
+
+test('invalid descriptors preserve the chosen identity and cannot trigger substitute discovery', async () => {
+ for(const descriptor of [
+  {version:0},
+  {version:1,origin:'https://evil.invalid',pathname:'/3/download',link:'abc',file:'Example'},
+  {version:1,origin:'http://prowlarr.internal:9696',pathname:'/4/download',link:'abc',file:'Example'},
+  {version:1,origin:'http://prowlarr.internal:9696',pathname:'/3/download',link:'../elsewhere',file:'Example'},
+ ]){
+  let calls=0;
+  assert.deepEqual(await fetchProwlarrTorrentBytes({...config,candidate:{...candidate,proxyDescriptor:descriptor},fetchImpl:async()=>{calls++;throw Error('no discovery or alternate release');}}),{state:'held',reason:'untrusted_proxy'});
+  assert.equal(calls,0);
+ }
+});

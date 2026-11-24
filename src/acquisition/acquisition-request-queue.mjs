@@ -380,7 +380,7 @@ export function openAcquisitionRequestQueue(dbPath,
   const inFlightStages = new Map();
   const activeStageForRequest = (requestId) => {
     for (const table of ['start_checks', 'completion_checks',
-      'handoff_publish_checks']) {
+      'handoff_publish_checks', 'pure_move_completion_checks', 'pure_move_publish_checks']) {
       if (!hasStage.get(table)) continue;
       if (!inFlightStages.has(table)) {
         inFlightStages.set(table, db.prepare(`SELECT 1 FROM ${table} c

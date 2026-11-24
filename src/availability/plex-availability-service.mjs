@@ -28,6 +28,7 @@ const validSections = (sections) => sections &&
     sections[kind].length <= 20 && sections[kind].every((id) => validId(id)) &&
     new Set(sections[kind]).size === sections[kind].length) &&
   sections.episode.length + sections.movie.length > 0 &&
+  sections.episode.length + sections.movie.length <= 20 &&
   new Set([...sections.episode, ...sections.movie]).size ===
     sections.episode.length + sections.movie.length;
 

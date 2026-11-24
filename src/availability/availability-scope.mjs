@@ -13,12 +13,7 @@ export function openAvailabilityScope(dbPath) {
   const exists = name => !!db.prepare('SELECT 1 FROM sqlite_master WHERE type=\'table\' AND name=?').get(name);
   return {
     reconcile({serverIdentity,episodeLibraryIds,movieLibraryIds,shokoMount,plexMounts,observedMs}={}) {
-      if (typeof serverIdentity !== 'string' || !serverIdentity || serverIdentity.length>4096 ||
-        !validIds(episodeLibraryIds) || !validIds(movieLibraryIds) || !validMount(shokoMount) ||
-        !Array.isArray(plexMounts) || plexMounts.length<1 || plexMounts.length>8 || !plexMounts.every(validMount) ||
-        !Number.isSafeInteger(observedMs) || observedMs<0) throw new TypeError('Invalid availability scope');
-      const mounts = plexMounts.map(({appRoot,localRoot})=>[appRoot,localRoot]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
-      const signature=createHash('sha256').update(JSON.stringify([serverIdentity,[...episodeLibraryIds].sort((a,b)=>a-b),[...movieLibraryIds].sort((a,b)=>a-b),[shokoMount.appRoot,shokoMount.localRoot],mounts])).digest('hex');
+      const signature=availabilityScopeSignature({serverIdentity,episodeLibraryIds,movieLibraryIds,shokoMount,plexMounts,observedMs});
       db.exec('BEGIN IMMEDIATE');
       try {
         const prior=db.prepare('SELECT signature,generation FROM availability_scope WHERE id=1').get();
@@ -41,4 +36,13 @@ export function openAvailabilityScope(dbPath) {
     },
     close(){db.close();},
   };
+}
+
+export function availabilityScopeSignature({serverIdentity,episodeLibraryIds,movieLibraryIds,shokoMount,plexMounts,observedMs}={}) {
+      if (typeof serverIdentity !== 'string' || !serverIdentity || serverIdentity.length>4096 ||
+        !validIds(episodeLibraryIds) || !validIds(movieLibraryIds) || !validMount(shokoMount) ||
+        !Array.isArray(plexMounts) || plexMounts.length<1 || plexMounts.length>8 || !plexMounts.every(validMount) ||
+        !Number.isSafeInteger(observedMs) || observedMs<0) throw new TypeError('Invalid availability scope');
+      const mounts = plexMounts.map(({appRoot,localRoot})=>[appRoot,localRoot]).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+      return createHash('sha256').update(JSON.stringify([serverIdentity,[...episodeLibraryIds].sort((a,b)=>a-b),[...movieLibraryIds].sort((a,b)=>a-b),[shokoMount.appRoot,shokoMount.localRoot],mounts])).digest('hex');
 }
