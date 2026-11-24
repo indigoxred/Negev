@@ -14,6 +14,13 @@ afterEach(async () => Promise.all(cleanup.splice(0).map((dir) => rm(dir,
   { recursive: true, force: true }))));
 const digest = 'A'.repeat(32);
 
+test('service rejects combined public sections beyond the final observer bound', async () => {
+  const { config } = await fixture();
+  assert.throws(() => createPlexAvailabilityService({ ...config, publicSections: {
+    episode: Array.from({ length: 20 }, (_, i) => i + 1), movie: [21],
+  } }), TypeError);
+});
+
 async function fixture({ detailedPage = false, densePage = false,
   userRelease = false, flaggedRelease = false } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'negev-plex-service-'));

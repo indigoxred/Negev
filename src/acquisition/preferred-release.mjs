@@ -1,3 +1,4 @@
+import { durableSelection, rememberLegacySelection } from './durable-release-candidate.mjs';
 import { releaseFacts } from '../web/public/release-choice-fields.mjs';
 import { compareReleases, compareReleaseRecognitionTier } from './release-preference.mjs';
 
@@ -21,6 +22,12 @@ export function initializePreferredReleases(db) {
     fallback_json TEXT NOT NULL,
     PRIMARY KEY(request_id,episode_id)
   ) STRICT`);
+  for(const row of db.prepare(`SELECT request_id,episode_id,fallback_json FROM preferred_release_waits`).all()) {
+    let parsed;try{parsed=JSON.parse(row.fallback_json);}catch{continue;}
+    rememberLegacySelection(db,parsed);
+    const clean=JSON.stringify(durableSelection(parsed));
+    db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=? AND fallback_json=?').run(clean,row.request_id,row.episode_id,row.fallback_json);
+  }
 }
 export function checkPreferredRelease(db, preference, { requestId, candidate, preview, releaseState, nowMs }) {
   if (!preference || releaseState === 'completed' || matchesPreferredGroup(candidate, preference.group)) return { state: 'ready' };
@@ -31,7 +38,8 @@ export function checkPreferredRelease(db, preference, { requestId, candidate, pr
   const known = db.prepare(`SELECT 1 FROM request_targets rt JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.episode_id=?`);
   if (fresh.some(id => !known.get(requestId,id))) return { state: 'held', reason: 'target_not_requested' };
-  const saved = JSON.stringify({ candidate, preview });
+  rememberLegacySelection(db,{candidate,preview});
+  const saved = JSON.stringify(durableSelection({ candidate, preview }));
   if (saved.length > 1_000_000) return { state: 'held', reason: 'invalid_preferred_release' };
   let retryAtMs = null;
   for (const id of fresh) {
@@ -60,7 +68,9 @@ export function getPreferredFallback(db, requestId, episodeIds, nowMs, includePe
   let strongest=null;
   for (const row of rows) {
     if (!episodeIds.includes(row.episode_id)) continue;
-    try { const saved=JSON.parse(row.fallback_json);
+    try { const saved=durableSelection(JSON.parse(row.fallback_json));
+      const clean=JSON.stringify(saved);
+      if(clean!==row.fallback_json)db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=? AND fallback_json=?').run(clean,requestId,row.episode_id,row.fallback_json);
       if (includePending?saved.preview.episodeIds.some(id=>episodeIds.includes(id)):
           saved.preview.episodeIds.every(id=>episodeIds.includes(id))){
         if(!strongest||compareReleases(saved.candidate,strongest.candidate)<0)strongest=saved;

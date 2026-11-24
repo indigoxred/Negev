@@ -1,4 +1,4 @@
-import { mkdir, chmod } from 'node:fs/promises';
+import { mkdir, lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { createCatalogueTestService } from '../catalogue/catalogue-service.mjs';
 import { createAiringScheduler } from '../requests/airing-scheduler.mjs';
@@ -9,8 +9,16 @@ let airingScheduler;
 try {
   const config = parsePrivateServerConfig(process.env);
   const dataDir = path.resolve(config.dataDir);
+  if (config.dataDir !== dataDir || path.parse(dataDir).root === dataDir) {
+    throw new TypeError('Dedicated canonical private directory required');
+  }
   await mkdir(dataDir, { recursive: true, mode: 0o700 });
-  await chmod(dataDir, 0o700);
+  const directory = await lstat(dataDir);
+  if (!directory.isDirectory() || directory.isSymbolicLink() ||
+      (process.platform !== 'win32' && (directory.mode & 0o077) !== 0) ||
+      path.relative(dataDir, await realpath(dataDir)) !== '') {
+    throw new TypeError('Private diagnostic directory required');
+  }
   service = createCatalogueTestService({
     ...config, dbPath: path.join(dataDir, 'catalogue-claims.sqlite'),
   });

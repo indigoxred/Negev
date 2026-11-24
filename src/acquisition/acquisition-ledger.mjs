@@ -1,3 +1,4 @@
+import { canonicalReleaseGuid } from './durable-release-candidate.mjs';
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { createBonusPackLedger } from './bonus-pack-ledger.mjs';
 import { createHash } from 'node:crypto';
@@ -266,17 +267,30 @@ export function openAcquisitionLedger(dbPath) {
   const findRetirement = db.prepare('SELECT torrent_hash,reason,retired_ms FROM acquisition_retirements WHERE attempt_id=?');
   const findRecovery = db.prepare(`SELECT status FROM recognition_recoveries
     WHERE attempt_id=?`);
+  db.exec(`CREATE TABLE IF NOT EXISTS acquisition_candidate_aliases (
+    indexer_id INTEGER NOT NULL,canonical_digest TEXT NOT NULL,legacy_digest TEXT NOT NULL,
+    PRIMARY KEY(indexer_id,canonical_digest,legacy_digest)) STRICT`);
+  const findAliasedDigests=db.prepare(`SELECT candidate_digest FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?
+    UNION SELECT a.candidate_digest FROM acquisition_candidate_aliases alias
+    JOIN acquisition_attempts a ON a.indexer_id=alias.indexer_id AND a.candidate_digest=alias.legacy_digest
+    WHERE alias.indexer_id=? AND alias.canonical_digest=?`);
+  const aliasedDigest = (indexerId, canonicalDigest) => {
+    const matches=findAliasedDigests.all(indexerId,canonicalDigest,indexerId,canonicalDigest);
+    if(matches.length>1)throw new TypeError('Ambiguous legacy release identity');
+    return matches[0]?.candidate_digest??canonicalDigest;
+  };
   const digestForCandidate = (candidate, anidbId) => {
-    const legacyDigest = createHash('sha256').update(candidate.guid).digest('hex');
+    const guid=canonicalReleaseGuid(candidate.guid,candidate.indexerId);
+    const legacyDigest = aliasedDigest(candidate.indexerId,createHash('sha256').update(guid).digest('hex'));
     const legacy = candidateRow.get(candidate.indexerId, legacyDigest);
     if (legacy && findRetirement.get(legacy.id)?.reason === 'policy_reset') {
-      return createHash('sha256').update(JSON.stringify(
-        ['release-policy-reset-v1', anidbId, candidate.guid])).digest('hex');
+      return aliasedDigest(candidate.indexerId,createHash('sha256').update(JSON.stringify(
+        ['release-policy-reset-v1', anidbId, guid])).digest('hex'));
     }
     if (legacy && legacy.anidb_id !== anidbId &&
         findRetirement.get(legacy.id)?.reason === 'file_wrong_identity') {
-      return createHash('sha256').update(JSON.stringify(
-        ['wrong-installment-reassignment-v1', anidbId, candidate.guid])).digest('hex');
+      return aliasedDigest(candidate.indexerId,createHash('sha256').update(JSON.stringify(
+        ['wrong-installment-reassignment-v1', anidbId, guid])).digest('hex'));
     }
     return legacyDigest;
   };

@@ -7,6 +7,8 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { submitMissingCandidate } from '../src/acquisition/submit-missing-candidate.mjs';
+import { previewRequestCandidate } from '../src/acquisition/request-candidate-preflight.mjs';
+import { prepareStoppedCandidate } from '../src/acquisition/prepare-stopped-candidate.mjs';
 import { createAcquisitionRequestProcessor } from
   '../src/acquisition/acquisition-request-processor.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from
@@ -562,6 +564,44 @@ for (const proof of ['exact', 'wrong_anime', 'wrong_episode', 'inconclusive', 'm
       }
     }));
 }
+
+test('exact year-and-season alias crosses real preflight, processor, planning and stopped submission', async () =>
+  withLedgers(async ({ request, ledger }) => {
+    const chosen = { ...candidate, seeders: 10, evidence: 'unverified',
+      title: '[Group] Silver Orchard Season 02 S02 [2025] COMPLETE 1080p' };
+    const detail = { ...baseDetail, page: 1, nextPage: null, title: 'Gin no Niwa (2025)',
+      episodes: baseDetail.episodes.map(episode => ({ ...episode, title: 'Episode' })) };
+    const aliases = async () => ['Silver Orchard (2025)'];
+    const calls = [];
+    const input = options({ request, ledger, readEvidence: async () => absent(),
+      prowlarrFetch: async url => new URL(url).pathname.endsWith('/search')
+        ? Response.json([{ ...chosen, protocol: 'torrent', downloadUrl: proxy }])
+        : new Response(bytes, { headers: { 'content-type': 'application/x-bittorrent' } }),
+      qbittorrentFetch: qbittorrentFetch(calls,2) });
+    const offlineLookup = async ({ filename }) => ({ status: 200, release: {
+      ProviderName: 'Offline Importer', IsCorrupted: false, OriginalFilename: filename,
+      ID: 'offline://42-1001', CrossReferences: [{ AnidbAnimeID: 42, AnidbEpisodeID: 1001,
+        PercentageStart: 0, PercentageEnd: 100 }],
+    } });
+    const preview = args => previewRequestCandidate({ ...args, readRequest: () => request,
+      loadDetail: async () => detail, releaseQueries: aliases, offlineLookup,
+      prepare: args => prepareStoppedCandidate({ ...input.prowlarr, ...args }) });
+    const preflight = await preview({ requestId: request.id, candidate: chosen });
+    assert.equal(preflight.state, 'preflight', JSON.stringify(preflight));
+    assert.equal(preflight.shokoPreview, 'exact');
+    const processor = createAcquisitionRequestProcessor({ readRequest: () => request,
+      loadDetail: async () => detail,
+      discoverCandidates: async () => ({ state: 'candidates', requestId: request.id,
+        anidbId: 42, items: [chosen] }),
+      previewCandidate: preview,
+      submitCandidate: args => submitMissingCandidate({ ...input, ...args,
+        releaseQueries: aliases, offlineLookup }),
+    });
+    const result = await processor({ requestId: request.id });
+    assert.equal(result.state, 'stopped_observed', JSON.stringify(result));
+    assert.equal(calls.filter(call => call.endpoint.endsWith('/add')).length, 1);
+    assert.deepEqual(ledger.getFilePlan(result.attemptId), [{ name: '01.mkv', size: 1000, episodeIds: [1001] }]);
+  }));
 
 
 test('a season-labelled batch checks every file before reservation or addition', async () =>

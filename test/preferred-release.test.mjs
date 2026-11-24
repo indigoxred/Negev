@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp,rm } from 'node:fs/promises';
@@ -65,4 +66,14 @@ test('intentional group waiting is measured separately from acquisition decision
    const timing=queue.getDecisionTiming(id);assert.equal(timing.intentionalGroupWaitMs,7_200_000);
    assert.equal(timing.wallElapsedMs,7_201_500);assert.equal(timing.elapsedMs,1500);
  }finally{queue.close();}
+}));
+test('new preferred fallback saves only the exact credential-free locator across reopen',()=>fixture(({ledger,id,reopen,dbPath})=>{
+ ledger.updateReleasePreference(id,0,preference,100);
+ const privateCandidate={...candidate,guid:'http://prowlarr.invalid/1/download?apikey=oldFakeKey&link=exact&file=Example',proxyUrl:'http://prowlarr.invalid/1/download?apikey=oldFakeKey&link=exact&file=Example'};
+ const wait=ledger.checkPreferredRelease({requestId:id,candidate:privateCandidate,preview,releaseState:'airing',nowMs:1000});
+ const inspect=new DatabaseSync(dbPath);try{assert.equal(inspect.prepare('SELECT fallback_json FROM preferred_release_waits').get().fallback_json.includes('oldFakeKey'),false);}finally{inspect.close();}
+ const saved=reopen().getPreferredFallback(id,[102],wait.retryAtMs);
+ assert.equal(JSON.stringify(saved).includes('oldFakeKey'),false);
+ assert.equal(saved.candidate.proxyDescriptor.link,'exact');
+ assert.equal(saved.preview.torrentHash,preview.torrentHash);
 }));

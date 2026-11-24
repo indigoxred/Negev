@@ -59,7 +59,14 @@ test('review service reads recent saved public proofs without starting backfill'
     assert.equal(library.json().items[0].anidbId, 42);
     assert.equal(library.json().items[0].title,
       'Anime title unavailable (42)');
-    assert.equal(library.json().items[0].englishTitle, 'English Example');
+    assert.equal(library.json().items[0].englishTitle, null);
+    let warmed;
+    for(let turn=0;turn<20;turn++){
+      await new Promise(resolve=>setImmediate(resolve));
+      warmed=await service.app.inject({method:'GET',url:'/api/library',headers:{cookie:login.headers['set-cookie'].split(';')[0]}});
+      if(warmed.json().items[0].englishTitle)break;
+    }
+    assert.equal(warmed.json().items[0].englishTitle,'English Example');
     assert.equal((await service.tickFileBackfill()).state, 'held');
   } finally {
     await service?.close();

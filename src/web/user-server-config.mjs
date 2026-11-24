@@ -105,6 +105,7 @@ function plexConfig(env, dataDir) {
         sections[kind].every(validId) &&
         new Set(sections[kind]).size === sections[kind].length) ||
       sections.episode.length + sections.movie.length === 0 ||
+      sections.episode.length + sections.movie.length > 20 ||
       (env.NEGEV_PLEX_GUID_PROBE === '1' &&
         sections.episode.length + sections.movie.length > 4) ||
       new Set([...sections.episode, ...sections.movie]).size !==

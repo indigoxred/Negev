@@ -966,10 +966,14 @@ test('signed-in consumer routes render real shell with search, library and reque
         return;
       }
       if (path === '/api/airing/preferences') {
-        if (request.method === 'PUT') {
+        if (request.method === 'PATCH') {
           let body = '';
           for await (const chunk of request) body += chunk;
-          airingPreference = JSON.parse(body);
+          const intent=JSON.parse(body);
+          if(intent.action==='mode')airingPreference={...airingPreference,mode:intent.mode};
+          else if(intent.action==='track')airingPreference={...airingPreference,trackedAnidbIds:[...new Set([...airingPreference.trackedAnidbIds,intent.anidbId])]};
+          else if(intent.action==='untrack')airingPreference={...airingPreference,trackedAnidbIds:airingPreference.trackedAnidbIds.filter(id=>id!==intent.anidbId)};
+          else throw Error('Unexpected preference intent');
         }
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify(airingPreference));

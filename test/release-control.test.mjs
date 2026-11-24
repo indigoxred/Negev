@@ -46,3 +46,28 @@ test('unanswered automatic proposal expires to the registered option across rest
     proposal:{registered,better:{candidate:{...candidate,guid:'better'},preview}}},101);
   assert.equal(reopen().getReleaseControl(id,201).selection.candidate.guid,candidate.guid);
 }));
+
+test('manual and proposal choices persist no authenticated proxy URL after reopen', () => fixture(({requests,id,reopen}) => {
+ const privateCandidate={...candidate,proxyUrl:'http://prowlarr.invalid/1/download?apikey=oldFakeKey&link=abc&file=Example'};
+ requests.updateReleaseControl(id,requests.getReleaseControl(id,100).revision,{mode:'manual',phase:'chosen',selection:{candidate:privateCandidate,preview}},101);
+ const saved=reopen().getReleaseControl(id,102);
+ assert.equal(JSON.stringify(saved).includes('oldFakeKey'),false);
+ assert.equal(saved.selection.candidate.proxyUrl,undefined);
+ assert.equal(saved.selection.candidate.proxyDescriptor.link,'abc');
+}));
+
+test('proposal persistence preserves decision metadata with credential-free choices', () => fixture(({requests,id,reopen}) => {
+ const privateCandidate={...candidate,guid:'http://prowlarr.invalid/1/download?apikey=obsoleteFakeKey&link=exact&file=Example'};
+ const proposal={registered:{candidate:privateCandidate,preview},better:{candidate,preview},reason:'registration_tradeoff',createdMs:101,explanation:{registered:true}};
+ requests.updateReleaseControl(id,requests.getReleaseControl(id,100).revision,{mode:'auto',phase:'proposal',expiresMs:200,proposal},101);
+ const saved=reopen().getReleaseControl(id,102).proposal;
+ assert.equal(saved.reason,proposal.reason);assert.deepEqual(saved.explanation,proposal.explanation);
+ assert.equal(JSON.stringify(saved).includes('obsoleteFakeKey'),false);
+}));
+test('malformed credential-bearing GUIDs are scrubbed and remain unusable', () => fixture(({requests,id,reopen}) => {
+ const privateCandidate={...candidate,guid:'http://prowlarr.invalid/1/download?apikey=obsoleteFakeKey&link=exact&file=Example&redirect=1'};
+ requests.updateReleaseControl(id,requests.getReleaseControl(id,100).revision,{mode:'manual',phase:'chosen',selection:{candidate:privateCandidate,preview}},101);
+ const saved=reopen().getReleaseControl(id,102).selection;
+ assert.equal(JSON.stringify(saved).includes('obsoleteFakeKey'),false);
+ assert.deepEqual(saved.candidate.proxyDescriptor,{version:0});
+}));
