@@ -87,3 +87,11 @@ test('migration scratch files stay in the writable private database directory',a
 test('explicit scratch directory cannot escape the private database root',async()=>fixture(async f=>{
  await assert.rejects(importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000,scratchDir:path.dirname(f.root)}),/Private migration scratch/);
 }));
+
+test('cache publication preserves populated title jobs with foreign keys enabled',async()=>fixture(async f=>{
+ const {openTitleCheckLedger}=await import('../src/availability/title-check-ledger.mjs');const jobs=openTitleCheckLedger(f.dbPath);
+ try{jobs.start({anidbId:42,nowMs:10});const claim=jobs.claimNext({nowMs:11});jobs.recordPage({claim,detail:{state:'details',anidbId:42,kind:'series',page:1,total:1,nextPage:null,episodes:[{id:1001}]},checkedMs:12});
+  assert.equal((await importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000})).recorded,1);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM title_check_jobs').get().n,1);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM title_check_targets').get().n,1);assert.deepEqual(f.db.prepare('PRAGMA foreign_key_check').all(),[]);
+ }finally{jobs.close();}
+}));

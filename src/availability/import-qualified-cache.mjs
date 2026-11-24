@@ -13,7 +13,7 @@ import {localPath} from './known-card-availability.mjs';
 const cacheTables=['availability_scope','plex_card_observations','plex_part_candidates',
  'plex_card_change_events','plex_card_cursors','plex_sweep_passes','plex_sweep_keys',
  'plex_card_retries','plex_card_removals','file_availability_proofs',
- 'title_check_positive_proofs','direct_availability_targets','title_check_targets','title_check_jobs'];
+ 'title_check_positive_proofs','direct_availability_targets','title_check_jobs','title_check_targets'];
 const sourceTables=['shoko_inventory_files','shoko_inventory_pairs','shoko_inventory_file_hints'];
 const exists=(db,name)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const fingerprint=db=>{
