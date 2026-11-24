@@ -1,6 +1,6 @@
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {open,realpath,stat} from 'node:fs/promises';
+import {open,realpath,stat,mkdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {parseUserServerConfig} from '../web/user-server-config.mjs';
 import {readPrivatePlexToken} from '../web/private-shoko-key.mjs';
@@ -32,7 +32,8 @@ export async function migrateQualifiedCache({config,manifestPath,fetchImpl=fetch
  if(typeof machine!=='string'||!/^[A-Za-z0-9_-]{1,256}$/.test(machine))throw new Error('Invalid current public server identity');
  const endpoint=value=>{const u=new URL(value);return u.origin+u.pathname;};
  const scope={serverIdentity:JSON.stringify([machine,endpoint(plex.plexBaseUrl),endpoint(config.shokoBaseUrl)]),episodeLibraryIds:plex.publicSections.episode,movieLibraryIds:plex.publicSections.movie,shokoMount:plex.shokoMount,plexMounts:plex.plexMounts??[plex.plexMount],observedMs:now()};
- return importQualifiedAvailability({dbPath:path.join(config.dataDir,'negev.sqlite'),manifest,scope,positiveLifetimeMs:config.fileProofLifetimeMs,now});
+ const scratchDir=path.join(config.dataDir,'.cache-upgrade');await mkdir(scratchDir,{recursive:true,mode:0o700});
+ return importQualifiedAvailability({scratchDir,dbPath:path.join(config.dataDir,'negev.sqlite'),manifest,scope,positiveLifetimeMs:config.fileProofLifetimeMs,now});
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
  try{

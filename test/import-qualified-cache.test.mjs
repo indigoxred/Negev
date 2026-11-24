@@ -83,3 +83,7 @@ test('migration scratch files stay in the writable private database directory',a
  await importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000,probeImpl:async()=>{privateScratch=(await readdir(f.root)).some(name=>name.startsWith('.cache-upgrade-'));return{state:'candidate',candidateKey:f.manifest.receipts[0].proof.storageKey}}});
  assert.equal(privateScratch,true);assert.equal((await readdir(f.root)).some(name=>name.startsWith('.cache-upgrade-')),false);
 }));
+
+test('explicit scratch directory cannot escape the private database root',async()=>fixture(async f=>{
+ await assert.rejects(importQualifiedAvailability({...f,positiveLifetimeMs:10000,now:()=>2000,scratchDir:path.dirname(f.root)}),/Private migration scratch/);
+}));
