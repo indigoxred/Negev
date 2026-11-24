@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 const sourcePath = process.env.NEGEV_AUTH_SOURCE
   ?? fileURLToPath(new URL('../src/web/public/app.js', import.meta.url));
 const source = readFileSync(sourcePath, 'utf8');
+const epochSource = readFileSync(new URL('../src/web/public/response-epoch.mjs', import.meta.url),'utf8').replace('export function','function');
 const browser = findTestBrowser();
 
 function listener(formId, nextMarker) {
@@ -30,6 +31,8 @@ test('browser completes successful login and registration submit transitions',
       <script>
         const byId = (id) => document.getElementById(id);
         const calls = [];
+        ${epochSource}
+        const sessionResponses=createResponseEpoch(), priorSession=sessionResponses.current();
         let currentMessage = '';
         let selectedTab = 'register';
         let failRegistration=false;
@@ -39,7 +42,7 @@ test('browser completes successful login and registration submit transitions',
           if(path==='/api/register'&&failRegistration){const e=new Error('Username must be 3–32 characters, start with a letter, and use only letters, numbers or underscores.');e.field='username';throw e;}
           return {};
         };
-        const refreshSession = async () => { calls.push('refreshSession'); return true; };
+        const refreshSession = async () => { if(sessionResponses.isCurrent(priorSession))throw Error('Old session generation survived login');calls.push('refreshSession'); return true; };
         const authTab = (register) => { selectedTab = register ? 'register' : 'login'; };
         const message = (value) => { currentMessage = value; };
         ${login}
