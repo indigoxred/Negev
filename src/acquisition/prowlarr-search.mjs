@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { readBoundedJson, cancelResponseBody } from '../http/bounded-response.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { isTrustedProxy } from './prowlarr-torrent-bytes.mjs';
 import { compareReleases, hasTargetEpisodeHint } from './release-preference.mjs';
@@ -50,7 +50,7 @@ export async function searchReleaseCandidates({
       headers: { 'X-Api-Key': apiKey, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (response.status !== 200) return { state: 'unavailable' };
+    if (response.status !== 200) { await cancelResponseBody(response); return { state: 'unavailable' }; }
     const data = await readBoundedJson(response, 2_000_000);
     if (!Array.isArray(data) || data.length > 1_000 || data.some((item) =>
       typeof item?.guid !== 'string' || !item.guid || item.guid.length > MAX_RELEASE_GUID_LENGTH ||

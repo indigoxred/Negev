@@ -779,7 +779,7 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(library.statusCode, 200);
     assert.deepEqual(library.json(), { state: 'current_proofs', items: [
       { anidbId: 1234, title: 'Example series', englishTitle: null,
-        verifiedEpisodeCount: 2, lastVerifiedMs: 950, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }], nextAfterAnidbId: null });
+        verifiedEpisodeCount: 2, lastVerifiedMs: 950, chineseProduction: false, regularCoverage:{total:4,verified:1,aired:4,verifiedAired:1,upcoming:0,undated:0} }], nextAfterAnidbId: null });
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/library?afterAnidbId=-1', headers: { cookie } })).statusCode, 400);
     const airing = await app.inject({ method: 'GET', url: '/api/airing', headers: { cookie } });

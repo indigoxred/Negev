@@ -1,5 +1,5 @@
 import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { readBoundedJson, cancelResponseBody } from '../http/bounded-response.mjs';
 import { evaluateStoppedManifest } from './evaluate-stopped-manifest.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
@@ -29,6 +29,7 @@ export async function observeStoppedManifest({
     url.searchParams.set(parameter, expected.hash);
     const response = await fetchImpl(url, { method: 'GET', headers, redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status === 403) throw providerRejected;
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     return readBoundedJson(response, maxChars);

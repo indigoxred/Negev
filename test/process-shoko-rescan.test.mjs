@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { processShokoRescan } from
+import { processShokoRescan as runShokoRescan } from
   '../src/acquisition/process-shoko-rescan.mjs';
+
+// Control-flow tests inject filesystem evidence; real journal/filesystem tests
+// live in shoko-rescan-physical-attribution.test.mjs.
+const processShokoRescan = options => runShokoRescan({...options,
+  item:{...options.item,manifest:{...options.item.manifest,files:options.item.manifest.files.map(file=>
+    ({dev:'1',ino:'2',mtimeNs:'3',...file}))}},
+  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})});
 
 const manifest = {
   attemptId: 71, torrentHash: 'a'.repeat(40), files: [
@@ -159,7 +166,7 @@ test('a moved exact file completes only after its own Plex episode is verified',
   const single = { ...item, manifest: { ...manifest, files: [manifest.files[0]] } };
   const options = { item: single, ledger: saved.ledger, importRoot,
     shokoMount, readQueue: async () => ({ state: 'queue_idle_unverified' }),
-    readFile: async () => [], rescan: async () => {
+    readFile: async ({sourcePath}) => sourcePath === '/01 [BD].mkv' ? [{...linked(80,11,manifest.files[0].size,'/import/Anime/01 [BD].mkv'),Created:new Date(200).toISOString()}] : [], rescan: async () => {
       throw Error('No second rescan'); },
     verifyPlex: async () => ({ state: 'unknown' }),
   };
@@ -193,7 +200,7 @@ test('an already moved first-pass import does not become a false review', async 
   assert.equal(scanned, 0);
 });
 
-test('a stale same-name file cannot prove a new first-pass import', async () => {
+test('record creation time cannot reject a physically proved first-pass import', async () => {
   const saved = witness();
   const video = manifest.files[0];
   const single = { ...item, publishedMs: 100_000,
@@ -208,8 +215,8 @@ test('a stale same-name file cannot prove a new first-pass import', async () => 
     verifyPlex: async () => ({ state: 'available', fileId: 80 }),
     rescan: async () => ({ state: 'accepted' }),
   });
-  assert.notEqual(result.state, 'linked');
-  assert.equal(saved.completion(), null);
+  assert.equal(result.state, 'linked');
+  assert.equal(saved.completion(), 'done');
 });
 
 test('a busy queue, wrong file, or conflicting identity cannot trigger rescan', async () => {
@@ -326,7 +333,7 @@ test('provider failures and a busy Shoko queue remain recoverable after hours',a
 test('an unresolved pack member later recognized clears review without another rescan',async()=>{
   const saved=witness();const video=manifest.files[0];saved.files.set(video.name,{fileId:80,status:'unresolved',firstSeenMs:300100,updatedMs:660100});
   const result=await processShokoRescan({item:{...item,manifest:{...manifest,files:[video]}},ledger:saved.ledger,importRoot,shokoMount,nowMs:4_000_000,
-    readQueue:async()=>({state:'busy'}),readFile:async()=>[],rescan:async()=>{throw Error('once only')},verifyPlex:async()=>({state:'available',fileId:80})});
+    readQueue:async()=>({state:'busy'}),readFile:async({sourcePath})=>sourcePath==='/01 [BD].mkv'?[{...linked(80,11,video.size,'/import/Anime/01 [BD].mkv'),Created:new Date(200).toISOString()}]:[],rescan:async()=>{throw Error('once only')},verifyPlex:async()=>({state:'available',fileId:80})});
   assert.equal(result.state,'linked');assert.equal(saved.completion(),'done');
 });
 

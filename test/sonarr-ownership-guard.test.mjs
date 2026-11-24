@@ -81,3 +81,26 @@ test('rejects a stale or mismatched public map', async () => {
   assert.deepEqual(await validChecksumButOld.refresh(), { state: 'held',
     reason: 'ownership_map_unavailable' });
 });
+
+test('map generation expiry invalidates both the map and short ownership cache', async () => {
+ let time=nowMs,calls=0;
+ const text=JSON.stringify({...map,generated_at:new Date(time-14*86400000+1000).toISOString()});
+ const sha=createHash('sha256').update(text).digest('hex');
+ const gate=createSonarrOwnershipGuard({sonarrBaseUrl:'http://127.0.0.1:8999',sonarrApiKey:'SyntheticKey1234567',now:()=>time,
+ fetchImpl:async url=>{calls++;return String(url).endsWith('/animap.json')?new Response(text):String(url).endsWith('.sha256')?new Response(`${sha}  animap.json\n`):Response.json([]);}});
+ assert.equal((await gate.refresh()).state,'ready');time+=1001;
+ assert.equal(gate.status(10),'unavailable');
+ assert.equal((await gate.refresh({force:false})).state,'held');assert.equal(calls,5);
+});
+
+test('a native HTTP redirect cannot forward the configured Sonarr key', async () => {
+ const {createServer}=await import('node:http');let leaked=0;
+ const receiver=createServer((req,res)=>{leaked++;res.end('[]');});
+ const redirect=createServer((_req,res)=>{res.writeHead(302,{location:`http://127.0.0.1:${receiver.address().port}/capture`});res.end();});
+ await new Promise(r=>receiver.listen(0,'127.0.0.1',r));await new Promise(r=>redirect.listen(0,'127.0.0.1',r));
+ try {
+  const gate=createSonarrOwnershipGuard({sonarrBaseUrl:`http://127.0.0.1:${redirect.address().port}`,sonarrApiKey:'SyntheticKey1234567',now:()=>nowMs,
+   fetchImpl:(url,options)=>String(url).startsWith('https://github.com/')?Promise.resolve(responseFor(String(url))):fetch(url,options)});
+  assert.equal((await gate.refresh()).state,'held');assert.equal(leaked,0);
+ }finally{receiver.closeAllConnections();redirect.closeAllConnections();await Promise.all([new Promise(r=>receiver.close(r)),new Promise(r=>redirect.close(r))]);}
+});

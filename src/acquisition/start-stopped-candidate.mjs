@@ -1,8 +1,8 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { refreshBonusOwnership } from './bonus-ownership.mjs';
-import { createHash } from 'node:crypto';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { createHash, randomUUID } from 'node:crypto';
+import { readBoundedJson, cancelResponseBody } from '../http/bounded-response.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
@@ -16,13 +16,14 @@ const held = (reason) => ({ state: 'held', reason });
 
 // A one-send start boundary. Completion and AniDB identity are separate later
 // gates; a successful HTTP response alone is never evidence of either.
-export async function startStoppedCandidate({
+export async function startStoppedCandidate(options) {
+  const {
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
   readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
   now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
-}) {
+} = options;
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -155,7 +156,7 @@ export async function startStoppedCandidate({
   }
   if(manifest.state==='manifest_needs_exclusions'){
     const body=new URLSearchParams({hash:expected.hash,id:manifest.passive.map(file=>String(file.index)).join('|'),priority:'0'});
-    try{await activeFetch(new URL('/api/v2/torrents/filePrio',base),{method:'POST',headers:{Cookie:qbittorrentSessionCookie(activeSessionId)},body,redirect:'manual',signal:AbortSignal.timeout(timeoutMs)});}catch{/* Exact re-observation decides whether exclusion succeeded. */}
+    try{const receipt=await activeFetch(new URL('/api/v2/torrents/filePrio',base),{method:'POST',headers:{Cookie:qbittorrentSessionCookie(activeSessionId)},body,redirect:'manual',signal:AbortSignal.timeout(timeoutMs)});await cancelResponseBody(receipt);}catch{/* Exact re-observation decides whether exclusion succeeded. */}
     manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames});
   }
   if (manifest.state !== 'manifest_safe') return manifest;
@@ -178,7 +179,7 @@ export async function startStoppedCandidate({
       headers: { Cookie: qbittorrentSessionCookie(activeSessionId),
         Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return held(response.status===403?'provider_http_403':'provider_unavailable');
+    if (response.status !== 200) { await cancelResponseBody(response); return held(response.status===403?'provider_http_403':'provider_unavailable'); }
     paths = await readBoundedJson(response, 100_000);
   } catch { return held('provider_unavailable'); }
   if (paths?.save_path !== expected.savePath ||
@@ -258,16 +259,33 @@ export async function startStoppedCandidate({
     videos: manifest.videos, subtitles: manifest.subtitles,
     savePath: paths.save_path, downloadPath: paths.download_path,
   })).digest('hex');
+  const sendToken = randomUUID();
   const intent = ledger.beginStart({ attemptId, hash: expected.hash,
-    manifestDigest, nowMs: startMs });
+    manifestDigest, nowMs: startMs, sendToken });
   if (intent.state === 'held' || !intent.sendNow) return intent;
 
   const body = new URLSearchParams({ hashes: expected.hash });
+  let response;
   try {
-    await activeFetch(new URL('/api/v2/torrents/start', base), {
+    response = await activeFetch(new URL('/api/v2/torrents/start', base), {
       method: 'POST', headers: { Cookie: qbittorrentSessionCookie(activeSessionId) }, body,
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch { /* Start may have reached qBittorrent; never repeat automatically. */ }
+  } catch {
+    // A timeout/disconnect may follow acceptance. Its intent remains one-send.
+    return {state:'start_unknown',sendNow:true};
+  }
+  await cancelResponseBody(response);
+  if(response.status===403 && typeof ledger.rejectStart==='function') {
+      // Only an explicit HTTP authentication rejection establishes non-acceptance.
+      // Bind that receipt to this send, so a stale/concurrent worker cannot clear
+      // a newer uncertain intent. Rejections remain durable across restarts.
+      const rejected=ledger.rejectStart({attemptId,hash:expected.hash.toLowerCase(),manifestDigest,sendToken,nowMs:now()});
+      if(rejected.state!=='start_rejected')return {state:'start_unknown',sendNow:true};
+      if(options.retryRejectedStart===false)return held('provider_http_403');
+      const renewed=await renewSession();
+      if(renewed.state!=='authenticated')return renewed;
+      return startStoppedCandidate({...options,sessionId:activeSessionId,fetchImpl:activeFetch,renewQbittorrent:undefined,retryRejectedStart:false});
+    }
   return { state: 'start_unknown', sendNow: true };
 }

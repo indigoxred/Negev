@@ -48,3 +48,14 @@ test('accepts an XML-escaped magnet GUID without treating its query separator as
   assert.equal(result.items[0].guid, 'magnet:?xt=urn:btih:abc&dn=Example');
   assert.equal(result.items[0].title, 'Example <Anime> 01');
 });
+
+test('accepts bounded standard GUID attributes while rejecting malformed attributes', async () => {
+ for(const attribute of [' isPermaLink="false"'," isPermaLink='true'",' isPermaLink="false" data-source="feed"']) {
+  const result=await readProwlarrRss({...config,fetchImpl:async()=>new Response(`<rss><channel><item><title>Example</title><guid${attribute}>release-1</guid></item></channel></rss>`)});
+  assert.equal(result.state,'feed');assert.equal(result.items[0].guid,'release-1');
+ }
+ for(const attribute of [' isPermaLink=false',' isPermaLink="false" isPermaLink="true"',' bad="<item>"',' '+ 'x'.repeat(1100)+'="value"']) {
+  const result=await readProwlarrRss({...config,fetchImpl:async()=>new Response(`<rss><channel><item><title>Example</title><guid${attribute}>release-1</guid></item></channel></rss>`)});
+  assert.equal(result.state,'unavailable');
+ }
+});

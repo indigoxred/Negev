@@ -1,3 +1,5 @@
+import { DatabaseSync } from 'node:sqlite';
+import { openStartQueue, createStartWorker } from '../src/acquisition/start-queue.mjs';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,7 +28,7 @@ async function withObservedTorrent(run, { withPlan = true,
   const requests = openRequestLedger(dbPath);
   const request = requests.submit({ requesterId: 1, requestKey: 'one', nowMs: 100,
     intent: { state: 'ready', anidbId: 42, kind: 'series', monitorFuture: false, episodeIds: [1001] } });
-  const ledger = openAcquisitionLedger(dbPath);
+  let ledger = openAcquisitionLedger(dbPath);
   const attempt = ledger.reserve({ requestId: request.requestId, candidate,
     episodeIds: [1001], evidencePolicy, nowMs: 200 });
   ledger.bindPreparedTorrent({ attemptId: attempt.attemptId, candidate, hash, nowMs: 201 });
@@ -35,7 +37,7 @@ async function withObservedTorrent(run, { withPlan = true,
   if(bonusFiles.length)ledger.recordBonusPlan({attemptId:attempt.attemptId,hash,files:bonusFiles,nowMs:201});
   ledger.beginDispatch({ attemptId: attempt.attemptId, nowMs: 202 });
   ledger.recordTorrent({ attemptId: attempt.attemptId, hash, nowMs: 203 });
-  try { await run({ ledger, attemptId: attempt.attemptId,
+  try { await run({ ledger, dbPath, requests, reopenAcquisitions:()=>{ledger.close();ledger=openAcquisitionLedger(dbPath);return ledger;}, attemptId: attempt.attemptId,
     readRequest: (id) => requests.getRequest(id) }); }
   finally { ledger.close(); requests.close(); await rm(dir, { recursive: true, force: true }); }
 }
@@ -654,3 +656,103 @@ test('a restarted stopped season starts once with independently journalled bonus
 });
 
 test('now-owned or uncertain bonuses are durably excluded before starting the main season',async()=>{for(const state of ['owned','uncertain']){const bonus={name:'Extras/Example OVA 1.mkv',size:50,anidbId:43,episodeIds:[2001],kind:'ova',evidence:'shoko_filename_prediction'};await withObservedTorrent(async({ledger,attemptId,readRequest})=>{let starts=0,priority=1;const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,readBonusOwnership:async()=>({state}),fetchImpl:async(url,init)=>{const p=new URL(url).pathname;if(p.endsWith('/start')){starts++;return new Response('Ok.')}if(p.endsWith('/filePrio')){assert.equal(init.body.get('id'),'1');priority=0;return new Response('Ok.')}if(p.endsWith('/files'))return Response.json([...files,{index:1,name:bonus.name,size:50,priority,progress:0}]);if(p.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json([torrent]);}});assert.equal(result.state,'start_unknown',JSON.stringify(result));assert.equal(starts,1);assert.equal(priority,0);assert.deepEqual(ledger.getBonusPlan(attemptId),[]);assert.deepEqual(ledger.getRecordedBonusPlan(attemptId).files,[]);assert.deepEqual(ledger.getFilePlan(attemptId),[{name:'Example.mkv',size:1000,episodeIds:[1001]}]);},{bonusFiles:[bonus]});}});
+
+test('definitive start 403 renews and reruns all guards before one retry', async () => withObservedTorrent(async ({ledger,attemptId,readRequest})=>{
+ let starts=0, renewals=0, proofs=0;
+ const provider=async url=>{const endpoint=new URL(url).pathname;
+  if(endpoint.endsWith('/start'))return new Response('',{status:++starts===1?403:200});
+  if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});
+  return Response.json(endpoint.endsWith('/files')?files:[torrent]);};
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,fetchImpl:provider,
+ readEvidence:async(...args)=>{proofs++;return options.readEvidence(...args);},
+ renewQbittorrent:async()=>{renewals++;return {state:'authenticated',sessionId:'renewedSID',fetchImpl:provider};}});
+ assert.equal(result.state,'start_unknown');assert.equal(starts,2);assert.equal(renewals,1);assert.equal(proofs,2);
+}));
+
+test('two definitive start rejections bound immediate retry and healthy auth later resumes the same attempt', async () => withObservedTorrent(async ({ledger,attemptId,readRequest,dbPath,reopenAcquisitions})=>{
+ let starts=0,renewals=0,healthy=false;
+ const provider=async url=>{const endpoint=new URL(url).pathname;
+  if(endpoint.endsWith('/start')){starts++;return new Response('',{status:healthy?200:403});}
+  if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});
+  return Response.json(endpoint.endsWith('/files')?files:[torrent]);};
+ const run=ledger=>startStoppedCandidate({...options,ledger,attemptId,readRequest,fetchImpl:provider,renewQbittorrent:async()=>{renewals++;return {state:'authenticated',sessionId:'renewedSID',fetchImpl:provider};}});
+ assert.deepEqual(await run(ledger),{state:'held',reason:'provider_http_403'});
+ assert.equal(starts,2);assert.equal(renewals,1);assert.equal(ledger.getStart(attemptId),null);
+ ledger=reopenAcquisitions();healthy=true;assert.equal((await run(ledger)).state,'start_unknown');
+ assert.equal(starts,3);assert.equal(renewals,1);
+ const db=new DatabaseSync(dbPath);try{assert.equal(db.prepare('SELECT COUNT(*) AS n FROM acquisition_start_rejections WHERE attempt_id=?').get(attemptId).n,2);}finally{db.close();}
+}));
+
+test('a rejected start with authentication outage stays retryable through the durable worker after reopen', async () => withObservedTorrent(async ({ledger,attemptId,readRequest,dbPath,reopenAcquisitions})=>{
+ let starts=0,renewals=0,offline=true,clock=204;
+ const provider=async url=>{const endpoint=new URL(url).pathname;
+  if(endpoint.endsWith('/start')){starts++;return new Response('',{status:offline?403:200});}
+  if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});
+  return Response.json(endpoint.endsWith('/files')?files:[torrent]);};
+ let queue=openStartQueue(dbPath,{acquisitions:ledger});
+ const processAttempt=()=>startStoppedCandidate({...options,now:()=>clock,ledger,attemptId,readRequest,fetchImpl:provider,readEvidence:async()=>{const e=await options.readEvidence();return {...e,observedAtMs:clock,importFence:{...e.importFence,beforeObservedAtMs:clock-1,afterObservedAtMs:clock}};},renewQbittorrent:async()=>{renewals++;return {state:'held',reason:'authentication_unavailable'};}});
+ try{
+  const worker=createStartWorker({queue,now:()=>clock,processAttempt});
+  const rejected=await worker.runOnce();assert.equal(rejected.result.reason,'authentication_unavailable');assert.equal(ledger.getStart(attemptId),null);
+  queue.close();ledger=reopenAcquisitions();queue=openStartQueue(dbPath,{acquisitions:ledger});clock+=60000;offline=false;
+  assert.equal((await createStartWorker({queue,now:()=>clock,processAttempt}).runOnce()).result.state,'start_unknown');
+  assert.equal(starts,2);assert.equal(renewals,1);
+ }finally{queue.close();}
+}));
+
+test('a late rejection receipt cannot clear a newer uncertain send', async () => withObservedTorrent(async ({ledger,attemptId})=>{
+ const first='11111111-1111-1111-1111-111111111111',second='22222222-2222-2222-2222-222222222222';const manifestDigest='b'.repeat(64);
+ assert.equal(ledger.beginStart({attemptId,hash,manifestDigest,nowMs:204,sendToken:first}).sendNow,true);
+ assert.equal(ledger.rejectStart({attemptId,hash,manifestDigest,nowMs:204,sendToken:first}).state,'start_rejected');
+ assert.equal(ledger.beginStart({attemptId,hash,manifestDigest,nowMs:204,sendToken:second}).sendNow,true);
+ assert.equal(ledger.rejectStart({attemptId,hash,manifestDigest,nowMs:204,sendToken:first}).reason,'start_intent_changed');
+ assert.equal(ledger.getStart(attemptId).status,'start_unknown');
+}));
+
+test('a native HTTP disconnect stays one-send across old-schema upgrade, restart and concurrent workers', async () => withObservedTorrent(async ({ledger,attemptId,readRequest,dbPath,reopenAcquisitions})=>{
+ const {createServer}=await import('node:http');let starts=0,release;
+ const starting=new Promise(r=>release=r);
+ const provider=createServer((req,res)=>{const endpoint=new URL(req.url,'http://localhost').pathname;
+  if(endpoint.endsWith('/start')){starts++;release();req.socket.destroy();return;}
+  res.setHeader('content-type','application/json');res.end(JSON.stringify(endpoint.endsWith('/properties')?{save_path:expected.savePath,download_path:''}:endpoint.endsWith('/files')?files:[torrent]));});
+ await new Promise(r=>provider.listen(0,'127.0.0.1',r));
+ // Simulate a previous release database before any start was sent.
+ const db=new DatabaseSync(dbPath);db.exec('ALTER TABLE acquisition_starts DROP COLUMN send_token');db.close();ledger=reopenAcquisitions();
+ let queue=openStartQueue(dbPath,{acquisitions:ledger});const other=openStartQueue(dbPath,{acquisitions:ledger});
+ const run=()=>startStoppedCandidate({...options,baseUrl:`http://127.0.0.1:${provider.address().port}/`,ledger,attemptId,readRequest});
+ try{
+  const worker=createStartWorker({queue,now:()=>204,processAttempt:run});const pending=worker.runOnce();await starting;
+  assert.equal((await createStartWorker({queue:other,now:()=>204,processAttempt:run}).runOnce()).state,'idle');
+  assert.equal((await pending).result.state,'start_unknown');queue.close();ledger=reopenAcquisitions();queue=openStartQueue(dbPath,{acquisitions:ledger});
+  assert.equal((await createStartWorker({queue,now:()=>100000,processAttempt:run}).runOnce()).state,'idle');
+  assert.equal((await run()).sendNow,false);assert.equal(starts,1);
+ }finally{queue.close();other.close();provider.closeAllConnections();await new Promise(r=>provider.close(r));}
+}));
+
+test('authentication renewal cannot bypass a newly changed request guard', async () => withObservedTorrent(async ({ledger,attemptId,readRequest})=>{
+ let starts=0,cancelled=false,proofs=0;
+ const provider=async url=>{const endpoint=new URL(url).pathname;
+  if(endpoint.endsWith('/start')){starts++;return new Response('',{status:403});}
+  if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});
+  return Response.json(endpoint.endsWith('/files')?files:[torrent]);};
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest:id=>cancelled?{...readRequest(id),status:'cancelled'}:readRequest(id),fetchImpl:provider,
+ readEvidence:async()=>{proofs++;return options.readEvidence();},
+ renewQbittorrent:async()=>{cancelled=true;return {state:'authenticated',sessionId:'renewedSID',fetchImpl:provider};}});
+ assert.deepEqual(result,{state:'held',reason:'request_missing'});assert.equal(starts,1);assert.equal(proofs,1);assert.equal(ledger.getStart(attemptId),null);
+}));
+
+test('bonus priority response is disposed without blocking exact re-observation',async()=>{
+ const bonus={name:'Extras/Example OVA 1.mkv',size:50,anidbId:43,episodeIds:[2001],kind:'ova',evidence:'shoko_filename_prediction'};
+ await withObservedTorrent(async({ledger,attemptId,readRequest})=>{
+  let cancelled=false,priority=1,finish;
+  const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,readBonusOwnership:async()=>({state:'owned'}),fetchImpl:async(url)=>{
+   const p=new URL(url).pathname;
+   if(p.endsWith('/filePrio')){priority=0;return new Response(new ReadableStream({cancel(){cancelled=true;return new Promise(resolve=>finish=resolve)}}));}
+   if(p.endsWith('/start'))return new Response('Ok.');
+   if(p.endsWith('/files'))return Response.json([...files,{index:1,name:bonus.name,size:50,priority,progress:0}]);
+   if(p.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});
+   return Response.json([torrent]);
+  }});
+  finish?.();assert.equal(cancelled,true);assert.equal(result.state,'start_unknown');
+ },{bonusFiles:[bonus]});
+});
