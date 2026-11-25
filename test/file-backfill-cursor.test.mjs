@@ -131,7 +131,7 @@ test('a newly linked file can be queued once ahead of the historical pass', asyn
   }
 });
 
-test('an old event cannot keep reordering the historical pass', async () => {
+test('an expired positive-confirmation window cannot discard scheduled arrival retries', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-file-priority-expiry-'));
   const cursor = openFileBackfillCursor(path.join(dir, 'state.sqlite'));
   try {
@@ -142,8 +142,10 @@ test('an old event cannot keep reordering the historical pass', async () => {
       nowMs: 102 });
     assert.deepEqual(cursor.confirmRecentFile({ fileId: 51,
       nowMs: 100 + 30 * 60_000 + 1 }), { state: 'unchanged' });
-    assert.equal(cursor.claim({ inventory,
-      nowMs: 100 + 30 * 60_000 + 2 }).state, 'idle');
+    const retry=cursor.claim({inventory,nowMs:100+30*60_000+2});
+    assert.deepEqual(retry.fileIds,[51]);
+    cursor.record({claim:retry,outcomes:[{fileId:51,state:'unknown'}],nowMs:100+30*60_000+3});
+    assert.equal(cursor.claim({inventory,nowMs:100+30*60_000+4}).state,'idle');
   } finally {
     cursor.close(); await rm(dir, { recursive: true, force: true });
   }
@@ -388,3 +390,46 @@ test('a large linked file resumes at its saved episode offset after restart', as
       [8]);
   } finally { cursor.close(); await rm(dir, { recursive: true, force: true }); }
 });
+
+async function arrivalFixture(run){const dir=await mkdtemp(path.join(os.tmpdir(),'negev-arrival-retry-')),dbPath=path.join(dir,'state.sqlite');let cursor=openFileBackfillCursor(dbPath);const reopen=()=>{cursor.close();cursor=openFileBackfillCursor(dbPath);return cursor};try{await run({dbPath,get cursor(){return cursor},reopen})}finally{cursor.close();await rm(dir,{recursive:true,force:true})}}
+const emptyHints={listFileHintIds:()=>[]};
+const finishArrival=(cursor,claim,nowMs,state='unknown')=>cursor.record({claim,outcomes:claim.fileIds.map(fileId=>({fileId,state})),nowMs});
+test('an initial Plex miss has durable due retry beyond restart and the historical prefix',()=>arrivalFixture(async f=>{
+ const inventory={listFileHintIds:({afterFileId,limit})=>[1,2,51].filter(id=>id>afterFileId).slice(0,limit)};
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const first=f.cursor.claim({inventory,nowMs:101,limit:1});assert.deepEqual(first.fileIds,[51]);finishArrival(f.cursor,first,102);f.reopen();
+ const retry=f.cursor.claim({inventory,nowMs:60102,limit:1});assert.deepEqual(retry.fileIds,[51]);assert.equal(retry.priority,true);finishArrival(f.cursor,retry,60103,'available');
+ const historical=f.cursor.claim({inventory,nowMs:60104,limit:1});assert.deepEqual(historical.fileIds,[1]);finishArrival(f.cursor,historical,60105);
+ const db=new DatabaseSync(f.dbPath);assert.equal(db.prepare('SELECT COUNT(*) n FROM file_backfill_arrivals').get().n,0);db.close();
+}));
+test('arrival retries survive thirty minutes without another event or positive observer',()=>arrivalFixture(async f=>{
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const first=f.cursor.claim({inventory:emptyHints,nowMs:101,limit:1});finishArrival(f.cursor,first,102);f.reopen();
+ const retry=f.cursor.claim({inventory:emptyHints,nowMs:1800103,limit:1});assert.deepEqual(retry.fileIds,[51]);finishArrival(f.cursor,retry,1800104);assert.equal(f.cursor.claim({inventory:emptyHints,nowMs:1800105,limit:1}).state,'idle');
+ const later=f.cursor.claim({inventory:emptyHints,nowMs:2100104,limit:1});assert.deepEqual(later.fileIds,[51]);
+}));
+test('continuous arrivals preserve historical turns across reopen',()=>arrivalFixture(async f=>{
+ const inventory={listFileHintIds:({afterFileId,limit})=>Array.from({length:10},(_,i)=>i+1).filter(id=>id>afterFileId).slice(0,limit)};const history=[];
+ for(let i=0;i<10;i++){const clock=100+i*61000;f.cursor.prioritizeFile({fileId:100+i,observedMs:clock});const claim=f.cursor.claim({inventory,nowMs:clock+1,limit:1});if(claim.priority!==true)history.push(...claim.fileIds);finishArrival(f.cursor,claim,clock+2,'available');f.reopen();}assert.deepEqual(history,[1,2,3,4,5]);
+}));
+test('an older in-flight success cannot erase a newer arrival generation',()=>arrivalFixture(async f=>{
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const first=f.cursor.claim({inventory:emptyHints,nowMs:101,limit:1});f.cursor.prioritizeFile({fileId:51,observedMs:102});finishArrival(f.cursor,first,103,'available');f.reopen();
+ const newer=f.cursor.claim({inventory:emptyHints,nowMs:104,limit:1});assert.deepEqual(newer.fileIds,[51]);finishArrival(f.cursor,newer,105,'available');assert.equal(f.cursor.claim({inventory:emptyHints,nowMs:106,limit:1}).state,'idle');
+}));
+
+test('due retries, fresh arrivals and history each retain turns under continuous intake',()=>arrivalFixture(async f=>{
+ const inventory={listFileHintIds:({afterFileId,limit})=>[1,2,3,4,5,51].filter(id=>id>afterFileId).slice(0,limit)};const seen=[];
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const initial=f.cursor.claim({inventory,nowMs:101,limit:1});finishArrival(f.cursor,initial,102);
+ for(let i=0;i<12;i++){const clock=60102+i*61000;f.cursor.prioritizeFile({fileId:200+i,observedMs:clock});const claim=f.cursor.claim({inventory,nowMs:clock+1,limit:1});seen.push(claim.fileIds[0]);finishArrival(f.cursor,claim,clock+2,claim.fileIds[0]===51?'unknown':'available');f.reopen();}
+ assert.ok(seen.filter(x=>x===51).length>=3,JSON.stringify(seen));assert.ok(seen.filter(x=>x<51).length>=3,JSON.stringify(seen));assert.ok(seen.filter(x=>x>=200).length>=3,JSON.stringify(seen));
+}));
+test('card-invalidated priority work also retains retry without an arrival marker',()=>arrivalFixture(async f=>{
+ const db=new DatabaseSync(f.dbPath);db.prepare('INSERT INTO file_backfill_priority(file_id,rank)VALUES(51,1)').run();db.close();const first=f.cursor.claim({inventory:emptyHints,nowMs:100,limit:1});finishArrival(f.cursor,first,101);f.reopen();assert.deepEqual(f.cursor.claim({inventory:emptyHints,nowMs:60101,limit:1}).fileIds,[51]);
+}));
+
+test('duplicate or older arrival events cannot bypass the persisted retry backoff',()=>arrivalFixture(async f=>{
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const first=f.cursor.claim({inventory:emptyHints,nowMs:101,limit:1});finishArrival(f.cursor,first,102);
+ assert.equal(f.cursor.prioritizeFile({fileId:51,observedMs:100}).state,'unchanged');assert.equal(f.cursor.prioritizeFile({fileId:51,observedMs:99}).state,'unchanged');
+ assert.equal(f.cursor.claim({inventory:emptyHints,nowMs:103,limit:1}).state,'idle');const db=new DatabaseSync(f.dbPath);assert.equal(db.prepare('SELECT observed_ms FROM file_backfill_arrivals').get().observed_ms,100);db.close();
+}));
+test('a definitive source transition retires only its captured arrival generation',()=>arrivalFixture(async f=>{
+ f.cursor.prioritizeFile({fileId:51,observedMs:100});const first=f.cursor.claim({inventory:emptyHints,nowMs:101,limit:1});f.cursor.prioritizeFile({fileId:51,observedMs:102});f.cursor.record({claim:first,outcomes:[{fileId:51,state:'unknown',terminal:true}],nowMs:103});const next=f.cursor.claim({inventory:emptyHints,nowMs:104,limit:1});assert.deepEqual(next.fileIds,[51]);f.cursor.record({claim:next,outcomes:[{fileId:51,state:'unknown',terminal:true}],nowMs:105});assert.equal(f.cursor.claim({inventory:emptyHints,nowMs:106,limit:1}).state,'idle');
+}));

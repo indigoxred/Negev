@@ -112,3 +112,21 @@ observer. Disabling that observer stops old direct/title receipts from trimming
 new requests. API activity renews the bounded server identity
 lease even when all periodic availability workers are off. Renewal failure
 keeps saved evidence untrusted until identity can be verified again.
+
+### Arrival availability retries
+
+A newly linked file can reach Shoko before Plex has indexed it. An inconclusive
+first public observation now leaves durable, due-time retry work. Fresh priority
+work, due arrival retries and the historical file sweep share bounded turns;
+the existing per-tick provider and physical-check budgets remain unchanged.
+Retries use one-minute spacing initially and at most five-minute spacing after
+15 minutes. They survive restart and do not expire with the old recent-event
+marker. Duplicate events do not reset age or bypass backoff. A newer source
+generation cannot be retired by an older in-flight result.
+
+An arrival is complete only when all its linked targets have current guarded
+proofs. Unknown results do not mark a file Available or start another download.
+Direct availability also alternates newer pending arrivals with oldest due work,
+so the historical queue and ordinary reconciliation continue progressing.
+Existing in-flight priority work is migrated without rebasing known observation
+or proof timestamps. No media, request or provider configuration is changed.

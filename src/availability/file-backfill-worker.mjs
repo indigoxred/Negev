@@ -92,7 +92,7 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
     try {
       source = inventory.getFile(fileId);
       if (source?.state !== 'linked' || !validTime(source.observedMs)) {
-        return finish({ state: 'unknown' }, 0, 0);
+        return finish({ state: 'unknown', terminal: true }, 0, 0);
       }
       candidate = canonicalCandidate(await readCandidate({ fileId }));
     } catch { return sourceReadFailed(); }
@@ -192,7 +192,13 @@ export function createFileBackfillWorker({ cursor, inventory, readCandidate,
       return finish({ state: 'partial', nextPairOffset: end,
         fingerprint: identity }, end - start, available);
     }
-    return finish({ state: available ? 'available' : 'unknown' },
+    // Finish a multi-target arrival only when all guarded target proofs are current.
+    let allAvailable = start===0 && available===candidate.pairs.length;
+    if(typeof proofs.getCurrent==='function'){
+      try { allAvailable=candidate.pairs.every(pair=>proofs.getCurrent(pair).state==='available'); }
+      catch { allAvailable=false; }
+    }
+    return finish({ state: allAvailable ? 'available' : 'unknown' },
       end - start, available);
   };
   return {

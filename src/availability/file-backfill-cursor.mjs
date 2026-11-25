@@ -1,3 +1,4 @@
+import { createFileArrivalRetries } from './file-arrival-retries.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -30,6 +31,8 @@ export function resetFileBackfillEvidence(dbPath) {
       pending_json=NULL, claimed_ms=NULL, pair_offset=0,
       fingerprint=NULL,priority_claim=0 WHERE id=1`).run();
     if (reset.changes !== 1) throw new Error('File backfill cursor unavailable');
+    if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_backfill_lane_state'").get())
+      db.exec('UPDATE file_backfill_lane_state SET phase=0 WHERE id=1');
     db.exec('COMMIT');
   } catch (error) {
     db.exec('ROLLBACK');
@@ -44,6 +47,7 @@ export function openFileBackfillCursor(dbPath) {
     throw new TypeError('Invalid file backfill database');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  let arrivals;
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec(`CREATE TABLE IF NOT EXISTS file_backfill_cursor (
@@ -83,6 +87,7 @@ export function openFileBackfillCursor(dbPath) {
     ) STRICT`);
     db.exec(`INSERT OR IGNORE INTO file_backfill_cursor
       (id,after_file_id,pass,receipt) VALUES (1,0,1,0)`);
+    arrivals = createFileArrivalRetries(db);
   } catch (error) { db.close(); throw error; }
   const read = db.prepare(`SELECT after_file_id AS afterFileId,pass,receipt,
     pending_json AS pendingJson,claimed_ms AS claimedMs,
@@ -132,6 +137,9 @@ export function openFileBackfillCursor(dbPath) {
       }
       db.exec('BEGIN IMMEDIATE');
       try {
+        if(!arrivals.prioritize(fileId,observedMs)){
+          db.exec('COMMIT');return {state:'unchanged'};
+        }
         pruneRecent.run(observedMs);
         rememberRecent.run(fileId, observedMs + recentWindowMs);
         const queued = addPriority.run(fileId).changes === 1;
@@ -175,51 +183,33 @@ export function openFileBackfillCursor(dbPath) {
             pairOffset: saved.pairOffset, fingerprint: saved.fingerprint,
             ...(saved.priorityClaim ? { priority: true } : {}) };
         }
-        const priorityIds = nextPriority.all(limit).map((row) => row.fileId);
-        if (!validPriorityPage(priorityIds, limit)) {
-          db.exec('ROLLBACK');
-          return held('invalid_file_priority_page');
-        }
-        if (priorityIds.length > 0) {
-          const receipt = saved.receipt + 1;
-          if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
-          saveClaim.run(saved.afterFileId, saved.pass, receipt,
-            JSON.stringify(priorityIds), nowMs, 0, null, 1);
-          db.exec('COMMIT');
-          return { state: 'claimed', pass: saved.pass, receipt,
-            claimedMs: nowMs, fileIds: priorityIds, pairOffset: 0,
-            fingerprint: null, priority: true };
-        }
-        let afterFileId = saved.afterFileId;
-        let pass = saved.pass;
-        let ids = inventory.listFileHintIds({ afterFileId, limit });
-        if (!validPage(ids, afterFileId, limit)) {
-          db.exec('ROLLBACK');
-          return held('invalid_file_hint_page');
-        }
-        if (ids.length === 0 && afterFileId > 0) {
-          afterFileId = 0;
-          pass++;
-          ids = inventory.listFileHintIds({ afterFileId, limit });
-          if (!validPage(ids, afterFileId, limit)) {
-            db.exec('ROLLBACK');
-            return held('invalid_file_hint_page');
+        const phase = arrivals.phase();
+        let afterFileId = saved.afterFileId, pass = saved.pass;
+        for (let turn=0;turn<3;turn++) {
+          const lane=(phase+turn)%3;
+          let ids;
+          if(lane===0) ids=nextPriority.all(limit).map(row=>row.fileId);
+          else if(lane===1) ids=arrivals.due(nowMs,limit);
+          else {
+            ids=inventory.listFileHintIds({afterFileId,limit});
+            if(!validPage(ids,afterFileId,limit)){db.exec('ROLLBACK');return held('invalid_file_hint_page');}
+            if(ids.length===0&&afterFileId>0){afterFileId=0;pass++;ids=inventory.listFileHintIds({afterFileId,limit});}
+            if(!validPage(ids,afterFileId,limit)){db.exec('ROLLBACK');return held('invalid_file_hint_page');}
           }
-        }
-        if (ids.length === 0) {
-          if (afterFileId !== saved.afterFileId) {
-            saveClaim.run(afterFileId, pass, saved.receipt, null, null, 0, null, 0);
-          }
+          if(!validPriorityPage(ids,limit)){db.exec('ROLLBACK');return held('invalid_file_priority_page');}
+          if(!ids.length)continue;
+          const receipt=saved.receipt+1;
+          if(!Number.isSafeInteger(receipt))throw Error('Backfill receipt exhausted');
+          const priority=lane!==2;
+          saveClaim.run(priority?saved.afterFileId:afterFileId,priority?saved.pass:pass,receipt,
+            JSON.stringify(ids),nowMs,0,null,priority?1:0);
+          arrivals.capture(receipt,ids,nowMs);arrivals.advance(lane);
           db.exec('COMMIT');
-          return { state: 'idle' };
+          return {state:'claimed',pass:priority?saved.pass:pass,receipt,claimedMs:nowMs,
+            fileIds:ids,pairOffset:0,fingerprint:null,...(priority?{priority:true}:{})};
         }
-        const receipt = saved.receipt + 1;
-        if (!Number.isSafeInteger(receipt)) throw new Error('Backfill receipt exhausted');
-        saveClaim.run(afterFileId, pass, receipt, JSON.stringify(ids), nowMs,
-          0, null, 0);
-        db.exec('COMMIT');
-        return { state: 'claimed', pass, receipt,
-          claimedMs: nowMs, fileIds: ids, pairOffset: 0, fingerprint: null };
+        if(afterFileId!==saved.afterFileId)saveClaim.run(afterFileId,pass,saved.receipt,null,null,0,null,0);
+        db.exec('COMMIT');return {state:'idle'};
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
     record({ claim, outcomes, nowMs } = {}) {
@@ -268,12 +258,14 @@ export function openFileBackfillCursor(dbPath) {
           saveClaim.run(saved.afterFileId, saved.pass, receipt,
             saved.pendingJson, nowMs, outcomes[0].nextPairOffset,
             outcomes[0].fingerprint, saved.priorityClaim);
+          arrivals.transfer(claim.receipt,receipt);
           db.exec('COMMIT');
           return { state: 'partial', count: 1 };
         }
         const last = claim.fileIds.at(-1);
         if (claim.priority === true) {
           for (const [index, fileId] of claim.fileIds.entries()) {
+            if(!arrivals.current(claim.receipt,fileId))continue;
             const recent = readRecent.get(fileId);
             removePriority.run(fileId);
             if (recent && (outcomes[index].state === 'available' ||
@@ -284,6 +276,10 @@ export function openFileBackfillCursor(dbPath) {
             }
           }
         }
+        for(const outcome of outcomes) {
+          if(arrivals.settle(claim.receipt,outcome,nowMs) && claim.priority!==true)
+            removePriority.run(outcome.fileId);
+        }
         if ((claim.priority !== true && last <= saved.afterFileId) ||
             (claim.priority === true
               ? savePriorityResult.run(claim.receipt)
@@ -291,6 +287,7 @@ export function openFileBackfillCursor(dbPath) {
           db.exec('ROLLBACK');
           return held('stale_file_backfill_claim');
         }
+        arrivals.release(claim.receipt);
         db.exec('COMMIT');
         return { state: 'recorded', count: outcomes.length };
       } catch (error) { db.exec('ROLLBACK'); throw error; }

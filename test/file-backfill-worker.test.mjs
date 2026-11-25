@@ -1,3 +1,4 @@
+import {DatabaseSync} from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -762,4 +763,11 @@ test('the worker saves one real SQLite proof only while both source generations 
     proofs.close(); plex.close(); inventory.close(); cursor.close();
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('a partly proved multi-target arrival retains scheduled work across partial receipts and restart',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'negev-partial-arrival-')),dbPath=path.join(dir,'db.sqlite');let cursor=openFileBackfillCursor(dbPath),clock=1000,ready=false;const current=new Set();
+ const make=()=>createFileBackfillWorker({cursor,inventory:{listFileHintIds:()=>[],getFile:()=>({state:'linked',updated:candidate(12).updated,observedMs:100})},readCandidate:async()=>candidate(12),resolveKind:async()=> 'series',observeCandidate:async({target})=>target.episodeId===1012&&!ready?{state:'unknown',reason:'card_discovery_incomplete'}:{state:'available',fileId:7,proof:{fileId:7,episodeId:target.episodeId},cardRevision:{observedMs:200}},proofs:{observeGuarded:({episodeId})=>{current.add(episodeId);return{state:'recorded'}},getCurrent:({episodeId})=>({state:current.has(episodeId)?'available':'unknown'})},now:()=>clock});
+ try{cursor.prioritizeFile({fileId:7,observedMs:100});let worker=make();assert.equal((await worker.runOnce()).state,'partial');const miss=await worker.runOnce();assert.equal(miss.available,1);const db=new DatabaseSync(dbPath);const pending=db.prepare('SELECT COUNT(*) n FROM file_backfill_arrivals').get().n;db.close();assert.equal(pending,1);cursor.close();cursor=openFileBackfillCursor(dbPath);clock=61000;ready=true;worker=make();assert.equal((await worker.runOnce()).state,'partial');assert.equal((await worker.runOnce()).state,'checked');const checked=new DatabaseSync(dbPath);const remaining=checked.prepare('SELECT COUNT(*) n FROM file_backfill_arrivals').get().n;checked.close();assert.equal(remaining,0);assert.equal(current.size,12);
+ }finally{cursor.close();await rm(dir,{recursive:true,force:true});}
 });

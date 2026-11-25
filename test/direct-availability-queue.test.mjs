@@ -637,3 +637,86 @@ test('actual guarded worker card-change hold reaches the paced scheduler and suc
  const index=openPlexCardIndex(ctx.dbPath),target={anidbId:42,episodeId:1001};let clock=100,first=true;const card=()=>({libraryId:102,ratingKey:500,kind:'episode',observedMs:clock,parts:[{libraryId:102,partId:600,size:5,plexPath:'/source-pure/one.mkv'}]});index.recordCard(card());ctx.queue.enqueue({...target,observedMs:clock,priority:'interactive'});const worker=createDirectAvailabilityWorker({queue:ctx.queue,now:()=>clock,requireProof:true,observeTarget:async()=>{if(first){first=false;index.forgetCard({libraryId:102,ratingKey:500,observedMs:++clock});}return{state:'available',proof:{fileId:51,libraryId:102,ratingKey:500,partId:600}}}});const timers=[],outcomes=[];const scheduler=createDirectAvailabilityScheduler({runOnce:async()=>{const r=await worker.runOnce();outcomes.push(r);return r},initialDelayMs:1000,activeDelayMs:10000,idleDelayMs:60000,setTimer:(fn,delay)=>{timers.push({fn,delay});return timers.length},clearTimer:()=>{}});try{scheduler.start();clock=1100;await timers.shift().fn();assert.equal(outcomes[0].reason,'card_changed');assert.equal(timers[0].delay,10000);clock=11100;index.recordCard(card());await timers.shift().fn();assert.equal(outcomes[1].state,'checked');assert.equal(ctx.queue.getStatus({...target,nowMs:clock}).state,'available');}finally{await scheduler.close();index.close();}
  });
 });
+
+test('newer pending arrivals and a 6201-row prefix share 180 worker turns over 36 minutes across reopen',async()=>fixture(async ctx=>{
+ const db=new DatabaseSync(ctx.dbPath),oldTime=100,newTime=200,clock=14*60*60_000;
+ try{
+  const insert=db.prepare("INSERT INTO direct_availability_targets(anidb_id,episode_id,observed_ms,due_ms,version,priority,state) VALUES(1,?,?,?,1,1,'pending')");
+  db.exec('BEGIN');for(let id=1;id<=6201;id++)insert.run(id,oldTime,oldTime);db.exec('COMMIT');
+  ctx.queue.enqueue({anidbId:2,episodeId:7001,observedMs:newTime,priority:'event'});
+  const visited=[];
+  for(let tick=0;tick<180;tick++){
+   if(tick>=2&&tick%2===0)ctx.queue.enqueue({anidbId:2,episodeId:7000+tick,observedMs:newTime+tick,priority:'event'});
+   ctx.reopen();
+   const worker=createDirectAvailabilityWorker({queue:ctx.queue,now:()=>clock+tick*12_000,requireProof:true,
+    observeTarget:async target=>{visited.push(target.episodeId);return {state:'available',proof:{fileId:51,libraryId:102,ratingKey:500,partId:600}};}});
+   await worker.runOnce();
+  }
+  assert.ok(visited.indexOf(7001)>=0&&visited.indexOf(7001)<=1,JSON.stringify(visited));
+  assert.deepEqual(visited.filter(id=>id<=6201),Array.from({length:90},(_,i)=>i+1));
+  for(const id of [7001,...Array.from({length:89},(_,i)=>7002+i*2)])assert.ok(visited.includes(id),JSON.stringify(visited));
+  assert.equal(db.prepare('SELECT observed_ms t FROM direct_availability_targets WHERE episode_id=7001').get().t,newTime);
+ }finally{db.close();}
+}));
+
+test('busy and failing arrivals retain fair old progress, backoff and original evidence across every reopen',async()=>fixture(async ctx=>{
+ const db=new DatabaseSync(ctx.dbPath);let nowMs=10_000_000;const seen=[];let busy=true;
+ try{
+  for(let id=1;id<=12;id++)ctx.queue.enqueue({anidbId:1,episodeId:id,observedMs:100,priority:'event'});
+  ctx.queue.enqueue({anidbId:2,episodeId:100,observedMs:200,priority:'event'});
+  for(let tick=0;tick<8;tick++){
+   ctx.reopen();const worker=createDirectAvailabilityWorker({queue:ctx.queue,now:()=>nowMs,
+    observeTarget:async target=>{seen.push(target.episodeId);if(target.episodeId===100&&busy){busy=false;return{state:'busy'};}return {state:'unknown'};}});
+   await worker.runOnce();nowMs++;
+  }
+  assert.deepEqual(seen,[100,1,100,2,3,4,5,6]);
+  const row=db.prepare('SELECT observed_ms observed,due_ms due,state,priority FROM direct_availability_targets WHERE episode_id=100').get();
+  assert.equal(row.observed,200);assert.equal(row.state,'unknown');assert.equal(row.priority,0);
+  assert.equal(row.due,10_000_002+300_000,'an aged miss keeps the five-minute backoff');
+ }finally{db.close();}
+}));
+
+test('legacy pending queue initializes fairness once without rewriting observations or active leases',async()=>fixture(async ctx=>{
+ const db=new DatabaseSync(ctx.dbPath);
+ try{
+  for(let id=1;id<=3;id++)ctx.queue.enqueue({anidbId:1,episodeId:id,observedMs:100,priority:'event'});
+  const inFlight=ctx.queue.claimNext({nowMs:100});
+  db.exec('DROP TABLE direct_availability_fairness'); // frozen pre-fairness schema
+  const before=db.prepare('SELECT * FROM direct_availability_targets WHERE episode_id=1').get();
+  ctx.queue.enqueue({anidbId:2,episodeId:100,observedMs:200,priority:'event'});
+  ctx.reopen();ctx.reopen();
+  assert.deepEqual(db.prepare('SELECT * FROM direct_availability_targets WHERE episode_id=1').get(),before);
+  assert.equal(ctx.queue.claimNext({nowMs:200}).target.episodeId,100);
+  ctx.reopen();assert.equal(ctx.queue.claimNext({nowMs:200}).target.episodeId,2);
+  assert.equal(ctx.queue.recordResult({claim:inFlight,state:'unknown',checkedMs:201}).state,'recorded');
+  assert.equal(ctx.queue.getObservation({anidbId:1,episodeId:1}).observedMs,100);
+ }finally{db.close();}
+}));
+
+test('a fair new-lane worker still rejects a concurrent enqueue and saves only its new generation',async()=>fixture(async ctx=>{
+ ctx.queue.enqueue({anidbId:1,episodeId:1,observedMs:100,priority:'event'});
+ ctx.queue.enqueue({anidbId:2,episodeId:100,observedMs:200,priority:'event'});
+ let nowMs=300,replaced=false,callbacks=0;
+ const makeWorker=()=>createDirectAvailabilityWorker({queue:ctx.queue,now:()=>nowMs,requireProof:true,
+  onRecordedAvailable:()=>callbacks++,observeTarget:async target=>{
+   if(target.episodeId===100&&!replaced){replaced=true;ctx.queue.enqueue({...target,observedMs:301,priority:'event'});}
+   return{state:'available',proof:{fileId:51,libraryId:102,ratingKey:500,partId:600}};
+  }});
+ assert.equal((await makeWorker().runOnce()).reason,'stale_claim');
+ assert.equal(ctx.queue.getStatus({anidbId:2,episodeId:100,nowMs}).state,'unknown');ctx.reopen();
+ nowMs=301;assert.equal((await makeWorker().runOnce()).state,'checked');
+ ctx.reopen();nowMs=302;assert.equal((await makeWorker().runOnce()).state,'checked');
+ assert.equal(callbacks,2);assert.equal(ctx.queue.getObservation({anidbId:2,episodeId:100}).observedMs,301);
+}));
+
+test('ordinary priority-zero history receives bounded turns during continuous event intake',async()=>fixture(async ctx=>{
+ ctx.queue.enqueue({anidbId:1,episodeId:1,observedMs:0,priority:'reconcile'});
+ const visited=[];
+ for(let tick=0;tick<8;tick++){
+  ctx.queue.enqueue({anidbId:2,episodeId:100+tick,observedMs:100+tick,priority:'event'});
+  ctx.reopen();const worker=createDirectAvailabilityWorker({queue:ctx.queue,now:()=>100+tick,
+   observeTarget:async target=>{visited.push(target.episodeId);return{state:'unknown'};}});
+  await worker.runOnce();
+ }
+ assert.ok(visited.indexOf(1)>=0&&visited.indexOf(1)<=1,JSON.stringify(visited));
+}));
