@@ -16,7 +16,7 @@ const count = (value) => Number.isSafeInteger(value) && value >= 0;
 export async function readShokoImportActivity({ baseUrl, apiKey,
   importRoot, managedFolderId, readSidecarTorrent, qbitImportSavePath,
   target, getHandoff, getPureMove, ownedSubtree = '',
-  withFingerprint = false, now = Date.now, fetchImpl = fetch,
+  withFingerprint = false, includeObservedPaths = false, now = Date.now, fetchImpl = fetch,
   // Pure manifests can contain 500 selected files plus their directories.
   // Keep the existing hard inventory ceiling and conservative unknown state.
   timeoutMs = 10_000, maxBaselineEntries = getPureMove ? 1_000 : 256 } = {}) {
@@ -33,7 +33,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
          managedFolderId === undefined ||
          typeof qbitImportSavePath !== 'string' ||
          !qbitImportSavePath.startsWith('/'))) ||
-      typeof withFingerprint !== 'boolean' ||
+      typeof withFingerprint !== 'boolean' || typeof includeObservedPaths !== 'boolean' ||
       (ownedSubtree !== '' && (typeof ownedSubtree !== 'string' ||
         !/^[A-Za-z0-9_-]{1,64}$/.test(ownedSubtree))) ||
       !Number.isSafeInteger(maxBaselineEntries) ||
@@ -166,6 +166,7 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
           !/^[0-9a-f]{64}$/.test(quietFingerprint)) return unavailable();
       return { state: 'quiet_observed', fingerprint: quietFingerprint,
         observedAtMs,
+        ...(includeObservedPaths ? {observedPathKeys: beforeInventory.files.map(file => `${managedFolderId}:${file.relativePath}`).sort()} : {}),
         ...(target === undefined ? {} :
           { unrelatedPendingKeys: beforeInventory.unrelatedPendingKeys }) };
     }

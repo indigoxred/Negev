@@ -173,10 +173,12 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       const filename = basename(file.name);
       let preview;
       try { preview = budget ? await budget.read(() => offlineLookup({ filename })) : await offlineLookup({ filename }); }
-      catch { return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch'); }
+      catch { return held('provider_unavailable'); }
       if (budget?.expired) return held('metadata_reader_busy');
-      if (evaluateOfflinePreview(preview, { animeId: request.anidbId,
-        episodeIds: file.episodeIds, filename }).state !== 'accepted') {
+      const evaluated = evaluateOfflinePreview(preview, { animeId: request.anidbId,
+        episodeIds: file.episodeIds, filename });
+      if(evaluated.reason==='provider_unavailable')return held('provider_unavailable');
+      if (evaluated.state !== 'accepted') {
         return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
       }
     }

@@ -16,7 +16,7 @@ test('review service reads recent saved public proofs without starting backfill'
   const root = await mkdtemp(path.join(tmpdir(), 'negev-proof-review-'));
   const dbPath = path.join(root, 'state.sqlite');
   primeSavedScope({dbPath,localRoot:root,shokoBaseUrl:'http://shoko:8111/',plexBaseUrl:'http://plex:32400/'});
-  let service;
+  let service, clock=1000;
   try {
     const proofs = openFileProofLedger(dbPath, {
       positiveLifetimeMs: 30 * 60_000, now: () => 1_000 });
@@ -27,7 +27,7 @@ test('review service reads recent saved public proofs without starting backfill'
     service = await createUserService({ dbPath,
       shokoBaseUrl: 'http://shoko:8111/', shokoApiKey: 'synthetic',
       sessionKey: randomBytes(32), publicOrigin: 'http://localhost:3000',
-      secureCookies: false, now: () => 1_000,
+      secureCookies: false, now: () => clock,
       anidbTitleDump: true,
       fetchImpl: async (url) => {
         if (String(url) === 'https://animap.id/api/anidb/42') {
@@ -67,6 +67,9 @@ test('review service reads recent saved public proofs without starting backfill'
       if(warmed.json().items[0].englishTitle)break;
     }
     assert.equal(warmed.json().items[0].englishTitle,'English Example');
+    clock += 300001;
+    const renewed=await service.app.inject({method:'GET',url:'/api/library',headers:{cookie:login.headers['set-cookie'].split(';')[0]}});
+    assert.equal(renewed.json().items[0]?.anidbId,42,'idle workers must not expire Library scope trust');
     assert.equal((await service.tickFileBackfill()).state, 'held');
   } finally {
     await service?.close();

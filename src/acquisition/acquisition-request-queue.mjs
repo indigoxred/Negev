@@ -123,6 +123,22 @@ export function openAcquisitionRequestQueue(dbPath,
         'provider_unavailable','release_preflight_unavailable',
         'availability_evidence_stale','import_activity_unverified') AND checked_ms IS NOT NULL
         AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
+    // Revisit legacy typed-target and transient-alias misses once. Preserve
+    // elapsed work, claims and suspensions; fresh misses keep normal cadence.
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some(column => column.name === 'discovery_policy_revision')) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN
+          discovery_policy_revision INTEGER NOT NULL DEFAULT 1 CHECK(discovery_policy_revision=1);
+          UPDATE acquisition_request_checks SET
+            next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
+          WHERE state='held' AND reason IN ('invalid_request','release_title_mismatch','no_safe_release')
+            AND checked_ms IS NOT NULL AND request_id IN
+              (SELECT id FROM requests WHERE cancelled_ms IS NULL)`);
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
     // Revisit one recent multi-episode Airing miss under the broader episode
     // query once. A settled empty watch retains its normal hourly cadence.
     const policyNowMs = Date.now();

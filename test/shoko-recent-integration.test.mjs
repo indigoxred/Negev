@@ -85,9 +85,9 @@ test('offline Shoko arrivals journal before cursor, retry provisional, and survi
     scheduler.requestSoon();
     await clock.fire();
     assert.deepEqual(ledger.getCursor(), cursor(13));
-    await clock.fire(); // never-attempted 13 has the earlier due time.
-    await clock.fire(); // previously provisional 11 is now linked.
-    assert.deepEqual(seen, [11, 12, 13, 11]);
+    await clock.fire(); // due retry 11 gets its durable share after restart.
+    await clock.fire(); // fresh 13 retains its own share.
+    assert.deepEqual(seen, [11, 12, 11, 13]);
     assert.equal(ledger.nextDue(nowMs), null);
   } finally {
     await scheduler?.close();

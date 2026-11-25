@@ -94,7 +94,15 @@ export async function importQualifiedAvailability({dbPath,manifest,scope,positiv
     const schema=staged.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name).sql;
     if(!exists(live,name))live.exec(schema);
     const columns=db=>db.prepare(`PRAGMA table_info("${name}")`).all().map(c=>c.name);
-    if(JSON.stringify(columns(live))!==JSON.stringify(columns(staged)))throw new Error('Unsupported cache schema transition');
+    if(JSON.stringify(columns(live))!==JSON.stringify(columns(staged))){
+     // Publish the supported additive proof-payload migration in the same
+     // transaction as the qualified cache. Do not rebuild unknown schemas.
+     const prior=live.prepare(`PRAGMA table_info("${name}")`).all(),next=staged.prepare(`PRAGMA table_info("${name}")`).all();
+     if(name!=='file_availability_proofs'||next.length!==prior.length+1||
+       next.at(-1).name!=='components_json'||next.at(-1).type!=='TEXT'||next.at(-1).notnull||next.at(-1).dflt_value!==null||
+       JSON.stringify(prior)!==JSON.stringify(next.slice(0,-1)))throw new Error('Unsupported cache schema transition');
+     live.exec('ALTER TABLE file_availability_proofs ADD COLUMN components_json TEXT');
+    }
    }
    // Delete children before their parents; unrelated table rows are untouched.
    for(const name of [...cacheTables].reverse())if(exists(staged,name))live.exec(`DELETE FROM "${name}"`);

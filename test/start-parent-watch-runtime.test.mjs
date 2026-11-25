@@ -63,3 +63,78 @@ test('failed startup closes both opened ledgers', () => {
   }), /worker failed/);
   assert.deepEqual(events, ['request-close', 'parent-close']);
 });
+
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { openParentWatchLedger } from '../src/requests/parent-watch-ledger.mjs';
+import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { createParentWatchWorker } from '../src/requests/parent-watch-worker.mjs';
+import { createAiringScheduler } from '../src/requests/airing-scheduler.mjs';
+
+test('actual runtime finishes bounded parent traversal before daily expiry, fairly across restart', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-parent-runtime-'));
+  const dbPath = path.join(dir, 'db.sqlite');
+  let nowMs = Date.parse('2026-11-12T00:00:00Z');
+  let timer;
+  let runtime;
+  let reads = [];
+  const visits = [];
+  const map = { version: 2, anime: [{ anidb_id: 11, tvdb_id: 100 }, { anidb_id: 50, tvdb_id: 200 }] };
+  let parents = openParentWatchLedger(dbPath);
+  parents.adopt({ tvdbId: 100, requesterId: 7, sourceSeriesId: 42, nowMs });
+  parents.adopt({ tvdbId: 200, requesterId: 7, sourceSeriesId: 43, nowMs });
+  parents.close();
+  const start = () => startParentWatchRuntime({
+    config: { parentWatch: true, dbPath, shokoBaseUrl: 'http://unused', timeZone: 'UTC' },
+    shokoApiKey: 'test', createMapReader: () => ({ read: async () => map }),
+    createArchiveReader: () => ({}),
+    createWorker: input => {
+      const worker = createParentWatchWorker({ ...input, now: () => nowMs,
+        today: () => new Date(nowMs).toISOString().slice(0, 10),
+        readRelations: async id => {
+          reads.push(id);
+          return { state: 'related_titles', anidbId: id, items: id === 50 ? [] : [
+            ...(id > 11 ? [{ anidbId: id - 1, relation: 'Prequel' }] : []),
+            ...(id < 30 ? [{ anidbId: id + 1, relation: 'Sequel' }] : [])] };
+        },
+        loadDetail: async ({ anidbId }) => ({ state: 'details', anidbId,
+          title: `Anime ${anidbId}`, kind: 'series', restricted: false,
+          complete: true, total: 1, airDate: '2026-11-01',
+          endDate: [30, 50].includes(anidbId) ? null : '2026-11-02', episodeCount: 12,
+          episodes: [{ id: anidbId * 100, type: 'Episode', airDate: '2026-11-01' }] }) });
+      return { async runOnce() {
+        reads = [];
+        const result = await worker.runOnce();
+        assert.ok(reads.length <= 12);
+        if (result.afterId) visits.push(result.afterId);
+        return result;
+      } };
+    },
+    createScheduler: input => createAiringScheduler({ ...input,
+      setTimeoutImpl(callback, delay) { timer = { callback, delay }; return 1; },
+      clearTimeoutImpl() { timer = null; } }) });
+  const fire = async () => { const next = timer; timer = null; nowMs += next.delay; await next.callback(); };
+  try {
+    runtime = start();
+    await fire(); // durable first parent's unfinished traversal
+    await runtime.close();
+    runtime = start();
+    await fire(); // second parent receives its turn after restart
+    assert.deepEqual(visits.slice(0, 2), [100, 200]);
+    for (let i = 0; i < 20 && timer.delay !== 86_400_000; i++) await fire();
+    parents = openParentWatchLedger(dbPath);
+    assert.deepEqual(parents.listInstallments({ tvdbId: 100 }).map(x => x.anidbId), [30]);
+    assert.deepEqual(parents.listInstallments({ tvdbId: 200 }).map(x => x.anidbId), [50]);
+    parents.close(); parents = null;
+    assert.equal(timer.delay, 86_400_000, 'completed traversal returns to daily pacing');
+    const prior = nowMs;
+    await fire(); // real configured daily interval: evidence must be fetched again
+    assert.equal(nowMs - prior, 86_400_000);
+    assert.ok(reads.includes(11), 'next daily sweep revalidates original seed');
+    assert.ok(visits.filter(x => x === 200).length >= 2);
+  } finally {
+    await runtime?.close(); parents?.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

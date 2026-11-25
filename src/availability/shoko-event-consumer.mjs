@@ -128,6 +128,21 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
       detected.delete(token.key);forgetPathResolutions(token.key);
       pendingOnlyDebt=false;return {state:'resolved'};
     },
+    // Only the same event generation's complete, twice observed watched-root
+    // inventory may retire a detected path that has since moved or vanished.
+    // This clears path debt, never creates a linked file or an absence proof.
+    acknowledgeMissingPathObservations({tokens,generation:expected,managedFolderId,observation}={}) {
+      if(stopping||expected!==generation||!validId(managedFolderId)||!Array.isArray(tokens)||
+          observation?.state!=='quiet_observed'||!/^[a-f0-9]{64}$/.test(observation.fingerprint)||
+          !Array.isArray(observation.observedPathKeys))return {state:'held'};
+      const present=new Set(observation.observedPathKeys);let resolved=0;
+      for(const token of tokens)if(token.key.startsWith(managedFolderId+':')&&
+          detected.get(token.key)===token.sequence&&!present.has(token.key)){
+        detected.delete(token.key);forgetPathResolutions(token.key);resolved++;
+      }
+      if(resolved)pendingOnlyDebt=false;
+      return {state:'observed',resolved};
+    },
     accept(target, args) {
       if (stopping) return { state: 'held', reason: 'consumer_stopping' };
       if (target === 'file:detected' || idEvents.has(target)) bumpGeneration();

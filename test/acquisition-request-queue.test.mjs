@@ -1214,3 +1214,15 @@ test('Auto-Pick delegation gets one immediate turn after an empty search and sur
   assert.notEqual(queue.claimNext({nowMs:103,priorityRequestId:1}).requestId,1);
  }finally{db.close();queue.close();}
 }));
+
+ test('v317 discovery upgrade revisits old misses once without resetting elapsed work or cancellation',async()=>fixture(async dbPath=>{
+ let queue=openAcquisitionRequestQueue(dbPath);const db=new DatabaseSync(dbPath);
+ try{
+ const first=queue.claimNext({nowMs:100,priorityRequestId:1});queue.recordResult({requestId:1,pass:first.pass,state:'held',reason:'no_safe_release',checkedMs:100});queue.close();
+ const cols=db.prepare('PRAGMA table_info(acquisition_request_checks)').all();if(cols.some(c=>c.name==='discovery_policy_revision'))db.exec('ALTER TABLE acquisition_request_checks DROP COLUMN discovery_policy_revision');
+ db.exec('UPDATE acquisition_request_checks SET next_due_ms=3600100,scan_started_ms=50,decision_ms=80 WHERE request_id=1');
+ queue=openAcquisitionRequestQueue(dbPath);assert.equal(queue.getResult(1).nextDueMs,60100);assert.equal(db.prepare('SELECT scan_started_ms AS scan,decision_ms AS decision FROM acquisition_request_checks WHERE request_id=1').get().scan,50);assert.equal(db.prepare('SELECT decision_ms AS decision FROM acquisition_request_checks WHERE request_id=1').get().decision,80);
+ const claim=queue.claimNext({nowMs:60100,priorityRequestId:1});assert.equal(claim.requestId,1);queue.recordResult({requestId:1,pass:claim.pass,state:'held',reason:'no_safe_release',checkedMs:60101});const due=queue.getResult(1).nextDueMs;queue.close();queue=openAcquisitionRequestQueue(dbPath);assert.equal(queue.getResult(1).nextDueMs,due);
+ db.exec("UPDATE requests SET cancelled_ms=60102 WHERE id=1");assert.notEqual(queue.claimNext({nowMs:due+1,priorityRequestId:1}).requestId,1);
+ }finally{db.close();queue.close();}
+ }));

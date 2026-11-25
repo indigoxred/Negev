@@ -1,6 +1,7 @@
 import { createCatalogueReadPacer } from './search-pages.mjs';
 
 export function createAdultSearchVerifier({ readDisplay, concurrency = 4,
+  now = Date.now,
   pacer = createCatalogueReadPacer({burst:4}) }) {
   if (typeof readDisplay !== 'function' || !Number.isSafeInteger(concurrency) ||
       concurrency < 1 || concurrency > 8) {
@@ -24,20 +25,31 @@ export function createAdultSearchVerifier({ readDisplay, concurrency = 4,
               entry = { consumers: new Set() };
               pending.set(id, entry);
               entry.consumers.add(current);
-              entry.promise = pacer.run(async () => {
-                const result = await readDisplay(id);
-                if (result?.state === 'display' && result.anidbId === id &&
-                    typeof result.restricted === 'boolean') {
-                  confirmed.set(id, result.restricted);
-                  while (confirmed.size > 500) confirmed.delete(confirmed.keys().next().value);
-                  return result.restricted;
+              let expiresMs = Infinity;
+              const live = () => now() < expiresMs && [...entry.consumers].some(isCurrent => isCurrent());
+              // Retry only transient classification failures, within this live
+              // pass. All attempts share the existing pacing/cooldown budget.
+              entry.promise = (async () => {
+                for (let attempt = 0; attempt < 3 && live(); attempt++) {
+                  try {
+                    return await pacer.run(async () => {
+                      const result = await readDisplay(id);
+                      if (live() && result?.state === 'display' && result.anidbId === id &&
+                          typeof result.restricted === 'boolean') {
+                        confirmed.set(id, result.restricted);
+                        while (confirmed.size > 500) confirmed.delete(confirmed.keys().next().value);
+                        return result.restricted;
+                      }
+                    }, live);
+                  } catch (error) {
+                    if (![429, 503].includes(error?.status)) return undefined;
+                    if (expiresMs === Infinity) expiresMs = now() + 180_000;
+                    pacer.defer(error.retryAfter,
+                      error.status === 429 ? 60_000 : 5000);
+                  }
                 }
-              }, () => [...entry.consumers].some(isCurrent => isCurrent()))
-                .catch(error => {
-                  if ([429, 503].includes(error?.status)) pacer.defer(error.retryAfter,
-                    error.status === 429 ? 60_000 : 5000);
-                  return undefined;
-                })
+                return undefined;
+              })()
                 .finally(() => { if (pending.get(id) === entry) pending.delete(id); });
             } else entry.consumers.add(current);
             adult = await entry.promise;

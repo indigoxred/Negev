@@ -265,18 +265,18 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // A pre-retry-policy cursor may have consumed a strong release during a transient
     // Prowlarr re-search failure. Revisit it once with the preserved proxy.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
-      [preferSeasonPack ? 'quality-policy-season-pack-v4' :
-        requireReleasePolicy ? 'quality-policy-v6' :
+      [preferSeasonPack ? 'quality-policy-season-pack-v5' :
+        requireReleasePolicy ? 'quality-policy-v7' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const fallbackFingerprint = preferSeasonPack ? createHash('sha256')
-      .update(JSON.stringify(['quality-policy-episode-fallback-v4',
+      .update(JSON.stringify(['quality-policy-episode-fallback-v5',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex') : null;
     const uncertainPackFingerprint = preferSeasonPack && preferShokoPreview ?
       createHash('sha256').update(JSON.stringify(
-        ['quality-policy-uncertain-pack-v4',
+        ['quality-policy-uncertain-pack-v5',
           ...[...request.episodeIds].sort((a, b) => a - b)]))
         .digest('hex') : null;
     const saved = typeof candidateFingerprint === 'string' &&

@@ -4,6 +4,8 @@ import vm from 'node:vm';
 import { test } from 'node:test';
 import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
 import { hideChineseProduction } from '../src/web/public/chinese-visibility.mjs';
+import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibility.mjs';
+import { createCatalogueReadPacer } from '../src/web/public/search-pages.mjs';
 
 const source = await readFile(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
 function functionSource(name) {
@@ -138,10 +140,12 @@ test('a later failed preference intent preserves an earlier successful saved cha
 });
 
 test('actual sign-out reset prevents an old blocked preference mutation delaying the next session', async () => {
-  const node = () => ({ dataset: {}, replaceChildren() {}, reset() {} });
+  let change;
+  const node = () => ({ dataset: {}, replaceChildren() {}, reset() {}, addEventListener(_event, listener) { change = listener; } });
   const nodes = new Map();
   const state = { user: { id: 1 }, detailHydrationQueued: new Set(), searchItems: new Map(), searchToken: 1 };
-  let sent = false;
+  let sent = false, calls = 0;
+  const oldMutation = deferred();
   const context = vm.createContext({ state, sessionResponses: createResponseEpoch(),
     routePositions: new Map(), pendingScrollRestore: null, renderedHash: null,
     stopLibraryPageObserver() {}, stopBrowsePageObserver() {}, invalidateRequestResponses() {},
@@ -150,17 +154,102 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     airingSeasonResponses: createResponseEpoch(), seasonalResponses: createResponseEpoch(),
     detailPollTimer: null, dismissRequestDialogs() {}, displayCache: new Map(),
     trackingPrefsPromise: null, trackingPreferencesRevision: 0, trackingSaving: true,
-    trackingMutationTail: new Promise(() => {}), genreSelections: { airing: new Set(), season: new Set() },
+    trackingMutationTail: Promise.resolve(), genreSelections: { airing: new Set(), season: new Set() },
     nextReviewAttemptId: null, element: () => ({}),
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
-    api: async () => { sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
+    renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
+    api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
   vm.runInContext(functionSource('clearWorkspace') + '\n' + functionSource('changeTrackingPreferences'), context);
+  const handlerStart = source.indexOf("byId('airing-view-mode').addEventListener('change'");
+  vm.runInContext(source.slice(handlerStart, source.indexOf("\nbyId('refresh-requests')", handlerStart)), context);
+  const select = context.byId('airing-view-mode');
+  state.airingPreferences = { mode: 'library', trackedAnidbIds: [] };
+  select.value = 'all';
+  const oldChange = change({ currentTarget: select });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(select.disabled, true);
   context.clearWorkspace();
+  assert.equal(select.disabled, false, 'the next session has an enabled Airing selector');
   state.user = { id: 2 };
   const write = context.changeTrackingPreferences({ action: 'track', anidbId: 2 });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(sent, true);
   assert.equal(await write, true);
+  oldMutation.resolve({ mode: 'all', trackedAnidbIds: [99] });
+  await oldChange;
+  assert.equal(state.airingPreferences.mode, 'library');
+  assert.deepEqual(state.airingPreferences.trackedAnidbIds, [2]);
+  assert.equal(select.disabled, false);
+});
+
+for (const status of [429, 503]) test(`actual client classifier recovers a ${status} with unknown cards hidden until verified`, async () => {
+  let now = 0, reads = 0, renders = 0;
+  const starts = [];
+  const node = { dataset: { adult: 'unknown', anidbId: '1' } };
+  const verifier = createAdultSearchVerifier({ now: () => now,
+    pacer: createCatalogueReadPacer({ now: () => now, sleep: async ms => { now += ms; } }),
+    readDisplay: async id => {
+      starts.push(now); reads++;
+      assert.equal(node.dataset.adult, 'unknown');
+      if (reads === 1) throw Object.assign(new Error('busy'), { status, retryAfter: '12' });
+      return { state: 'display', anidbId: id, restricted: false };
+    } });
+  const context = vm.createContext({ state: { user: { id: 1 }, searchToken: 1,
+    showAdult: false, showChinese: true, searchItems: new Map([[1, {}]]) }, classificationToken: 0,
+    sessionResponses: createResponseEpoch(), location: { hash: '#/discover?q=anime' },
+    hideChineseProduction, document: { querySelectorAll: () => [node] },
+    adultSearchVerifier: verifier, applyAdultVisibility: () => { renders++; } });
+  vm.runInContext(functionSource('classifySearchCards'), context);
+  await context.classifySearchCards(1);
+  assert.equal(node.dataset.adult, 'false');
+  assert.equal(renders, 1);
+  assert.deepEqual(starts, [0, 12_000]);
+});
+
+for (const transition of ['route', 'session', 'toggle', 'expiry']) test(`actual client classification retry cancels after ${transition}`, async () => {
+  let now = 0, reads = 0;
+  const pause = deferred();
+  const node = { dataset: { adult: 'unknown', anidbId: '1' } };
+  const epoch = createResponseEpoch();
+  const state = { user: { id: 1 }, searchToken: 1, showAdult: false, showChinese: true, searchItems: new Map() };
+  const location = { hash: '#/discover?q=anime' };
+  const verifier = createAdultSearchVerifier({ now: () => now,
+    pacer: createCatalogueReadPacer({ now: () => now, sleep: async ms => { await pause.promise; now += ms; } }),
+    readDisplay: async () => { reads++; throw Object.assign(new Error('busy'), { status: 503, retryAfter: transition === 'expiry' ? '181' : '5' }); } });
+  const context = vm.createContext({ state, classificationToken: 0, sessionResponses: epoch, location,
+    hideChineseProduction, document: { querySelectorAll: () => [node] }, adultSearchVerifier: verifier,
+    applyAdultVisibility() { assert.fail('unknown must stay hidden'); } });
+  vm.runInContext(functionSource('classifySearchCards'), context);
+  const run = context.classifySearchCards(1);
+  await new Promise(resolve => setImmediate(resolve));
+  if (transition === 'route') location.hash = '#/library';
+  if (transition === 'session') { epoch.invalidate(); state.user = { id: 1 }; }
+  if (transition === 'toggle') { state.showAdult = true; await context.classifySearchCards(1); state.showAdult = false; }
+  pause.resolve(); await run;
+  assert.equal(reads, 1);
+  assert.equal(node.dataset.adult, 'unknown');
+});
+
+test('actual classifier rejects a successful old-session response before caching or rendering it', async () => {
+  const pending = deferred(), epoch = createResponseEpoch();
+  const node = { dataset: { adult: 'unknown', anidbId: '1' } };
+  let reads = 0;
+  const verifier = createAdultSearchVerifier({ pacer: { run: read => read(), defer() {} }, readDisplay: async id => {
+    if (++reads === 1) return pending.promise;
+    return { state: 'display', anidbId: id, restricted: false };
+  } });
+  const state = { user: { id: 1 }, searchToken: 1, showAdult: false, showChinese: true, searchItems: new Map() };
+  const context = vm.createContext({ state, classificationToken: 0, sessionResponses: epoch, location: { hash: '#/discover' },
+    hideChineseProduction, document: { querySelectorAll: () => [node] }, adultSearchVerifier: verifier, applyAdultVisibility() {} });
+  vm.runInContext(functionSource('classifySearchCards'), context);
+  const run = context.classifySearchCards(1);
+  epoch.invalidate();
+  pending.resolve({ state: 'display', anidbId: 1, restricted: false });
+  await run;
+  assert.equal(node.dataset.adult, 'unknown');
+  await context.classifySearchCards(1);
+  assert.equal(reads, 2, 'an obsolete success is not cached for a later session');
+  assert.equal(node.dataset.adult, 'false');
 });
 
 test('a superseded classification pass cannot resume after visibility toggles back', async () => {

@@ -14,7 +14,7 @@ export function initializeReleaseControl(db) {
     let parsed;try{parsed=JSON.parse(row.release_control);}catch{continue;}
     rememberLegacyControl(db,parsed);
     const clean=JSON.stringify(durableControl(parsed));
-    db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?').run(clean,row.id,row.release_control);
+    if(clean!==row.release_control)db.prepare('UPDATE requests SET release_control=? WHERE id=? AND release_control=?').run(clean,row.id,row.release_control);
   }
 }
 export function sameReleaseFiles(left,right) {

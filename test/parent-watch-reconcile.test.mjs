@@ -222,3 +222,24 @@ test('a graph larger than old cache and candidate limits reaches its final exact
  assert.ok(maxReads<=12);assert.ok(maxDetails<=100);
  assert.deepEqual(parents.listInstallments({tvdbId:100}).map(x=>x.anidbId),[250]);
 }));
+
+test('provider outage alone leaves budget continuation at daily pacing', async () => withLedgers(async ({parents,requests}) => {
+  await reconcileParentWatch({parent:parents.listActive()[0],map,parents,requests,
+    today:'2026-11-12',nowMs:2000,readRelations:async()=>({state:'unavailable'}),
+    loadDetail:async()=>({state:'unavailable'})});
+  assert.equal(parents.hasPendingContinuation(),false);
+}));
+
+test('large candidate traversal eventually clears expedited continuation', async () => withLedgers(async ({parents,requests}) => {
+  for (let tick=0;tick<40;tick++) {
+    await reconcileParentWatch({parent:parents.listActive()[0],map,parents,requests,
+      today:'2026-11-12',nowMs:2000+tick*60_000,
+      readRelations:async id=>({state:'related_titles',anidbId:id,items:[
+        ...(id>11?[{anidbId:id-1,relation:'Prequel'}]:[]),
+        ...(id<250?[{anidbId:id+1,relation:'Sequel'}]:[])]}),
+      loadDetail:async({anidbId})=>detail(anidbId,anidbId===250?{}:{endDate:'2026-11-02'})});
+    if(!parents.hasPendingContinuation())break;
+  }
+  assert.equal(parents.hasPendingContinuation(),false);
+  assert.deepEqual(parents.listInstallments({tvdbId:100}).map(x=>x.anidbId),[250]);
+}));

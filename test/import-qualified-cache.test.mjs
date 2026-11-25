@@ -95,3 +95,11 @@ test('cache publication preserves populated title jobs with foreign keys enabled
   assert.equal(f.db.prepare('SELECT COUNT(*) n FROM title_check_jobs').get().n,1);assert.equal(f.db.prepare('SELECT COUNT(*) n FROM title_check_targets').get().n,1);assert.deepEqual(f.db.prepare('PRAGMA foreign_key_check').all(),[]);
  }finally{jobs.close();}
 }));
+test('frozen v300 availability schema imports atomically with original times and rollback on conflict',async()=>fixture(async f=>{
+ const {readFile}=await import('node:fs/promises'),dbPath=path.join(f.root,'v300.sqlite'),old=new DatabaseSync(dbPath);old.exec(await readFile(new URL('./fixtures/availability-schema-v300.sql',import.meta.url),'utf8'));old.exec("CREATE TABLE retained_ownership(id INTEGER PRIMARY KEY,value TEXT);INSERT INTO retained_ownership VALUES(1,'keep')");
+ for(const name of ['shoko_inventory_files','shoko_inventory_pairs','shoko_inventory_file_hints','plex_card_observations','plex_part_candidates'])for(const row of f.db.prepare(`SELECT * FROM ${name}`).all()){const columns=Object.keys(row);old.prepare(`INSERT INTO ${name}(${columns.join(',')}) VALUES(${columns.map(()=>'?').join(',')})`).run(...Object.values(row));}
+ const before=old.prepare("SELECT sql FROM sqlite_master WHERE name='file_availability_proofs'").get().sql;old.close();
+ await assert.rejects(importQualifiedAvailability({...f,dbPath,positiveLifetimeMs:10000,now:()=>2000,probeImpl:async()=>{const concurrent=new DatabaseSync(dbPath);concurrent.prepare('UPDATE shoko_inventory_files SET observed_ms=101').run();concurrent.close();return{state:'candidate',candidateKey:f.manifest.receipts[0].proof.storageKey};}}),/changed/);
+ let check=new DatabaseSync(dbPath);assert.equal(check.prepare("SELECT sql FROM sqlite_master WHERE name='file_availability_proofs'").get().sql,before);check.prepare('UPDATE shoko_inventory_files SET observed_ms=100').run();check.close();
+ const result=await importQualifiedAvailability({...f,dbPath,positiveLifetimeMs:10000,now:()=>2000});assert.equal(result.recorded,1);const proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:10000,now:()=>2000});try{assert.equal(proofs.getCurrent({anidbId:42,episodeId:1001}).verifiedAtMs,300);}finally{proofs.close();}check=new DatabaseSync(dbPath);assert.equal(check.prepare('SELECT value FROM retained_ownership').get().value,'keep');check.close();
+}));

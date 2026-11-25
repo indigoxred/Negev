@@ -25,7 +25,8 @@ export function createParentWatchWorker({ parents, requests, mapReader,
       if (page.length === 0) {
         const advanced = parents.advanceCursor({ expectedTvdbId: afterId,
           nextTvdbId: 0 });
-        return advanced.state === 'advanced' ? { state: 'page', afterId: 0 }
+        return advanced.state === 'advanced' ? { state: 'page', afterId: 0,
+          ...(parents.hasPendingContinuation?.() ? { continueSoon: true } : {}) }
           : advanced;
       }
       const parent = page[0];

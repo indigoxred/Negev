@@ -37,15 +37,15 @@ test('duplicate classification reads coalesce and obsolete queued cards never fe
   assert.deepEqual(seen, [1]);
 });
 
-test('classification pauses queued reads after provider throttling without retrying the failed title', async () => {
+test('classification retries are bounded and retain the provider cooldown', async () => {
   const deferred = [], reads = [];
   const verifier = createAdultSearchVerifier({ readDisplay: async id => {
     reads.push(id);
     const error = new Error('busy'); error.status = 429; error.retryAfter = '120'; throw error;
   }, pacer: { run: read => read(), defer: (...args) => deferred.push(args) } });
   await verifier.verify([1], () => assert.fail('failed classification stays hidden'));
-  assert.deepEqual(reads, [1]);
-  assert.deepEqual(deferred, [['120', 60_000]]);
+  assert.deepEqual(reads, [1, 1, 1]);
+  assert.deepEqual(deferred, Array.from({ length: 3 }, () => ['120', 60_000]));
 });
 
 test('simultaneous search batches share a rate budget that leaves foreground display capacity', async () => {

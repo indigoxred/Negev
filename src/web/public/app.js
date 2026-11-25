@@ -610,6 +610,7 @@ function showSession(data) {
     trackingPreferencesRevision++;
     trackingMutationTail = Promise.resolve();
     trackingSaving = false;
+    byId('airing-view-mode').disabled = false;
     airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
     genreSelections.airing.clear();
     genreSelections.season.clear();
@@ -698,6 +699,7 @@ function clearWorkspace() {
   trackingPreferencesRevision++;
   trackingMutationTail = Promise.resolve();
   trackingSaving = false;
+  byId('airing-view-mode').disabled = false;
   airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
   genreSelections.airing.clear();
   genreSelections.season.clear();

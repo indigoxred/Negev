@@ -9,7 +9,7 @@ export const hasTargetEpisodeHint = (candidate, number) => {
   if (!Number.isSafeInteger(number) || number < 1 || number > 9999) return false;
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
   const patterns = [
-    /(?:^|[ ._-])S\d{1,2}E(0*[1-9]\d{0,3})(?:v\d+)?(?=$|[ ._\-[\(])/gi,
+    /(?:^|[ ._-])S(?!0{1,2}E)\d{1,2}E(0*[1-9]\d{0,3})(?:v\d+)?(?=$|[ ._\-[\(])/gi,
     /(?:^|[ ._-])E(0*[1-9]\d{0,3})(?:v\d+)?(?=$|[ ._\-[\(])/gi,
     /\s[-–]\s(0*[1-9]\d{0,3})(?:v\d+)?(?=\s|$|[.\[(])/gi,
   ];
