@@ -1,3 +1,4 @@
+import { transientInspectionFailure } from './quality-inspection-retry.mjs';
 import { createReadDeadline } from './read-deadline.mjs';
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
@@ -15,8 +16,6 @@ import { planPackBonuses } from './pack-bonus-plan.mjs';
 import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
-
-const held = (reason) => ({ state: 'held', reason });
 
 function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
   if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > MAX_ACQUISITION_VIDEOS ||
@@ -58,6 +57,18 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   readEvidence, publicLibraryIds, ledger,
   renewQbittorrent,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
+  let beforeReservation = true;
+  const inspectionResult = result => {
+    if (!beforeReservation || result?.state !== 'held') return result;
+    if (transientInspectionFailure(result)) return { ...result, inspectionRetryable: true };
+    if (['related_installment_mismatch', 'release_title_mismatch',
+      'shoko_preview_wrong_identity', 'invalid_metainfo', 'release_not_eligible',
+      'ambiguous_or_unrequested_video'].includes(result.reason)) {
+      return { ...result, inspectionRejected: true };
+    }
+    return result;
+  };
+  const held = reason => inspectionResult({ state: 'held', reason });
   if (!prowlarr || !qbittorrent || typeof now !== 'function' ||
       typeof releaseQueries !== 'function' ||
       (readRelatedTitles !== undefined && typeof readRelatedTitles !== 'function') ||
@@ -118,7 +129,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   const prepared = await prepareStoppedCandidate({ ...prowlarr,
     query: selectedQuery, candidate, saveRoot: qbittorrent.saveRoot });
-  if (prepared.state !== 'prepared_stopped') return prepared;
+  if (prepared.state !== 'prepared_stopped') return inspectionResult(prepared);
   let related;
   if (readRelatedTitles) {
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
@@ -134,7 +145,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
       requestedTitle: detail.title, requestedAliases: aliases, related, releaseTitle: candidate.title,
       fileNames: mainPrepared.files.filter((file) =>
         torrentFileKind(file.name) === 'video').map((file) => file.name) });
-    if (checked.state !== 'related_title_clear') return checked;
+    if (checked.state !== 'related_title_clear') return inspectionResult(checked);
   }
   if (expectedHash !== undefined &&
       prepared.expected.hash.toLowerCase() !== expectedHash.toLowerCase()) {
@@ -226,6 +237,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     } catch { return held('provider_unavailable'); }
     return { state: 'ready' };
   };
+  // Once reservation begins, held outcomes cannot release a quality fallback.
+  beforeReservation = false;
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     preparedHash:prepared.expected.hash,plannedFiles,
     readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve });

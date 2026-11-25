@@ -165,7 +165,7 @@ test('server submission rejects a related installment before reserving or adding
       readRelatedTitles: async () => ({ state: 'related_titles', anidbId: 42,
         items: [{ anidbId: 43, title: 'Example: Side Story', relation: 'SideStory' }] }),
     });
-    assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch' });
+    assert.deepEqual(result, { state: 'held', reason: 'related_installment_mismatch', inspectionRejected: true });
     assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
     assert.equal(qbitCalls.length, 0);
   }));
@@ -253,7 +253,7 @@ test('a short retrieval hint needs a fresh exact Shoko identity at submission', 
     assert.deepEqual(await submitMissingCandidate({ ...input,
       candidate: selected, detail, searchQuery: 'Kashita Maryoku wa 01',
       releaseQueries: async () => ['Magic Repo Man'] }),
-    { state: 'held', reason: 'release_title_mismatch' });
+    { state: 'held', reason: 'release_title_mismatch', inspectionRejected: true });
     assert.equal(providerCalls, 0);
     const result = await submitMissingCandidate({ ...input,
       candidate: selected, detail, searchQuery: 'Kashita Maryoku wa 01',
@@ -368,7 +368,7 @@ test('a supplied file plan cannot bypass the trusted release-title gate', async 
       candidate: wrongCandidate });
     assert.equal(providerCalls, 0);
     assert.deepEqual(result,
-      { state: 'held', reason: 'release_title_mismatch' });
+      { state: 'held', reason: 'release_title_mismatch', inspectionRejected: true });
     assert.equal(qbCalls, 0);
     assert.equal(ledger.getAttempt(1), null);
   }));
@@ -558,7 +558,7 @@ for (const proof of ['exact', 'wrong_anime', 'wrong_episode', 'inconclusive', 'm
         assert.deepEqual(previews, ['01.mkv']);
         assert.equal(calls.filter((call) => call.endpoint.endsWith('/add')).length, 1);
       } else {
-        assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+        assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch', inspectionRejected: true });
         assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
         assert.equal(calls.length, 0);
       }
@@ -641,7 +641,7 @@ test('a season-labelled batch checks every file before reservation or addition',
         } };
       },
     });
-    assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch' });
+    assert.deepEqual(result, { state: 'held', reason: 'release_title_mismatch', inspectionRejected: true });
     assert.deepEqual(previews, ['01.mkv', '02.mkv']);
     assert.equal(qbitCalls, 0);
     assert.equal(ledger.inspectRequestAttempts(request.id).state, 'no_attempt');
@@ -676,5 +676,5 @@ for(const outage of [false,true])test('final submission without filename provide
  const result=await submitMissingCandidate({...options({request,ledger,readEvidence:async()=>{throw Error('must not reserve')},prowlarrFetch:async url=>new URL(url).pathname.endsWith('/search')?Response.json([{...chosen,protocol:'torrent',downloadUrl:proxy}]):new Response(torrentBytes,{headers:{'content-type':'application/x-bittorrent'}}),qbittorrentFetch:async()=>{qbitCalls++;throw Error('must not add')}}),candidate:chosen,detail:{...baseDetail,title:'Example Season 2'},episodeIds:undefined,plannedFiles:undefined,
   readRelatedTitles:async({anidbId})=>({state:'related_titles',anidbId,items:anidbId===42?[{anidbId:43,title:'Earlier Example',relation:'prequel'}]:[]}),
   loadDetail:async()=>outage?{state:'detail_pending',anidbId:43}:{...baseDetail,anidbId:43,title:'Earlier Example',total:12,complete:true,page:1,nextPage:null,episodes:Array.from({length:12},(_,i)=>({id:5001+i,number:i===0?99:i+1,type:'Episode',title:'Earlier '+i}))}});
- assert.deepEqual(result,{state:'held',reason:outage?'provider_unavailable':'absolute_numbering_unverified'});assert.equal(qbitCalls,0);assert.equal(ledger.getAttempt(1),null);
+ assert.deepEqual(result,{state:'held',reason:outage?'provider_unavailable':'absolute_numbering_unverified',...(outage?{inspectionRetryable:true}:{})});assert.equal(qbitCalls,0);assert.equal(ledger.getAttempt(1),null);
 }));
