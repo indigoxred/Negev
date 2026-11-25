@@ -536,6 +536,11 @@ test('title and library controls recover from pending and failed reads without d
       await until("!document.querySelector('#view-library').hidden");
       await navigate("#/requests");
       await until("document.querySelector('#watch-list')?.textContent.includes('Loading watches')");
+      // Rendering the loading state precedes receipt of its HTTP request.
+      // Wait for the same server-side observation used by the other holds.
+      for (let attempt = 0; attempt < 80 && heldWatchingResponses.length < 1; attempt++) {
+        await wait(100);
+      }
       assert.equal(heldWatchingResponses.length, 1);
       for (let attempt = 0; attempt < 80 && historyReads === historyBeforeHeldWatch; attempt++) {
         await wait(100);
