@@ -28,6 +28,11 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     db.exec('PRAGMA journal_mode=WAL');
+    db.exec(`CREATE TABLE IF NOT EXISTS direct_availability_fairness (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      prefer_new INTEGER NOT NULL CHECK(prefer_new IN (0,1))
+    ) STRICT`);
+    db.exec('INSERT INTO direct_availability_fairness VALUES(1,1) ON CONFLICT(id) DO NOTHING');
     db.exec(`CREATE TABLE IF NOT EXISTS direct_availability_targets (
       anidb_id INTEGER NOT NULL CHECK(anidb_id>0),
       episode_id INTEGER NOT NULL CHECK(episode_id>0),
@@ -84,6 +89,9 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
     ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_change_file
       ON shoko_file_change_events(file_id,id)`);
+    db.exec(`CREATE INDEX IF NOT EXISTS direct_availability_pending_arrivals
+      ON direct_availability_targets(observed_ms DESC,anidb_id,episode_id)
+      WHERE state='pending' AND priority=1`);
     db.exec(`CREATE INDEX IF NOT EXISTS direct_availability_priority_due
       ON direct_availability_targets(priority DESC,due_ms,anidb_id,episode_id)`);
   } catch (error) { db.close(); throw error; }
@@ -103,7 +111,17 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
   const due = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
     observed_ms AS observedMs,version,priority FROM direct_availability_targets
     WHERE due_ms<=? ORDER BY CASE WHEN interactive_until_ms>? THEN 1 ELSE 0 END DESC,
-      priority DESC,due_ms,anidb_id,episode_id LIMIT 1`);
+      due_ms,priority DESC,anidb_id,episode_id LIMIT 1`);
+  const newestPending = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
+    observed_ms AS observedMs,version,priority FROM direct_availability_targets
+    WHERE state='pending' AND priority=1 AND interactive_until_ms=0 AND due_ms<=?
+    ORDER BY observed_ms DESC,anidb_id,episode_id LIMIT 1`);
+  const interactiveDue = db.prepare(`SELECT anidb_id AS anidbId,episode_id AS episodeId,
+    observed_ms AS observedMs,version,priority FROM direct_availability_targets
+    WHERE due_ms<=? AND interactive_until_ms>?
+    ORDER BY due_ms,anidb_id,episode_id LIMIT 1`);
+  const fairness = db.prepare('SELECT prefer_new AS preferNew FROM direct_availability_fairness WHERE id=1');
+  const advanceFairness = db.prepare('UPDATE direct_availability_fairness SET prefer_new=1-prefer_new WHERE id=1');
   const dueTarget = db.prepare(`SELECT observed_ms AS observedMs,version,priority
     FROM direct_availability_targets WHERE anidb_id=? AND episode_id=?
     AND due_ms<=?`);
@@ -212,12 +230,18 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
       let begun = false;
       try {
         db.exec('BEGIN IMMEDIATE'); begun = true;
-        const row = due.get(nowMs, nowMs);
+        // Alternate oldest due work with a newer pending arrival. Old rows
+        // retain half the turns even under intake; untouched legacy event rows
+        // cannot occupy every turn before an overnight arrival gets inspected.
+        // Explicit short interactive reservations keep their existing lease.
+        const row = interactiveDue.get(nowMs, nowMs) ??
+          (fairness.get().preferNew ? newestPending.get(nowMs) : null) ?? due.get(nowMs, nowMs);
         if (!row) { db.exec('COMMIT'); begun = false; return { state: 'idle' }; }
         const changeId = latestChange.get().id;
         const shokoChangeId = latestShokoChange.get().id;
         const updated = claim.run(nowMs + leaseMs, row.anidbId,
           row.episodeId, row.version);
+        if (updated.changes === 1) advanceFairness.run();
         db.exec('COMMIT'); begun = false;
         if (updated.changes !== 1) return { state: 'idle' };
         return { state: 'claimed', target: { anidbId: row.anidbId,
