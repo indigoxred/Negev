@@ -94,6 +94,14 @@ export async function previewRequestCandidate({ requestId, candidate,
     }
     sourceQuery = candidate.sourceQuery;
   }
+  const hasBroadMatch = candidate.broadSourceQuery !== undefined;
+  if (hasBroadMatch && (!queries.includes(candidate.broadSourceQuery) &&
+      !trustedPackQueries(detail.title, aliases).includes(candidate.broadSourceQuery))) {
+    return held('untrusted_release_query');
+  }
+  // Use the broad query for both inspection and final submission. The exact
+  // file may legitimately satisfy only the Special subset of a mixed request.
+  if (hasBroadMatch) sourceQuery = candidate.broadSourceQuery;
   let prepared;
   let searchQuery = sourceQuery;
   try { prepared = await prepare({ query: sourceQuery, candidate }); }
@@ -143,7 +151,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     releaseTitle: candidate.title, trustedTitle: firstQuery,
     allowTitleMetadataVariation: !verifiedIdentity });
   if (plan.state !== 'planned_targets') return {...plan,...(inspectedFiles?{inspectedFiles}:{})};
-  if (candidate.targetEpisodeId !== undefined &&
+  if (candidate.targetEpisodeId !== undefined && !hasBroadMatch &&
       !plan.episodeIds.includes(candidate.targetEpisodeId)) {
     return held('targeted_result_wrong_episode');
   }
@@ -205,7 +213,13 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (plan.numberingEvidence === 'complete_absolute_sequence' && shokoPreview !== 'exact') {
     const scope = await verifyAbsoluteNumberingScope({ anidbId:request.anidbId,
       offset:plan.absoluteOffset, related, readRelatedTitles, loadDetail });
-    if (scope.state !== 'scope_confirmed') return held('absolute_numbering_unverified');
+    if (scope.state !== 'scope_confirmed') {
+      // A temporary filename-provider failure is not evidence that this
+      // otherwise complete sequence is wrong. Reuse the bounded quality
+      // retry; independently verified offsets still pass immediately.
+      return held(filenameBudgetExpired ? 'metadata_reader_busy' :
+        filenameProviderUnavailable ? 'provider_unavailable' : 'absolute_numbering_unverified');
+    }
   }
   if (!verifiedIdentity && shokoPreview !== 'exact') {
     return held(filenameBudgetExpired ? 'metadata_reader_busy' : filenameProviderUnavailable ? 'provider_unavailable' : 'release_title_mismatch');
@@ -226,7 +240,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       ({ name: file.name, size: file.size, state: 'unknown' })) };
   }
   return { state: 'preflight', requestId, anidbId: request.anidbId,
-    ...(searchQuery === canonicalQuery ? {} : { searchQuery }),
+    ...(searchQuery === canonicalQuery && firstQuery === detail.title ? {} : { searchQuery }),
     ...(firstQuery === detail.title ? {} : { identityTitle: firstQuery }),
     torrentHash: prepared.expected.hash.toLowerCase(),
     ...(shokoPreview ? { shokoPreview } : {}),

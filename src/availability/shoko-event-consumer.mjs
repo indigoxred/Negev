@@ -32,12 +32,15 @@ export function forwardShokoEvent({ consumer, requestReconciliation,
 // The installed feed can join; delivery of a genuine file event still needs
 // a controlled live proof.
 export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
-  onReconciliationNeeded,
+  onReconciliationNeeded, intakeFolderIds,
   maxPending = 64, maxArrivals = 128 } = {}) {
   if (typeof refreshFile !== 'function' || !Number.isSafeInteger(maxPending) ||
       maxPending < 1 || maxPending > 256 ||
       !Number.isSafeInteger(maxArrivals) || maxArrivals < 1 ||
       maxArrivals > 1024 ||
+      (intakeFolderIds !== undefined && (!Array.isArray(intakeFolderIds) ||
+        intakeFolderIds.length < 1 || intakeFolderIds.some(id => !validId(id)) ||
+        new Set(intakeFolderIds).size !== intakeFolderIds.length)) ||
       (onDeleted !== undefined && typeof onDeleted !== 'function') ||
       (onFileEvent !== undefined && typeof onFileEvent !== 'function') ||
       (onReconciliationNeeded !== undefined &&
@@ -47,6 +50,16 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
   const pending = new Set();
   const detected = new Map();
   const resolutions = new Map();
+  const intake = intakeFolderIds === undefined ? null : new Set(intakeFolderIds);
+  const isIntakeKey = key => intake === null || intake.has(Number(key.split(':', 1)[0]));
+  const intakeKeys = () => [...detected.keys()].filter(isIntakeKey);
+  const unknownCount = () => detected.size - intakeKeys().length;
+  let unknownOverflow = false;
+  let unknownReconciliationNeeded = false;
+  const unknownEvidence = () => intake === null ? {} : {
+    unknownPendingPaths: unknownCount(), unknownPathOverflow: unknownOverflow };
+  const blockingPaths = () => intakeKeys().length > 0 ||
+    [...resolutions.values()].some(token => isIntakeKey(token.key));
   const forgetPathResolutions = (key) => {
     for (const [fileId, resolution] of resolutions) {
       if (resolution.key === key) resolutions.delete(fileId);
@@ -148,15 +161,25 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
       if (target === 'file:detected' || idEvents.has(target)) bumpGeneration();
       if (target === 'file:detected') {
         if (!reconciliationNeeded && !fullReconciliationNeeded &&
-            detected.size === 0) pendingOnlyDebt = true;
+            intakeKeys().length === 0) pendingOnlyDebt = true;
         reconciliationNeeded = true;
         const key = Array.isArray(args) && args.length === 1
           ? arrivalKey(args[0]) : null;
         if (!key) { fullReconciliationNeeded = true; pendingOnlyDebt = false; }
-        if (key && (detected.has(key) || detected.size < maxArrivals)) {
+        // Unconfigured folder detections remain explicit evidence, but cannot
+        // consume the configured intake's path budget or permanently block it.
+        // They still dirty the global catalogue and require full catch-up.
+        const unknown = key !== null && !isIntakeKey(key);
+        if (unknown) {
+          unknownReconciliationNeeded = true;
+          fullReconciliationNeeded = true; pendingOnlyDebt = false;
+        }
+        const categoryCount = unknown ? unknownCount() : intakeKeys().length;
+        if (key && (detected.has(key) || categoryCount < maxArrivals)) {
           forgetPathResolutions(key);
           detected.set(key, ++detectionSequence);
         } else if (key) {
+          if (unknown) unknownOverflow = true;
           // A dropped path may not have a FileID yet. A recent-file scan
           // cannot account for it, even after every tracked path resolves.
           fullReconciliationNeeded = true;
@@ -206,15 +229,19 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
     },
     getState() {
       return { pending: pending.size, inFlight,
-        reconciliationNeeded, fullReconciliationNeeded, generation };
+        reconciliationNeeded, fullReconciliationNeeded, generation,
+        ...unknownEvidence() };
     },
     // Internal-only atomic snapshot. Pending keys never leave the account
     // service and cannot by themselves authorize an acquisition.
     getPendingSnapshot() {
-      return { state: stopping ? 'stopping' : 'snapshot', generation,
+      // The first-attempt policy may tolerate ordinary startup debt, but
+      // cannot skip the full catch-up caused by an unobserved source event.
+      const unknownCatchup = unknownReconciliationNeeded;
+      return { state: stopping ? 'stopping' : unknownCatchup ? 'unverified' : 'snapshot', generation,
         pending: pending.size, inFlight, reconciliationNeeded,
         fullReconciliationNeeded, pendingOnlyDebt,
-        pendingKeys: [...detected.keys()].sort() };
+        pendingKeys: intakeKeys().sort(), ...unknownEvidence() };
     },
     // Only a completed catch-up that started at this exact event generation
     // may clear the dirty bit. Pending paths and reads still block clearance.
@@ -222,7 +249,7 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
       if (stopping || !Number.isSafeInteger(expectedGeneration) ||
           expectedGeneration !== generation ||
           generation === Number.MAX_SAFE_INTEGER || pending.size ||
-          inFlight !== null || detected.size || resolutions.size ||
+          inFlight !== null || blockingPaths() ||
           fullReconciliationNeeded) {
         return { state: 'held' };
       }
@@ -236,10 +263,11 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
       if (stopping || !Number.isSafeInteger(expectedGeneration) ||
           expectedGeneration !== generation ||
           generation === Number.MAX_SAFE_INTEGER || pending.size ||
-          inFlight !== null || detected.size || resolutions.size) {
+          inFlight !== null || blockingPaths()) {
         return { state: 'held' };
       }
       fullReconciliationNeeded = false;
+      unknownReconciliationNeeded = false;
       reconciliationNeeded = false;
       pendingOnlyDebt = false;
       return { state: 'acknowledged' };
@@ -247,8 +275,9 @@ export function createShokoEventConsumer({ refreshFile, onDeleted, onFileEvent,
     // Positive busy evidence only. Empty memory cannot prove that Shoko's
     // watcher, hash queue, or a disconnected event feed has settled.
     getArrivalState() {
-      return { state: detected.size ? 'busy' : 'unverified',
-        pendingPaths: detected.size };
+      const pendingPaths = intakeKeys().length;
+      return { state: pendingPaths ? 'busy' : 'unverified',
+        pendingPaths, ...unknownEvidence() };
     },
     flagReconciliation() {
       bumpGeneration(); reconciliationNeeded = true;

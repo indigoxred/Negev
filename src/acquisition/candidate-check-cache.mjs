@@ -20,6 +20,7 @@ const keyFor = ({ request, candidate }) => createHash('sha256').update(JSON.stri
   [...request.episodeIds].sort((a, b) => a - b), candidate.indexerId,
   request.title, candidate.guid, candidate.title, candidate.size,
   candidate.sourceQuery, candidate.targetEpisodeId,
+  ...(candidate.broadSourceQuery === undefined ? [] : [candidate.broadSourceQuery]),
 ])).digest('hex');
 
 // Private bounded memo of read-only checks, never a dispatch authorization.

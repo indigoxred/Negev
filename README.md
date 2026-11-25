@@ -109,7 +109,7 @@ proof time; they never refresh an imported receipt merely by copying it.
 
 Public evidence reads require a configured, currently authenticated Plex
 observer. Disabling that observer stops old direct/title receipts from trimming
-new requests. API activity renews the bounded server identity
+new requests. Availability-consuming API reads and actions renew the bounded server identity
 lease even when all periodic availability workers are off. Renewal failure
 keeps saved evidence untrusted until identity can be verified again.
 

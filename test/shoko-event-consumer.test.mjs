@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createShokoEventConsumer, forwardShokoEvent } from
   '../src/availability/shoko-event-consumer.mjs';
+import { scopedImportFeedState } from '../src/acquisition/import-quiet-window.mjs';
 
 const deferred = () => {
   let resolve;
@@ -409,4 +410,42 @@ test('a missed hash can resolve only from the exact linked path observation and 
   assert.equal(consumer.acknowledgeLinkedPathObservation({token,fileId:81,path,result:{state:'recorded_file',recognition:'linked'}}).state,'held');
   assert.equal(consumer.getArrivalState().pendingPaths,1);
  }finally{await consumer.close();}
+});
+
+test('unconfigured detections cannot exhaust intake tracking or defeat later pending-only ownership', async () => {
+  const consumer = createShokoEventConsumer({ intakeFolderIds: [1, 5], maxArrivals: 1,
+    refreshFile: async () => ({ state: 'recorded_file', recognition: 'linked' }) });
+  try {
+    consumer.accept('file:detected', [{ ManagedFolderID: 9, RelativePath: 'unknown.mkv' }]);
+    consumer.accept('file:detected', [{ ManagedFolderID: 9, RelativePath: 'overflow.mkv' }]);
+    assert.equal(consumer.getState().unknownPathOverflow, true);
+    assert.equal(consumer.acknowledgeFullReconciliation(consumer.getState().generation).state, 'acknowledged');
+    consumer.accept('file:detected', [{ ManagedFolderID: 5, RelativePath: 'owned.mkv' }]);
+    assert.equal(consumer.getArrivalState().pendingPaths, 1);
+    assert.deepEqual(consumer.getPendingSnapshot().pendingKeys, ['5:owned.mkv']);
+    assert.equal(consumer.getPendingSnapshot().pendingOnlyDebt, true);
+    assert.equal(consumer.acknowledgeFullReconciliation(consumer.getState().generation).state, 'held');
+    consumer.accept('file:hashed', [{ ManagedFolderID: 9, RelativePath: 'unknown.mkv', FileID: 51 }]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(consumer.getState().unknownPendingPaths, 0, 'exact linked hash retires the warning');
+    assert.equal(consumer.getArrivalState().pendingPaths, 1, 'unknown resolution cannot clear owned intake');
+  } finally { await consumer.close(); }
+});
+
+test('unknown path debt cannot use first-attempt uncertainty to bypass global catch-up', async () => {
+  const consumer = createShokoEventConsumer({ intakeFolderIds: [1, 5],
+    refreshFile: async () => ({ state: 'recorded_file', recognition: 'linked' }) });
+  try {
+    consumer.accept('file:detected', [{ ManagedFolderID: 9, RelativePath: 'unknown.mkv' }]);
+    const read = () => scopedImportFeedState({ connection: { state: 'connected' },
+      snapshot: consumer.getPendingSnapshot(), allowUnreconciledFirstAttempt: true });
+    assert.equal(read().state, 'unverified');
+    consumer.accept('file:hashed', [{ ManagedFolderID: 9, RelativePath: 'unknown.mkv', FileID: 51 }]);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(consumer.getState().unknownPendingPaths, 0);
+    assert.equal(read().state, 'unverified', 'exact warning retirement still owes full catalogue catch-up');
+    consumer.acknowledgeFullReconciliation(consumer.getState().generation);
+    assert.equal(read().state, 'connected');
+    assert.equal(consumer.getState().unknownPendingPaths, 0);
+  } finally { await consumer.close(); }
 });

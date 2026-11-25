@@ -194,6 +194,17 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         bestByCandidate.set(key, item);
       }
     }
+    // A numbered title can be returned by both a regular-target query and
+    // an untargeted title query (including Specials with the same number).
+    // Keep that independent broad hit; the stopped files decide their type.
+    for (const bucket of buckets) for (const item of bucket) {
+      if (item.targetEpisodeId !== undefined || !item.sourceQuery) continue;
+      const key = item.indexerId + ':' + item.guid;
+      const best = bestByCandidate.get(key);
+      if (best?.targetEpisodeId !== undefined && best.broadSourceQuery === undefined) {
+        bestByCandidate.set(key, { ...best, broadSourceQuery: item.sourceQuery });
+      }
+    }
     let items = [];
     const seenCandidates = new Set();
     // Each source gets a chance before the 50-item cap. An older exact

@@ -93,3 +93,11 @@ test('completed pack provider failures release the normal episode fallback after
   assert.ok(inspected.includes('pack'));
   assert.ok(clock-1000<=900000,`completed fallback took ${clock-1000}ms`);
 });
+
+
+test('v318 consumed quality cursor rechecks the stronger candidate under new policy',async()=>{
+ const digest=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
+ const legacy=digest(['quality-policy-v7',1001])+':'+[high,low].map(c=>digest([c.indexerId,c.guid])).join(',')+'|';
+ const x=fixture();x.recover();const result=await x.process({requestId:4,candidateOffset:1,candidateFingerprint:legacy});
+ assert.equal(result.state,'stopped_observed');assert.deepEqual(x.submitted,['high']);
+});
