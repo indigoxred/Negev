@@ -262,21 +262,22 @@ export function createAcquisitionRequestProcessor({ readRequest,
     // order and append newcomers so churn cannot starve an older candidate.
     // A rotated episode search may promote an unvisited release. Promote it
     // within the unvisited suffix without repeating already inspected items.
-    // A pre-retry-policy cursor may have consumed a strong release during a transient
-    // Prowlarr re-search failure. Revisit it once with the preserved proxy.
+    // Older policies may have consumed a strong release during transient
+    // provider or absolute-numbering evidence failure. Revisit it once without
+    // resetting persisted scan elapsed time or quality retry deadlines.
     const packFingerprint = createHash('sha256').update(JSON.stringify(
-      [preferSeasonPack ? 'quality-policy-season-pack-v6' :
-        requireReleasePolicy ? 'quality-policy-v8' :
+      [preferSeasonPack ? 'quality-policy-season-pack-v7' :
+        requireReleasePolicy ? 'quality-policy-v9' :
         readRelatedTitles ? 'targeted-related-peers-v3' : 'targeted-peers-v2',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex');
     const fallbackFingerprint = preferSeasonPack ? createHash('sha256')
-      .update(JSON.stringify(['quality-policy-episode-fallback-v6',
+      .update(JSON.stringify(['quality-policy-episode-fallback-v7',
         ...[...request.episodeIds].sort((a, b) => a - b)]))
       .digest('hex') : null;
     const uncertainPackFingerprint = preferSeasonPack && preferShokoPreview ?
       createHash('sha256').update(JSON.stringify(
-        ['quality-policy-uncertain-pack-v6',
+        ['quality-policy-uncertain-pack-v7',
           ...[...request.episodeIds].sort((a, b) => a - b)]))
         .digest('hex') : null;
     const saved = typeof candidateFingerprint === 'string' &&

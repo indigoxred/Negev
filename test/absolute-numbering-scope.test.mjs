@@ -18,3 +18,13 @@ test('first installments, cycles, branching ancestry, gaps, wrong metadata and p
   assert.equal((await verifyAbsoluteNumberingScope({anidbId:42,offset:12,readRelatedTitles,loadDetail})).state,'unverified',mode);
  }
 });
+
+test('temporary prequel providers retain failure provenance while genuine scope uncertainty does not',async()=>{
+ const base={anidbId:42,offset:24,related:relations(42,[43]),readRelatedTitles:async({anidbId})=>relations(anidbId,[])};
+ for(const mode of ['pending','unavailable','busy','throw']){
+  const loadDetail=async()=>{if(mode==='throw')throw Error('synthetic outage');return mode==='pending'?{state:'detail_pending',anidbId:43}:mode==='busy'?{state:'held',reason:'metadata_reader_busy'}:{state:'unavailable'};};
+  assert.deepEqual(await verifyAbsoluteNumberingScope({...base,loadDetail}),{state:'unverified',reason:'provider_unavailable'},mode);
+ }
+ assert.deepEqual(await verifyAbsoluteNumberingScope({...base,loadDetail:async()=>({...detail(43,24),anidbId:999})}),{state:'unverified'});
+ assert.deepEqual(await verifyAbsoluteNumberingScope({...base,related:relations(42,[43,44]),loadDetail:async()=>detail(43,24)}),{state:'unverified'});
+});

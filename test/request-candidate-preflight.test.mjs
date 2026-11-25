@@ -670,3 +670,11 @@ test('broad query provenance permits only independently requested files and reje
  const outside=await previewRequestCandidate({...input,candidate:{...input.candidate,broadSourceQuery:'Example'},readRequest:()=>({...request,episodeIds:[1001]})});
  assert.equal(outside.state,'held');
 });
+
+test('a filename outage never masks confirmed contradictory absolute predictions',async()=>{
+ const episodes=Array.from({length:5},(_,i)=>({id:1001+i,number:i+1,type:'Episode',title:'Episode '+(i+1)}));
+ const result=await previewRequestCandidate({requestId:4,candidate:{...candidate,title:'Example Season 2'},readRequest:()=>({...request,episodeIds:episodes.map(e=>e.id)}),loadDetail:async()=>({...detail,total:5,episodes}),
+  prepare:async()=>({...prepared,totalBytes:5000,files:episodes.map((_,i)=>({name:'Example - '+(25+i)+'.mkv',size:1000}))}),
+  offlineLookup:async({filename})=>{const n=Number(/- (\d+)/.exec(filename)[1]);if(n===29)return{status:503};if(n<27)return{status:204};const id=1001;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}}});
+ assert.equal(result.reason,'shoko_preview_wrong_identity');
+});

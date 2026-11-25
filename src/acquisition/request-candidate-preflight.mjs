@@ -204,7 +204,11 @@ export async function previewRequestCandidate({ requestId, candidate,
     }
     filenameBudgetExpired = budget?.expired === true;
     if(verdicts.includes('conflicting')) {
-      if(predictionOffsets.length<2||new Set(predictionOffsets).size!==1) return held('shoko_preview_wrong_identity');
+      // Contradictory predictions are a real conflict. Too few predictions
+      // during an outage are incomplete evidence, not a permanent rejection.
+      if(new Set(predictionOffsets).size!==1) return held('shoko_preview_wrong_identity');
+      if(predictionOffsets.length<2) return held(filenameBudgetExpired ? 'metadata_reader_busy' :
+        filenameProviderUnavailable ? 'provider_unavailable' : 'shoko_preview_wrong_identity');
       shokoPreviewConflict='absolute_number_offset';
     }
     shokoPreview = verdicts.every((value) => value === 'exact')
@@ -218,7 +222,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       // otherwise complete sequence is wrong. Reuse the bounded quality
       // retry; independently verified offsets still pass immediately.
       return held(filenameBudgetExpired ? 'metadata_reader_busy' :
-        filenameProviderUnavailable ? 'provider_unavailable' : 'absolute_numbering_unverified');
+        filenameProviderUnavailable || scope.reason === 'provider_unavailable' ? 'provider_unavailable' : 'absolute_numbering_unverified');
     }
   }
   if (!verifiedIdentity && shokoPreview !== 'exact') {
