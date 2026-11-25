@@ -239,6 +239,10 @@ export function openAcquisitionRequestQueue(dbPath,
     // Corrected verification must reach old settled misses before their hourly
     // retry. Revisit only saved candidate evidence for the same target scope;
     // this changes scheduling, never acquisition eligibility or a choice.
+    // Revision 1 skipped closed watches even when requested episodes were
+    // still missing. Revision 2 recovers those exact old-evidence holds once;
+    // closure still prevents future episode discovery, and completed watches,
+    // suspensions and active claims retain their existing state.
     db.exec('BEGIN IMMEDIATE');
     try {
       if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
@@ -249,9 +253,12 @@ export function openAcquisitionRequestQueue(dbPath,
       const legacyMisses = db.prepare(`SELECT c.request_id AS requestId,
           r.anidb_id AS anidbId,c.candidate_fingerprint AS fingerprint
         FROM acquisition_request_checks c JOIN requests r ON r.id=c.request_id
-        WHERE c.verification_policy_revision=0 AND c.state='held'
+        WHERE (c.verification_policy_revision=0 AND r.watch_closed=0 OR
+            c.verification_policy_revision<2 AND r.watch_closed=1) AND c.state='held'
           AND c.reason='no_safe_release' AND c.checked_ms IS NOT NULL
-          AND r.status='held' AND r.cancelled_ms IS NULL AND r.watch_closed=0`).all();
+          AND r.status='held' AND r.cancelled_ms IS NULL
+          AND (r.watch_closed=0 OR NOT EXISTS
+            (SELECT 1 FROM acquisition_request_suspensions s WHERE s.request_id=r.id))`).all();
       const targets = db.prepare(`SELECT t.episode_id AS episodeId FROM request_targets rt
         JOIN targets t ON t.id=rt.target_id WHERE rt.request_id=? AND t.anidb_id=?
         ORDER BY t.episode_id`);
@@ -259,7 +266,7 @@ export function openAcquisitionRequestQueue(dbPath,
         ? db.prepare('SELECT targets_json,result_json FROM acquisition_candidate_checks WHERE anidb_id=?') : null;
       const wake = db.prepare(`UPDATE acquisition_request_checks
         SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
-        WHERE request_id=? AND verification_policy_revision=0`);
+        WHERE request_id=? AND verification_policy_revision<2`);
       const oldPolicies = ['quality-policy-v8','quality-policy-season-pack-v6',
         'quality-policy-episode-fallback-v6','quality-policy-uncertain-pack-v6'];
       for (const row of legacyMisses) {
@@ -279,8 +286,8 @@ export function openAcquisitionRequestQueue(dbPath,
         });
         if (oldCursor || legacyWrongIdentity) wake.run(row.requestId);
       }
-      db.exec(`UPDATE acquisition_request_checks SET verification_policy_revision=1
-        WHERE verification_policy_revision=0`);
+      db.exec(`UPDATE acquisition_request_checks SET verification_policy_revision=2
+        WHERE verification_policy_revision<2`);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
@@ -320,8 +327,8 @@ export function openAcquisitionRequestQueue(dbPath,
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision,coverage_policy_revision,request_scope_policy_revision,verification_policy_revision)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1,1) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=1,verification_policy_revision=1,
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1,2) ON CONFLICT(request_id) DO UPDATE SET
+    pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=1,verification_policy_revision=2,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,

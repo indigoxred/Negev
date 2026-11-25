@@ -192,7 +192,7 @@ test('alias provider failure only at final submission never dispatches and recov
  let calls=0,recovered=false;
  const f=await fixture(t,{title:'Himitsu no Mise (2025)',aliases:['Secret Shop (2025)'],completed:true,registered:true,episodes:2,requested:[1,2],prediction:()=>++calls<=2||recovered?true:{status:503},items:[
  {...release('strong','[G] Secret Shop Season 02 [2025] Complete 1080p',[1,2],30),names:['Secret Shop S02E01.mkv','Secret Shop S02E02.mkv']}]});
- const first=await f.run();assert.equal(first.state,'held',JSON.stringify(first));assert.equal(first.reason,'provider_unavailable');assert.deepEqual(f.added,[]);assert.equal(f.acquisitions.getAttempt(1),null);
+ const first=await f.run();assert.equal(first.state,'held',JSON.stringify(first));assert.equal(first.reason,'release_preflight_unavailable');assert.deepEqual(f.added,[]);assert.equal(f.acquisitions.getAttempt(1),null);
  f.restart();recovered=true;f.setClock(NOW+61000);const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,['strong']);assert.equal((await f.runStart(result.attemptId)).state,'start_unknown');
 });
 
@@ -231,7 +231,7 @@ for(const recovers of [true,false])test('partial absolute filename503 '+(recover
 });
 test('prequel provider failure appearing only at final submission retries without dispatch',async t=>{
  let reads=0,ready=false;const f=await fixture(t,{title:'Example Season 2',episodes:2,requested:[1,2],completed:true,registered:true,prequelEpisodes:24,prediction:false,prequelRead:value=>++reads===1||ready?value:{state:'detail_pending',anidbId:41},items:[release('strong','[G] Example Season 2 1080p Batch',[25,26],30)]});
- const first=await f.run();assert.equal(first.state,'held');assert.equal(first.reason,'provider_unavailable');assert.deepEqual(f.added,[]);
+ const first=await f.run();assert.equal(first.state,'held');assert.equal(first.reason,'release_preflight_unavailable');assert.deepEqual(f.added,[]);
  f.restart();ready=true;f.setClock(NOW+61000);const next=await f.run();assert.equal(next.state,'stopped_observed',JSON.stringify(next));assert.deepEqual(f.added,['strong']);
 });
 

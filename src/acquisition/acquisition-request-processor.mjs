@@ -417,7 +417,8 @@ export function createAcquisitionRequestProcessor({ readRequest,
         if(requireReleasePolicy&&!pinned&&preview?.state==='preflight'){qualityInspectionRetry.fail(request,candidate,now());transientFailure=true;}
         continue;
       }
-      if(requireReleasePolicy&&!pinned)qualityInspectionRetry.resolve(request,candidate);
+      // A valid preview, including a cached positive, is not final recovery.
+      // Keep failed inspection hints until submission or confirmed rejection.
       // Current exact public proof makes this release unnecessary. Inspect
       // another candidate in the same bounded run so older episodes are not
       // delayed by a separate queue retry for each new-episode release.
@@ -572,12 +573,27 @@ export function createAcquisitionRequestProcessor({ readRequest,
         { searchQuery: selected.preview.searchQuery }) }); }
     catch { return held('submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
+      if(requireReleasePolicy&&!pinned)qualityInspectionRetry.resolve(request,selected.candidate);
       closePreferredWaits?.(requestId,selected.preview.episodeIds,now());
       if(pinned) consumeReleaseChoice?.(requestId,control.revision);
       // The attempt now owns its exact target. Keep the request's search
       // position moving so a Shoko hold for this episode cannot starve later
       // episodes. The ledger still prevents a second claim for that target.
       return { state: 'stopped_observed', attemptId: outcome.attemptId,
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor };
+    }
+    if (requireReleasePolicy && !pinned && outcome?.state === 'held' &&
+        outcome.inspectionRetryable === true && transientInspectionFailure(outcome)) {
+      qualityInspectionRetry.fail(request,selected.candidate,now());
+      return { ...held('release_preflight_unavailable'),
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor };
+    }
+    if (requireReleasePolicy && !pinned && outcome?.state === 'held' &&
+        outcome.inspectionRejected === true) {
+      qualityInspectionRetry.resolve(request,selected.candidate);
+      return { ...held('release_preflight_unavailable'),
         nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
         nextCandidateFingerprint: cursor };
     }

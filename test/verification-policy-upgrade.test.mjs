@@ -74,7 +74,7 @@ for (const revisionColumn of [false, true]) test(`v319 verification upgrade wake
     queue = openAcquisitionRequestQueue(dbPath);
     for (const name of cases) {
       const row = db.prepare('SELECT next_due_ms FROM acquisition_request_checks WHERE request_id=?').get(ids.get(name));
-      const wake = name === 'memo' || name === 'null_due' || name.startsWith('quality-policy-') || name === 'current_revision' && !revisionColumn;
+      const wake = name === 'memo' || name === 'closed' || name === 'null_due' || name.startsWith('quality-policy-') || name === 'current_revision' && !revisionColumn;
       assert.equal(row.next_due_ms, name === 'already_due' ? 500 : name === 'inflight' ? null : wake ? 61000 : 3601000, name);
     }
     assert.deepEqual(state(), before, 'all state except due/revision remains exact');
