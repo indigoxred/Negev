@@ -658,3 +658,15 @@ test('sub-limit long-title retrieval reaches the real recovery worker only with 
     if (prediction === 'exact') assert.equal(result.state, 'stopped_observed');
   }
 });
+
+test('broad query provenance permits only independently requested files and rejects untrusted provenance',async()=>{
+ const input={requestId:4,candidate:{...candidate,title:'Example Special - 01',sourceQuery:'Example 01',targetEpisodeId:1001,targetedEpisode:true},
+  readRequest:()=>({...request,episodeIds:[1001,2001]}),loadDetail:async()=>({...detail,total:3,episodes:[...detail.episodes,{id:2001,number:1,type:'Special',title:'OVA'}]}),
+  prepare:async()=>({...prepared,files:[{name:'Example S00E01.mkv',size:1000}]})};
+ assert.equal((await previewRequestCandidate(input)).reason,'targeted_result_wrong_episode');
+ const broad=await previewRequestCandidate({...input,candidate:{...input.candidate,broadSourceQuery:'Example'}});
+ assert.equal(broad.state,'preflight');assert.deepEqual(broad.episodeIds,[2001]);
+ assert.equal((await previewRequestCandidate({...input,candidate:{...input.candidate,broadSourceQuery:'Other Show'}})).reason,'untrusted_release_query');
+ const outside=await previewRequestCandidate({...input,candidate:{...input.candidate,broadSourceQuery:'Example'},readRequest:()=>({...request,episodeIds:[1001]})});
+ assert.equal(outside.state,'held');
+});

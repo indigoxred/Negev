@@ -25,7 +25,15 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
     throw new TypeError('Invalid parent watch reconciliation');
   }
   const mapped = mapParentInstallments({ map, tvdbId: parent.tvdbId });
-  if (mapped.state !== 'mapped') return mapped;
+  if (mapped.state !== 'mapped') {
+    // A fully validated replacement map can retire the obsolete traversal,
+    // while adoption and existing installment watches remain intact. Outages
+    // and invalid/ambiguous evidence must keep their recoverable frontier.
+    if (mapped.reason === 'parent_mapping_missing') {
+      parents.saveRelationFrontier?.(parent.tvdbId, null);
+    }
+    return mapped;
+  }
   const recorded = new Set(parents.listInstallments({ tvdbId: parent.tvdbId })
     .filter((item) => validId(item.requestId)).map((item) => item.anidbId));
   // Persist validated relation evidence for this exact mapped seed set.

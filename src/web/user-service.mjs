@@ -472,9 +472,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const status=acquisitionOwnershipGate.status(input.anidbId);
         if(status!=='eligible')return {state:'held',reason:status==='owned'?'title_sonarr_owned':'sonarr_identity_unmapped'};
       }
+      await plexObserver?.ensureScope();
       return prepareRequest({...input,releaseMode:'manual'});
     };
     const submitRequest = async (input) => {
+      await plexObserver?.ensureScope();
       const result = await submitHeldRequest(input);
       if (result.created === true && Number.isSafeInteger(result.requestId) &&
           result.requestId > 0 && result.targetIds?.length > 0) {
@@ -729,6 +731,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       findActiveWatch: (input) => requests.findActiveWatch(input),
       findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
+        await plexObserver?.ensureScope();
         void titleSource?.refresh().catch(() => {});
         const target = input.requestId ? requests.getRequest(input.requestId) : null;
         const page = input.requestId ? { items: target &&
@@ -782,6 +785,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }) };
       },
       searchTitles: async ({ query, page }) => {
+        await plexObserver?.ensureScope();
         const withPublicPresence = (result) => {
           if (result?.state !== 'results' || !Array.isArray(result.items)) {
             return result;
@@ -813,6 +817,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       listLibraryTitles: plexObserver && fileProofs ?
         async ({ afterAnidbId, limit }) => {
+          // Demand renewal keeps saved evidence usable without periodic workers.
+          // Account/configuration reads do not wait for this public boundary.
+          await plexObserver.ensureScope();
           // Title artwork and names are optional display data. A temporary
           // AniDB outage must not hide already verified public Plex files.
           void titleSource?.refresh().catch(() => {});
@@ -829,6 +836,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             nextAfterAnidbId: page.nextAfterAnidbId };
         } : undefined,
       listAiringSchedule: async ({ airingPreference } = {}) => {
+        await plexObserver?.ensureScope();
         const [schedule] = await Promise.all([
           weeklySchedule.read(), titleSource?.refresh(),
         ]);
@@ -844,6 +852,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             ? item.libraryPresence.state === 'in_library' : true) };
       },
       listSeasonalTitles: async ({ airingPreference, ...input }) => {
+        await plexObserver?.ensureScope();
         const checkedMs = now();
         const presence = airingPreference ? libraryPresenceForTitle
           : (anidbId) => publicPresenceForTitle(anidbId, checkedMs);
@@ -876,6 +885,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             titleSource?.getEnglishTitle(anidbId) ?? null } : merged;
       },
       loadRelatedTitles: async ({ anidbId }) => {
+        await plexObserver?.ensureScope();
         const related = await cachedDisplayRelations({ anidbId });
         if (related?.state !== 'related_titles' || !Array.isArray(related.items)) {
           return related;
@@ -902,6 +912,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (releaseState === 'upcoming' || !plexObserver) {
           return { ...detail, originalTitle, releaseState, ...requestMode };
         }
+        await plexObserver.ensureScope();
         const checkedMs = now();
         const index = detail.kind === 'series'
           ? rawDetailReader.cachedEpisodeIndex(detail.anidbId) : null;
@@ -954,8 +965,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       startTitleCheck: titleChecks ? ({ anidbId }) =>
         titleChecks.start({ anidbId, nowMs: now() }) : undefined,
-      getTitleCheck: titleChecks ? ({ anidbId }) =>
-        titleChecks.getProgress({ anidbId, nowMs: now() }) : undefined,
+      getTitleCheck: titleChecks ? async ({ anidbId }) => {
+        await plexObserver?.ensureScope();
+        return titleChecks.getProgress({ anidbId, nowMs: now() });
+      } : undefined,
       discoverCandidates, previewCandidate, releaseSelection, releasePreviews,
       listOperationalReview: async (input) => {
         await titleSource?.refresh();
@@ -987,11 +1000,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       observePublicTarget: (target) => plexObserver ?
         observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
-    });
-    // Reads also renew the bounded server identity lease when periodic workers
-    // are disabled. Failed renewal keeps proof readers closed.
-    app.addHook('preHandler', async request => {
-      if (plexObserver && request.url.startsWith('/api/')) await plexObserver.ensureScope();
     });
     const observations = new Set();
     let stopping = false;
@@ -1054,6 +1062,9 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       refreshFile: refreshRecognizedShokoFile,
     }) : null;
     eventConsumer = createShokoEventConsumer({
+      ...([shokoImportFolderId, acquisitionImportFolderId].some(id => Number.isSafeInteger(id) && id > 0) ? {
+        intakeFolderIds: [...new Set([shokoImportFolderId, acquisitionImportFolderId].filter(id => Number.isSafeInteger(id) && id > 0))],
+      } : {}),
       refreshFile: refreshRecognizedShokoFile,
       onReconciliationNeeded: onShokoReconciliationNeeded,
       onFileEvent: (fileId) => {

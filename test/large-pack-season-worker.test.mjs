@@ -33,7 +33,7 @@ const release = (guid,title,numbers=[1],seeders=10) => ({guid,indexerId:3,title,
   names:numbers.map(n=>'Example - '+String(n).padStart(2,'0')+'.mkv')});
 
 // Real stage/ledger/discovery/preflight/submission. Only outside services are synthetic.
-async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[]}={}) {
+async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null}={}) {
   const root=await mkdtemp(path.join(tmpdir(),'negev-worker-quality-season-'));
   let clock=NOW;const metadataPages=[];
   const dbPath=path.join(root,'db.sqlite');const cleanups=[];const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath);
@@ -61,10 +61,10 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
  if(url.hostname==='shoko'){if(url.pathname==='/api/v3/ReleaseInfo/Provider')return Response.json([{Name:'Offline Importer',IsEnabled:true,ID:'11111111-2222-4333-8444-555555555555'}]);const predicted=await offlineLookup({filename:url.searchParams.get('id')?.slice(9)});return predicted.status===200?Response.json(predicted.release):new Response(null,{status:predicted.status||503});}
  if(url.pathname==='/api/v1/search')return Response.json(searchRows);
     const record=records.find(c=>c.guid===url.searchParams.get('link'));assert.ok(record,'only known synthetic descriptor');return new Response(record.bytes,{headers:{"content-type":"application/x-bittorrent"}});};
-  const related={state:'related_titles',anidbId:42,items:aliases.length?[{anidbId:41,title:'Example',relation:'Prequel'}]:[]};
-  const readRelatedTitles=async()=>related,releaseQueries=async()=>aliases;
+  const related={state:'related_titles',anidbId:42,items:prequelEpisodes!==null?[{anidbId:41,title:'Example Season 1',relation:'Prequel'}]:aliases.length?[{anidbId:41,title:'Example',relation:'Prequel'}]:[]};
+  const readRelatedTitles=async({anidbId})=>anidbId===41?{state:'related_titles',anidbId:41,items:[]}:related,releaseQueries=async()=>aliases;
   const loadPage=async({page=1}={})=>{metadataPages.push(page);const next=page*100<detail.total?page+1:null;return {...detail,page,complete:detail.total<=100,episodes:detail.episodes.slice((page-1)*100,page*100),nextPage:next}};
-  const loadDetail=async({anidbId})=>collectAniDbDetail({anidbId,loadPage});
+  const loadDetail=async({anidbId})=>anidbId===41&&prequelEpisodes!==null?{...detail,anidbId:41,title:'Example Season 1',complete:true,total:prequelEpisodes,nextPage:null,episodes:Array.from({length:prequelEpisodes},(_,i)=>({id:3001+i,number:i+1,type:'Episode',title:'Previous '+(i+1)}))}:collectAniDbDetail({anidbId,loadPage});
   const readRequest=id=>requests.getRequest(id);const inspected=[],previews=[];
   const discoverCandidates=createRequestCandidateDiscovery({readRequest,loadDetail,releaseQueries,pause:async()=>{},
     searchReleases:async()=>({state:'candidates',items:searchRows.map(c=>({...c,evidence:'unverified'}))})});
@@ -194,4 +194,22 @@ test('alias provider failure only at final submission never dispatches and recov
  {...release('strong','[G] Secret Shop Season 02 [2025] Complete 1080p',[1,2],30),names:['Secret Shop S02E01.mkv','Secret Shop S02E02.mkv']}]});
  const first=await f.run();assert.equal(first.state,'held',JSON.stringify(first));assert.equal(first.reason,'provider_unavailable');assert.deepEqual(f.added,[]);assert.equal(f.acquisitions.getAttempt(1),null);
  f.restart();recovered=true;f.setClock(NOW+61000);const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,['strong']);assert.equal((await f.runStart(result.attemptId)).state,'start_unknown');
+});
+
+test('broad Special dash hit survives overlapping regular search and leaves regular pending',async t=>{
+ const f=await fixture(t,{episodes:1,specials:[1],requested:[1],requestedSpecials:[1],items:[{...release('special','[G] Example Special - 01 1080p'),names:['Example S00E01.mkv']}]});
+ const selected=await f.run();assert.equal(selected.state,'stopped_observed',JSON.stringify({selected,previews:f.previews}));
+ assert.deepEqual(f.acquisitions.getFilePlan(selected.attemptId).flatMap(x=>x.episodeIds),[2001]);
+ assert.equal((await f.runStart(selected.attemptId)).state,'start_unknown');
+ f.restart();await f.run();assert.deepEqual(f.added,['special']);assert.deepEqual(f.started,['special']);
+ assert.deepEqual(f.requests.getRequest(f.requestId).episodeIds,[1001,2001]);
+});
+for(const mode of ['recover','expire','known'])test('absolute-offset outage '+mode+' through actual stage and restart',async t=>{
+ let ready=false;const f=await fixture(t,{title:'Example Season 2',completed:true,registered:true,episodes:2,requested:[1,2],prequelEpisodes:mode==='known'?24:null,
+ prediction:filename=>{if(!/ - (25|26)/.test(filename))return true;if(!ready)return{status:503};const id=filename.includes('25')?1001:1002;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}},
+ items:[{...release('strong','[G] Example Season 2 1080p Batch',[25,26],30)},release('weak','[G] Example Season 2 720p Batch',[1,2],30)]});
+ const first=await f.run();if(mode==='known'){assert.equal(first.state,'stopped_observed',JSON.stringify(first));assert.deepEqual(f.added,['strong']);return;}
+ assert.equal(first.state,'held',JSON.stringify({first,previews:f.previews}));assert.deepEqual(f.added,[]);
+ f.restart();ready=mode==='recover';f.setClock(NOW+(ready?61000:181000));const selected=await f.run();assert.equal(selected.state,'stopped_observed',JSON.stringify({selected,previews:f.previews}));
+ assert.deepEqual(f.added,[ready?'strong':'weak']);assert.equal((await f.runStart(selected.attemptId)).state,'start_unknown');
 });
