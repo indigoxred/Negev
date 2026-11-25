@@ -28,7 +28,7 @@ export function createAiringScheduler({ runPage,
       try { lastResult = await runPage(); }
       catch { lastResult = { state: 'held', reason: 'poll_failed' }; }
       const delay = lastResult?.state === 'page'
-        ? lastResult.afterId === 0 ? cycleDelayMs : pageDelayMs
+        ? lastResult.afterId === 0 && lastResult.continueSoon !== true ? cycleDelayMs : pageDelayMs
         : failureDelayMs;
       schedule(delay);
     } finally { running = null; }

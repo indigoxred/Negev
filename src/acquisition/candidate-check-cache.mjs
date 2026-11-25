@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 const relatedGuardRevision = 'trusted-title-season-v3';
 const packBudgetRevision = 'completed-pack-capacity-v1';
-const titleIdentityRevision = 'literal-season-title-v1';
+const titleIdentityRevision = 'literal-season-title-v2-provider-failure';
 const deterministic = new Set(['release_title_mismatch', 'shoko_preview_wrong_identity',
   'targeted_result_wrong_episode', 'shoko_video_format_unsupported',
   'related_installment_mismatch', 'invalid_metainfo', 'unsafe_torrent_path',

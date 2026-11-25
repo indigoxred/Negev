@@ -247,8 +247,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     hydration = openHydrationLedger(dbPath);
     inventory = openShokoInventoryLedger(dbPath);
     if (shokoRecent) recent = openShokoRecentLedger(dbPath);
-    directAvailability = openDirectAvailabilityQueue(dbPath, { evidenceTrusted: () => !plex || plexObserver?.isScopeCurrent() === true });
-    if (titleCheck) titleChecks = openTitleCheckLedger(dbPath, { requireProof: true, evidenceTrusted: () => !plex || plexObserver?.isScopeCurrent() === true });
+    directAvailability = openDirectAvailabilityQueue(dbPath, { evidenceTrusted: () => plexObserver?.isScopeCurrent() === true });
+    if (titleCheck) titleChecks = openTitleCheckLedger(dbPath, { requireProof: true, evidenceTrusted: () => plexObserver?.isScopeCurrent() === true });
     const metadata = createMetadataLimiter();
     const catalogueFetch = createCatalogueFetch({ fetchImpl, now });
     const cataloguePosters = createPosterReader({ fetchImpl: catalogueFetch, now });
@@ -988,6 +988,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
     });
+    // Reads also renew the bounded server identity lease when periodic workers
+    // are disabled. Failed renewal keeps proof readers closed.
+    app.addHook('preHandler', async request => {
+      if (plexObserver && request.url.startsWith('/api/')) await plexObserver.ensureScope();
+    });
     const observations = new Set();
     let stopping = false;
     let stopPromise;
@@ -1067,6 +1072,22 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (before?.pairs.length) enqueueChangedFile({ before, after: null,
           observedMs, priority: 'event' });
       } });
+    const reconcileMissingDetectedPaths = async () => {
+      const tokens=eventConsumer.snapshotPendingPathResolutions();
+      if(!tokens.length||readShokoConnectionState()?.state!=='connected')return;
+      const generation=eventConsumer.getState().generation;
+      for(const [importRoot,managedFolderId] of [[shokoImportRoot,shokoImportFolderId],
+          [acquisitionImportParent,acquisitionImportFolderId]]){
+        if(importRoot===null||managedFolderId===null||!tokens.some(token=>token.key.startsWith(managedFolderId+':')))continue;
+        const observation=await metadata.run(()=>readShokoImportActivity({baseUrl:shokoBaseUrl,
+          apiKey:shokoApiKey,fetchImpl,importRoot,managedFolderId,withFingerprint:true,includeObservedPaths:true,now,
+          maxBaselineEntries:importRoot===acquisitionImportParent&&pureMoves?1000:256,
+          ...(importRoot===shokoImportRoot&&qbitSidecarObserver!==null?{
+            readSidecarTorrent:qbitSidecarObserver.readTorrent,qbitImportSavePath:qbitSidecarObserver.importSavePath}:{}),
+        }));
+        if(readShokoConnectionState()?.state==='connected')eventConsumer.acknowledgeMissingPathObservations({tokens,generation,managedFolderId,observation});
+      }
+    };
     const fullReconciliation = createShokoFullReconciliation({ ledger: inventory,
       consumer: eventConsumer, readConnectionState: readShokoConnectionState,
       tickPage: () => inventoryWorker.tick() });
@@ -1116,7 +1137,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       tickShokoInventory: () => {
         if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
-        return track(fullReconciliation.tick());
+        return track((async()=>{await reconcileMissingDetectedPaths();return fullReconciliation.tick();})());
       },
       tickShokoProvisional: async () => {
         if (stopping) return { state: 'held', reason: 'service_stopping' };
@@ -1138,6 +1159,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           reason: 'recent_observer_disabled' });
         const generation = eventConsumer.getState().generation;
         return track((async () => {
+          await reconcileMissingDetectedPaths();
           const result = await recentWorker.scan();
           if (result.state === 'caught_up' &&
               recent.getCapacity().pending === 0) {

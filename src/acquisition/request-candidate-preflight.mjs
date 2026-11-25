@@ -153,7 +153,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       return held('shoko_video_format_unsupported');
     }
   }
-  let shokoPreview, shokoPreviewConflict, filenameBudgetExpired = false;
+  let shokoPreview, shokoPreviewConflict, filenameBudgetExpired = false, filenameProviderUnavailable = false;
   if (offlineLookup) {
     const verdicts = [], predictionOffsets = [];
     const budget = plan.plannedFiles.length > 50 ? createReadDeadline(maxFilenamePreviewMs) : null;
@@ -172,6 +172,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       }
       const verdict = evaluateOfflinePreview(result, {
         animeId: request.anidbId, episodeIds: file.episodeIds, filename });
+      if(verdict.reason==='provider_unavailable')filenameProviderUnavailable=true;
       if (verdict.state === 'rejected') {
         // Offline Importer can subtract a prequel's Specials maximum from
         // absolute regular numbering. Its filename-only guess is not file
@@ -207,7 +208,7 @@ export async function previewRequestCandidate({ requestId, candidate,
     if (scope.state !== 'scope_confirmed') return held('absolute_numbering_unverified');
   }
   if (!verifiedIdentity && shokoPreview !== 'exact') {
-    return held(filenameBudgetExpired ? 'metadata_reader_busy' : 'release_title_mismatch');
+    return held(filenameBudgetExpired ? 'metadata_reader_busy' : filenameProviderUnavailable ? 'provider_unavailable' : 'release_title_mismatch');
   }
   if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(prepared.expected?.hash) ||
       !Number.isSafeInteger(prepared.totalBytes) || prepared.totalBytes < 1 ||

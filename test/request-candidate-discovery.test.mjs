@@ -522,3 +522,10 @@ test('an unavailable batch supplement with no matching broad results reports unc
  assert.deepEqual(await discover({requestId:12,interactive:true,filters:manualFilters}),
   {state:'held',reason:'release_search_incomplete'});
 });
+
+test('mixed explicit Special and regular number one retain their distinct retrieval evidence',async()=>{
+ const queries=[];const special={guid:'special',indexerId:1,title:'Canonical Anime S00E01 1080p',evidence:'unverified'};
+ const discover=createRequestCandidateDiscovery({readRequest:()=>({...request,episodeIds:[1001,2001]}),loadDetail:async()=>({...detail,total:2,episodes:[...detail.episodes,{id:2001,number:1,type:'Special',title:'OVA'}]}),pause:async()=>{},searchReleases:async({query})=>{queries.push(query);return{state:'candidates',items:[special]}}});
+ const found=await discover({requestId:12,searchTargetEpisodeId:1001,searchTargetEpisodeIds:[1001,2001]});
+ assert.equal(found.state,'candidates');assert.ok(queries.length>0);assert.equal(found.items[0].targetEpisodeId,undefined,'S00E01 must never become regular episode01');
+});

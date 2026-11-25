@@ -46,6 +46,7 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
   const queue = [...roots.slice(rootOffset), ...roots.slice(0, rootOffset)];
   const visited = new Set();
   let reads = 0;
+  let validatedReads = 0;
   let relationBudgetExhausted = false;
   const budgetedRelations = async (anidbId) => {
     if (relationCache.has(anidbId)) return relationCache.get(anidbId).value;
@@ -55,7 +56,10 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
     }
     reads++;
     const result = await readRelations(anidbId);
-    if (validRelations(result, anidbId)) relationCache.set(anidbId, { value: result, observedMs: nowMs });
+    if (validRelations(result, anidbId)) {
+      validatedReads++;
+      relationCache.set(anidbId, { value: result, observedMs: nowMs });
+    }
     return result;
   };
   while (queue.length > 0) {
@@ -77,11 +81,12 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
   const remaining = ordered.filter(id=>id>afterId);
   const candidatePage = (remaining.length ? remaining : ordered).slice(0,100);
   const nextAfterId = candidatePage.at(-1) ?? 0;
-  const candidateContinuation = ordered.length > 100;
+  const candidateContinuation = (remaining.length ? remaining : ordered).length > 100;
   parents.saveRelationFrontier?.(parent.tvdbId,
     relationHolds.length || relationBudgetExhausted || candidateContinuation
       ? { seeds, relations: [...relationCache], pass: pass < Number.MAX_SAFE_INTEGER ? pass + 1 : 0,
-          candidateAfterId: nextAfterId } : null);
+          candidateAfterId: nextAfterId,
+          continueSoon: candidateContinuation || (relationBudgetExhausted && validatedReads > 0) } : null);
   const created = [];
   const existing = [];
   const skipped = [];

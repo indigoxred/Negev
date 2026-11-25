@@ -163,6 +163,13 @@ export function openParentWatchLedger(dbPath) {
         }
       });
     },
+    // A persisted budget continuation survives restart. Outages alone do not
+    // accelerate the ordinary daily sweep, and every active parent keeps a turn.
+    hasPendingContinuation() {
+      return Boolean(db.prepare(`SELECT 1 FROM parent_watch_frontiers AS frontier
+        JOIN parent_watches AS parent ON parent.tvdb_id=frontier.tvdb_id
+        WHERE parent.enabled=1 AND json_extract(frontier.evidence,'$.continueSoon')=1 LIMIT 1`).get());
+    },
     getCursor() { return cursor.get().tvdbId; },
     advanceCursor({ expectedTvdbId, nextTvdbId } = {}) {
       if (![expectedTvdbId, nextTvdbId].every((id) =>

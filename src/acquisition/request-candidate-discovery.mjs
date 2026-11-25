@@ -62,7 +62,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       target = detail.episodes.find((episode) => episode.id === searchTargetEpisodeId);
       if (request.kind !== 'series' ||
           !request.episodeIds.includes(searchTargetEpisodeId) ||
-          target?.type !== 'Episode' ||
+          !['Episode','Special'].includes(target?.type) ||
           !Number.isSafeInteger(target.number) || target.number < 1) {
         return held('invalid_request');
       }
@@ -76,19 +76,23 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         episode.id === id)) : target ? [target] : [];
     if (targets.some((episode) => request.kind !== 'series' ||
         !episode || !request.episodeIds.includes(episode.id) ||
-        episode.type !== 'Episode' ||
+        !['Episode','Special'].includes(episode.type) ||
         !Number.isSafeInteger(episode.number) || episode.number < 1)) {
       return held('invalid_request');
     }
+    // A Special number is not a regular episode coordinate. Retrieve explicit
+    // Specials through bounded trusted title aliases; exact metainfo/type
+    // mapping remains mandatory before submission.
+    const queryTargets = targets.filter(episode => episode.type === 'Episode');
     const targetByQuery = new Map();
-    for (const episode of targets) {
+    for (const episode of queryTargets) {
       for (const query of trustedTargetedQueries(detail.title, aliases,
         episode.number)) targetByQuery.set(query, episode);
     }
     const targeted = [...targetByQuery.keys()];
     // One canonical query per missing episode first, then broad aliases and
     // remaining targeted aliases. Never multiply ten episodes by every alias.
-    const canonicalTargets = targets.map(episode =>
+    const canonicalTargets = queryTargets.map(episode =>
       trustedTargetedQueries(detail.title, aliases, episode.number)[0]).filter(Boolean);
     const primaryAliases = target ? targeted.filter(query =>
       targetByQuery.get(query)?.id === target.id) : [];
@@ -169,7 +173,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
       buckets.push(result.items.filter(item=>matches(item)).map((item) => ({ ...item,
         ...(interactive&&filters!==null?{selectionPolicy:{allowUhd:true,allowEnglishDub:filters.audio==='english'}}:{}),
         ...(!interactive ? {sourceQuery: query} : {}),
-        ...(targets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
+        ...(queryTargets.some((episode) => hasTargetEpisodeHint(item, episode.number)) ?
           { targetedEpisode: true } : {}),
         ...(queryTarget ? {
           ...(!hasTargetEpisodeHint(item, queryTarget.number) ?

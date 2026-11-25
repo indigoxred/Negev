@@ -79,3 +79,36 @@ restart. Confirm that any previously started attempts outside the list have
 finished or are held before enabling this mode, since downstream attempt
 workers continue their durable journals. Remove the restriction only after
 the former owner's corresponding watches and request route have been retired.
+
+### Qualified availability cache upgrades
+
+Stop Negev and retain a private SQLite/WAL-consistent backup before using
+`node src/availability/migrate-qualified-cache.mjs --manifest /private/data/qualified.json --stopped-service-confirmed`
+with the installation's normal private configuration. The manifest must be a
+canonical private file inside the configured data directory. It binds exact
+source/card generations, public server identity, libraries and mounts; the
+command rechecks physical witnesses before atomic cache publication. Accounts,
+requests, choices, acquisition journals and source inventory are preserved.
+Imported proof timestamps remain the original qualification times.
+
+The frozen v0.0.300 availability schema is supported directly for the specific
+additive `components_json` proof migration. Other schema differences fail
+closed rather than rebuilding unknown tables. Keep the matched backup until
+request scope, Library and installed workers have been checked. If publication
+fails, its transaction rolls back; if a later fresh request check fails after
+publication, inspect privately and restore the matched backup if needed.
+
+The requested-target warmer processes at most 1,000 targets and 15 minutes per
+invocation. A private durable cursor advances across both available and unknown
+targets, survives restarts and resets when the public scope changes. When the
+returned `requested.state` is `partial`, repeat the command with
+`--warm-requests-only` to continue without republishing the qualified cache.
+A complete cycle resets the cursor, allowing unknown targets to be checked
+again in a later cycle. Fresh successful checks receive their own current
+proof time; they never refresh an imported receipt merely by copying it.
+
+Public evidence reads require a configured, currently authenticated Plex
+observer. Disabling that observer stops old direct/title receipts from trimming
+new requests. API activity renews the bounded server identity
+lease even when all periodic availability workers are off. Renewal failure
+keeps saved evidence untrusted until identity can be verified again.

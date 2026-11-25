@@ -35,6 +35,11 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       file_id INTEGER NOT NULL UNIQUE CHECK(file_id>0),
       retry_after_ms INTEGER NOT NULL DEFAULT 0 CHECK(retry_after_ms>=0)
     ) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_drain_state (
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      prefer_retry INTEGER NOT NULL CHECK(prefer_retry IN (0,1))
+    ) STRICT`);
+    db.exec('INSERT INTO shoko_recent_drain_state VALUES (1,1) ON CONFLICT(id) DO NOTHING');
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_continuation (kind TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_recent_due
       ON shoko_recent_pending(retry_after_ms,seq)`);
@@ -58,9 +63,13 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
   const countPending = db.prepare('SELECT COUNT(*) AS total FROM shoko_recent_pending');
   const insertPending = db.prepare(`INSERT OR IGNORE INTO shoko_recent_pending(file_id)
     VALUES (?)`);
-  const nextPending = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
-    WHERE retry_after_ms<=? ORDER BY retry_after_ms,seq LIMIT 1`);
-  const findPending = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
+  const nextFresh = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
+    WHERE retry_after_ms=0 ORDER BY seq LIMIT 1`);
+  const nextRetry = db.prepare(`SELECT file_id AS fileId FROM shoko_recent_pending
+    WHERE retry_after_ms>0 AND retry_after_ms<=? ORDER BY retry_after_ms,seq LIMIT 1`);
+  const drainState = db.prepare('SELECT prefer_retry AS preferRetry FROM shoko_recent_drain_state WHERE id=1');
+  const setDrainState = db.prepare('UPDATE shoko_recent_drain_state SET prefer_retry=? WHERE id=1');
+  const findPending = db.prepare(`SELECT file_id AS fileId,retry_after_ms AS retryAfterMs FROM shoko_recent_pending
     WHERE file_id=?`);
   const removePending = db.prepare('DELETE FROM shoko_recent_pending WHERE file_id=?');
   const retryPending = db.prepare(`UPDATE shoko_recent_pending
@@ -233,7 +242,11 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
         throw new TypeError('Invalid recent work time');
       }
-      const row = nextPending.get(nowMs);
+      // Give each class a bounded share. Persist the next turn with the result
+      // so continuous intake and a failing retry prefix both remain fair on restart.
+      const row = drainState.get().preferRetry
+        ? nextRetry.get(nowMs) ?? nextFresh.get()
+        : nextFresh.get() ?? nextRetry.get(nowMs);
       return row ? { ...row } : null;
     },
     recordResult({ fileId, success, nowMs } = {}) {
@@ -244,9 +257,11 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       }
       db.exec('BEGIN IMMEDIATE');
       try {
-        if (!findPending.get(fileId)) {
+        const pending = findPending.get(fileId);
+        if (!pending) {
           rollback(); return held('recent_file_not_pending');
         }
+        setDrainState.run(pending.retryAfterMs > 0 ? 0 : 1);
         if (success) removePending.run(fileId);
         else retryPending.run(nowMs + 300_000, fileId);
         db.exec('COMMIT');

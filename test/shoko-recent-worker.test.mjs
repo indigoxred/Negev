@@ -165,3 +165,62 @@ test('a missing baseline and an active operation cannot start a second scan', as
     assert.equal((await running).state, 'caught_up');
   });
 });
+
+test('due retries progress during 180 sustained arrivals over 36 minutes and restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-recent-fair-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  let ledger = openShokoRecentLedger(dbPath);
+  let nowMs = 100;
+  let healthy = false;
+  const seen = [];
+  const makeWorker = () => createShokoRecentWorker({ ledger, now: () => nowMs,
+    readPage: async () => { throw new Error('drain-only test'); },
+    refreshFile: async fileId => {
+      seen.push({ fileId, nowMs });
+      return fileId === 11 && !healthy ? { state: 'held' } :
+        { state: 'recorded_file', recognition: 'linked' };
+    } });
+  try {
+    ledger.bootstrap(cursor(10));
+    ledger.recordBatch({ state: 'complete', fileIds: [11], newest: cursor(11) });
+    let worker = makeWorker();
+    assert.equal((await worker.drainOne()).state, 'retry_scheduled');
+    healthy = true;
+    let retryAt;
+    for (let i = 0; i < 180; i++) {
+      nowMs = 100 + (i + 1) * 12_000;
+      if (i === 24) { ledger.close(); ledger = openShokoRecentLedger(dbPath); worker = makeWorker(); }
+      const id = 12 + i;
+      ledger.recordBatch({ state: 'complete', fileIds: [id], newest: cursor(id) });
+      const result = await worker.drainOne();
+      if (result.fileId === 11 && result.state === 'acknowledged') retryAt = nowMs;
+    }
+    assert.ok(retryAt >= 300_100 && retryAt <= 312_100,
+      `healthy retry must run on first due drain, got ${retryAt}`);
+    assert.ok(seen.some(x => x.fileId === 12 && x.nowMs < 300_100));
+    assert.ok(seen.some(x => x.fileId > 100));
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('a large failing due prefix cannot consume the new-file drain share after restart', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-recent-prefix-'));
+  const dbPath = path.join(dir, 'negev.sqlite');
+  let ledger = openShokoRecentLedger(dbPath);
+  let nowMs = 100;
+  const makeWorker = () => createShokoRecentWorker({ ledger, now: () => nowMs,
+    readPage: async () => { throw new Error('drain-only'); },
+    refreshFile: async fileId => fileId < 200 ? { state: 'held' } :
+      { state: 'recorded_file', recognition: 'linked' } });
+  try {
+    ledger.bootstrap(cursor(10));
+    const ids = Array.from({ length: 100 }, (_, i) => i + 11);
+    ledger.recordBatch({ state: 'complete', fileIds: ids, newest: cursor(110) });
+    let worker = makeWorker();
+    for (let i = 0; i < 100; i++) await worker.drainOne();
+    nowMs = 300_100;
+    ledger.recordBatch({ state: 'complete', fileIds: [200], newest: cursor(200) });
+    assert.equal((await worker.drainOne()).state, 'retry_scheduled');
+    ledger.close(); ledger = openShokoRecentLedger(dbPath); worker = makeWorker();
+    assert.deepEqual(await worker.drainOne(), { state: 'acknowledged', fileId: 200 });
+  } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});

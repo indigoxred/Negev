@@ -26,7 +26,7 @@ export function initializePreferredReleases(db) {
     let parsed;try{parsed=JSON.parse(row.fallback_json);}catch{continue;}
     rememberLegacySelection(db,parsed);
     const clean=JSON.stringify(durableSelection(parsed));
-    db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=? AND fallback_json=?').run(clean,row.request_id,row.episode_id,row.fallback_json);
+    if(clean!==row.fallback_json)db.prepare('UPDATE preferred_release_waits SET fallback_json=? WHERE request_id=? AND episode_id=? AND fallback_json=?').run(clean,row.request_id,row.episode_id,row.fallback_json);
   }
 }
 export function checkPreferredRelease(db, preference, { requestId, candidate, preview, releaseState, nowMs }) {
