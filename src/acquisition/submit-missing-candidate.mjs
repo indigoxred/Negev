@@ -166,7 +166,10 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const scope = absolute ? await verifyAbsoluteNumberingScope({ anidbId:request.anidbId,
     offset:mapped.absoluteOffset, related, readRelatedTitles, loadDetail }) : null;
   if (!verifiedIdentity || absolute && scope.state !== 'scope_confirmed') {
-    if (typeof offlineLookup !== 'function') return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
+    if (typeof offlineLookup !== 'function') {
+      return held(absolute && scope.reason === 'provider_unavailable' ? 'provider_unavailable' :
+        absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
+    }
     const budget = selectedFiles.length > 50 ? createReadDeadline() : null;
     for (const file of selectedFiles) {
       if (file.episodeIds.length !== 1) return held('release_title_mismatch');
@@ -179,6 +182,8 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
         episodeIds: file.episodeIds, filename });
       if(evaluated.reason==='provider_unavailable')return held('provider_unavailable');
       if (evaluated.state !== 'accepted') {
+        if (absolute && scope.reason === 'provider_unavailable' &&
+            evaluated.state !== 'rejected') return held('provider_unavailable');
         return held(absolute ? 'absolute_numbering_unverified' : 'release_title_mismatch');
       }
     }

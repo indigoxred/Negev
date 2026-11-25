@@ -24,6 +24,7 @@ test('malformed stronger response cannot clear protected hint or immediately dow
 test('malformed first stronger response uses same bounded guard',async()=>{const x=fixture({previewCandidate:async({candidate})=>candidate.guid==='high'?{state:'preflight',episodeIds:[]}:preflight});assert.equal((await x.process({requestId:4})).state,'held');assert.deepEqual(x.submitted,[])});
 test('older 480p remains a usable fallback once the temporary stronger check budget is spent',async()=>{const x=fixture({discoverCandidates:async()=>({state:'candidates',requestId:4,anidbId:42,releaseState:'airing',items:[high,{...low,title:'[Group] Example - 01 DVD 480p'}]})});assert.equal((await x.process({requestId:4})).state,'held');x.time(181000);assert.equal((await x.process({requestId:4})).state,'stopped_observed');assert.deepEqual(x.submitted,['low'])});
 import {createHash} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 test('saved pre-fix cursor cannot skip unresolved stronger candidate after upgrade',async()=>{const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');const x=fixture();const candidateFingerprint=hash(['quality-policy-v5',1001])+':'+[high,low].map(c=>hash([c.indexerId,c.guid])).join(',')+'|';assert.equal((await x.process({requestId:4,candidateOffset:1,candidateFingerprint})).state,'held');assert.deepEqual(x.submitted,[])});
 
 test('failed inspection pages advance without starving a later healthy 1080p release',async()=>{
@@ -100,4 +101,79 @@ test('v318 consumed quality cursor rechecks the stronger candidate under new pol
  const legacy=digest(['quality-policy-v7',1001])+':'+[high,low].map(c=>digest([c.indexerId,c.guid])).join(',')+'|';
  const x=fixture();x.recover();const result=await x.process({requestId:4,candidateOffset:1,candidateFingerprint:legacy});
  assert.equal(result.state,'stopped_observed');assert.deepEqual(x.submitted,['high']);
+});
+
+test('v319 consumed quality cursor cannot skip a recovered stronger candidate', async () => {
+  const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+  const legacy = digest(['quality-policy-v8', 1001]) + ':' + [high, low].map(c => digest([c.indexerId, c.guid])).join(',') + '|';
+  const x = fixture(); x.recover();
+  const result = await x.process({ requestId: 4, candidateOffset: 1, candidateFingerprint: legacy });
+  assert.equal(result.state, 'stopped_observed');
+  assert.deepEqual(x.submitted, ['high']);
+});
+
+for (const policy of ['quality-policy-season-pack-v6', 'quality-policy-episode-fallback-v6', 'quality-policy-uncertain-pack-v6']) {
+  test(`v319 ${policy} cursor rechecks recovered stronger completed packs`, async () => {
+    const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+    const packs = [{ ...high, title: '[Group] Example Complete Batch 1080p' }, { ...low, title: '[Group] Example Complete Batch 720p' }];
+    const legacy = digest([policy, 1001, 1002]) + ':' + packs.map(c => digest([c.indexerId, c.guid])).join(',') + '|';
+    const x = fixture({ preferShokoPreview: true, readRequest: () => ({ ...request, episodeIds: [1001, 1002] }),
+      discoverCandidates: async () => ({ state: 'candidates', requestId: 4, anidbId: 42, releaseState: 'completed', items: packs }),
+      loadDetail: async () => ({ ...detail, total: 2, episodes: [...detail.episodes, { id: 1002, number: 2, type: 'Episode' }] }),
+      previewCandidate: async () => ({ ...preflight, shokoPreview: 'exact', episodeIds: [1001, 1002],
+        files: [1, 2].map(n => ({ name: `Example - 0${n}.mkv`, size: 400000000, episodeIds: [1000 + n] })) }),
+    });
+    const result = await x.process({ requestId: 4, candidateOffset: 1, candidateFingerprint: legacy });
+    assert.equal(result.state, 'stopped_observed', JSON.stringify(result));
+    assert.deepEqual(x.submitted, ['high']);
+  });
+}
+
+test('v319 persisted cursor upgrade preserves scan elapsed, retry origin, choices and group deadline', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-quality-upgrade-')), dbPath = path.join(dir, 'db.sqlite');
+  let requests = openRequestLedger(dbPath), queue = openAcquisitionRequestQueue(dbPath), retry = openQualityInspectionRetry(dbPath);
+  t.after(async () => { retry.close(); queue.close(); requests.close(); await rm(dir, { recursive: true, force: true }); });
+  const id = requests.submit({ requesterId: 1, requestKey: 'upgrade', nowMs: 1000,
+    intent: { state: 'ready', anidbId: 42, kind: 'series', title: 'Example', episodeIds: [1001], monitorFuture: true } }).requestId;
+  const manualId = requests.submit({ requesterId: 1, requestKey: 'manual', nowMs: 1000, releaseMode: 'manual',
+    intent: { state: 'ready', anidbId: 43, kind: 'series', title: 'Other', episodeIds: [2001], monitorFuture: false } }).requestId;
+  requests.updateReleasePreference(id, 0, { group: 'Preferred', audio: 'japanese', createdMs: 1000, knownEpisodeIds: [] }, 1000);
+  requests.checkPreferredRelease({ requestId: id, candidate: low, preview: preflight, releaseState: 'airing', nowMs: 1000 });
+  const control = requests.getReleaseControl(manualId, 1000);
+  const digest = x => createHash('sha256').update(JSON.stringify(x)).digest('hex');
+  const legacy = digest(['quality-policy-v8', 1001]) + ':' + [high, low].map(c => digest([c.indexerId, c.guid])).join(',') + '|';
+  const claim = queue.claimNext({ nowMs: 1000, priorityRequestId: id });
+  queue.recordResult({ requestId: id, pass: claim.pass, state: 'held', reason: 'release_preflight_unavailable', checkedMs: 1000,
+    nextCandidateOffset: 1, nextCandidateFingerprint: legacy });
+  retry.fail(requests.getRequest(id), high, 1000);
+  const snapshot = () => {
+    const db = new DatabaseSync(dbPath);
+    try { return { retry: db.prepare('SELECT first_ms,attempts FROM acquisition_quality_retry WHERE request_id=?').get(id),
+      wait: db.prepare('SELECT first_seen_ms,deadline_ms,fallback_json FROM preferred_release_waits WHERE request_id=?').get(id) }; }
+    finally { db.close(); }
+  };
+  const before = snapshot();
+  retry.close(); queue.close(); requests.close();
+  requests = openRequestLedger(dbPath); queue = openAcquisitionRequestQueue(dbPath); retry = openQualityInspectionRetry(dbPath);
+  const inspected = [], submitted = [];
+  const worker = createAcquisitionPageWorker({ queue, now: () => 61000, limit: 1,
+    processRequest: createAcquisitionRequestProcessor({ qualityInspectionRetry: retry, requireReleasePolicy: true,
+      readRequest: id => requests.getRequest(id), now: () => 61000,
+      discoverCandidates: async () => ({ state: 'candidates', requestId: id, anidbId: 42, releaseState: 'airing', items: [high, low] }),
+      previewCandidate: async ({ candidate }) => { inspected.push(candidate.guid); return candidate.guid === 'high' ?
+        { state: 'held', reason: 'provider_unavailable' } : { ...preflight, requestId: id }; },
+      loadDetail: async () => detail,
+      submitCandidate: async ({ candidate }) => { submitted.push(candidate.guid); return { state: 'stopped_observed', attemptId: 1 }; },
+    }) });
+  const run = await worker.runOnce({ priorityRequestId: id });
+  assert.equal(run.results[0].state, 'held');
+  assert.ok(inspected.includes('high'), 'old consumed prefix must be revisited through the reopened worker');
+  assert.deepEqual(submitted, []);
+  assert.equal(queue.getScanStartedMs(id), 1000);
+  assert.notEqual(queue.getResult(id).candidateFingerprint?.split(':')[0], legacy.split(':')[0]);
+  const after = snapshot();
+  assert.equal(after.retry.first_ms, before.retry.first_ms);
+  assert.equal(after.retry.attempts, 2);
+  assert.deepEqual(after.wait, before.wait);
+  assert.deepEqual(requests.getReleaseControl(manualId, 61000), control);
 });

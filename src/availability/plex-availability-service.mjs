@@ -14,7 +14,7 @@ import { readPlexLibrarySources } from './plex-library-sources.mjs';
 import { localPath, validMount } from './known-card-availability.mjs';
 import { probePhysicalCandidate } from './physical-plex-part.mjs';
 import { openAvailabilityScope } from './availability-scope.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { readBoundedJson, cancelResponseBody } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const changedCard = () => ({ state: 'unknown',
@@ -66,7 +66,8 @@ export function createPlexAvailabilityService({ dbPath, shokoBaseUrl,
         const response = await fetchImpl(url,{method:'GET',redirect:'manual',
           headers:{'X-Plex-Token':plexToken,Accept:'application/json'},
           signal:AbortSignal.any([scopeAbort.signal,AbortSignal.timeout(10000)])});
-        const body=response.status===200 ? await readBoundedJson(response,100000) : null;
+        if(response.status!==200){await cancelResponseBody(response);throw new Error('Public identity unavailable');}
+        const body=await readBoundedJson(response,100000);
         const machine=body?.MediaContainer?.machineIdentifier;
         if (closed) throw new Error('Observer closed');
         if(typeof machine!=='string' || !/^[A-Za-z0-9_-]{1,256}$/.test(machine)) throw new Error('Missing Plex server identity');

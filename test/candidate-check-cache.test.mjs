@@ -10,6 +10,42 @@ import { openCandidateCheckCache } from '../src/acquisition/candidate-check-cach
 const request = { id: 1, anidbId: 42, kind: 'series', episodeIds: [1001] };
 const candidate = { indexerId: 7, guid: 'private-candidate-guid', title: 'Example - 01', size: 1000 };
 
+test('v319 wrong-identity negatives recheck once without flushing positives or unrelated negatives', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-offset-cache-')), dbPath = path.join(dir, 'state.sqlite');
+  let clock = 100, cache = openCandidateCheckCache(dbPath, { now: () => clock });
+  const positive = { ...candidate, guid: 'positive' }, other = { ...candidate, guid: 'unsafe' };
+  try {
+    cache.put({ request, candidate: positive, result: { state: 'preflight', episodeIds: [1001] } });
+    cache.put({ request, candidate: other, result: { state: 'held', reason: 'invalid_metainfo' } });
+    cache.close();
+    const db = new DatabaseSync(dbPath);
+    const key = createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses', request.id, request.anidbId,
+      request.kind, [...request.episodeIds], candidate.indexerId, request.title, candidate.guid, candidate.title,
+      candidate.size, candidate.sourceQuery, candidate.targetEpisodeId])).digest('hex');
+    db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(key, 42, '[1001]',
+      JSON.stringify({ state: 'held', reason: 'shoko_preview_wrong_identity' }), 100, 21600100);
+    const baseline = db.prepare('SELECT cache_key,checked_ms,expires_ms,result_json FROM acquisition_candidate_checks WHERE cache_key<>? ORDER BY cache_key').all(key);
+    db.close();
+    cache = openCandidateCheckCache(dbPath, { now: () => clock });
+    assert.equal(cache.get({ request, candidate }), null, 'old reason alone cannot distinguish a transient evidence failure');
+    assert.equal(cache.get({ request, candidate: positive }).state, 'preflight');
+    assert.equal(cache.get({ request, candidate: other }).reason, 'invalid_metainfo');
+    clock = 200;
+    const genuine = { state: 'held', reason: 'shoko_preview_wrong_identity' };
+    cache.put({ request, candidate, result: genuine });
+    cache.close(); cache = openCandidateCheckCache(dbPath, { now: () => clock });
+    assert.deepEqual(cache.get({ request, candidate }), genuine);
+    const inspect = new DatabaseSync(dbPath);
+    assert.deepEqual(inspect.prepare('SELECT cache_key,checked_ms,expires_ms,result_json FROM acquisition_candidate_checks WHERE cache_key<>? ORDER BY cache_key').all(key), baseline);
+    assert.equal(inspect.prepare('SELECT expires_ms FROM acquisition_candidate_checks WHERE cache_key=?').get(key).expires_ms, 200 + 6 * 3600000);
+    inspect.close();
+    clock = 200 + 6 * 3600000 - 1;
+    assert.deepEqual(cache.get({ request, candidate }), genuine);
+    clock++;
+    assert.equal(cache.get({ request, candidate }), null);
+  } finally { cache.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('deterministic candidate evidence survives restart without raw GUIDs; transient failures do not', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-candidate-cache-'));
   const dbPath = path.join(dir, 'state.sqlite');
@@ -48,10 +84,10 @@ test('legacy season-mismatch decisions are reconsidered without flushing other e
  const dir=await mkdtemp(path.join(tmpdir(),'negev-text-season-cache-')),dbPath=path.join(dir,'state.sqlite');let cache=openCandidateCheckCache(dbPath,{now:()=>100});cache.close();
  const legacyKey=c=>createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses',request.id,request.anidbId,request.kind,[...request.episodeIds],c.indexerId,request.title,c.guid,c.title,c.size,c.sourceQuery,c.targetEpisodeId])).digest('hex');
  const other={...candidate,guid:'unrelated-cache'},positive={...candidate,guid:'positive-cache'};const db=new DatabaseSync(dbPath);
- for(const [c,result]of [[candidate,{state:'held',reason:'related_installment_mismatch'}],[other,{state:'held',reason:'shoko_preview_wrong_identity'}],[positive,{state:'preflight',episodeIds:[1001]}]])db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(legacyKey(c),42,'[1001]',JSON.stringify(result),100,21600100);db.close();
+ for(const [c,result]of [[candidate,{state:'held',reason:'related_installment_mismatch'}],[other,{state:'held',reason:'invalid_metainfo'}],[positive,{state:'preflight',episodeIds:[1001]}]])db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(legacyKey(c),42,'[1001]',JSON.stringify(result),100,21600100);db.close();
  cache=openCandidateCheckCache(dbPath,{now:()=>100});try{
   assert.equal(cache.get({request,candidate}),null);
-  assert.equal(cache.get({request,candidate:other}).reason,'shoko_preview_wrong_identity');
+  assert.equal(cache.get({request,candidate:other}).reason,'invalid_metainfo');
   assert.equal(cache.get({request,candidate:positive}).state,'preflight');
   const result={state:'held',reason:'related_installment_mismatch'};cache.put({request,candidate,result});
   assert.deepEqual(cache.get({request,candidate}),result);cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>101});assert.deepEqual(cache.get({request,candidate}),result);

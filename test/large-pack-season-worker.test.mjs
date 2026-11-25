@@ -33,7 +33,7 @@ const release = (guid,title,numbers=[1],seeders=10) => ({guid,indexerId:3,title,
   names:numbers.map(n=>'Example - '+String(n).padStart(2,'0')+'.mkv')});
 
 // Real stage/ledger/discovery/preflight/submission. Only outside services are synthetic.
-async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null}={}) {
+async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null,prequelRead=null,prequelRelationRead=null}={}) {
   const root=await mkdtemp(path.join(tmpdir(),'negev-worker-quality-season-'));
   let clock=NOW;const metadataPages=[];
   const dbPath=path.join(root,'db.sqlite');const cleanups=[];const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath);
@@ -62,9 +62,9 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
  if(url.pathname==='/api/v1/search')return Response.json(searchRows);
     const record=records.find(c=>c.guid===url.searchParams.get('link'));assert.ok(record,'only known synthetic descriptor');return new Response(record.bytes,{headers:{"content-type":"application/x-bittorrent"}});};
   const related={state:'related_titles',anidbId:42,items:prequelEpisodes!==null?[{anidbId:41,title:'Example Season 1',relation:'Prequel'}]:aliases.length?[{anidbId:41,title:'Example',relation:'Prequel'}]:[]};
-  const readRelatedTitles=async({anidbId})=>anidbId===41?{state:'related_titles',anidbId:41,items:[]}:related,releaseQueries=async()=>aliases;
+  const readRelatedTitles=async({anidbId})=>anidbId===41?(prequelRelationRead?prequelRelationRead({state:'related_titles',anidbId:41,items:[]}):{state:'related_titles',anidbId:41,items:[]}):related,releaseQueries=async()=>aliases;
   const loadPage=async({page=1}={})=>{metadataPages.push(page);const next=page*100<detail.total?page+1:null;return {...detail,page,complete:detail.total<=100,episodes:detail.episodes.slice((page-1)*100,page*100),nextPage:next}};
-  const loadDetail=async({anidbId})=>anidbId===41&&prequelEpisodes!==null?{...detail,anidbId:41,title:'Example Season 1',complete:true,total:prequelEpisodes,nextPage:null,episodes:Array.from({length:prequelEpisodes},(_,i)=>({id:3001+i,number:i+1,type:'Episode',title:'Previous '+(i+1)}))}:collectAniDbDetail({anidbId,loadPage});
+  const loadDetail=async({anidbId})=>{if(anidbId===41&&prequelEpisodes!==null){const value={...detail,anidbId:41,title:'Example Season 1',complete:true,total:prequelEpisodes,nextPage:null,episodes:Array.from({length:prequelEpisodes},(_,i)=>({id:3001+i,number:i+1,type:'Episode',title:'Previous '+(i+1)}))};return prequelRead?prequelRead(value):value;}return collectAniDbDetail({anidbId,loadPage});};
   const readRequest=id=>requests.getRequest(id);const inspected=[],previews=[];
   const discoverCandidates=createRequestCandidateDiscovery({readRequest,loadDetail,releaseQueries,pause:async()=>{},
     searchReleases:async()=>({state:'candidates',items:searchRows.map(c=>({...c,evidence:'unverified'}))})});
@@ -212,4 +212,36 @@ for(const mode of ['recover','expire','known'])test('absolute-offset outage '+mo
  assert.equal(first.state,'held',JSON.stringify({first,previews:f.previews}));assert.deepEqual(f.added,[]);
  f.restart();ready=mode==='recover';f.setClock(NOW+(ready?61000:181000));const selected=await f.run();assert.equal(selected.state,'stopped_observed',JSON.stringify({selected,previews:f.previews}));
  assert.deepEqual(f.added,[ready?'strong':'weak']);assert.equal((await f.runStart(selected.attemptId)).state,'start_unknown');
+});
+
+for(const failure of ['pending','unavailable','throw','relations'])for(const recovers of [true,false])test('temporary prequel '+failure+' '+(recovers?'recovers1080p':'expires to normal fallback')+' across actual stage restart',async t=>{
+ let ready=false;const fail=value=>{if(ready)return value;if(failure==='throw')throw Error('synthetic unavailable');return{state:failure==='pending'?'detail_pending':'unavailable',anidbId:41};};
+ const f=await fixture(t,{title:'Example Season 2',episodes:2,requested:[1,2],completed:true,registered:true,prequelEpisodes:24,prediction:false,
+  ...(failure==='relations'?{prequelRelationRead:fail}:{prequelRead:fail}),
+  items:[release('strong','[G] Example Season 2 1080p Batch',[25,26],30),release('weak','[G] Example Season 2 720p Batch',[1,2],30)]});
+ const first=await f.run();assert.equal(first.state,'held',JSON.stringify({first,previews:f.previews}));assert.deepEqual(f.added,[]);
+ f.restart();ready=recovers;f.setClock(NOW+(recovers?61000:181000));const next=await f.run();assert.equal(next.state,'stopped_observed',JSON.stringify({next,previews:f.previews}));assert.deepEqual(f.added,[recovers?'strong':'weak']);assert.equal((await f.runStart(next.attemptId)).state,'start_unknown');
+});
+for(const recovers of [true,false])test('partial absolute filename503 '+(recovers?'recovers1080p':'allows expired fallback')+' through actual stage restart',async t=>{
+ let ready=false;const f=await fixture(t,{title:'Example Season 2',episodes:4,requested:[1,2,3,4],completed:true,registered:true,prequelEpisodes:24,
+  prediction:filename=>{const n=Number(/ - (\d+)/.exec(filename)?.[1]);if(n<25)return true;if(!ready&&n===28)return{status:503};if(n<27)return{status:204};const id=1000+n-26;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}},
+  items:[release('strong','[G] Example Season 2 1080p Batch',[25,26,27,28],30),release('weak','[G] Example Season 2 720p Batch',[1,2,3,4],30)]});
+ const first=await f.run();assert.equal(first.state,'held',JSON.stringify({first,previews:f.previews}));assert.deepEqual(f.added,[]);assert.ok(f.previews.some(x=>x.reason==='provider_unavailable'));assert.equal(f.previews.some(x=>x.reason==='shoko_preview_wrong_identity'),false);
+ f.restart();ready=recovers;f.setClock(NOW+(recovers?61000:181000));const next=await f.run();assert.equal(next.state,'stopped_observed',JSON.stringify({next,previews:f.previews}));assert.deepEqual(f.added,[recovers?'strong':'weak']);assert.equal((await f.runStart(next.attemptId)).state,'start_unknown');
+});
+test('prequel provider failure appearing only at final submission retries without dispatch',async t=>{
+ let reads=0,ready=false;const f=await fixture(t,{title:'Example Season 2',episodes:2,requested:[1,2],completed:true,registered:true,prequelEpisodes:24,prediction:false,prequelRead:value=>++reads===1||ready?value:{state:'detail_pending',anidbId:41},items:[release('strong','[G] Example Season 2 1080p Batch',[25,26],30)]});
+ const first=await f.run();assert.equal(first.state,'held');assert.equal(first.reason,'provider_unavailable');assert.deepEqual(f.added,[]);
+ f.restart();ready=true;f.setClock(NOW+61000);const next=await f.run();assert.equal(next.state,'stopped_observed',JSON.stringify(next));assert.deepEqual(f.added,['strong']);
+});
+
+test('exact filename evidence proceeds despite temporarily missing prequel metadata',async t=>{
+ const f=await fixture(t,{title:'Example Season 2',episodes:2,requested:[1,2],completed:true,registered:true,prequelEpisodes:24,prequelRead:()=>({state:'detail_pending',anidbId:41}),
+  prediction:filename=>{const id=filename.includes('25')?1001:1002;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}},items:[release('strong','[G] Example Season 2 1080p Batch',[25,26],30)]});
+ const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,['strong']);assert.equal((await f.runStart(result.attemptId)).state,'start_unknown');
+});
+test('sufficient consistent offsets proceed during an unrelated partial filename outage',async t=>{
+ const f=await fixture(t,{title:'Example Season 2',episodes:5,requested:[1,2,3,4,5],completed:true,registered:true,prequelEpisodes:24,
+  prediction:filename=>{const n=Number(/ - (\d+)/.exec(filename)[1]);if(n===29)return{status:503};if(n<27)return{status:204};const id=1000+n-26;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}},items:[release('strong','[G] Example Season 2 1080p Batch',[25,26,27,28,29],30)]});
+ const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify({result,previews:f.previews}));assert.deepEqual(f.added,['strong']);
 });

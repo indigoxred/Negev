@@ -31,6 +31,13 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
     // and invalid/ambiguous evidence must keep their recoverable frontier.
     if (mapped.reason === 'parent_mapping_missing') {
       parents.saveRelationFrontier?.(parent.tvdbId, null);
+    } else if (mapped.reason === 'ambiguous_parent_mapping') {
+      // Retain safe traversal evidence for daily revalidation, but ambiguity
+      // cannot justify expedited rounds through the other active parents.
+      const frontier = parents.getRelationFrontier?.(parent.tvdbId);
+      if (frontier?.continueSoon === true) {
+        parents.saveRelationFrontier?.(parent.tvdbId, { ...frontier, continueSoon: false });
+      }
     }
     return mapped;
   }
