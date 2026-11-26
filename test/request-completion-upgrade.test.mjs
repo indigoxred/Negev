@@ -91,7 +91,7 @@ test('legacy exact completion becomes unsettled when a finale target is appended
   assert.notEqual(x.read().oneTimeAcquisitionComplete, true);
 });
 
-for (const revision of [null, 0, 1]) for (const phase of ['chosen', 'consumed']) {
+for (const revision of [null, 0, 1, 2]) for (const phase of ['chosen', 'consumed']) {
   test(`legacy matching full hash with ${phase} subset follows scope policy revision ${revision}`, async t => {
     const x = await fixture(t, { expanded: true });
     x.db.exec(`UPDATE acquisition_request_checks SET scan_scope='a04a67f3f0ad63048c2f58089c3678f018324b8d1933c8a959b8ae65648f7d7c',scan_target_count=2`);
@@ -102,6 +102,6 @@ for (const revision of [null, 0, 1]) for (const phase of ['chosen', 'consumed'])
       selection: { preview: { episodeIds: [1001] } },
     }));
     const read = createRequestCompletionReader(x.db);
-    assert.equal(read(1), revision === 1);
+    assert.equal(read(1), revision === 2);
   });
 }

@@ -132,7 +132,7 @@ test('reopening old stranded claims preserves uncertain claims until ledger reco
   }, 2));
 
 // Exercise a genuine pre-fix durable writer rather than handcrafting its check row.
-for (const legacyPhase of ['chosen', 'consumed']) test('legacy ' + legacyPhase + ' subset terminal decisions reopen once while complete, guarded and live rows survive',
+for (const legacyPhase of ['chosen', 'consumed']) test('legacy ' + legacyPhase + ' subset terminal decisions recheck all unproven legacy scopes while cancelled and live rows survive',
   async () => {
     const { createHash } = await import('node:crypto');
     const { readFile, writeFile } = await import('node:fs/promises');
@@ -197,11 +197,14 @@ for (const legacyPhase of ['chosen', 'consumed']) test('legacy ' + legacyPhase +
       assert.equal(reopened.candidateOffset, undefined);
       assert.equal(reopened.candidateFingerprint, undefined);
       assert.equal(queue.getDecisionTiming(1), null);
-      for (let id = 2; id <= 8; id++) if (id !== 4) assert.deepEqual(queue.getResult(id), before.get(id));
+      for (const id of [3, 5]) assert.deepEqual(queue.getResult(id), before.get(id));
+      // Current retained full/no/malformed choices do not prove what the old
+      // processor actually checked; the member may have changed them later.
+      for (const id of [2, 6, 7, 8]) assert.equal(queue.getResult(id).reason,'request_scope_recheck');
       assert.deepEqual(queue.getSuspension(4), originalSuspension);
       assert.equal(queue.getResult(4).reason, 'request_scope_recheck');
       assert.equal(queue.getResult(4).nextDueMs, 0);
-      assert.equal(db.prepare('SELECT request_scope_policy_revision AS revision FROM acquisition_request_checks WHERE request_id=1').get().revision, 1);
+      assert.equal(db.prepare('SELECT request_scope_policy_revision AS revision FROM acquisition_request_checks WHERE request_id=1').get().revision, 0);
       const { createAcquisitionRequestProcessor } = await import('../src/acquisition/acquisition-request-processor.mjs');
       let available = [1001], nowMs = 300;
       const scopes = [], submits = [];
@@ -238,13 +241,11 @@ for (const legacyPhase of ['chosen', 'consumed']) test('legacy ' + legacyPhase +
       assert.equal(finished.results[0].reason, 'request_fully_available');
       queue.close(); queue = openAcquisitionRequestQueue(dbPath);
       assert.equal(queue.getResult(1).reason, 'request_fully_available');
-      assert.equal(queue.claimNext({ nowMs: 10_000_000, priorityRequestId: 1 }).state,
-        'pass_complete');
+      assert.notEqual(queue.claimNext({ nowMs: 10_000_000, priorityRequestId: 1 }).requestId, 1);
       // Repaired cache must not bypass a suspension. Explicit resume must then
       // expose the saved whole-request recheck instead of stranding it forever.
       assert.deepEqual(queue.getSuspension(4), originalSuspension);
-      assert.equal(queue.claimNext({ nowMs: 10_000_000, priorityRequestId: 4 }).state,
-        'pass_complete');
+      assert.notEqual(queue.claimNext({ nowMs: 10_000_000, priorityRequestId: 4 }).requestId, 4);
       assert.deepEqual(queue.resumeSuspended({ requestId: 4 }), { state: 'resumed' });
       assert.equal(queue.claimNext({ nowMs: 10_000_000, priorityRequestId: 4 }).requestId, 4);
       assert.equal(db.prepare('SELECT COUNT(*) AS count FROM request_targets').get().count, 24);
