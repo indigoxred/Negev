@@ -31,6 +31,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   const mounts = plexMounts ?? (plexMount ? [plexMount] : []);
   if (!Number.isSafeInteger(target?.anidbId) || target.anidbId <= 0 ||
       !Number.isSafeInteger(target.episodeId) || target.episodeId <= 0 ||
+      (target.fileId !== undefined && (!Number.isSafeInteger(target.fileId) || target.fileId <= 0)) ||
       !Array.isArray(publicLibraryIds) || publicLibraryIds.length === 0 ||
       publicLibraryIds.some((id) => !Number.isSafeInteger(id) || id <= 0) ||
       !validMount(shokoMount) || !Array.isArray(mounts) ||
@@ -126,6 +127,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   const provenParts = [];
   let checks = 0;
   let incompletePhysical = false;
+  let unmapped = false;
   for (const file of shoko.files) {
     if (file?.anidbId !== target?.anidbId || !file.episodeIds?.includes(target.episodeId) ||
         !Array.isArray(file.sourcePaths) || file.sourcePaths.length === 0 ||
@@ -135,7 +137,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     let matched = false;
     for (const remoteSource of file.sourcePaths) {
       const shokoPath = localPath(remoteSource, shokoMount);
-      if (!shokoPath) return unknown('path_mapping_failed');
+      if (!shokoPath) { unmapped = true; continue; }
       for (const part of identityParts) {
         if (registeredEpisodeParts.includes(part) &&
             !(Number.isSafeInteger(file.anidbFileId) &&
@@ -143,7 +145,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
         if (!publicIds.has(part.libraryId) || part.size !== file.size) continue;
         const mapping = mounts.find((entry) => localPath(part.plexPath, entry));
         const plexPath = mapping && localPath(part.plexPath, mapping);
-        if (!plexPath) return unknown('path_mapping_failed');
+        if (!plexPath) { unmapped = true; continue; }
         if (++checks > maxChecks) return unknown('comparison_budget_exceeded');
         let witness;
         try {
@@ -177,6 +179,10 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
       episodeIds: file.episodeIds, coverage: file.coverage,
       storageKey: `unmatched:${file.fileId}` });
   }
+  // Prefer the explicitly journalled recovery version, while retaining every
+  // physical claim for the conflicting-storage check.
+  if (target.fileId !== undefined) files.sort((a,b) =>
+    Number(b.fileId === target.fileId) - Number(a.fileId === target.fileId));
   let result = evaluateExactAvailability({ target,
     shoko: { state: 'ok', complete: true, files },
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds });
@@ -191,6 +197,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   // One known card cannot establish a complete negative observation.
   if (result.state === 'absent') return unknown('observer_incomplete');
   if (result.state === 'available') {
+    if (target.fileId !== undefined && result.fileId !== target.fileId) return unknown('requested_file_unverified');
     if (result.multipart) return result;
     const proof = provenParts.find((part) => part.fileId === result.fileId &&
       Number.isSafeInteger(part.ratingKey) && part.ratingKey > 0 &&
@@ -198,5 +205,6 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
     return proof ? { ...result, proof } : result;
   }
   if (result.state === 'held') return result;
+  if (unmapped) return unknown('path_mapping_failed');
   return incompletePhysical ? unknown('physical_evidence_incomplete') : result;
 }

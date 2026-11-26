@@ -19,18 +19,19 @@ export const hasTargetEpisodeHint = (candidate, number) => {
 
 export function assessRelease(candidate) {
   const title = typeof candidate?.title === 'string' ? candidate.title : '';
+  const qualityTitle = title.replaceAll('_', ' ');
   const seeders = Number.isSafeInteger(candidate?.seeders) ?
     candidate.seeders : -1;
   const language = releaseLanguageSuitability(title, {
     allowEnglishDub: candidate?.selectionPolicy?.allowEnglishDub === true });
   const dualAudio = language.audio === 'dual';
-  const numericResolution=Number(/\b(\d{3,4})p\b/i.exec(title)?.[1]??/\b\d{3,4}x(\d{3,4})\b/i.exec(title)?.[1]??0);
-  const fourK = has(title, /\b(?:2160p?|4k|uhd)\b/i)||numericResolution>=2160;
-  const bluray = has(title, /\b(?:bd(?:rip|remux)?|blu[ ._-]*ray|bluray)\b/i);
+  const numericResolution=Number(/\b(\d{3,4})p\b/i.exec(qualityTitle)?.[1]??/\b\d{3,4}x(\d{3,4})\b/i.exec(qualityTitle)?.[1]??0);
+  const fourK = has(qualityTitle, /\b(?:2160p?|4k|uhd)\b/i)||numericResolution>=2160;
+  const bluray = has(qualityTitle, /\b(?:bd(?:rip|remux)?|blu[ ._-]*ray|bluray)\b/i);
   const allowUhd = candidate?.selectionPolicy?.allowUhd === true;
-  const resolution = numericResolution>=240&&numericResolution<=4320?numericResolution:fourK ? 2160 : has(title, /\b1080p?\b|1920x1080/i) ? 1080 :
-    has(title, /\b720p?\b|1280x720/i) ? 720 :
-      has(title, /\b(?:480|576)p?\b/i) ? 480 : 0;
+  const resolution = numericResolution>=240&&numericResolution<=4320?numericResolution:fourK ? 2160 : has(qualityTitle, /\b1080p?\b|1920x1080/i) ? 1080 :
+    has(qualityTitle, /\b720p?\b|1280x720/i) ? 720 :
+      has(qualityTitle, /\b(?:480|576)p?\b/i) ? 480 : 0;
   const quality = resolution >= 2160 ? (bluray ? 7 : 6) : bluray && resolution >= 1080 ? 5 :
     resolution >= 1080 ? 4 :
       bluray && resolution >= 720 ? 3 :

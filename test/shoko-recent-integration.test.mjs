@@ -95,3 +95,17 @@ test('offline Shoko arrivals journal before cursor, retry provisional, and survi
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('continuous import hints drain durable work and due retries across SQLite reopen',async()=>{
+ const dir=await mkdtemp(path.join(os.tmpdir(),'negev-busy-recent-')),db=path.join(dir,'state.sqlite');let ledger,scheduler;
+ try{
+ ledger=openShokoRecentLedger(db);ledger.bootstrap(cursor(10));
+ let nowMs=100,recognized=false;const seen=[];
+ const create=()=>{const worker=createShokoRecentWorker({ledger,now:()=>nowMs,readPage:async({page})=>({state:'page',page,total:3,items:[12,11,10].map(cursor)}),refreshFile:async id=>{seen.push(id);return {state:'recorded_file',recognition:id===11&&!recognized?'provisional':'linked'}}});const clock=fakeClock();scheduler=createShokoRecentScheduler({...clock,scan:worker.scan,drainOne:worker.drainOne});scheduler.start();return clock;};
+ let clock=create();for(let i=0;i<8;i++){scheduler.requestSoon();await clock.fire();}
+ assert.deepEqual(seen,[11,12]);assert.deepEqual(ledger.getCursor(),cursor(12));assert.deepEqual(ledger.nextDue(300100),{fileId:11});
+ await scheduler.close();ledger.close();ledger=openShokoRecentLedger(db);recognized=true;nowMs=300100;
+ clock=create();for(let i=0;i<4;i++){scheduler.requestSoon();await clock.fire();}
+ assert.deepEqual(seen,[11,12,11]);assert.equal(ledger.nextDue(nowMs),null);assert.deepEqual(ledger.getCursor(),cursor(12));
+ }finally{await scheduler?.close();ledger?.close();await rm(dir,{recursive:true,force:true});}
+});

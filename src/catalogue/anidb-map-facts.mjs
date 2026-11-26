@@ -40,7 +40,8 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
       const duration = data.duration;
       const durationMinutes = duration?.unit === 'SECONDS' &&
         Number.isSafeInteger(duration.value) && duration.value > 0 &&
-        duration.value <= 86_400 ? Math.round(duration.value / 60) : null;
+        duration.value <= 86_400 && Math.round(duration.value / 60) >= 1
+          ? Math.round(duration.value / 60) : null;
       return { state: 'facts', anidbId, season, year,
         status: statuses.get(data.status) ?? null, studio, durationMinutes };
     } catch (error) { return withCatalogueRetry({ state: 'unavailable' }, error); }

@@ -154,6 +154,13 @@ export function openDirectAvailabilityQueue(dbPath, { evidenceTrusted = () => tr
     FROM direct_availability_targets WHERE anidb_id=? AND state='available'
     AND verified_ms>? AND verified_ms<=? ORDER BY episode_id LIMIT 10001`);
   return {
+    getWitnessVersion() { return witnessRevisions.version(); },
+    isWitnessCurrent({proof,version} = {}) {
+      const parts=proof?.parts??(proof?[proof]:[]);
+      return validTime(version) && Array.isArray(parts) && parts.length>0 && parts.length<=8 &&
+        parts.every(part=>validId(part?.fileId)&&validId(part.libraryId)&&validId(part.ratingKey)&&
+          !witnessRevisions.changed(part,version));
+    },
     getObservation({ anidbId, episodeId }) {
       if (!validId(anidbId) || !validId(episodeId)) {
         throw new TypeError('Invalid availability target');

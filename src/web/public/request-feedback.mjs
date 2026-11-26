@@ -6,7 +6,7 @@ const messages = {
   already_monitored_elsewhere: 'Future episodes are already monitored. No second request is needed.',
   detail_pending: 'Episode details are still being prepared. Please try again shortly.',
   detail_unavailable: 'Episode details are unavailable right now. Please try again.',
-  request_cancelled: 'This request was cancelled. Refresh this title before requesting it again.',
+  request_cancelled: 'This request was cancelled. You can try requesting it again.',
   title_not_in_cutover: 'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
 };
 

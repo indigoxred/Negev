@@ -15,7 +15,7 @@ function within(parent, candidate) {
 
 function validName(name) {
   return typeof name === 'string' && name.length < 1024 &&
-    !name.includes('\\') && !name.includes('\0') && !name.includes(':') &&
+    !name.includes('\\') && !name.includes('\0') &&
     !name.startsWith('/') && name.split('/').every((part) =>
       part && part !== '.' && part !== '..' && part.length <= 255);
 }

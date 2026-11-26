@@ -7,10 +7,15 @@ export function mergeDisplayFacts(display, facts) {
   if (display?.state !== 'display' || facts?.state !== 'facts') return display;
   const conflicts = (year) => Number.isSafeInteger(facts.year) &&
     Number.isSafeInteger(year) && Math.abs(facts.year - year) > 1;
+  const startDate = conflicts(dateYear(display.startDate)) ? null : display.startDate;
+  // Ending years need not match the opening season of a long-running show.
+  const endBeforeOpening = Number.isSafeInteger(facts.year) &&
+    Number.isSafeInteger(dateYear(display.endDate)) && dateYear(display.endDate) < facts.year ||
+    startDate && display.endDate && display.endDate < startDate;
   return { ...display,
     startYear: conflicts(display.startYear) ? null : display.startYear,
-    startDate: conflicts(dateYear(display.startDate)) ? null : display.startDate,
-    endDate: conflicts(dateYear(display.endDate)) ? null : display.endDate,
+    startDate,
+    endDate: endBeforeOpening ? null : display.endDate,
     season: facts.season, releaseStatus: facts.status,
     studio: facts.studio, durationMinutes: facts.durationMinutes };
 }

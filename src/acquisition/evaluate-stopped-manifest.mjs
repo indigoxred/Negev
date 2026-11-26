@@ -11,6 +11,7 @@ const held = (reason) => ({ state: 'held', reason });
 
 function safeName(name) {
   if (typeof name !== 'string' || !name || name.includes('\\') ||
+      /^[a-z]:/i.test(name) || (process.platform === 'win32' && name.includes(':')) ||
       /[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/u.test(name) ||
       path.posix.isAbsolute(name)) return false;
   return name.split('/').every((part) => part && part !== '.' && part !== '..' &&

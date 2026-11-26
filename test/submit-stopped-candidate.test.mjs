@@ -76,6 +76,26 @@ const options = { candidate, prepared, hostPath, baseUrl: 'http://qbittorrent.in
   sessionId: 'syntheticSID', nowMs: 201,
   inspectMounts: async () => mounts, realpathImpl: async () => hostPath };
 
+test('definitive add refusal releases claims across reopen and permits a fresh exact retry',async()=>withAttempt(async({ledger,attemptId,dbPath})=>{
+ let addCalls=0;
+ const result=await submitStoppedCandidate({...options,ledger,attemptId,fetchImpl:async input=>{
+  const endpoint=new URL(input).pathname;if(endpoint.endsWith('/version'))return new Response('v5.3.0');
+  if(endpoint.endsWith('/add')){addCalls++;return new Response(null,{status:403})}
+  if(endpoint.endsWith('/info'))return Response.json([]);throw Error(endpoint);
+ }});
+ assert.equal(result.reason,'provider_http_403');assert.equal(addCalls,1);
+ const reopened=openAcquisitionLedger(dbPath);try{
+  assert.equal(reopened.getAttempt(attemptId).status,'dispatch_rejected');
+  const alternate=reopened.reserve({requestId:1,candidate:{...candidate,guid:'another'},episodeIds:[1001],nowMs:86400201});assert.equal(alternate.state,'reserved');reopened.releaseReserved({attemptId:alternate.attemptId,nowMs:86400202});
+  const same=reopened.reserve({requestId:1,candidate,episodeIds:[1001],nowMs:86400203});assert.equal(same.state,'reserved');assert.notEqual(same.attemptId,attemptId);
+  let accepted=false;
+  const retry=await submitStoppedCandidate({...options,ledger:reopened,attemptId:same.attemptId,nowMs:86400204,fetchImpl:async input=>{
+   const endpoint=new URL(input).pathname;if(endpoint.endsWith('/version'))return new Response('v5.3.0');if(endpoint.endsWith('/add')){addCalls++;accepted=true;return new Response('Ok.');}
+   if(endpoint.endsWith('/info'))return Response.json(accepted?[torrent]:[]);if(endpoint.endsWith('/properties'))return Response.json({save_path:savePath,download_path:''});if(endpoint.endsWith('/files'))return Response.json(files);throw Error(endpoint);
+  }});assert.equal(retry.state,'stopped_observed',JSON.stringify(retry));assert.equal(addCalls,2);
+ }finally{reopened.close()}
+}));
+
 test('a paused real add owns its attempt until observed; recovery never saves a premature hold', async () =>
   withAttempt(async ({ ledger, attemptId, dbPath }) => {
     let enterAdd, finishAdd, added = false, addCalls = 0, starts = 0;

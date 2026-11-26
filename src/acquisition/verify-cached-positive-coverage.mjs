@@ -8,7 +8,8 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // that a previously imported file still exists after a stopped-service reset.
 export async function verifyCachedPositiveCoverage({ request, cached,
   readShoko, readPublic, cache = new Map(), now = Date.now,
-  readRevision = () => '', ownedEpisodeIds = [], maxChecks = 16, timeoutMs = 5_000 } = {}) {
+  readRevision = () => '', readWitnessVersion, isWitnessCurrent,
+  ownedEpisodeIds = [], maxChecks = 16, timeoutMs = 5_000 } = {}) {
   if (!validId(request?.anidbId) ||
       !['series', 'movie'].includes(request.kind) ||
       !Array.isArray(request.episodeIds) ||
@@ -25,6 +26,8 @@ export async function verifyCachedPositiveCoverage({ request, cached,
       typeof readShoko !== 'function' || typeof readPublic !== 'function' ||
       !(cache instanceof Map) || typeof now !== 'function' ||
       typeof readRevision !== 'function' || !Number.isInteger(maxChecks) ||
+      ((readWitnessVersion !== undefined || isWitnessCurrent !== undefined) &&
+        (typeof readWitnessVersion !== 'function' || typeof isWitnessCurrent !== 'function')) ||
       !Array.isArray(ownedEpisodeIds) || ownedEpisodeIds.some(id => !request.episodeIds.includes(id)) ||
       maxChecks < 1 || maxChecks > 64 || !Number.isInteger(timeoutMs) ||
       timeoutMs < 1 || timeoutMs > 10_000) {
@@ -51,11 +54,16 @@ export async function verifyCachedPositiveCoverage({ request, cached,
     const target = targetFor(id), saved = cache.get(keyFor(id));
     let revision;
     try { revision = readRevision(target); } catch { uncertain.add(id); continue; }
-    if (saved && saved.until > now() && saved.revision === revision) {
+    let witnessStale = false;
+    if (saved?.state === 'available' && isWitnessCurrent) {
+      try { witnessStale = !isWitnessCurrent({proof:saved.proof,version:saved.witnessVersion}); }
+      catch { witnessStale = true; }
+    }
+    if (saved && saved.until > now() && saved.revision === revision && !witnessStale) {
       sweep.visited.set(id,revision);
       if (saved.state === 'available') confirmed.add(id);
       else if (saved.state !== 'absent') uncertain.add(id);
-    } else if(expired||sweep.visited.has(id)&&sweep.visited.get(id)===revision){
+    } else if(!witnessStale && (expired||sweep.visited.has(id)&&sweep.visited.get(id)===revision)){
       // An expired result cannot prove availability or absence. It has still
       // been observed this pass, so protect it without restarting the sweep.
       uncertain.add(id);
@@ -72,15 +80,21 @@ export async function verifyCachedPositiveCoverage({ request, cached,
     while (next < selected.length) {
       const { id, target, revision } = selected[next++];
       const controller = new AbortController();
+      let proof, witnessVersion;
       let timer;
       const observe = async () => {
+        if (readWitnessVersion) witnessVersion = readWitnessVersion();
         const shoko = await readShoko({ ...target, signal: controller.signal });
         if (controller.signal.aborted) return 'uncertain';
         if (shoko?.state === 'not_imported' || shoko?.state === 'ok' &&
             shoko.complete === true && Array.isArray(shoko.files) && !shoko.files.length) return 'absent';
-        if (shoko?.state !== 'ok' || shoko.complete !== true ||
+        if (shoko?.state !== 'ok' || typeof shoko.complete !== 'boolean' ||
             !Array.isArray(shoko.files) || !shoko.files.length) return 'uncertain';
         const result = await readPublic(target, shoko);
+        if (result?.state === 'available' && isWitnessCurrent) {
+          proof = result.proof;
+          if (!isWitnessCurrent({proof,version:witnessVersion})) return 'uncertain';
+        }
         return result?.state === 'available' ? 'available' : 'uncertain';
       };
       let state;
@@ -90,18 +104,33 @@ export async function verifyCachedPositiveCoverage({ request, cached,
             controller.abort(); resolve('uncertain');
           }, timeoutMs); })]);
         if (readRevision(target) !== revision) state = 'uncertain';
+        if (state === 'available' && isWitnessCurrent &&
+            !isWitnessCurrent({proof,version:witnessVersion})) state = 'uncertain';
       } catch { state = 'uncertain'; }
       finally { clearTimeout(timer); }
       sweep.visited.set(id,revision);
       cache.delete(keyFor(id));
       cache.set(keyFor(id), { state, revision, checkedMs: now(), until: now() +
-        (state === 'available' ? 300_000 : state === 'absent' ? 10_000 : 5_000) });
+        (state === 'available' ? 300_000 : state === 'absent' ? 10_000 : 5_000),
+        ...(state==='available' && isWitnessCurrent ? {proof,witnessVersion} : {}) });
       while (cache.size > 2_048) cache.delete(cache.keys().next().value);
       if (state === 'available') confirmed.add(id);
       else if (state !== 'absent') uncertain.add(id);
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, selected.length) }, () => worker()));
+  // A later concurrent read can withdraw an earlier worker's witness (or an
+  // initial cache hit). Fence the complete result synchronously before it can
+  // become durable request-completion evidence.
+  for (const id of confirmed) {
+    const saved = cache.get(keyFor(id));
+    let current = false;
+    try {
+      current = saved?.state === 'available' && saved.revision === readRevision(targetFor(id)) &&
+        (!isWitnessCurrent || isWitnessCurrent({proof:saved.proof,version:saved.witnessVersion}));
+    } catch { /* Source changes remain uncertainty, never absence. */ }
+    if (!current) { confirmed.delete(id); uncertain.add(id); }
+  }
   if(!deferred.size)sweeps.delete(scope);
   const availableEpisodeIds = request.episodeIds.filter(id => confirmed.has(id));
   return { verifiedTargets: availableEpisodeIds.length,

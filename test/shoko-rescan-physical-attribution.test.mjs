@@ -153,3 +153,27 @@ for(const sourceLookup of ['empty','stale-location']) for (const prior of [null,
     }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
   });
 }
+
+for(const publishedPublic of [true,false]) test('recovery proves its journalled version among public copies after reopen: '+publishedPublic,async()=>{
+ const x=await fixture();let ledger=x.rescan;
+ try{
+ const video=x.files[0],dest=path.join(x.root,'Anime',path.basename(video.name)),other=path.join(x.root,'Anime','old.mkv');
+ await mkdir(path.dirname(dest));await rename(path.join(x.root,'original.mkv'),dest);await writeFile(other,Buffer.alloc(video.size,2));
+ ledger.close();ledger=openShokoRescanLedger(x.dbPath);
+ const item=ledger.listDue({nowMs:1000000})[0];item.manifest.files=[item.manifest.files[0]];
+ const source='/pure/Anime/'+path.basename(video.name);
+ const {observeKnownCardAvailability}=await import('../src/availability/known-card-availability.mjs');
+ const files=[{fileId:82,sourcePaths:['/pure/Anime/old.mkv']},{fileId:81,sourcePaths:[source]}].map(file=>({...file,anidbId:42,anidbFileId:file.fileId,episodeIds:[1001],coverage:[{episodeId:1001,start:0,end:100}],size:video.size}));
+ const part=remote=>({cardType:'episode',itemGuid:'tv.plex.agents.custom.shoko://episode/e555',showGuid:'tv.plex.agents.custom.shoko://show/99',libraryId:102,size:video.size,plexPath:remote});
+ const options={item,ledger,importRoot:path.join(x.root,'Import'),shokoMount:{appRoot:'/pure',localRoot:x.root},nowMs:1000000,
+ readQueue:async()=>({state:'queue_idle_unverified'}),
+ readFile:async({sourcePath})=>sourcePath==='/'+path.basename(video.name)?[{ID:81,Size:video.size,Locations:[{AbsolutePath:source,IsAccessible:true}],SeriesIDs:[{SeriesID:{ID:4,AniDB:42},EpisodeIDs:[{AniDB:1001}]}]}]:[],
+ rescan:async()=>{throw Error('must not rescan linked file')},
+ verifyPlex:async target=>observeKnownCardAvailability({target:{...target,kind:'series'},shoko:{state:'ok',complete:true,shokoEpisodeId:555,shokoSeriesId:99,files},plex:{state:'ok',complete:true,parts:[part('/plex/Anime/old.mkv'),...(publishedPublic?[part('/plex/Anime/'+path.basename(video.name))]:[])]},publicLibraryIds:[102],shokoMount:{appRoot:'/pure',localRoot:x.root},plexMount:{appRoot:'/plex',localRoot:x.root}})};
+ const result=await processShokoRescan(options);
+ assert.equal(result.state,publishedPublic?'linked':'awaiting_plex');
+ ledger.close();ledger=openShokoRescanLedger(x.dbPath);
+ assert.equal(ledger.getAttemptStatus(x.attemptId),publishedPublic?'done':'pending');
+ if(!publishedPublic){assert.equal((await processShokoRescan({...options,ledger,nowMs:1060000})).state,'awaiting_plex');}
+ }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
+});

@@ -41,6 +41,16 @@ export function createRequestKeyStore({ storage, createKey } = {}) {
       storage.setItem(name, key);
       return key;
     },
-    saved(scope) { storage.removeItem(slot(scope)); },
+    saved(scope, requestKey) {
+      const name = slot(scope);
+      if (requestKey === undefined || storage.getItem(name) === requestKey) storage.removeItem(name);
+    },
+    rejected(scope, result, requestKey) {
+      // A lost acknowledgement is ambiguous. Only the server's definitive
+      // cancellation response permits another command identity.
+      const name = slot(scope);
+      if (result?.reason === 'request_cancelled' &&
+          (requestKey === undefined || storage.getItem(name) === requestKey)) storage.removeItem(name);
+    },
   };
 }

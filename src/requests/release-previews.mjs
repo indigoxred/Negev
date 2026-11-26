@@ -19,14 +19,22 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
         drafts.delete(session.id);
       }
     }
+    // Retain a bounded receipt cache for retries, independently of live drafts.
+    const receipts = [...sessions].filter(([, session]) => session.committed && !session.pending && !session.inspections);
+    for (const [key, session] of receipts.slice(0, Math.max(0, receipts.length - 100))) {
+      sessions.delete(key);
+      drafts.delete(session.id);
+    }
   };
   const access = (token, userId) => {
     prune();
     const session = sessions.get(token);
     return session?.input.requesterId === userId && session.expiresMs > now() ? session.id : null;
   };
-  const atCapacity = userId => sessions.size >= 100 ||
-    [...sessions.values()].filter(s => s.input.requesterId === userId).length >= 10;
+  const atCapacity = userId => {
+    const active = [...sessions.values()].filter(s => !s.committed);
+    return active.length >= 100 || active.filter(s => s.input.requesterId === userId).length >= 10;
+  };
   const adapter = {
     ...requests,
     getRequest: id => drafts.get(id)?.request ?? requests.getRequest(id),

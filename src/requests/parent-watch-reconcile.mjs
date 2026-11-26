@@ -141,6 +141,11 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
       requestKey, intent: { state: 'ready', anidbId, kind: 'series',
         episodeIds: [], monitorFuture: true,
         ...(validTitle(detail.title) ? { title: detail.title } : {}) }, nowMs });
+    // Preserve one-watch ownership without blocking later installments. The
+    // unrecorded claim is revisited during the next ordinary parent sweep.
+    if (submitted?.reason === 'already_monitored_elsewhere') {
+      heldCandidates.push(anidbId); continue;
+    }
     if (!validId(submitted?.requestId)) return held('watch_submit_unavailable');
     const saved = parents.recordInstallment({ tvdbId: parent.tvdbId,
       anidbId, requestId: submitted.requestId, nowMs });

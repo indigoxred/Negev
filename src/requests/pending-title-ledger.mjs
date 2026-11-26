@@ -36,6 +36,11 @@ export function openPendingTitleLedger(dbPath) {
     if(!db.prepare('PRAGMA table_info(pending_title_intents)').all().some(c=>c.name==='release_mode')) {
       db.exec("ALTER TABLE pending_title_intents ADD COLUMN release_mode TEXT NOT NULL DEFAULT 'auto'");
     }
+    // Older workers retried this settled outcome forever. Preserve its history
+    // without exposing the other account's request or creating another watch.
+    db.exec(`UPDATE pending_title_intents SET state='complete',lease_until_ms=NULL,
+      version=version+1 WHERE state IN ('pending','resolving')
+      AND normal_request_id IS NULL AND reason='already_monitored_elsewhere'`);
     db.exec(`CREATE INDEX IF NOT EXISTS pending_title_active_owner
       ON pending_title_intents(requester_id,anidb_id,state,id)`);
   } catch (error) { db.close(); throw error; }

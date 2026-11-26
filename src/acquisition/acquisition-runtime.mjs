@@ -42,6 +42,7 @@ export function openAcquisitionRuntime(options = {}) {
     wakeRequest: (requestId) => {
       const request = providers.requests?.getRequest(requestId);
       if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);
+      pipeline.wakeRequest({ requestId, nowMs: now() });
       scheduler.wakeRequest(requestId);
     },
     wakeHydratedTitle: (anidbId) => {

@@ -357,6 +357,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           !Number.isSafeInteger(item?.anidbId) || item.anidbId < 1 ||
           typeof item.title !== 'string' || !item.title.trim() ||
           item.title.length > 250 ||
+          item.englishTitle != null &&
+            (typeof item.englishTitle !== 'string' || item.englishTitle.length > 500) ||
           typeof item.scheduledDate !== 'string' ||
           !/^\d{4}-\d{2}-\d{2}$/.test(item.scheduledDate) ||
           typeof item.episodeNumber !== 'string' ||
@@ -375,7 +377,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       checkedMs: schedule.checkedMs,
       items: schedule.items.filter((item) =>
         request.negevUser.adultAllowed || !item.adult).map((item) => ({ anidbId: item.anidbId,
-        title: item.title, scheduledDate: item.scheduledDate,
+        title: item.title, ...(item.englishTitle ? { englishTitle: item.englishTitle } : {}), scheduledDate: item.scheduledDate,
         episodeNumber: item.episodeNumber, adult: item.adult,
         chineseProduction: item.chineseProduction === true,
         libraryPresence: item.libraryPresence })) };

@@ -117,3 +117,10 @@ test('a failed scan still drains durable work and retries the scan sooner', asyn
   assert.equal(clock.delay(), 5 * 60_000);
   await scheduler.close();
 });
+
+test('busy import hints cannot replace mandatory drains following scans',async()=>{
+ const clock=fakeClock(),calls=[];
+ const scheduler=createShokoRecentScheduler({...clock,scan:async()=>{calls.push('scan');return {state:'caught_up'}},drainOne:async()=>{calls.push('drain');return {state:'acknowledged'}}});
+ scheduler.start();for(let i=0;i<15;i++){scheduler.requestSoon();await clock.fire();}
+ assert.ok(calls.filter(x=>x==='drain').length>=7,JSON.stringify(calls));await scheduler.close();
+});

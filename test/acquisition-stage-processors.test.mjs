@@ -48,7 +48,7 @@ const options = (calls) => ({
   now: () => 200,
 } );
 
-test('the live stage sends one targeted Shoko rescan without qBittorrent', async (t) => {
+for (const linked of [false,true]) test('live rescan stage '+(linked?'verifies the journalled public file':'sends one targeted Shoko rescan'), async (t) => {
   const calls = [];
   const root = await mkdtemp(path.join(tmpdir(), 'negev-rescan-stage-'));
   t.after(()=>rm(root,{recursive:true,force:true}));
@@ -71,7 +71,10 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
       markLinked: () => {}, markUnresolved: () => {},
       delayAttempt: () => {}, endAttempt: () => {},
     },
-    observePublicTarget: async () => ({ state: 'available' }),
+    observePublicTarget: async (target) => {
+      assert.deepEqual(target,{anidbId:42,episodeId:1001,fileId:81,kind:'movie'});
+      return {state:'available',fileId:81};
+    },
     now: () => 360_209,
     providerFetchImpl: async (url, request) => {
       if (url.pathname === '/api/v3/Queue') return Response.json({
@@ -82,7 +85,7 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
         const sourcePath = url.searchParams.get('path');
         assert.equal(sourcePath,
           '/pure/.negev-handoff/source/Negev/negev-7-aaaaaaaaaaaaaaaa/group/01.mkv');
-        return Response.json([{ ID: 81, Size: 1000, SeriesIDs: [],
+        return Response.json([{ ID: 81, Size: 1000, SeriesIDs: linked ? [{SeriesID:{ID:4,AniDB:42},EpisodeIDs:[{AniDB:1001}]}] : [],
           Locations: [{ AbsolutePath: sourcePath, IsAccessible: true }] }]);
       }
       if (url.pathname === '/api/v3/Episode/AniDB/1001') return Response.json({ID:1001,AnimeID:42});
@@ -99,8 +102,8 @@ test('the live stage sends one targeted Shoko rescan without qBittorrent', async
         dev:String(physical.dev),ino:String(physical.ino),mtimeNs:String(physical.mtimeNs) },
     ] },
   } });
-  assert.equal(result.state, 'rescan_requested');
-  assert.deepEqual(calls, ['rescan']);
+  assert.equal(result.state, linked ? 'linked' : 'rescan_requested');
+  assert.deepEqual(calls, linked ? ['request:1'] : ['rescan']);
 });
 
 test('Sonarr ownership blocks request search and a previously reserved start', async () => {

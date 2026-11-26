@@ -289,7 +289,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
   }
   for (const { episodeId, fileId } of recoveredEpisodes) {
     let publicResult;
-    try { publicResult = await verifyPlex({ requestId, anidbId, episodeId }); }
+    try { publicResult = await verifyPlex({ requestId, anidbId, episodeId, fileId }); }
     catch { publicResult = null; }
     if (publicResult?.state !== 'available' ||
         publicResult.fileId !== fileId) {

@@ -70,6 +70,10 @@ export function createShokoRecentScheduler({ scan, drainOne,
       if (running) { requested = true; return; }
       if (timer === undefined ||
           scheduledKind === 'scan' && scheduledDelay <= gapDelay) return;
+      // Preserve the first durable drain after every scan despite busy hints.
+      if (scheduledKind === 'drain' && drainsSinceScan === 0) {
+        requested = true; return;
+      }
       clearTimer(timer);
       timer = undefined;
       schedule('scan', gapDelay);

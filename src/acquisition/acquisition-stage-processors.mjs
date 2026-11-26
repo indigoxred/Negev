@@ -179,13 +179,13 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         rescan: ({ fileId }) => requestShokoFileRescan({
           baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId,
           fetchImpl: providerFetchImpl }),
-        verifyPlex: ({ requestId, anidbId, episodeId }) => {
+        verifyPlex: ({ requestId, anidbId, episodeId, fileId }) => {
           const request = requests.getRequest(requestId);
           if (request?.anidbId !== anidbId ||
               !['series', 'movie'].includes(request.kind)) {
             return { state: 'unknown' };
           }
-          return observePublicTarget({ anidbId, episodeId,
+          return observePublicTarget({ anidbId, episodeId, fileId,
             kind: request.kind });
         },
       });

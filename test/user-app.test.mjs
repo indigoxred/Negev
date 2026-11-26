@@ -86,7 +86,7 @@ test('a saved airing request is tracked for its requester without changing the A
       requests.set(requestId, { id: requestId, requesterId: 7, anidbId,
         kind: anidbId === 20 ? 'movie' : 'series',
         monitorFuture: anidbId === 12 });
-      return { state: 'held', reason: 'queued', requestId };
+      return { state: 'held', reason: 'queued', requestId, created: true };
     }, readRequest: (id) => requests.get(id) ?? null });
   try {
     const login = await app.inject({ method: 'POST', url: '/api/login',
