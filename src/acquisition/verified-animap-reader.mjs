@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readBoundedText, cancelResponseBody, fetchResponsesOrCancel } from '../http/bounded-response.mjs';
+import { readBoundedTexts, cancelResponseBody, fetchResponsesOrCancel } from '../http/bounded-response.mjs';
 
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
 const CHECKSUM_URL = `${MAP_URL}.sha256`;
@@ -26,9 +26,8 @@ export function createVerifiedAniMapReader({ fetchImpl = fetch, now = Date.now }
       await Promise.all([cancelResponseBody(mapResponse),cancelResponseBody(digestResponse)]);
       throw new Error('AniMap release unavailable');
     }
-    const [raw, checksum] = await Promise.all([
-      readBoundedText(mapResponse, 30_000_000),
-      readBoundedText(digestResponse, 256),
+    const [raw, checksum] = await readBoundedTexts([
+      [mapResponse, 30_000_000], [digestResponse, 256],
     ]);
     const expected = /^([0-9a-f]{64})\s+\*?animap\.json\s*$/i.exec(checksum)?.[1];
     if (!expected || createHash('sha256').update(raw).digest('hex') !==

@@ -38,7 +38,7 @@ export async function fetchResponsesOrCancel(requests) {
   }
 }
 
-async function consumeChunks(response, maxBytes, consume) {
+async function consumeChunks(response, maxBytes, consume, signal) {
   validate(response, maxBytes);
   const body = response.body;
   if (!body || typeof body[Symbol.asyncIterator] !== 'function' &&
@@ -50,10 +50,19 @@ async function consumeChunks(response, maxBytes, consume) {
   }
   const reader = typeof body.getReader === 'function' ? body.getReader() : null;
   const iterator = reader ?? body[Symbol.asyncIterator]();
+  let cancelled = false;
+  const stop = () => {
+    if (cancelled) return;
+    cancelled = true;
+    beginCleanup(() => reader ? reader.cancel() : iterator.return?.());
+  };
+  signal?.addEventListener('abort', stop, { once: true });
   let total = 0;
   try {
     for (;;) {
+      if (signal?.aborted) throw new Error('Response batch cancelled');
       const item = await (reader ? reader.read() : iterator.next());
+      if (signal?.aborted) throw new Error('Response batch cancelled');
       if (item.done) break;
       if (!(item.value instanceof Uint8Array)) throw new TypeError('Invalid response byte chunk');
       total += item.value.byteLength;
@@ -61,14 +70,15 @@ async function consumeChunks(response, maxBytes, consume) {
       consume(item.value);
     }
   } catch (error) {
-    beginCleanup(() => reader ? reader.cancel() : iterator.return?.());
+    stop();
     throw error;
   } finally {
+    signal?.removeEventListener('abort', stop);
     if (reader) reader.releaseLock();
   }
   return total;
 }
-export async function readBoundedText(response, maxBytes) {
+async function readText(response, maxBytes, signal) {
   validate(response, maxBytes);
   // Legacy isolated fetch fixtures supply text() without a native stream.
   if (!(response instanceof Response) && !response.body && typeof response.text === 'function') {
@@ -78,8 +88,24 @@ export async function readBoundedText(response, maxBytes) {
   }
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let text = '';
-  await consumeChunks(response, maxBytes, chunk => { text += decoder.decode(chunk, { stream: true }); });
+  await consumeChunks(response, maxBytes, chunk => { text += decoder.decode(chunk, { stream: true }); }, signal);
   return text + decoder.decode();
+}
+export function readBoundedText(response, maxBytes) {
+  return readText(response, maxBytes);
+}
+
+// Own the readers as well as the responses. A body already locked by a
+// sibling bounded read cannot be cancelled through response.body.cancel().
+export async function readBoundedTexts(entries) {
+  const controller = new AbortController();
+  try {
+    return await Promise.all(entries.map(([response, maxBytes]) =>
+      readText(response, maxBytes, controller.signal)));
+  } catch (error) {
+    controller.abort();
+    throw error;
+  }
 }
 export async function readBoundedBytes(response, maxBytes) {
   const chunks = [];

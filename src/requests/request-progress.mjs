@@ -1,3 +1,4 @@
+import { pendingRecognitionSql } from '../acquisition/recognition-release-sql.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequestCompletionReader } from './request-completion-history.mjs';
 
@@ -159,7 +160,7 @@ export function openRequestProgress(dbPath, { now = Date.now,
         SELECT 1 FROM requests r WHERE r.id=acquisition_request_checks.request_id
           AND r.status='held' AND r.cancelled_ms IS NULL) AND EXISTS (
         SELECT 1 FROM acquisition_attempts a WHERE a.request_id=acquisition_request_checks.request_id
-          AND a.status='dispatch_unknown'
+          AND a.status='dispatch_unknown' AND ${pendingRecognitionSql(db, 'a')}
           AND NOT EXISTS (SELECT 1 FROM acquisition_releases x WHERE x.attempt_id=a.id)
           AND NOT EXISTS (SELECT 1 FROM acquisition_retirements t WHERE t.attempt_id=a.id)
           AND NOT EXISTS (SELECT 1 FROM acquisition_rejections j WHERE j.attempt_id=a.id))`;

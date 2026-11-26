@@ -15,11 +15,12 @@ export function createRequestCompletionReader(db) {
       modern = db.prepare(`SELECT 1 FROM requests r
         JOIN acquisition_request_checks c ON c.request_id=r.id
         WHERE r.id=? AND (r.monitor_future=0 OR r.watch_closed=1)
-          AND ${currentRequestCompletionSql}`);
+          AND ${currentRequestCompletionSql}
+          AND (json_array_length(c.scan_targets_json)<=1 OR ${names.has('request_scope_policy_revision') ? 'c.request_scope_policy_revision' : '0'}>=2)`);
       return Boolean(modern.get(requestId));
     }
     if (!names.has('scan_scope')) return false;
-    legacy ??= db.prepare(`SELECT c.scan_scope,r.release_control,
+    legacy ??= db.prepare(`SELECT c.scan_scope,
         ${names.has('request_scope_policy_revision') ? 'c.request_scope_policy_revision' : '0'} AS scope_policy,
         ${currentRequestScopeSql} AS targets_json
       FROM requests r JOIN acquisition_request_checks c ON c.request_id=r.id
@@ -33,22 +34,10 @@ export function createRequestCompletionReader(db) {
     // a completion against a separately read, concurrently expanded request.
     const targets = JSON.parse(row.targets_json).map(([anidb_id, episode_id]) =>
       ({ anidb_id, episode_id }));
-    // Before the full-scope processor policy, a chosen subset could produce
-    // the same completion reason even though the claim hash covered all
-    // targets. Match the queue's conservative legacy-subset repair boundary.
-    if (row.scope_policy < 1) {
-      let control;
-      try { control = JSON.parse(row.release_control); } catch { /* No retained choice. */ }
-      const selected = control?.selection?.preview?.episodeIds;
-      const episodeIds = new Set(targets.map(target => target.episode_id));
-      if (['chosen', 'consumed'].includes(control?.phase) &&
-          Array.isArray(selected) && selected.length > 0 &&
-          selected.every(id => Number.isSafeInteger(id) && id > 0) &&
-          new Set(selected).size === selected.length &&
-          selected.length < episodeIds.size && selected.every(id => episodeIds.has(id))) {
-        return false;
-      }
-    }
+    // A legacy full-target claim hash does not prove what the old processor
+    // checked. Revision 1 can be only an upgrade stamp, and choices can have
+    // changed since the check. Only a corrected worker earns revision 2.
+    if (targets.length > 1 && row.scope_policy < 2) return false;
     return targets.length > 0 && createHash('sha256')
       .update(JSON.stringify(targets)).digest('hex') === row.scan_scope;
   };

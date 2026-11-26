@@ -1,3 +1,4 @@
+import { pendingRecognitionSql } from './recognition-release-sql.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { preferredWaitDuration } from './preferred-release.mjs';
@@ -240,46 +241,19 @@ export function openAcquisitionRequestQueue(dbPath,
         request_scope_policy_revision INTEGER NOT NULL DEFAULT 0
         CHECK(request_scope_policy_revision>=0)`);
     }
-    // Old chosen-release checks could mistake a selected subset's public
-    // coverage for the entire request. Revisit only retained, exact subset
-    // evidence once; a fresh worker must establish full-request coverage.
-    // Never release an active claim or override cancellation. A suspension
-    // still blocks acquisition while retaining the repaired cache for resume.
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const legacySubsetChecks = db.prepare(`SELECT c.request_id AS requestId,
-          r.release_control AS releaseControl
-        FROM acquisition_request_checks c JOIN requests r ON r.id=c.request_id
-        WHERE c.request_scope_policy_revision=0 AND c.state='held'
-          AND c.reason='request_fully_available' AND r.status='held'
-          AND r.cancelled_ms IS NULL`).all();
-      const scopeTargets = db.prepare(`SELECT t.episode_id AS episodeId
-        FROM request_targets rt JOIN targets t ON t.id=rt.target_id
-        JOIN requests r ON r.id=rt.request_id
-        WHERE rt.request_id=? AND t.anidb_id=r.anidb_id`);
-      const revisitSubset = db.prepare(`UPDATE acquisition_request_checks SET
-          reason='request_scope_recheck',next_due_ms=0,candidate_offset=0,
-          candidate_fingerprint=NULL,decision_ms=NULL,scan_started_ms=NULL,
-          scan_scope=NULL,scan_target_count=NULL
-        WHERE request_id=? AND request_scope_policy_revision=0
-          AND state='held' AND reason='request_fully_available'`);
-      for (const row of legacySubsetChecks) {
-        let control;
-        try { control = JSON.parse(row.releaseControl); } catch { continue; }
-        const selected = control?.selection?.preview?.episodeIds;
-        if (!['chosen', 'consumed'].includes(control?.phase) ||
-            !Array.isArray(selected) || selected.length === 0 ||
-            selected.some(id => !validId(id)) ||
-            new Set(selected).size !== selected.length) continue;
-        const targets = new Set(scopeTargets.all(row.requestId).map(row => row.episodeId));
-        if (selected.length < targets.size && selected.every(id => targets.has(id))) {
-          revisitSubset.run(row.requestId);
-        }
-      }
-      db.exec(`UPDATE acquisition_request_checks SET request_scope_policy_revision=1
-        WHERE request_scope_policy_revision=0`);
-      db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+    // Revision 1 was stamped by migration even when a legacy worker had
+    // checked only a selected subset. A later member choice may have erased
+    // that subset, so matching claim scope alone cannot prove full coverage.
+    // Recheck old multi-target completion once; only a new full-scope worker
+    // claim earns revision 2. Keep choices, claims and suspensions untouched.
+    db.exec(`UPDATE acquisition_request_checks SET
+        reason='request_scope_recheck',next_due_ms=0,candidate_offset=0,
+        candidate_fingerprint=NULL,decision_ms=NULL,scan_started_ms=NULL,
+        scan_scope=NULL,scan_target_count=NULL,scan_targets_json=NULL
+      WHERE request_scope_policy_revision<2 AND state='held'
+        AND reason='request_fully_available' AND request_id IN (
+          SELECT r.id FROM requests r WHERE r.status='held' AND r.cancelled_ms IS NULL
+            AND (SELECT COUNT(*) FROM request_targets rt WHERE rt.request_id=r.id)>1)`);
     // Corrected verification must reach old settled misses before their hourly
     // retry. Revisit only saved candidate evidence for the same target scope;
     // this changes scheduling, never acquisition eligibility or a choice.
@@ -359,7 +333,7 @@ export function openAcquisitionRequestQueue(dbPath,
             WHERE state IS NOT NULL AND request_id IN (
               SELECT r.id FROM requests r WHERE r.status='held' AND r.cancelled_ms IS NULL
                 AND EXISTS (SELECT 1 FROM acquisition_attempts a WHERE a.request_id=r.id
-                  AND a.status='dispatch_unknown' ${ended}))`);
+                  AND a.status='dispatch_unknown' ${ended} AND ${pendingRecognitionSql(db, 'a')}))`);
         }
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -402,8 +376,8 @@ export function openAcquisitionRequestQueue(dbPath,
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
   const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,scan_targets_json,checked_release_revision,coverage_policy_revision,request_scope_policy_revision,verification_policy_revision)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1,2) ON CONFLICT(request_id) DO UPDATE SET
-    pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=1,verification_policy_revision=2,
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,2,2) ON CONFLICT(request_id) DO UPDATE SET
+    pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=2,verification_policy_revision=2,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
       THEN acquisition_request_checks.reason ELSE NULL END,
@@ -500,7 +474,7 @@ export function openAcquisitionRequestQueue(dbPath,
         LEFT JOIN acquisition_retirements retired ON retired.attempt_id=a.id
         LEFT JOIN acquisition_releases released ON released.attempt_id=a.id
         WHERE a.request_id=c.request_id AND retired.attempt_id IS NULL
-          AND released.attempt_id IS NULL
+          AND released.attempt_id IS NULL AND ${pendingRecognitionSql(db, 'a')}
           AND (a.status<>'torrent_observed' OR a.torrent_hash IS NULL OR
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;
