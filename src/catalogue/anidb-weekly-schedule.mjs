@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const SOURCE = 'https://animap.id/api/anidb/schedule';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -81,6 +81,7 @@ export function createAniDbWeeklySchedule({ fetchImpl = fetch,
         const response = await fetchImpl(SOURCE, { method: 'GET',
           redirect: 'manual', headers: { Accept: 'application/json' },
           signal: AbortSignal.timeout(timeoutMs) });
+        if (response.status !== 200) await cancelResponseBody(response);
         if (response.status !== 200) throw new TypeError('Schedule unavailable');
         cached = parse(await readBoundedJson(response, 512_000));
         checkedMs = time;

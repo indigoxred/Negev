@@ -1,3 +1,4 @@
+import { cancelResponseBody } from '../http/bounded-response.mjs';
 import { stagingSavePath } from './staging-save-path.mjs';
 import { startStoppedCandidate } from './start-stopped-candidate.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
@@ -57,11 +58,12 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
         id: observed.passive.map((file) => String(file.index)).join('|'),
         priority: '0' });
       try {
-        await fetchImpl(new URL('/api/v2/torrents/filePrio', qbittorrent.baseUrl), {
+        const receipt = await fetchImpl(new URL('/api/v2/torrents/filePrio', qbittorrent.baseUrl), {
           method: 'POST', headers: { Cookie: qbittorrentSessionCookie(qbittorrent.sessionId),
             'Content-Type': 'application/x-www-form-urlencoded' },
           body, redirect: 'manual', signal: AbortSignal.timeout(10_000),
         });
+        await cancelResponseBody(receipt);
       } catch { /* Re-observe the exact stopped torrent after an uncertain response. */ }
       observed = await observeStoppedManifest({
         baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,

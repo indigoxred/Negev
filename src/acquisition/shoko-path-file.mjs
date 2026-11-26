@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 export async function readShokoPathFile({ baseUrl, apiKey, sourcePath,
   fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
@@ -26,6 +26,7 @@ export async function readShokoPathFile({ baseUrl, apiKey, sourcePath,
       redirect: 'manual', headers: {
         Authorization: `Bearer ${apiKey}`, Accept: 'application/json',
       }, signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const items = await readBoundedJson(response, 2_000_000);
     if (!Array.isArray(items) || items.length > 100) {

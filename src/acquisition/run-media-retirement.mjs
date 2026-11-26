@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstat, readdir } from 'node:fs/promises';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 import { stagingSavePath, validStagingSaveRoot } from './staging-save-path.mjs';
@@ -62,6 +62,7 @@ export async function runMediaRetirement({ ledger, attemptId, baseUrl,
         Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if (response.status === 403 && renewQbittorrent && !renewed) {
+      await cancelResponseBody(response);
       renewed = true;
       const replacement = await renewQbittorrent(activeSessionId);
       if (replacement?.state !== 'authenticated' ||
@@ -76,6 +77,7 @@ export async function runMediaRetirement({ ledger, attemptId, baseUrl,
           Accept: 'application/json' },
         redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     }
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) throw Error('qBittorrent read failed');
     return readBoundedJson(response, 100_000);
   };
@@ -136,6 +138,7 @@ export async function runMediaRetirement({ ledger, attemptId, baseUrl,
         body: new URLSearchParams({ hashes: hash, deleteFiles: 'true' }),
         redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
       });
+      await cancelResponseBody(response);
       if (response.status === 403) {
         const reset = ledger.resetMediaDeleteAfterRejection({
           attemptId, hash, nowMs });

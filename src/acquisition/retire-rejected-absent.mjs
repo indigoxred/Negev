@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -39,6 +39,7 @@ export async function retireRejectedAbsent({ ledger, attemptId, baseUrl, session
     try {
       const response = await fetchImpl(url, { method: 'GET', headers,
         redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       torrents = await readBoundedJson(response, 100_000);
     } catch { return held('provider_unavailable'); }

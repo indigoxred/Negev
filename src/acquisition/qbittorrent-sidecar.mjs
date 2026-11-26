@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -25,6 +25,7 @@ export async function readQbittorrentSidecarTorrent({ baseUrl, sessionId,
       headers: { Cookie: qbittorrentSessionCookie(sessionId),
         Accept: 'application/json' },
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return null;
     const torrents = await readBoundedJson(response, 100_000);
     return Array.isArray(torrents) && torrents.length === 1 &&

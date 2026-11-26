@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 // Display merges exact AniDB IDs from the Shoko cache and archive. A local
 // title/relation wins on duplicate IDs. Acquisition uses its separate guard.
@@ -106,6 +106,7 @@ export async function readAniDbRelatedTitles({ anidbId, titleForId,
       method: 'GET', redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const data = await readBoundedJson(response, 64_000);
     if (data?.anidb_id !== anidbId || !Array.isArray(data.relatedanime) ||

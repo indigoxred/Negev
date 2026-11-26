@@ -1,3 +1,4 @@
+import { cancelResponseBody } from '../http/bounded-response.mjs';
 export const validPosterUid = (value) => typeof value === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 
@@ -16,17 +17,21 @@ export async function readShokoPoster({ baseUrl, apiKey, uid,
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'image/jpeg,image/png,image/webp' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const type = response.headers?.get('content-type')?.split(';')[0]?.trim().toLowerCase();
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(type)) {
+      await cancelResponseBody(response);
       return { state: 'unavailable' };
     }
     const maxBytes = 2_000_000;
     const declared = response.headers?.get('content-length');
     if (declared && (!/^\d+$/.test(declared) || Number(declared) > maxBytes)) {
+      await cancelResponseBody(response);
       return { state: 'unavailable' };
     }
     if (!response.body || typeof response.body[Symbol.asyncIterator] !== 'function') {
+      await cancelResponseBody(response);
       return { state: 'unavailable' };
     }
     const chunks = [];

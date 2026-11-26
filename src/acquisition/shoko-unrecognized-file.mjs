@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 // Shoko's explicit Unrecognized classification is checked only after the
 // exact path has remained unmatched across two quiet import observations.
@@ -26,6 +26,7 @@ export async function readShokoUnrecognizedFile({ baseUrl, apiKey, fileId,
       url.searchParams.set('page',String(number));
       const response=await fetchImpl(url,{method:'GET',redirect:'manual',headers:{
         Authorization:`Bearer ${apiKey}`,Accept:'application/json'},signal});
+      if (response.status !== 200) await cancelResponseBody(response);
       if(response.status!==200)return {state:'unavailable'};
       const page=await readBoundedJson(response,2000000);
       if(!Number.isSafeInteger(page?.Total)||page.Total<0||page.Total>1000||

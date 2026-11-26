@@ -1,5 +1,5 @@
 import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluateCompletion } from './evaluate-completion.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
@@ -41,6 +41,7 @@ export async function observeTorrentCompletion({
       throw error;
     }
     if (response.status !== 200) {
+      await cancelResponseBody(response);
       providerFailure = response.status === 403 ? 'provider_http_403' : 'provider_http_error';
       throw new Error('qBittorrent read failed');
     }

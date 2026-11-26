@@ -1,5 +1,5 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const seasons = new Map([['WINTER', 'Winter'], ['SPRING', 'Spring'],
   ['SUMMER', 'Summer'], ['FALL', 'Fall']]);
@@ -22,6 +22,7 @@ export function createAniDbMapFactsReader({ fetchImpl = fetch, now = Date.now,
         method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return withCatalogueRetry({ state: 'unavailable' }, response);
       const data = await readBoundedJson(response, 128_000);
       if (!Array.isArray(data?.sources) || data.sources.length > 100 ||

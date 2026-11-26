@@ -337,6 +337,33 @@ export function openAcquisitionRequestQueue(dbPath,
       repairUnscheduledClosedMisses(db);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
+    // Recovery admission is independent of a mutable search result. Older
+    // ordinary passes could hide a dispatch_unknown behind an empty search
+    // or completion reason. Restore only durable unconfirmed dispatches, not
+    // unsent reservations or live unfinished queue claims.
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some(column => column.name === 'recovery_hold')) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN recovery_hold
+          INTEGER NOT NULL DEFAULT 0 CHECK(recovery_hold IN (0,1));
+          UPDATE acquisition_request_checks SET recovery_hold=1
+            WHERE state='held' AND reason='interrupted_attempt_present'`);
+        const hasTable = name => Boolean(db.prepare(
+          "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+        if (hasTable('acquisition_attempts')) {
+          const ended = ['acquisition_retirements','acquisition_releases','acquisition_rejections']
+            .filter(hasTable).map(table => `AND NOT EXISTS
+              (SELECT 1 FROM ${table} ended WHERE ended.attempt_id=a.id)`).join(' ');
+          db.exec(`UPDATE acquisition_request_checks SET recovery_hold=1
+            WHERE state IS NOT NULL AND request_id IN (
+              SELECT r.id FROM requests r WHERE r.status='held' AND r.cancelled_ms IS NULL
+                AND EXISTS (SELECT 1 FROM acquisition_attempts a WHERE a.request_id=r.id
+                  AND a.status='dispatch_unknown' ${ended}))`);
+        }
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
   } catch (error) { db.close(); throw error; }
   const cursor = db.prepare('SELECT after_id AS afterId,pass FROM acquisition_request_cursor WHERE id=1');
@@ -358,7 +385,7 @@ export function openAcquisitionRequestQueue(dbPath,
     LEFT JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.id>? AND r.status='held' AND r.cancelled_ms IS NULL AND
-      s.request_id IS NULL AND
+      s.request_id IS NULL AND COALESCE(c.recovery_hold,0)=0 AND
       ${cohortFilter}
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
@@ -412,7 +439,8 @@ export function openAcquisitionRequestQueue(dbPath,
     scan_started_ms=?,
     candidate_offset=COALESCE(?,candidate_offset),
       candidate_fingerprint=COALESCE(?,candidate_fingerprint),
-      decision_ms=COALESCE(decision_ms,?)
+      decision_ms=COALESCE(decision_ms,?),
+      recovery_hold=CASE WHEN ?='interrupted_attempt_present' THEN 1 ELSE recovery_hold END
     WHERE request_id=? AND pass=? AND state IS NULL`);
   const result = db.prepare(`SELECT request_id AS requestId,pass,state,reason,
     attempt_id AS attemptId,candidate_offset AS candidateOffset,
@@ -443,7 +471,7 @@ export function openAcquisitionRequestQueue(dbPath,
     FROM requests r JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.status='held' AND r.cancelled_ms IS NULL
-      AND s.request_id IS NULL AND ${cohortFilter}
+      AND s.request_id IS NULL AND c.recovery_hold=0 AND ${cohortFilter}
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       c.state IS NOT NULL AND (c.next_due_ms IS NOT NULL OR ${changedRequestScopeSql}) AND
       NOT ((r.monitor_future=0 OR r.watch_closed=1) AND ${currentRequestCompletionSql})
@@ -457,7 +485,7 @@ export function openAcquisitionRequestQueue(dbPath,
         AND r.status='held' AND r.cancelled_ms IS NULL)`);
   const observedInterruptedSql = `SELECT c.request_id AS requestId
     FROM acquisition_request_checks c
-    WHERE c.state='held' AND ((c.reason='interrupted_attempt_present'
+    WHERE c.state IS NOT NULL AND (c.recovery_hold=1 OR (c.state='held' AND c.reason='interrupted_attempt_present'
       AND c.next_due_ms IS NULL) OR
       (c.reason='reconciled_observed_attempts' AND c.next_due_ms<=?))
       AND EXISTS (SELECT 1 FROM requests r
@@ -477,10 +505,10 @@ export function openAcquisitionRequestQueue(dbPath,
             NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
               WHERE t.attempt_id=a.id AND t.active=1)))`;
   const resumeObservedSql = `UPDATE acquisition_request_checks
-    SET reason='reconciled_observed_attempts',
-      next_due_ms=COALESCE(next_due_ms,?)
-    WHERE request_id=? AND state='held'
-      AND ((reason='interrupted_attempt_present' AND next_due_ms IS NULL)
+    SET state='held',reason='reconciled_observed_attempts',recovery_hold=0,
+      next_due_ms=CASE WHEN recovery_hold=1 THEN ? ELSE COALESCE(next_due_ms,?) END
+    WHERE request_id=? AND state IS NOT NULL
+      AND (recovery_hold=1 OR (reason='interrupted_attempt_present' AND next_due_ms IS NULL)
         OR (reason='reconciled_observed_attempts' AND next_due_ms<=?))`;
   let observedInterrupted;
   let resumeObserved;
@@ -664,7 +692,7 @@ export function openAcquisitionRequestQueue(dbPath,
       resumeObserved ??= db.prepare(resumeObservedSql);
       return transact(() => observedInterrupted.all(nowMs, ...(allowedAnidbIds ?? []))
         .map((row) => row.requestId)
-        .filter((id) => resumeObserved.run(nowMs, id, nowMs).changes === 1));
+        .filter((id) => resumeObserved.run(nowMs, nowMs, id, nowMs).changes === 1));
     },
     claimNext({ nowMs = Date.now(), priorityRequestId = null } = {}) {
       if (!validTime(nowMs) ||
@@ -808,7 +836,7 @@ export function openAcquisitionRequestQueue(dbPath,
         ? checkedMs : null;
       return save.run(state, reason, attemptId, checkedMs, nextDueMs,
         emptySinceMs, metadataSinceMs, scanStartedMs,
-        nextCandidateOffset, nextCandidateFingerprint, decisionMs,
+        nextCandidateOffset, nextCandidateFingerprint, decisionMs, reason,
         requestId, pass).changes === 1
         ? { state: 'recorded' } : held('stale_claim');
     },

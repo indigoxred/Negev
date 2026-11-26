@@ -1,6 +1,6 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { DatabaseSync } from 'node:sqlite';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const REFRESH_MS = 12 * 60 * 60_000;
 const STALE_MS = 7 * 24 * 60 * 60_000;
@@ -117,6 +117,7 @@ export function openAniListRankingCache({ dbPath, fetchImpl = fetch,
           body: JSON.stringify({ query: query(scope) }),
           signal: AbortSignal.timeout(timeoutMs),
         });
+        if (response.status !== 200) await cancelResponseBody(response);
         if (response.status !== 200) throw withCatalogueRetry(new Error('AniList unavailable'), response);
         const value = decode(await readBoundedJson(response, 100_000));
         const checkedMs = now();

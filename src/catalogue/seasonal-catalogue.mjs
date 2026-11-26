@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const MAP_URL = 'https://animap.id/api/v1/map';
 const ANIDB_URL = 'https://animap.id/api/anidb/';
@@ -31,6 +31,7 @@ async function parseMap(response) {
   const declared = response.headers?.get?.('content-length');
   if (declared !== null && declared !== undefined &&
       (!/^\d+$/.test(declared) || Number(declared) > MAX_MAP_BYTES)) {
+    await cancelResponseBody(response);
     throw new TypeError('Seasonal map too large');
   }
   const groups = new Map();
@@ -233,6 +234,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
         attemptedMs = time;
         pendingMap = (async () => {
           const response = await fetchImpl(MAP_URL, options());
+          if (response.status !== 200) await cancelResponseBody(response);
           if (response.status !== 200) throw new Error('Seasonal map unavailable');
           const parsed = await parseMap(response);
           cached = parsed;
@@ -256,6 +258,7 @@ export function createSeasonalCatalogue({ fetchImpl = fetch, now = Date.now,
     try {
       const response = await fetchImpl(`${ANIDB_URL}${id}`,
         options(detailTimeoutMs));
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return { kind: 'unknown' };
       const data = await readBoundedJson(response, MAX_DETAIL_BYTES);
       if (data?.anidb_id !== id || typeof data.restricted !== 'boolean') {

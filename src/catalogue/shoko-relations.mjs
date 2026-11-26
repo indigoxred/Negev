@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const TYPES = new Set(['Other', 'SameSetting', 'AlternativeSetting',
@@ -24,6 +24,7 @@ export async function readAniDbRelations({ baseUrl, apiKey, anidbId,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status === 404) return { state: 'detail_pending', anidbId };
     if (response.status !== 200) return { state: 'unavailable' };
     relations = await readBoundedJson(response, 250_000);

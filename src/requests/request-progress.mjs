@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { currentRequestCompletionSql } from './request-check-scope.mjs';
+import { createRequestCompletionReader } from './request-completion-history.mjs';
 
 // Read-only journal summary for a request page. It never infers Plex playback
 // from a torrent, a Shoko import intent, or a private handoff record.
@@ -63,8 +63,8 @@ export function openRequestProgress(dbPath, { now = Date.now,
     WHERE type='table' AND name='acquisition_request_suspensions'`);
   const hasCompletionChecks = db.prepare(`SELECT 1 FROM sqlite_master
     WHERE type='table' AND name='${completionTable}'`);
-  let oneTimeCompletion;
   let interruptedRequest;
+  let recoveryHoldColumn = false;
   let scheduledRetry;
   let inconclusiveFileCheck;
   let transferCheck;
@@ -148,27 +148,27 @@ export function openRequestProgress(dbPath, { now = Date.now,
     return Boolean(scheduledRetry.get(requestId));
   };
   const interrupted = (requestId) => {
-    if (!interruptedRequest) {
+    if (!interruptedRequest || !recoveryHoldColumn) {
       if (!hasAcquisitionChecks.get()) return false;
+      recoveryHoldColumn = db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+        .some(column => column.name === 'recovery_hold');
+      // Disabled acquisition may never open/migrate its queue. Derive the
+      // old masked warning read-only from a durable unknown dispatch; do not
+      // mistake a live unfinished claim or unsent reservation for recovery.
+      const recovery = recoveryHoldColumn ? 'recovery_hold=1' : `state IS NOT NULL AND EXISTS (
+        SELECT 1 FROM requests r WHERE r.id=acquisition_request_checks.request_id
+          AND r.status='held' AND r.cancelled_ms IS NULL) AND EXISTS (
+        SELECT 1 FROM acquisition_attempts a WHERE a.request_id=acquisition_request_checks.request_id
+          AND a.status='dispatch_unknown'
+          AND NOT EXISTS (SELECT 1 FROM acquisition_releases x WHERE x.attempt_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM acquisition_retirements t WHERE t.attempt_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM acquisition_rejections j WHERE j.attempt_id=a.id))`;
       interruptedRequest = db.prepare(`SELECT 1 FROM acquisition_request_checks
-        WHERE request_id=? AND state='held'
-          AND reason='interrupted_attempt_present'`);
+        WHERE request_id=? AND ((state='held' AND reason='interrupted_attempt_present') OR (${recovery}))`);
     }
     return Boolean(interruptedRequest.get(requestId));
   };
-  const completedOnce = (requestId) => {
-    // Acquisition is opt-in and its queue may open after this reader.
-    if (!oneTimeCompletion) {
-      if (!hasAcquisitionChecks.get()) return false;
-      if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
-        .some(column => column.name === 'scan_targets_json')) return false;
-      oneTimeCompletion = db.prepare(`SELECT 1 FROM requests r
-        JOIN acquisition_request_checks c ON c.request_id=r.id
-        WHERE r.id=? AND (r.monitor_future=0 OR r.watch_closed=1)
-          AND ${currentRequestCompletionSql}`);
-    }
-    return Boolean(oneTimeCompletion.get(requestId));
-  };
+  const completedOnce = createRequestCompletionReader(db);
   return {
     read(requestId, { availableEpisodeIds = [] } = {}) {
       if (!Number.isSafeInteger(requestId) || requestId < 1) {

@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unavailable = () => ({ state: 'unavailable' });
@@ -21,6 +21,7 @@ export async function readShokoEd2kMode({ baseUrl, apiKey, fetchImpl = fetch,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return null;
     return readBoundedJson(response, 100_000);
   };

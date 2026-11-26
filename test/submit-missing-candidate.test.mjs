@@ -678,3 +678,25 @@ for(const outage of [false,true])test('final submission without filename provide
   loadDetail:async()=>outage?{state:'detail_pending',anidbId:43}:{...baseDetail,anidbId:43,title:'Earlier Example',total:12,complete:true,page:1,nextPage:null,episodes:Array.from({length:12},(_,i)=>({id:5001+i,number:i===0?99:i+1,type:'Episode',title:'Earlier '+i}))}});
  assert.deepEqual(result,{state:'held',reason:outage?'provider_unavailable':'absolute_numbering_unverified',...(outage?{inspectionRetryable:true}:{})});assert.equal(qbitCalls,0);assert.equal(ledger.getAttempt(1),null);
 }));
+
+for(const renewed of [false,true])for(const mode of ['normal','pending','reject','throw']){
+ test(`hash preflight disposes terminal403 ${renewed?'after renewal':'without renewal'} with ${mode} cancellation`,async()=>withLedgers(async({request,ledger})=>{
+  const responses=[];let calls=0,renewals=0;
+  const forbidden=()=>{
+   let cancellations=0;
+   const response=new Response(new ReadableStream({start(c){c.enqueue(new TextEncoder().encode('unused'));},cancel(){cancellations++;if(mode==='pending')return new Promise(()=>{});if(mode==='reject')return Promise.reject(Error('synthetic rejection'));}}),{status:403});
+   if(mode==='throw')response.body.cancel=()=>{cancellations++;throw Error('synthetic cancellation failure');};
+   responses.push(()=>cancellations);return response;
+  };
+  const fetchImpl=async()=>{calls++;return forbidden();};
+  const input=options({request,ledger,readEvidence:async()=>absent(),prowlarrFetch:prowlarrFetch(),qbittorrentFetch:fetchImpl});
+  let timer;
+  try{
+   const run=submitMissingCandidate({...input,expectedHash:hash,...(renewed?{renewQbittorrent:async()=>{renewals++;assert.equal(responses[0](),1,'dispose before renewal');return {state:'authenticated',sessionId:'freshSID',fetchImpl};}}:{})});
+   const result=await Promise.race([run,new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('cleanup blocked hash preflight')),500);})]);
+   assert.deepEqual(result,{state:'held',reason:'provider_http_403'});assert.equal(calls,renewed?2:1);assert.equal(renewals,renewed?1:0);
+   assert.deepEqual(responses.map(count=>count()),renewed?[1,1]:[1]);assert.equal(ledger.getAttempt(1),null);
+   await new Promise(resolve=>setImmediate(resolve));
+  }finally{clearTimeout(timer);}
+ }));
+}

@@ -98,6 +98,8 @@ for (const version of ['v0.0.319','v0.0.320','v0.0.321']) {
         assert.equal(after.scan_targets_json,
           ['wrong_scope','orphan','empty'].includes(name)?null:'[[100,1001]]');
         delete after.scan_targets_json;
+        assert.equal(after.recovery_hold,0);
+        delete after.recovery_hold;
         assert.deepEqual(after,before,name);assert.deepEqual(f.db.prepare('SELECT * FROM requests').all(),requests,name);
       } finally {queue?.close();await f.close()}
     }

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readBoundedText, cancelResponseBody } from '../http/bounded-response.mjs';
+import { readBoundedText, cancelResponseBody, fetchResponsesOrCancel } from '../http/bounded-response.mjs';
 import { mapSonarrOwnership } from './sonarr-ownership-map.mjs';
 
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
@@ -32,10 +32,10 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
   let pending = null;
   const readMap = async (time) => {
     if (cachedMap && mapCheckedMs + MAP_CACHE_MS > time && Date.parse(cachedMap.generated_at) + MAX_MAP_AGE_MS > time) return cachedMap;
-    const [mapResponse, digestResponse] = await Promise.all([
-      fetchImpl(MAP_URL, { signal: AbortSignal.timeout(20_000),
+    const [mapResponse, digestResponse] = await fetchResponsesOrCancel([
+      () => fetchImpl(MAP_URL, { signal: AbortSignal.timeout(20_000),
         headers: { Accept: 'application/json' } }),
-      fetchImpl(CHECKSUM_URL, { signal: AbortSignal.timeout(10_000),
+      () => fetchImpl(CHECKSUM_URL, { signal: AbortSignal.timeout(10_000),
         headers: { Accept: 'text/plain' } }),
     ]);
     if (mapResponse.status !== 200 || digestResponse.status !== 200) {

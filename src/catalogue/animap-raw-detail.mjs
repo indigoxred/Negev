@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const kindFor = (value) => value === 'Movie' ? 'movie' :
   ['TV Series', 'TV Special', 'TV Short', 'OVA', 'Web', 'Other'].includes(value)
@@ -83,6 +83,7 @@ export function createAniMapRawDetailReader({ fetchImpl = fetch,
         if (response.status === 200) return {
           value: parseRecord(await readBoundedJson(response, 4_000_000), anidbId),
           transient: false };
+        await cancelResponseBody(response);
         if (attempt === 0 && (response.status === 429 || response.status >= 500) &&
             Date.now() - started + 200 < timeoutMs) {
           await new Promise((resolve) => setTimeout(resolve, 200));

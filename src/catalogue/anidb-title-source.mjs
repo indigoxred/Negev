@@ -1,3 +1,4 @@
+import { cancelResponseBody } from '../http/bounded-response.mjs';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
@@ -15,6 +16,7 @@ async function readCompressed(response, limit) {
   }
   const declared = response.headers?.get?.('content-length');
   if (declared != null && (!/^\d+$/.test(declared) || Number(declared) > limit)) {
+    await cancelResponseBody(response);
     throw new TypeError('Title dump too large');
   }
   let size = 0;
@@ -128,6 +130,7 @@ export function createAniDbTitleSource({ fetchImpl = fetch, now = Date.now,
         redirect: 'manual', headers: { Accept: 'application/gzip' },
         signal: AbortSignal.timeout(index ?
           Math.min(cachedTimeoutMs, timeoutMs) : timeoutMs) });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) throw new TypeError('Title dump unavailable');
       const compressed = await readCompressed(response, maxCompressedBytes);
       const next = await parseCompressed(compressed);

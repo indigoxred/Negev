@@ -1,3 +1,4 @@
+import { cancelResponseBody } from '../http/bounded-response.mjs';
 export async function requestShokoFileRescan({ baseUrl, apiKey, fileId,
   fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
@@ -17,6 +18,7 @@ export async function requestShokoFileRescan({ baseUrl, apiKey, fileId,
       redirect: 'manual', headers: {
         Authorization: `Bearer ${apiKey}`, Accept: 'application/json',
       }, signal: AbortSignal.timeout(timeoutMs) });
+    await cancelResponseBody(response);
     return { state: response.status === 200 ? 'accepted' : 'unconfirmed' };
   } catch { return { state: 'unconfirmed' }; }
 }

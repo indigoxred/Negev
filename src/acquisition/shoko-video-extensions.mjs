@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 export async function readShokoVideoExtensions({ baseUrl, apiKey,
   fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
@@ -17,6 +17,7 @@ export async function readShokoVideoExtensions({ baseUrl, apiKey,
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const settings = await readBoundedJson(response, 1_000_000);
     const values = settings?.Import?.VideoExtensions;

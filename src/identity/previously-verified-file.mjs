@@ -1,6 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { localPath, validMount } from '../availability/known-card-availability.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 // Availability for the same episode can belong to another release. Before
 // using a stored Shoko hash, require the inode captured during this torrent's
@@ -13,6 +13,7 @@ export async function readPreviouslyVerifiedFile({ prior, baseUrl, apiKey,
     url.searchParams.set('include', 'AbsolutePaths');
     const response = await fetchImpl(url, { headers: { Authorization: `Bearer ${apiKey}` },
       redirect: 'error', signal });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return null;
     const record = await readBoundedJson(response, 200_000);
     if (record.ID !== prior.fileId || record.Size !== prior.size ||
