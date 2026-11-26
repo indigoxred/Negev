@@ -1,4 +1,4 @@
-import { pendingRecognitionSql } from '../acquisition/recognition-release-sql.mjs';
+import { pendingRecognitionSql, unreconciledAttemptSql } from '../acquisition/recognition-release-sql.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createRequestCompletionReader } from './request-completion-history.mjs';
 
@@ -165,7 +165,12 @@ export function openRequestProgress(dbPath, { now = Date.now,
           AND NOT EXISTS (SELECT 1 FROM acquisition_retirements t WHERE t.attempt_id=a.id)
           AND NOT EXISTS (SELECT 1 FROM acquisition_rejections j WHERE j.attempt_id=a.id))`;
       interruptedRequest = db.prepare(`SELECT 1 FROM acquisition_request_checks
-        WHERE request_id=? AND ((state='held' AND reason='interrupted_attempt_present') OR (${recovery}))`);
+        WHERE request_id=? AND ((state='held' AND reason='interrupted_attempt_present') OR (${recovery}))
+          AND NOT (EXISTS (SELECT 1 FROM acquisition_attempts a
+              WHERE a.request_id=acquisition_request_checks.request_id)
+            AND NOT EXISTS (SELECT 1 FROM acquisition_attempts a
+              WHERE a.request_id=acquisition_request_checks.request_id
+                AND ${unreconciledAttemptSql(db, 'a')}))`);
     }
     return Boolean(interruptedRequest.get(requestId));
   };

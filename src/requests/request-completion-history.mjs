@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { currentRequestCompletionSql, currentRequestScopeSql } from './request-check-scope.mjs';
+import { currentRequestCompletionSql, currentRequestScopeSql, untouchedAutoSql } from './request-check-scope.mjs';
 
 // Historical completion is not fresh public availability. Read old scope
 // evidence without opening the acquisition queue or migrating its tables.
@@ -16,11 +16,13 @@ export function createRequestCompletionReader(db) {
         JOIN acquisition_request_checks c ON c.request_id=r.id
         WHERE r.id=? AND (r.monitor_future=0 OR r.watch_closed=1)
           AND ${currentRequestCompletionSql}
-          AND (json_array_length(c.scan_targets_json)<=1 OR ${names.has('request_scope_policy_revision') ? 'c.request_scope_policy_revision' : '0'}>=2)`);
+          AND (json_array_length(c.scan_targets_json)<=1 OR ${names.has('request_scope_policy_revision') ? 'c.request_scope_policy_revision' : '0'}>=2
+            OR ${names.has('checked_release_revision') ? untouchedAutoSql : '0'})`);
       return Boolean(modern.get(requestId));
     }
     if (!names.has('scan_scope')) return false;
-    legacy ??= db.prepare(`SELECT c.scan_scope,
+    legacy ??= db.prepare(`SELECT c.scan_scope,r.release_control,
+        ${names.has('checked_release_revision') ? 'c.checked_release_revision' : 'NULL'} AS checked_revision,
         ${names.has('request_scope_policy_revision') ? 'c.request_scope_policy_revision' : '0'} AS scope_policy,
         ${currentRequestScopeSql} AS targets_json
       FROM requests r JOIN acquisition_request_checks c ON c.request_id=r.id
@@ -37,7 +39,8 @@ export function createRequestCompletionReader(db) {
     // A legacy full-target claim hash does not prove what the old processor
     // checked. Revision 1 can be only an upgrade stamp, and choices can have
     // changed since the check. Only a corrected worker earns revision 2.
-    if (targets.length > 1 && row.scope_policy < 2) return false;
+    if (targets.length > 1 && row.scope_policy < 2 &&
+        !(row.release_control === null && row.checked_revision === 0)) return false;
     return targets.length > 0 && createHash('sha256')
       .update(JSON.stringify(targets)).digest('hex') === row.scan_scope;
   };

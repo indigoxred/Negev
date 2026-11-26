@@ -1,8 +1,8 @@
-import { pendingRecognitionSql } from './recognition-release-sql.mjs';
+import { pendingRecognitionSql, unreconciledAttemptSql } from './recognition-release-sql.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { preferredWaitDuration } from './preferred-release.mjs';
-import { changedRequestScopeSql, currentRequestCompletionSql } from '../requests/request-check-scope.mjs';
+import { changedRequestScopeSql, currentRequestCompletionSql, currentRequestScopeSql, untouchedAutoSql } from '../requests/request-check-scope.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -95,7 +95,10 @@ export function openAcquisitionRequestQueue(dbPath,
     ) STRICT`);
     if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
       .some(column => column.name === 'checked_release_revision')) {
-      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN checked_release_revision INTEGER NOT NULL DEFAULT 0');
+      // Missing historical provenance is unknown, not a saved revision zero.
+      // One atomic schema change also preserves this across interrupted upgrade.
+      // New worker claims explicitly write their actual current revision.
+      db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN checked_release_revision INTEGER NOT NULL DEFAULT -1');
     }
     // Migration review can hold an unstarted request without cancelling the
     // user's request or changing an existing download. The row survives a
@@ -244,16 +247,19 @@ export function openAcquisitionRequestQueue(dbPath,
     // Revision 1 was stamped by migration even when a legacy worker had
     // checked only a selected subset. A later member choice may have erased
     // that subset, so matching claim scope alone cannot prove full coverage.
-    // Recheck old multi-target completion once; only a new full-scope worker
-    // claim earns revision 2. Keep choices, claims and suspensions untouched.
-    db.exec(`UPDATE acquisition_request_checks SET
+    // Preserve an exact unchanged completion with positive untouched-Auto
+    // provenance. Other old multi-target completion needs one normal recheck;
+    // only a new full-scope worker claim earns revision 2.
+    db.exec(`UPDATE acquisition_request_checks AS c SET
         reason='request_scope_recheck',next_due_ms=0,candidate_offset=0,
         candidate_fingerprint=NULL,decision_ms=NULL,scan_started_ms=NULL,
         scan_scope=NULL,scan_target_count=NULL,scan_targets_json=NULL
       WHERE request_scope_policy_revision<2 AND state='held'
         AND reason='request_fully_available' AND request_id IN (
           SELECT r.id FROM requests r WHERE r.status='held' AND r.cancelled_ms IS NULL
-            AND (SELECT COUNT(*) FROM request_targets rt WHERE rt.request_id=r.id)>1)`);
+            AND (SELECT COUNT(*) FROM request_targets rt WHERE rt.request_id=r.id)>1
+            AND NOT (${untouchedAutoSql} AND c.scan_targets_json IS NOT NULL
+              AND c.scan_targets_json=${currentRequestScopeSql}))`);
     // Corrected verification must reach old settled misses before their hourly
     // retry. Revisit only saved candidate evidence for the same target scope;
     // this changes scheduling, never acquisition eligibility or a choice.
@@ -471,13 +477,7 @@ export function openAcquisitionRequestQueue(dbPath,
       AND EXISTS (SELECT 1 FROM acquisition_attempts a
         WHERE a.request_id=c.request_id)
       AND NOT EXISTS (SELECT 1 FROM acquisition_attempts a
-        LEFT JOIN acquisition_retirements retired ON retired.attempt_id=a.id
-        LEFT JOIN acquisition_releases released ON released.attempt_id=a.id
-        WHERE a.request_id=c.request_id AND retired.attempt_id IS NULL
-          AND released.attempt_id IS NULL AND ${pendingRecognitionSql(db, 'a')}
-          AND (a.status<>'torrent_observed' OR a.torrent_hash IS NULL OR
-            NOT EXISTS (SELECT 1 FROM acquisition_target_claims t
-              WHERE t.attempt_id=a.id AND t.active=1)))`;
+        WHERE a.request_id=c.request_id AND ${unreconciledAttemptSql(db, 'a')})`;
   const resumeObservedSql = `UPDATE acquisition_request_checks
     SET state='held',reason='reconciled_observed_attempts',recovery_hold=0,
       next_due_ms=CASE WHEN recovery_hold=1 THEN ? ELSE COALESCE(next_due_ms,?) END
