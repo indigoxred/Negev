@@ -11,7 +11,7 @@ const providerRejected = Symbol('qBittorrent session rejected');
 // Read-only, double-observed qBittorrent manifest. It never starts a torrent.
 export async function observeStoppedManifest({
   baseUrl, sessionId, expected, fetchImpl = fetch, timeoutMs = 10_000,
-  allowSelectedPassive = false, plannedFileNames, expectedFiles, saveRoot,
+  allowSelectedPassive = false, plannedFileNames, excludedFileNames, expectedFiles, saveRoot,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -88,5 +88,5 @@ export async function observeStoppedManifest({
     }
   }
   return evaluateStoppedManifest({ torrent: after, files: filesAfter, expected,
-    allowSelectedPassive, plannedFileNames, saveRoot });
+    allowSelectedPassive, plannedFileNames, excludedFileNames, saveRoot });
 }

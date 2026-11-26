@@ -17,7 +17,7 @@ import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
-function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
+function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips, excludedVideoNames = []) {
   if (!Array.isArray(plannedFiles) || plannedFiles.length < 1 || plannedFiles.length > MAX_ACQUISITION_VIDEOS ||
       !Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > MAX_ACQUISITION_TARGETS) return false;
   const plannedByName = new Map();
@@ -37,6 +37,7 @@ function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
       episodeIds.some((id) => !plannedTargets.has(id))) return false;
   const videos = prepared.files.filter((file) =>
     torrentFileKind(file.name) === 'video' &&
+    !excludedVideoNames.includes(file.name) &&
     !(allowOptionalClips && isOptionalClip(file.name) &&
       !plannedByName.has(file.name.toLowerCase())));
   if (videos.length !== plannedFiles.length || prepared.files.some((file) =>
@@ -153,20 +154,19 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   const allowOptionalClips = !detail.episodes.some((episode) =>
     episode.type === 'Special' && request.episodeIds.includes(episode.id));
-  if ((episodeIds !== undefined || plannedFiles !== undefined) &&
-      !exactFilePlan(mainPrepared, plannedFiles, episodeIds, allowOptionalClips)) {
-    return held('file_plan_mismatch');
-  }
   // Re-derive the episode map even when a caller supplies a reviewed plan.
   // The final server boundary cannot trust stale or forged preflight fields.
   const mapped = planTorrentTargets({ request, detail, prepared:mainPrepared,
     releaseTitle: candidate.title, trustedTitle: identityQuery,
     allowTitleMetadataVariation: !verifiedIdentity, today: new Date(now()).toISOString().slice(0,10) });
   if (mapped.state !== 'planned_targets') return mapped;
+  if ((episodeIds !== undefined || plannedFiles !== undefined) &&
+      !exactFilePlan(mainPrepared, plannedFiles, episodeIds, allowOptionalClips,
+        mapped.excludedVideoNames)) return held('file_plan_mismatch');
   const selectedEpisodeIds = episodeIds ?? mapped.episodeIds;
   const selectedFiles = plannedFiles ?? mapped.plannedFiles;
   if (!exactFilePlan(mainPrepared, selectedFiles, selectedEpisodeIds,
-    allowOptionalClips)) return held('file_plan_mismatch');
+    allowOptionalClips, mapped.excludedVideoNames)) return held('file_plan_mismatch');
   const mappedByName = new Map(mapped.plannedFiles.map((file) =>
     [file.name, file.episodeIds]));
   if (selectedFiles.some((file) => JSON.stringify([...file.episodeIds]
@@ -284,5 +284,6 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   const bonusFiles=selectedBonuses?.files??[];
   return submitStoppedCandidate({ ...activeQbittorrent, ledger,
     attemptId: reserved.attemptId, candidate, prepared, nowMs,
-    plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name) });
+    plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name),
+    excludedFileNames: [...(mapped.excludedVideoNames ?? []), ...(mapped.excludedSubtitleNames ?? [])] });
 }

@@ -23,6 +23,8 @@ import { createRequestCandidateDiscovery } from '../src/acquisition/request-cand
 import { previewRequestCandidate } from '../src/acquisition/request-candidate-preflight.mjs';
 import { prepareStoppedCandidate } from '../src/acquisition/prepare-stopped-candidate.mjs';
 import { inspectTorrentMetainfo } from '../src/acquisition/inspect-torrent-metainfo.mjs';
+import { createHeldRequestSubmitter } from '../src/requests/submit-held-request.mjs';
+import { openAcquisitionRequestQueue, createAcquisitionPageWorker } from '../src/acquisition/acquisition-request-queue.mjs';
 
 const NOW=Date.UTC(2026,10,23);
 const encode = value => Buffer.isBuffer(value) ? Buffer.concat([Buffer.from(value.length+':'),value]) :
@@ -33,10 +35,11 @@ const release = (guid,title,numbers=[1],seeders=10) => ({guid,indexerId:3,title,
   names:numbers.map(n=>'Example - '+String(n).padStart(2,'0')+'.mkv')});
 
 // Real stage/ledger/discovery/preflight/submission. Only outside services are synthetic.
-async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null,prequelRead=null,prequelRelationRead=null}={}) {
+async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null,prequelRead=null,prequelRelationRead=null,owned=[],wholeShow=false,ignorePriorities=false}={}) {
   const root=await mkdtemp(path.join(tmpdir(),'negev-worker-quality-season-'));
   let clock=NOW;const metadataPages=[];
-  const dbPath=path.join(root,'db.sqlite');const cleanups=[];const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath);
+  const dbPath=path.join(root,'db.sqlite');const cleanups=[];let requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath);
+  const available=new Set(owned.map(n=>1000+n));
   t.after(async()=>{for(const fn of cleanups)fn();acquisitions.close();requests.close();await rm(root,{recursive:true,force:true});});
   const offlineLookup=async({filename})=>{
  if(typeof prediction==='function'){const result=await prediction(filename);if(result!==true)return result;}
@@ -47,7 +50,10 @@ async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=
 const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,complete:true,page:1,total:episodes+specials.length,nextPage:null,
     airDate:'2026-01-01',endDate:completed?'2026-02-01':null,episodeCount:completed?episodes:episodes+10,
     episodes:Array.from({length:episodes},(_,i)=>({id:1001+i,number:i+1,type:'Episode',title:'Episode '+(i+1),airDate:'2026-01-01'})).concat(specials.map(number=>({id:2000+number,number,type:'Special',title:'Special '+number,airDate:'2026-01-01'})))};
-  const saved=requests.submit({requesterId:1,requestKey:'desired',nowMs:100,intent:{state:'ready',anidbId:42,title,kind:'series',monitorFuture:!completed,episodeIds:[...requested.map(n=>1000+n),...requestedSpecials.map(n=>2000+n)]}});
+  const saved=wholeShow ? await createHeldRequestSubmitter({ledger:requests,confirmKnownTitle:async()=>true,
+    authorizeRequester:()=>({active:true,adultAllowed:true}),loadDetail:async()=>detail,
+    recentlyAvailable:({episodeId})=>available.has(episodeId),now:()=>100,today:()=> '2026-11-23'})({requesterId:1,anidbId:42,scope:'installment',requestKey:'desired'}) :
+    requests.submit({requesterId:1,requestKey:'desired',nowMs:100,intent:{state:'ready',anidbId:42,title,kind:'series',monitorFuture:!completed,episodeIds:[...requested.map(n=>1000+n),...requestedSpecials.map(n=>2000+n)]}});
   const records=items.map(c=>{
     const names=c.names??['Example - 01.mkv'];const size=names.length*1000;
     const info={name:names.length===1?names[0]:'Pack','piece length':16384,pieces:Buffer.alloc(Math.ceil(size/16384)*20,97),
@@ -72,11 +78,12 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
     offlineLookup,
     inspectCorrespondence:async({files})=>({files:files.map(f=>({...f,state:registered?'likely':'unknown'}))}),
     prepare:input=>prepareStoppedCandidate({baseUrl:'http://prowlarr:9696/',apiKey:'synthetic',indexerIds:[3],fetchImpl:prowlarrFetch,...input})});previews.push({state:checked.state,reason:checked.reason,shokoPreview:checked.shokoPreview,files:checked.files?.length});return checked;};
-  const added=[],started=[];let active=null,phase='stoppedDL';
+  const added=[],started=[],startPriorities=[],priorities=new Map();let active=null,phase='stoppedDL';
   const qbitFetch=async(input,options={})=>{
     const url=new URL(input);
     if(url.pathname.endsWith('/stop')){phase='stoppedUP';return new Response('Ok.');}
-    if(url.pathname.endsWith('/start')){started.push(active.guid);return new Response('Ok.');}
+    if(url.pathname.endsWith('/filePrio')){if(!ignorePriorities)for(const index of options.body.get('id').split('|'))priorities.set(Number(index),Number(options.body.get('priority')));return new Response('Ok.');}
+    if(url.pathname.endsWith('/start')){started.push(active.guid);startPriorities.push(active.metadata.files.map((file,index)=>({name:file.name,priority:priorities.get(index)??1})));return new Response('Ok.');}
     if(url.pathname.endsWith('/version'))return new Response('v5.3.0');
     if(url.pathname.endsWith('/add')){
       const blob=options.body.get('torrents');const meta=inspectTorrentMetainfo({bytes:new Uint8Array(await blob.arrayBuffer())});
@@ -86,19 +93,21 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
     if(url.pathname.endsWith('/info')&&url.searchParams.get('hashes')&&active&&url.searchParams.get('hashes')!==active.metadata.hash)return Response.json([]);
     if(url.pathname.endsWith('/info'))return Response.json(active?[{hash:active.metadata.hash,category:'negev',save_path:'/Downloads/negev/'+active.metadata.hash,state:phase,progress:phase==='stoppedDL'?0:1,downloaded:phase==='stoppedDL'?0:active.size,amount_left:phase==='stoppedDL'?active.size:0,auto_tmm:false,force_start:false}]:[]);
     if(url.pathname.endsWith('/properties'))return Response.json({save_path:'/Downloads/negev/'+active.metadata.hash,download_path:''});
-    if(url.pathname.endsWith('/files'))return Response.json(active.metadata.files.map((f,index)=>({...f,index,priority:1,progress:phase==='stoppedDL'?0:1,...(phase!=='stoppedDL'&&index===0?{is_seed:true}:{})})));
+    if(url.pathname.endsWith('/files'))return Response.json(active.metadata.files.map((f,index)=>({...f,index,priority:priorities.get(index)??1,progress:phase==='stoppedDL'||priorities.get(index)===0?0:1,...(phase!=='stoppedDL'&&index===0?{is_seed:true}:{})})));
     throw Error('Unexpected qBittorrent endpoint '+url.pathname);
   };
   let qualityInspectionRetry=openQualityInspectionRetry(dbPath);cleanups.push(()=>qualityInspectionRetry.close());
   const createStages=()=>createAcquisitionStageProcessors({qualityInspectionRetry,providerFetchImpl:prowlarrFetch,readVideoExtensions:async()=>({state:"extensions",values:[".mkv"]}),requests,acquisitions,handoffs:{getHandoff:()=>null},discoverCandidates,previewCandidate,loadDetail,releaseQueries,readRelatedTitles,
-    readPublicCoverage:async request=>({verifiedTargets:0,targetCount:request.episodeIds.length,availableEpisodeIds:[],uncertainEpisodeIds:[]}),
+    readPublicCoverage:async request=>({verifiedTargets:request.episodeIds.filter(id=>available.has(id)).length,targetCount:request.episodeIds.length,availableEpisodeIds:request.episodeIds.filter(id=>available.has(id)),uncertainEpisodeIds:[]}),
     readEvidence:async({anidbId,episodeIds})=>({anidbId,episodeIds,observedAtMs:clock-1,importFence:{state:'settled',anidbId,episodeIds,beforeObservedAtMs:clock-2,afterObservedAtMs:clock-1},shoko:{state:'ok',complete:true,files:[]},plex:{state:'ok',complete:true,sourceVerified:true,libraryIds:[102],parts:[]}}),
     publicSections:{episode:[102],movie:[123]},prowlarr:{baseUrl:'http://prowlarr:9696/',apiKey:'synthetic',indexerIds:[3]},
     stagingHostPath:'/srv/negev/staging',qbitStagingRoot:'/Downloads/negev',holdingRoot:'/srv/negev/holding',importRoot:'/srv/shoko/import',
     verifyStagingRoot:async()=>({state:'verified_staging_root'}),realpathImpl:async p=>p,ensureImportRoot:async()=>({state:'import_child_ready'}),verifyShokoSource:async()=>({state:'verified_shoko_source'}),
     shoko:{baseUrl:'http://shoko:8111/',apiKey:'synthetic',providerId:'11111111-2222-4333-8444-555555555555'},now:()=>clock});
   let stages=createStages();
-  return {restart:()=>{qualityInspectionRetry.close();qualityInspectionRetry=openQualityInspectionRetry(dbPath);stages=createStages()},added,started,inspected,previews,requests,acquisitions,records,detail,root,dbPath,qbitFetch,metadataPages,setClock:value=>{clock=value},cleanup:fn=>cleanups.push(fn),finishDownload:()=>{phase='uploading'},requestId:saved.requestId,
+  return {restart:()=>{qualityInspectionRetry.close();qualityInspectionRetry=openQualityInspectionRetry(dbPath);stages=createStages()},
+    reopen:()=>{qualityInspectionRetry.close();acquisitions.close();requests.close();requests=openRequestLedger(dbPath);acquisitions=openAcquisitionLedger(dbPath);qualityInspectionRetry=openQualityInspectionRetry(dbPath);stages=createStages()},
+    get requests(){return requests},get acquisitions(){return acquisitions},available,added,started,startPriorities,inspected,previews,records,detail,root,dbPath,qbitFetch,metadataPages,setClock:value=>{clock=value},cleanup:fn=>cleanups.push(fn),finishDownload:()=>{phase='uploading'},requestId:saved.requestId,
     runStart:attemptId=>stages.processStart({attemptId,qbittorrent:{baseUrl:"http://qb:8080/",sessionId:"syntheticSID"},fetchImpl:qbitFetch}),
     selection:createReleaseSelection({requests,discoverCandidates,previewCandidate,loadDetail,now:()=>201,
       readPublicCoverage:async()=>({availableEpisodeIds:[],uncertainEpisodeIds:[]})}),
@@ -106,13 +115,49 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
 }
 
 
-for(const count of [51,104,220,500])test(`completed ${count}-video pack reaches the actual Auto worker and starts once`,async t=>{
+for(const count of [6,51,104,220,500])test(`completed ${count}-video pack reaches the actual Auto worker and starts once`,async t=>{
  const numbers=Array.from({length:count},(_,i)=>i+1);
  const f=await fixture(t,{episodes:count,requested:numbers,completed:true,registered:true,items:[release('batch','[G] Example Complete 1080p Batch',numbers)]});
  const selected=await f.run();assert.equal(selected.state,'stopped_observed',JSON.stringify({selected,previews:f.previews}));
  assert.equal(f.acquisitions.getFilePlan(selected.attemptId).length,count);if(count>100)assert.ok(f.metadataPages.includes(Math.ceil(count/100)));assert.deepEqual(f.added,['batch']);
  const started=await f.runStart(selected.attemptId);assert.equal(started.state,'start_unknown',JSON.stringify(started));
  await f.runStart(selected.attemptId);assert.deepEqual(f.started,['batch']);
+});
+
+test('whole-season Auto uses a full pack for only missing episodes and keeps completion after reopen',async t=>{
+ const numbers=[1,2,3,4,5,6],names=numbers.map(n=>`Example - 0${n}.mkv`);
+ const f=await fixture(t,{episodes:6,wholeShow:true,owned:[1,2],completed:true,registered:true,
+  items:[{...release('full','[G] Example Complete 1080p Batch',numbers),names:[...names,'Example - 01.en.ass','Example - 03.en.ass']}]});
+ assert.deepEqual(f.requests.getRequest(f.requestId).episodeIds,[1003,1004,1005,1006]);
+ const selected=await f.run();assert.equal(selected.state,'stopped_observed',JSON.stringify({selected,previews:f.previews}));
+ assert.deepEqual(f.acquisitions.getFilePlan(selected.attemptId).map(file=>file.episodeIds),[[1003],[1004],[1005],[1006]]);
+ f.reopen();assert.equal((await f.runStart(selected.attemptId)).state,'start_unknown');
+ assert.deepEqual(f.startPriorities[0].map(file=>file.priority),[0,0,1,1,1,1,0,1]);
+ const hash=f.acquisitions.getAttempt(selected.attemptId).torrentHash;
+ const stagingHostPath=path.join(f.root,'stage'),stagingRoot=path.join(stagingHostPath,hash),holdingRoot=path.join(f.root,'holding'),importRoot=path.join(f.root,'import');
+ const originals=path.join(f.root,'existing');await mkdir(originals);for(const n of [1,2])await writeFile(path.join(originals,n+'.mkv'),'original-'+n);
+ for(const dir of [stagingRoot,holdingRoot,importRoot])await mkdir(dir,{recursive:true});
+ for(const file of f.startPriorities[0].filter(file=>file.priority!==0))await writeFile(path.join(stagingRoot,file.name),Buffer.alloc(1000,42));
+ const moves=openPureMoveLedger(f.dbPath);f.cleanup(()=>moves.close());f.finishDownload();
+ const completed=await processPureCompletedAttempt({attemptId:selected.attemptId,requests:f.requests,acquisitions:f.acquisitions,pureMoves:moves,nowMs:NOW+1000,stagingHostPath,qbitStagingRoot:'/Downloads/negev',holdingRoot,importRoot,qbittorrent:{baseUrl:'http://qb:8080/',sessionId:'syntheticSID'},fetchImpl:f.qbitFetch,verifyStagingRoot:async()=>({state:'verified_staging_root'}),verifyHandoffMounts:async()=>({state:'mounted_handoff_roots'})});
+ assert.equal(completed.state,'handoff_prepared',JSON.stringify(completed));
+ assert.deepEqual(moves.getIntent(selected.attemptId).manifest.files.map(file=>file.name).sort(),[...names.slice(2),'Example - 03.en.ass'].sort());
+ assert.equal((await publishPureMove({attemptId:selected.attemptId,ledger:moves,holdingRoot,importRoot,nowMs:NOW+2000})).state,'published_observed');
+ const move=moves.getIntent(selected.attemptId),prefix=path.basename(move.manifest.holdingPath);
+ const files=move.manifest.files.filter(file=>file.episodeIds).map((file,i)=>({fileId:2000+i,anidbId:42,size:file.size,episodeIds:file.episodeIds,coverage:file.episodeIds.map(episodeId=>({episodeId,start:0,end:100})),sourcePaths:['/pure/'+prefix+'/'+file.name],releaseEvidence:'offline_identified',storageKey:'file-'+i}));
+ assert.equal((await observePureMoveImport({move,target:{anidbId:42,episodeIds:[1003,1004,1005,1006]},shokoMount:{localRoot:importRoot,appRoot:'/pure'},readEpisode:async({episodeId})=>({state:'ok',complete:true,files:files.filter(file=>file.episodeIds.includes(episodeId))})})).state,'shoko_files_identified');
+ for(const id of [1003,1004,1005,1006]){assert.equal(evaluateExactAvailability({target:{anidbId:42,episodeId:id},publicLibraryIds:[102],shoko:{state:'ok',complete:true,files},plex:{state:'ok',complete:true,parts:files.map(file=>({storageKey:file.storageKey,libraryId:102,readable:true}))}}).state,'available');f.available.add(id);}
+ let queue=openAcquisitionRequestQueue(f.dbPath);let visits=0;
+ const run=()=>createAcquisitionPageWorker({queue,now:()=>NOW+3000,processRequest:async input=>{visits++;return f.run(input)}}).runOnce();
+ await run();assert.equal(queue.getResult(f.requestId).reason,'request_fully_available');queue.close();f.reopen();queue=openAcquisitionRequestQueue(f.dbPath);await run();queue.close();assert.equal(visits,1);
+ assert.deepEqual(f.added,['full']);assert.deepEqual(f.started,['full']);
+ for(const n of [1,2])assert.equal(await readFile(path.join(originals,n+'.mkv'),'utf8'),'original-'+n);
+});
+
+test('whole-season pack cannot start if the downloader ignores exclusions',async t=>{
+ const f=await fixture(t,{episodes:6,wholeShow:true,owned:[1,2],completed:true,registered:true,ignorePriorities:true,
+  items:[release('full','[G] Example Complete 1080p Batch',[1,2,3,4,5,6])]});
+ assert.equal((await f.run()).state,'held');assert.deepEqual(f.started,[]);
 });
 
 test('trusted year-suffixed textual season alias survives preflight, submission and start',async t=>{

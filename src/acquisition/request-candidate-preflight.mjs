@@ -255,11 +255,12 @@ export async function previewRequestCandidate({ requestId, candidate,
     ...(bonus.bonusFiles.length || bonus.skippedBonuses.length ?
       { bonusFiles: bonus.bonusFiles, skippedBonuses: bonus.skippedBonuses } : {}),
     subtitles: prepared.files.filter((file) =>
-      torrentFileKind(file.name) === 'subtitle').map((file) => ({
+      torrentFileKind(file.name) === 'subtitle' && !plan.excludedSubtitleNames?.includes(file.name)).map((file) => ({
       name: file.name, size: file.size })),
     filesToExclude: prepared.files.filter((file) =>
       torrentFileKind(file.name) === 'passive' ||
       plan.excludedVideoNames?.includes(file.name) ||
+      plan.excludedSubtitleNames?.includes(file.name) ||
       bonus.skippedBonuses.some(b=>b.name===file.name)).map((file) => ({
       name: file.name, size: file.size })),
     registeredInAniDb: false, downloadStarted: false };

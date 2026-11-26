@@ -5,6 +5,7 @@ const relatedGuardRevision = 'trusted-title-season-v3';
 const packBudgetRevision = 'completed-pack-capacity-v1';
 const titleIdentityRevision = 'literal-season-title-v2-provider-failure';
 const previewIdentityRevision = 'absolute-scope-v1-provider-failure';
+const packSubsetRevision = 'separate-unrequested-regular-v1';
 const deterministic = new Set(['release_title_mismatch', 'shoko_preview_wrong_identity',
   'targeted_result_wrong_episode', 'shoko_video_format_unsupported',
   'related_installment_mismatch', 'invalid_metainfo', 'unsafe_torrent_path',
@@ -58,10 +59,13 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
             result._previewIdentityRevision !== previewIdentityRevision) return null;
         if (result.state === 'held' && result.reason === 'video_budget_exceeded' &&
             result._packBudgetRevision !== packBudgetRevision) return null;
+        if (result.state === 'held' && result.reason === 'ambiguous_or_unrequested_video' &&
+            result._packSubsetRevision !== packSubsetRevision) return null;
         delete result._packBudgetRevision;
         delete result._relatedGuardRevision;
         delete result._titleIdentityRevision;
         delete result._previewIdentityRevision;
+        delete result._packSubsetRevision;
         return result;
       } catch { return null; }
     },
@@ -74,6 +78,7 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
       if (result.reason === 'release_title_mismatch') safe._titleIdentityRevision = titleIdentityRevision;
       if (result.reason === 'shoko_preview_wrong_identity') safe._previewIdentityRevision = previewIdentityRevision;
       if (result.reason === 'video_budget_exceeded') safe._packBudgetRevision = packBudgetRevision;
+      if (result.reason === 'ambiguous_or_unrequested_video') safe._packSubsetRevision = packSubsetRevision;
       const json = JSON.stringify(safe);
       if (Buffer.byteLength(json) > 64_000) return;
       const checkedMs = now();

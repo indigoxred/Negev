@@ -182,6 +182,27 @@ test('plans an exact subset from unambiguous AniDB regular episode numbers', () 
   });
 });
 
+test('a complete pack excludes separate known regular files outside the missing subset', () => {
+  const files = [1, 2, 3].map(n => ({name:`Show E0${n}.mkv`,size:1000+n}));
+  const plan = planTorrentTargets({request:{...request,episodeIds:[1002,1003]},detail,
+    prepared:{state:'prepared_stopped',files},releaseTitle:'Show Complete 1080p',trustedTitle:'Show'});
+  assert.equal(plan.state,'planned_targets',JSON.stringify(plan));
+  assert.deepEqual(plan.episodeIds,[1002,1003]);
+  assert.deepEqual(plan.plannedFiles.map(f=>f.name),files.slice(1).map(f=>f.name));
+  assert.deepEqual(plan.excludedVideoNames,[files[0].name]);
+});
+
+test('subset exclusion never hides ambiguous, duplicate, unknown or partly requested videos', () => {
+  for(const names of [
+    ['Show E01.mkv','Show E01 Alternate.mkv','Show E02.mkv'],
+    ['Show E04.mkv','Show E02.mkv'],
+    ['Show Unnumbered.mkv','Show E02.mkv'],
+    ['Show - 01-02.mkv','Show E03.mkv'],
+  ]) assert.equal(planTorrentTargets({request:{...request,episodeIds:[1002,1003]},detail,
+    prepared:{state:'prepared_stopped',files:names.map(name=>({name,size:1000}))},
+    releaseTitle:'Show Complete 1080p',trustedTitle:'Show'}).state,'held',names.join(','));
+});
+
 test('plans standard season-episode filenames provisionally against exact AniDB numbers', () => {
   for (const [name, id] of [
     ['[Group] Show - 01 [BD 1080p].mkv', 1001],

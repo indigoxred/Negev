@@ -11,6 +11,15 @@ const torrent = {
 };
 const video = { index: 0, name: 'Show/01.mkv', size: 1_000, priority: 1, progress: 0 };
 
+test('a server-mapped unrequested episode must be excluded and re-observed before start', () => {
+  const extra={...video,index:1,name:'Show/02.mkv'};
+  const input={torrent,files:[video,extra],expected,plannedFileNames:[video.name],excludedFileNames:[extra.name]};
+  assert.equal(evaluateStoppedManifest({...input,allowSelectedPassive:true}).state,'manifest_needs_exclusions');
+  assert.equal(evaluateStoppedManifest(input).state,'held');
+  assert.equal(evaluateStoppedManifest({...input,files:[video,{...extra,priority:0}]}).state,'manifest_safe');
+  assert.equal(evaluateStoppedManifest({...input,excludedFileNames:[video.name],allowSelectedPassive:true}).state,'held');
+});
+
 test('accepts the exact configured qBittorrent root and rejects the default root', () => {
   const custom = { ...expected, savePath: `/data/torrents/negev/${hash}` };
   const observed = { ...torrent, save_path: custom.savePath };

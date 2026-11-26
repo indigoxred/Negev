@@ -43,7 +43,7 @@ export function isOptionalClip(name) {
 // A pre-download, pure file-list gate. This does not prove AniDB registration
 // and does not authorize a qBittorrent start or import by itself.
 export function evaluateStoppedManifest({ torrent, files, expected,
-  allowSelectedPassive = false, plannedFileNames, saveRoot }) {
+  allowSelectedPassive = false, plannedFileNames, excludedFileNames, saveRoot }) {
   if (!matchesStagingSavePath(expected, { saveRoot }) || expected.category !== 'negev') {
     throw new TypeError('Invalid stopped-torrent expectation');
   }
@@ -62,6 +62,12 @@ export function evaluateStoppedManifest({ torrent, files, expected,
   const subtitles = [];
   const passive = [];
   const planned = plannedFileNames === undefined ? null : new Set(plannedFileNames);
+  if (excludedFileNames !== undefined && !Array.isArray(excludedFileNames)) return held('invalid_file_plan');
+  const excluded = new Set(excludedFileNames ?? []);
+  if (excludedFileNames !== undefined && (!Array.isArray(excludedFileNames) ||
+      excluded.size !== excludedFileNames.length || !planned ||
+      excludedFileNames.some(name => !['video','subtitle'].includes(torrentFileKind(name)) ||
+        planned.has(name)))) return held('invalid_file_plan');
   if (planned && (planned.size !== plannedFileNames.length ||
       plannedFileNames.some((name) => torrentFileKind(name) !== 'video'))) {
     return held('invalid_file_plan');
@@ -78,7 +84,10 @@ export function evaluateStoppedManifest({ torrent, files, expected,
     names.add(file.name.toLowerCase());
     if (file.priority === 0) continue;
     const item = { index: file.index, name: file.name, size: file.size };
-    if (kind === 'video' && planned && !planned.has(file.name) && (isOptionalClip(file.name) || isPackBonusVideo(file.name))) {
+    if (excluded.has(file.name)) {
+      if (!allowSelectedPassive) return held('unexpected_selected_file');
+      passive.push(item);
+    } else if (kind === 'video' && planned && !planned.has(file.name) && (isOptionalClip(file.name) || isPackBonusVideo(file.name))) {
       if (!allowSelectedPassive) return held('unexpected_selected_file');
       passive.push(item);
     } else if (kind === 'video') videos.push(item);

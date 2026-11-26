@@ -84,7 +84,9 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     if (!intent.monitorFuture && missingIds.length === 0) {
       return held('already_available');
     }
-    if (releaseMode !== 'auto' && missingIds.length === 0) {
+    // Auto review selects a release only when there are current targets.
+    // A watch without targets is already automatic; explicit Manual stays held.
+    if (releaseMode === 'manual' && missingIds.length === 0) {
       return held('release_selection_requires_targets');
     }
     return ledger.submit({ requesterId, requestKey, commandKey, releaseMode,
