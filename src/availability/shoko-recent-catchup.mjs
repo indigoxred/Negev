@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const emptyCursor = { fileId: 1, importedNs: '0' };
@@ -48,7 +48,10 @@ export async function readShokoRecentPage({ baseUrl, apiKey, page = 1,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return { state: 'unavailable' };
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return { state: 'unavailable' };
+    }
     const data = await readBoundedJson(response, 1_000_000);
     if (!Number.isSafeInteger(data?.Total) || data.Total < 0 ||
         !Array.isArray(data.List) || data.List.length !==

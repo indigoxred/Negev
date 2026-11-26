@@ -1,5 +1,5 @@
 import { MAX_ACQUISITION_TARGETS } from '../acquisition/torrent-file-limits.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { readImportRootState } from './import-root-state.mjs';
 import { readImportRootInventory } from './import-root-inventory.mjs';
 import { classifyShokoImportBaseline } from './shoko-import-baseline.mjs';
@@ -57,7 +57,11 @@ export async function readShokoImportActivity({ baseUrl, apiKey,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    return response.status === 200 ? readBoundedJson(response, maximumBytes) : null;
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return null;
+    }
+    return readBoundedJson(response, maximumBytes);
   };
   try {
     const readRecognizedBaseline = async () => {

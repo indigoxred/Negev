@@ -93,6 +93,11 @@ for (const version of ['v0.0.319','v0.0.320','v0.0.321']) {
           assert.deepEqual(resumed,after,name+' resume preserves check state');
         }
         delete before.verification_policy_revision;delete after.verification_policy_revision;
+        // v323 adds an exact claim snapshot only when the old scope hash
+        // proves it. This schema backfill must not alter the old row fields.
+        assert.equal(after.scan_targets_json,
+          ['wrong_scope','orphan','empty'].includes(name)?null:'[[100,1001]]');
+        delete after.scan_targets_json;
         assert.deepEqual(after,before,name);assert.deepEqual(f.db.prepare('SELECT * FROM requests').all(),requests,name);
       } finally {queue?.close();await f.close()}
     }

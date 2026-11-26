@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { parsePlexCardParts } from './plex-item-parts.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
@@ -35,7 +35,10 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
       headers: { 'X-Plex-Token': token, Accept: 'application/json',
         'X-Plex-Client-Identifier': 'negev-availability-observer' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (sectionResponse.status !== 200) return unavailable();
+    if (sectionResponse.status !== 200) {
+      await cancelResponseBody(sectionResponse);
+      return unavailable();
+    }
     const section = (await readBoundedJson(sectionResponse, 100_000))?.MediaContainer;
     const type = kind === 'episode' ? '4' : '1';
     if (integer(section?.librarySectionID) !== integer(libraryId) ||
@@ -67,7 +70,10 @@ export async function readPlexSectionKeys({ baseUrl, token, libraryId, kind,
         'X-Plex-Container-Start': String(offset),
         'X-Plex-Container-Size': String(pageSize) },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     hasResponseStart = response.headers?.has?.('x-plex-container-start') ?? false;
     hasResponseTotal = response.headers?.has?.('x-plex-container-total-size') ?? false;
     if (hasResponseStart) responseStart = integer(response.headers.get('x-plex-container-start'));

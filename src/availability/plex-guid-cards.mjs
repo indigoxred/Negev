@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const integer = (value, minimum = 0) => {
@@ -34,14 +34,23 @@ export async function readPlexGuidCards({ baseUrl, token, libraryId, kind,
         'X-Plex-Client-Identifier': 'negev-availability-observer',
         'X-Plex-Container-Start': '0', 'X-Plex-Container-Size': '10' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     if (response.headers?.has?.('x-plex-container-start')) {
       startHeader = integer(response.headers.get('x-plex-container-start'));
-      if (startHeader === null) return unavailable();
+      if (startHeader === null) {
+        await cancelResponseBody(response);
+        return unavailable();
+      }
     }
     if (response.headers?.has?.('x-plex-container-total-size')) {
       totalHeader = integer(response.headers.get('x-plex-container-total-size'));
-      if (totalHeader === null) return unavailable();
+      if (totalHeader === null) {
+        await cancelResponseBody(response);
+        return unavailable();
+      }
     }
     body = await readBoundedJson(response, 500_000);
   } catch { return unavailable(); }

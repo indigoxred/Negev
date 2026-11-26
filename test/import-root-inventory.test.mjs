@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readImportRootInventory } from '../src/availability/import-root-inventory.mjs';
@@ -37,6 +37,9 @@ test('missing roots and over-limit inventories cannot be considered quiet', asyn
 test('a transient root-level arrival changes the fingerprint after removal', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-import-inventory-'));
   try {
+    // A create/remove pair can share the initial directory timestamp tick on
+    // Windows. Establish a distinct baseline without a timing-dependent sleep.
+    await utimes(root, new Date(1000), new Date(1000));
     const before = await readImportRootInventory({ root });
     await writeFile(path.join(root, 'transient.mkv'), 'episode');
     await rm(path.join(root, 'transient.mkv'));

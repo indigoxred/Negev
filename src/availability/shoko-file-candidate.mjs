@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { normalizeShokoFile } from './shoko-file-page.mjs';
 import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
@@ -33,7 +33,10 @@ export async function readShokoFileCandidate({ baseUrl, apiKey, fileId,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     file = await readBoundedJson(response, 200_000);
   } catch { return unavailable(); }
   const item = normalizeShokoFile(file);

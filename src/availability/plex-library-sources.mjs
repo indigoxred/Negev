@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const unavailable = () => ({ state: 'unavailable' });
@@ -36,7 +36,10 @@ export async function readPlexLibrarySources({ baseUrl, token, libraryIds,
         'X-Plex-Client-Identifier': 'negev-availability-observer' },
       signal: AbortSignal.timeout(timeoutMs),
     });
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     body = (await readBoundedJson(response, 500_000))?.MediaContainer;
   } catch { return unavailable(); }
   if (!Array.isArray(body?.Directory) || body.Directory.length > 100 ||
