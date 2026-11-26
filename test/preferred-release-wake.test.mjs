@@ -53,4 +53,3 @@ test('runtime wake persists preferred-group admission before scheduler and acros
   runtime.wakeRequest(1);await runtime.stop();queue=openAcquisitionRequestQueue(dbPath);assert.equal(queue.getResult(1).nextDueMs,1801000);assert.equal(requests.getPreferredWait(1,1801000).deadlineMs,deadline);assert.equal(queue.claimNext({nowMs:1801000,priorityRequestId:1}).requestId,1);
  }finally{await runtime?.stop();queue.close();}
 }));
-

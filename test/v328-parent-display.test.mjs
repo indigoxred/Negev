@@ -70,5 +70,3 @@ test('authenticated weekly serialization preserves optional English titles and a
 test('sub-minute runtime retains authenticated description and dates',async()=>authenticatedApp(async({get,setDisplay})=>{
  setDisplay(mergeDisplayFacts(display,await facts(20)));const response=await get('/api/catalogue/11/display');assert.equal(response.statusCode,200);assert.equal(response.json().description,display.description);assert.equal(response.json().endDate,display.endDate);assert.equal(response.json().durationMinutes,null);setDisplay(mergeDisplayFacts(display,await facts(1200)));const control=await get('/api/catalogue/11/display');assert.equal(control.statusCode,200);assert.equal(control.json().durationMinutes,20);
 }));
-
-
