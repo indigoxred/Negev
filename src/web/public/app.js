@@ -3332,7 +3332,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
               } else {
                 row.statusText.textContent = payload.state === 'pending'
                   ? 'Queued for details' : 'Requested';
-                if(payload.created!==false&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title,englishTitle:row.englishTitle});
+                if(payload.created!==false&&payload.targetIds?.length!==0&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title,englishTitle:row.englishTitle});
                 saved.push(Number.isSafeInteger(payload.requestId)
                   ? `#${payload.requestId}` : row.title);
               }

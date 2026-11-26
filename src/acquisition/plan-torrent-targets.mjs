@@ -251,18 +251,20 @@ export function planTorrentTargets({ request, detail, prepared,
   const requestedRegularNumbers = new Set(detail.episodes.filter((episode) =>
     episode.type === 'Episode' && requested.has(episode.id))
     .map((episode) => episode.number));
+  const sequenceNumbers = titleMatched && targetVideos.length === regular.length
+    ? new Set(regular.map(episode => episode.number)) : requestedRegularNumbers;
   const needsSequence = targetVideos.some((file) => {
     const episode = episodeNumbers(file.name);
     return episode === null || episode.type === 'Unnumbered';
   });
-  const allowAbsolute = titleMatched && regular.length === requestedRegularNumbers.size &&
+  const allowAbsolute = titleMatched && regular.length === sequenceNumbers.size &&
     targetVideos.every((file) => {
       const parsed = episodeNumbers(file.name);
       return parsed?.type === 'Episode' && parsed.numbers.length === 1 &&
-        !requestedRegularNumbers.has(parsed.numbers[0]);
+        !sequenceNumbers.has(parsed.numbers[0]);
     });
   const packSequence = hasRequestedSpecial || (!needsSequence && !allowAbsolute) ? null :
-    completePackNumbers(targetVideos, requestedRegularNumbers, { allowAbsolute });
+    completePackNumbers(targetVideos, sequenceNumbers, { allowAbsolute });
   if (packSequence?.state === 'ambiguous') return held('ambiguous_pack_numbering');
 
   const byNumber = new Map();
@@ -276,6 +278,7 @@ export function planTorrentTargets({ request, detail, prepared,
   }
   const plannedFiles = [];
   const targets = new Set();
+  const mappedTargets = new Set();
   const trustedUnnumberedTitle = typeof trustedTitle === 'string' &&
     trustedTitle.length <= 120 && releaseTitle?.length <= 500 &&
     titleMatched;
@@ -298,16 +301,36 @@ export function planTorrentTargets({ request, detail, prepared,
       : episode?.type === 'Unnumbered' ? null
         : episode?.numbers.map((number) => byNumber.get(`${episode.type}:${number}`));
     if (!ids || ids.length === 0 || ids.some((id) =>
-      !id || !requested.has(id) || targets.has(id))) {
+      !id || mappedTargets.has(id))) {
       return held('ambiguous_or_unrequested_video');
+    }
+    for (const id of ids) mappedTargets.add(id);
+    if (ids.some(id => !requested.has(id))) {
+      // Never split a combined video or silently ignore ambiguous identity.
+      // A separate, known regular episode outside this request needs no
+      // download or import, whether owned or deliberately not requested.
+      if (!titleMatched || ids.length !== 1 || requested.has(ids[0]) ||
+          !regular.some(episode => episode.id === ids[0])) {
+        return held('ambiguous_or_unrequested_video');
+      }
+      excludedVideoNames.push(file.name);
+      continue;
     }
     for (const id of ids) targets.add(id);
     plannedFiles.push({ name: file.name, size: file.size, episodeIds: ids });
   }
   if (plannedFiles.length === 0) return held('no_requested_video');
+  const stem = name => name.slice(0, -path.posix.extname(name).length);
+  const associated = (subtitle, video) => stem(subtitle) === stem(video) ||
+    stem(subtitle).startsWith(stem(video) + '.');
+  const excludedSubtitleNames = prepared.files.filter(file =>
+    torrentFileKind(file.name) === 'subtitle' &&
+    excludedVideoNames.some(video => associated(file.name, video)) &&
+    !plannedFiles.some(video => associated(file.name, video.name))).map(file => file.name);
   return { state: 'planned_targets',
     episodeIds: [...targets].sort((a, b) => a - b), plannedFiles,
     ...(packSequence?.sourceNumbers ? { numberingEvidence:'complete_absolute_sequence',
       absoluteOffset:Math.min(...packSequence.sourceNumbers)-1 } : {}),
-    ...(excludedVideoNames.length ? { excludedVideoNames } : {}) };
+    ...(excludedVideoNames.length ? { excludedVideoNames } : {}),
+    ...(excludedSubtitleNames.length ? { excludedSubtitleNames } : {}) };
 }

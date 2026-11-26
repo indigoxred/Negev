@@ -10,6 +10,20 @@ import { openCandidateCheckCache } from '../src/acquisition/candidate-check-cach
 const request = { id: 1, anidbId: 42, kind: 'series', episodeIds: [1001] };
 const candidate = { indexerId: 7, guid: 'private-candidate-guid', title: 'Example - 01', size: 1000 };
 
+test('old subset-pack rejection is reconsidered without flushing unrelated evidence', async () => {
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-subset-pack-cache-')),dbPath=path.join(dir,'db.sqlite');
+ let cache=openCandidateCheckCache(dbPath,{now:()=>100});
+ const positive={...candidate,guid:'positive'},other={...candidate,guid:'other'};
+ cache.put({request,candidate:positive,result:{state:'preflight',episodeIds:[1001]}});
+ cache.put({request,candidate:other,result:{state:'held',reason:'invalid_metainfo'}});cache.close();
+ const key=createHash('sha256').update(JSON.stringify(['candidate-check-v4-bonuses',request.id,request.anidbId,request.kind,[...request.episodeIds],candidate.indexerId,request.title,candidate.guid,candidate.title,candidate.size,candidate.sourceQuery,candidate.targetEpisodeId])).digest('hex');
+ const db=new DatabaseSync(dbPath);db.prepare('INSERT INTO acquisition_candidate_checks VALUES(?,?,?,?,?,?)').run(key,42,'[1001]',JSON.stringify({state:'held',reason:'ambiguous_or_unrequested_video'}),100,21600100);db.close();
+ cache=openCandidateCheckCache(dbPath,{now:()=>101});try{
+ assert.equal(cache.get({request,candidate}),null);assert.equal(cache.get({request,candidate:positive}).state,'preflight');assert.equal(cache.get({request,candidate:other}).reason,'invalid_metainfo');
+ const result={state:'held',reason:'ambiguous_or_unrequested_video'};cache.put({request,candidate,result});cache.close();cache=openCandidateCheckCache(dbPath,{now:()=>102});assert.deepEqual(cache.get({request,candidate}),result);
+ }finally{cache.close();await rm(dir,{recursive:true,force:true});}
+});
+
 test('v319 wrong-identity negatives recheck once without flushing positives or unrelated negatives', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-offset-cache-')), dbPath = path.join(dir, 'state.sqlite');
   let clock = 100, cache = openCandidateCheckCache(dbPath, { now: () => clock });

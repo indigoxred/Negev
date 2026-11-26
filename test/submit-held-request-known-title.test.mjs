@@ -4,7 +4,7 @@ import { createHeldRequestSubmitter } from '../src/requests/submit-held-request.
 
 const authorized = () => ({ active: true, adultAllowed: true });
 
-test('zero-target Manual and review requests are rejected without silently creating Auto watches', async () => {
+test('zero-target Manual rejects while Auto review saves an automatic future watch', async () => {
   let saved = 0;
   const submit = createHeldRequestSubmitter({ authorizeRequester: authorized,
     confirmKnownTitle: async () => true,
@@ -16,10 +16,12 @@ test('zero-target Manual and review requests are rejected without silently creat
     ledger: { findSubmission: () => null, submit: () => { saved++; return { state: 'held', requestId: 1 }; } },
     now: () => 1, today: () => '2026-11-03',
   });
-  for (const releaseMode of ['manual', 'auto_review']) assert.deepEqual(await submit({
+  for (const releaseMode of ['manual']) assert.deepEqual(await submit({
     requesterId: 1, anidbId: 42, scope: 'installment', requestKey: releaseMode, releaseMode,
   }), { state: 'held', reason: 'release_selection_requires_targets' });
   assert.equal(saved, 0);
+  assert.equal((await submit({ requesterId: 1, anidbId: 42, scope: 'installment', requestKey: 'review', releaseMode: 'auto_review' })).requestId, 1);
+  assert.equal(saved, 1);
   assert.equal((await submit({ requesterId: 1, anidbId: 42, scope: 'installment', requestKey: 'auto' })).requestId, 1);
 });
 
