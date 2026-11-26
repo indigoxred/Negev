@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { normalizeShokoFile } from './shoko-file-page.mjs';
 
 // Targeted event follow-up. A 404 is inconclusive during Shoko's import
@@ -19,7 +19,10 @@ export async function readShokoOneFile({ baseUrl, apiKey, fileId,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return { state: 'unavailable' };
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return { state: 'unavailable' };
+    }
     const raw=await readBoundedJson(response,100_000);
     const item = normalizeShokoFile(raw);
     const observedPaths=includePaths&&Array.isArray(raw?.Locations)&&raw.Locations.length<=20

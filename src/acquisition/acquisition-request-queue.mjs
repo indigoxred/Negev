@@ -25,6 +25,25 @@ const validCandidateFingerprint = (value) => {
     new Set(ids).size === ids.length;
 };
 
+// A closed watch can still have requested episodes missing. A settled miss
+// requires a retry even after the disposable negative memo has expired. Repair
+// only this unscheduled state; never reopen a completed watch or active claim.
+// The normal worker must re-read availability, choices and ownership afterward.
+const repairUnscheduledClosedMisses = (db, requestId = null) => db.prepare(`
+  UPDATE acquisition_request_checks SET next_due_ms=checked_ms+60000
+  WHERE (? IS NULL OR request_id=?) AND state='held'
+    AND reason='no_safe_release' AND checked_ms IS NOT NULL
+    AND next_due_ms IS NULL AND request_id IN (
+      SELECT r.id FROM requests r WHERE r.status='held'
+        AND r.watch_closed=1 AND r.cancelled_ms IS NULL
+        AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s
+          WHERE s.request_id=r.id)
+        AND EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id)
+        AND NOT EXISTS (SELECT 1 FROM request_targets rt
+          LEFT JOIN targets t ON t.id=rt.target_id
+          WHERE rt.request_id=r.id AND (t.id IS NULL OR t.anidb_id<>r.anidb_id))
+    )`).run(requestId, requestId);
+
 // This queue only chooses which saved request to examine. It never searches
 // an indexer, calls qBittorrent, or treats a held item as completed.
 export function openAcquisitionRequestQueue(dbPath,
@@ -288,6 +307,9 @@ export function openAcquisitionRequestQueue(dbPath,
       }
       db.exec(`UPDATE acquisition_request_checks SET verification_policy_revision=2
         WHERE verification_policy_revision<2`);
+      // Independent of memo retention and the old migration marker. In
+      // particular, v321 already stamped suspended rows as revision 2.
+      repairUnscheduledClosedMisses(db);
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     db.exec('INSERT INTO acquisition_request_cursor VALUES (1,0,1) ON CONFLICT(id) DO NOTHING');
@@ -552,8 +574,11 @@ export function openAcquisitionRequestQueue(dbPath,
     },
     resumeSuspended({ requestId } = {}) {
       if (!validId(requestId)) throw new TypeError('Invalid suspended request');
-      return transact(() => deleteSuspension.run(requestId).changes === 1
-        ? { state: 'resumed' } : held('not_suspended'));
+      return transact(() => {
+        if (deleteSuspension.run(requestId).changes !== 1) return held('not_suspended');
+        repairUnscheduledClosedMisses(db, requestId);
+        return { state: 'resumed' };
+      });
     },
     getSuspension(requestId) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');

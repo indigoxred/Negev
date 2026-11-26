@@ -24,9 +24,12 @@ test('operator diagnostics read one consistent snapshot without exposing paths, 
     const result = await readWorkerDiagnostics({ dataDir: root, nowMs: 400 });
     assert.equal(result.state, 'worker_snapshot');
     assert.equal(result.stages.acquisition.unresolvedClaims, 1);
-    assert.equal(result.stages.acquisition.dueRetries, 1);
+    assert.equal(result.stages.acquisition.dueRetries, null);
+    assert.equal(result.stages.acquisition.recordedDueRetries, 1);
+    assert.equal(result.stages.acquisition.eligibility, 'not_established');
     assert.equal(result.stages.acquisition.lastSuccessfulMs, 300);
-    assert.equal(result.stages.acquisition.oldestDueAgeMs, 200);
+    assert.equal(result.stages.acquisition.oldestDueAgeMs, null);
+    assert.equal(result.stages.acquisition.recordedOldestDueAgeMs, 200);
     assert.equal(result.recent.pending, 1);
     assert.equal(result.recent.due, 1);
     assert.deepEqual(result.plex.cursors, [{ kind: 'episode', offset: 100 }]);
