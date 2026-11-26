@@ -152,8 +152,19 @@ export function openRequestProgress(dbPath, { now = Date.now,
       if (!hasAcquisitionChecks.get()) return false;
       recoveryHoldColumn = db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
         .some(column => column.name === 'recovery_hold');
+      // Disabled acquisition may never open/migrate its queue. Derive the
+      // old masked warning read-only from a durable unknown dispatch; do not
+      // mistake a live unfinished claim or unsent reservation for recovery.
+      const recovery = recoveryHoldColumn ? 'recovery_hold=1' : `state IS NOT NULL AND EXISTS (
+        SELECT 1 FROM requests r WHERE r.id=acquisition_request_checks.request_id
+          AND r.status='held' AND r.cancelled_ms IS NULL) AND EXISTS (
+        SELECT 1 FROM acquisition_attempts a WHERE a.request_id=acquisition_request_checks.request_id
+          AND a.status='dispatch_unknown'
+          AND NOT EXISTS (SELECT 1 FROM acquisition_releases x WHERE x.attempt_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM acquisition_retirements t WHERE t.attempt_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM acquisition_rejections j WHERE j.attempt_id=a.id))`;
       interruptedRequest = db.prepare(`SELECT 1 FROM acquisition_request_checks
-        WHERE request_id=? AND ((state='held' AND reason='interrupted_attempt_present')${recoveryHoldColumn ? ' OR recovery_hold=1' : ''})`);
+        WHERE request_id=? AND ((state='held' AND reason='interrupted_attempt_present') OR (${recovery}))`);
     }
     return Boolean(interruptedRequest.get(requestId));
   };

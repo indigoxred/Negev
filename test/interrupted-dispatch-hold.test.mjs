@@ -171,3 +171,27 @@ test('normal start recovery observes exact saved manifest after an outage/restar
   assert.equal((await x.run()).results[0]?.reason,'no_release_candidates');assert.equal(x.progress().reviewRequired,false);
   assert.ok(reads>=7);assert.equal(writes,0);assert.equal(x.submissions,0);
 });
+
+for(const guard of ['none','cancelled','inflight','reserved','released','retired','rejected'])test(`acquisition-disabled legacy masked warning is read-only and respects ${guard}`,async()=>{
+  const root=await mkdtemp(path.join(tmpdir(),'negev-disabled-recovery-')),dbPath=path.join(root,'negev.sqlite');
+  let db=new DatabaseSync(dbPath),progress;
+  try{
+    db.exec(await readFile(new URL('./fixtures/masked-dispatch-v0.0.323.sql',import.meta.url),'utf8'));
+    if(guard==='cancelled')db.exec('UPDATE requests SET cancelled_ms=1');
+    if(guard==='inflight')db.exec('UPDATE acquisition_request_checks SET state=NULL,reason=NULL');
+    if(guard==='reserved')db.exec("UPDATE acquisition_attempts SET status='reserved'");
+    if(guard==='released')db.exec('INSERT INTO acquisition_releases VALUES(1,1)');
+    if(guard==='retired')db.prepare("INSERT INTO acquisition_retirements VALUES(1,?,'policy_reset',1)").run('a'.repeat(40));
+    if(guard==='rejected')db.prepare("INSERT INTO acquisition_rejections VALUES(1,?,'file_wrong_identity',1)").run('a'.repeat(40));
+    const schema=db.prepare('PRAGMA schema_version').get().schema_version;
+    const checks=db.prepare('SELECT * FROM acquisition_request_checks').all();
+    progress=openRequestProgress(dbPath,{pureMode:true});
+    const result=progress.read(1);
+    assert.equal(result.state==='request_interrupted',guard==='none');
+    // A separately rejected file can still require its own review; the
+    // terminated unknown-dispatch warning itself must not be resurrected.
+    if(guard!=='rejected')assert.equal(result.reviewRequired,guard==='none');
+    assert.equal(db.prepare('PRAGMA schema_version').get().schema_version,schema);
+    assert.deepEqual(db.prepare('SELECT * FROM acquisition_request_checks').all(),checks);
+  }finally{progress?.close();db.close();await rm(root,{recursive:true,force:true})}
+});
