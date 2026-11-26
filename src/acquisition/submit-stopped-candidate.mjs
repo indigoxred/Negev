@@ -130,6 +130,13 @@ async function submitOwnedCandidate({
           method: 'POST', headers, body: prepared.form, redirect: 'manual',
           signal: AbortSignal.timeout(timeoutMs),
         });
+        if(receipt.status===403 && typeof ledger.rejectDispatch==='function') {
+          let refused;
+          try{refused=ledger.rejectDispatch({attemptId,candidate,hash:expected.hash,nowMs,httpStatus:403});}
+          finally{await cancelResponseBody(receipt);}
+          if(refused?.state==='dispatch_rejected')return held('provider_http_403');
+          return refused??held('dispatch_refusal_unreconciled');
+        }
         await cancelResponseBody(receipt);
       } catch { /* Response is uncertain; observe by exact hash below. */ }
     }

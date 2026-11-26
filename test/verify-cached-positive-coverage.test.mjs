@@ -123,3 +123,12 @@ test('sweep capacity cannot discard active progress and restart provider reads f
  const overflow=await verifyCachedPositiveCoverage({...options,request:{...request,id:65,anidbId:107}});assert.equal(overflow.pendingEpisodeIds,undefined);assert.equal(overflow.uncertainEpisodeIds.length,2);assert.equal(calls,64);
  const first=await verifyCachedPositiveCoverage({...options,request:{...request,id:1,anidbId:43}});assert.equal(first.pendingEpisodeIds,undefined);assert.equal(calls,65);
 });
+
+test('incomplete Shoko siblings permit exact public proof but never absence', async()=>{
+ for(const state of ['available','unknown']){
+ const result=await verifyCachedPositiveCoverage({request,cached,readShoko:async()=>({state:'ok',complete:false,files:[{fileId:9}]}),readPublic:async()=>({state})});
+ assert.equal(result.verifiedTargets,state==='available'?2:0);assert.deepEqual(result.uncertainEpisodeIds??[],state==='available'?[]:[1001,1002]);
+ }
+ const result=await verifyCachedPositiveCoverage({request,cached,readShoko:async()=>({state:'ok',complete:false,files:[]}),readPublic:async()=>{throw Error('empty response cannot prove availability')}});
+ assert.deepEqual(result.uncertainEpisodeIds,[1001,1002]);
+});

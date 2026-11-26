@@ -95,6 +95,15 @@ export function openAcquisitionLedger(dbPath) {
     if (hashIndex?.unique === 1) db.exec('DROP INDEX acquisition_expected_hash');
     db.exec(`CREATE INDEX IF NOT EXISTS acquisition_expected_hash
       ON acquisition_attempts(expected_hash) WHERE expected_hash IS NOT NULL`);
+    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_dispatch_refusals (
+      attempt_id INTEGER PRIMARY KEY REFERENCES acquisition_attempts(id),
+      anidb_id INTEGER NOT NULL,indexer_id INTEGER NOT NULL,
+      candidate_base TEXT NOT NULL,torrent_hash TEXT NOT NULL,
+      refused_ms INTEGER NOT NULL CHECK(refused_ms>=0),
+      http_status INTEGER NOT NULL CHECK(http_status=403)
+    ) STRICT;
+    CREATE INDEX IF NOT EXISTS dispatch_refusal_candidate
+      ON acquisition_dispatch_refusals(indexer_id,anidb_id,candidate_base,attempt_id DESC)`);
     db.exec(`CREATE TABLE IF NOT EXISTS acquisition_target_claims (
       attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id),
       anidb_id INTEGER NOT NULL CHECK(anidb_id > 0),
@@ -233,10 +242,13 @@ export function openAcquisitionLedger(dbPath) {
       later.attempt_id<>original.attempt_id
     JOIN acquisition_attempts attempt ON attempt.id=later.attempt_id
     WHERE recovery.status='released' AND attempt.request_id=? AND
-      original.anidb_id=? AND original.episode_id=? LIMIT 1`);
+      original.anidb_id=? AND original.episode_id=? AND NOT EXISTS
+        (SELECT 1 FROM acquisition_dispatch_refusals d WHERE d.attempt_id=attempt.id) LIMIT 1`);
   const busyHash = db.prepare(`SELECT a.id FROM acquisition_attempts a
     LEFT JOIN acquisition_retirements r ON r.attempt_id=a.id
-    WHERE a.expected_hash=? AND a.id<>? AND
+    WHERE a.expected_hash=? AND a.id<>? AND NOT EXISTS
+      (SELECT 1 FROM acquisition_dispatch_refusals d JOIN acquisition_releases released
+        ON released.attempt_id=d.attempt_id WHERE d.attempt_id=a.id) AND
       (r.reason IS NULL OR r.reason NOT IN ('file_wrong_identity','policy_reset')
         OR (r.reason='file_wrong_identity' AND a.anidb_id=?))
     LIMIT 1`);
@@ -253,6 +265,9 @@ export function openAcquisitionLedger(dbPath) {
   const insertPlan = db.prepare('INSERT INTO acquisition_file_plans(attempt_id,file_name,file_size,episode_key) VALUES (?,?,?,?)');
   const touchAttempt = db.prepare('UPDATE acquisition_attempts SET updated_ms=? WHERE id=?');
   const findRelease = db.prepare('SELECT released_ms FROM acquisition_releases WHERE attempt_id=?');
+  const findDispatchRefusal = db.prepare('SELECT torrent_hash,refused_ms,indexer_id,candidate_base FROM acquisition_dispatch_refusals WHERE attempt_id=?');
+  const latestDispatchRefusal = db.prepare(`SELECT attempt_id FROM acquisition_dispatch_refusals
+    WHERE indexer_id=? AND anidb_id=? AND candidate_base=? ORDER BY attempt_id DESC LIMIT 1`);
   const insertRelease = db.prepare('INSERT INTO acquisition_releases(attempt_id,released_ms) VALUES (?,?)');
   const deactivateClaims = db.prepare('UPDATE acquisition_target_claims SET active=0 WHERE attempt_id=? AND active=1');
   const prepare = db.prepare("UPDATE acquisition_attempts SET expected_hash=?,updated_ms=? WHERE id=? AND status='reserved' AND expected_hash IS NULL");
@@ -282,6 +297,10 @@ export function openAcquisitionLedger(dbPath) {
   };
   const digestForCandidate = (candidate, anidbId) => {
     const guid=canonicalReleaseGuid(candidate.guid,candidate.indexerId);
+    const base=createHash('sha256').update(guid).digest('hex');
+    const refused=latestDispatchRefusal.get(candidate.indexerId,anidbId,base);
+    if(refused)return createHash('sha256').update(JSON.stringify(
+      ['dispatch-refusal-retry-v1',anidbId,guid,refused.attempt_id])).digest('hex');
     const legacyDigest = aliasedDigest(candidate.indexerId,createHash('sha256').update(guid).digest('hex'));
     const legacy = candidateRow.get(candidate.indexerId, legacyDigest);
     if (legacy && findRetirement.get(legacy.id)?.reason === 'policy_reset') {
@@ -965,6 +984,24 @@ export function openAcquisitionLedger(dbPath) {
         return { state: row.status, sendNow: false };
       });
     },
+    rejectDispatch({attemptId,candidate,hash,nowMs,httpStatus}={}) {
+      if(!validId(attemptId)||!validId(candidate?.indexerId)||typeof candidate?.guid!=='string'||!candidate.guid||
+        candidate.guid.length>MAX_RELEASE_GUID_LENGTH||!validHash(hash)||!validTime(nowMs)||httpStatus!==403)throw new TypeError('Invalid definitive dispatch refusal');
+      return transact(()=>{
+        const row=findAttempt.get(attemptId),prior=findDispatchRefusal.get(attemptId);
+        const base=createHash('sha256').update(canonicalReleaseGuid(candidate.guid,candidate.indexerId)).digest('hex');
+        if(prior) {
+          if(prior.indexer_id!==candidate.indexerId||prior.candidate_base!==base)return held('candidate_conflict');
+          return prior.torrent_hash===hash.toLowerCase()?{state:'dispatch_rejected'}:held('torrent_conflict');
+        }
+        if(!row||row.indexer_id!==candidate.indexerId||row.candidate_digest!==digestForCandidate(candidate,row.anidb_id))return held('candidate_conflict');
+        if(row.status!=='dispatch_unknown'||row.torrent_hash!==null||row.expected_hash!==hash.toLowerCase()||findStart.get(attemptId)||findRelease.get(attemptId)||findRejection.get(attemptId))return held('dispatch_not_rejectable');
+        if(nowMs<row.updated_ms)return held('time_before_last_transition');
+        db.prepare('INSERT INTO acquisition_dispatch_refusals VALUES(?,?,?,?,?,?,403)').run(attemptId,row.anidb_id,row.indexer_id,base,hash.toLowerCase(),nowMs);
+        insertRelease.run(attemptId,nowMs);deactivateClaims.run(attemptId);bonuses.deactivateBonuses(attemptId,nowMs);
+        return {state:'dispatch_rejected'};
+      });
+    },
     recordTorrent({ attemptId, hash, nowMs }) {
       if (!validId(attemptId) || typeof hash !== 'string' ||
           !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
@@ -1076,7 +1113,7 @@ export function openAcquisitionLedger(dbPath) {
         episodeIds: attemptEpisodes.all(attemptId).map((target) => target.episode_id),
         ...(row.evidence_policy === 'first_time_permissive'
           ? { evidencePolicy: row.evidence_policy } : {}),
-        status: findRelease.get(attemptId) ? 'released_pre_dispatch' :
+        status: findDispatchRefusal.get(attemptId) ? 'dispatch_rejected' : findRelease.get(attemptId) ? 'released_pre_dispatch' :
           findPrestartMismatchRetirement.get(attemptId)
             ? 'retired_prestart_mismatch' :
           findRetirement.get(attemptId)?.reason === 'stalled_download'

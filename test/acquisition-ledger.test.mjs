@@ -30,6 +30,37 @@ async function withLedger(run) {
 
 const candidate = { indexerId: 7, guid: 'synthetic-private-candidate-guid' };
 
+test('definitive refusal requires the exact unobserved dispatch and never migrates uncertainty away', async () =>
+  withLedger(async ({ dbPath, firstId }) => {
+    let ledger = openAcquisitionLedger(dbPath);
+    const hash = 'd'.repeat(40);
+    const attemptId = ledger.reserve({ requestId: firstId, candidate,
+      episodeIds: [1001], nowMs: 200 }).attemptId;
+    const refusal = overrides => ledger.rejectDispatch({ attemptId, candidate, hash,
+      nowMs: 204, httpStatus: 403, ...overrides });
+    ledger.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    assert.equal(refusal().reason, 'dispatch_not_rejectable');
+    ledger.beginDispatch({ attemptId, nowMs: 202 });
+    ledger.close();
+    // A historical dispatch with no HTTP receipt stays unresolved after upgrade/restart.
+    ledger = openAcquisitionLedger(dbPath);
+    try {
+      assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { ...candidate, guid: 'other' }, episodeIds: [1001], nowMs: 203 }).reason,
+      'target_busy');
+      assert.equal(refusal({ candidate: { ...candidate, guid: 'wrong' } }).reason, 'candidate_conflict');
+      assert.equal(refusal({ hash: 'e'.repeat(40) }).reason, 'dispatch_not_rejectable');
+      assert.throws(() => refusal({ httpStatus: 503 }), /Invalid definitive dispatch refusal/);
+      ledger.recordTorrent({ attemptId, hash, nowMs: 203 });
+      assert.equal(refusal().reason, 'dispatch_not_rejectable');
+      assert.equal(ledger.getAttempt(attemptId).status, 'torrent_observed');
+      assert.equal(ledger.reserve({ requestId: firstId,
+        candidate: { ...candidate, guid: 'other' }, episodeIds: [1001], nowMs: 205 }).reason,
+      'target_busy');
+    } finally { ledger.close(); }
+  }));
+
 test('prior correspondence needs the exact torrent, planned file and same-file episode proofs', async () =>
   withLedger(async ({ dbPath, firstId }) => {
     const ledger = openAcquisitionLedger(dbPath);

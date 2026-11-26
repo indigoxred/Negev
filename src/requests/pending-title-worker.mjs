@@ -1,4 +1,4 @@
-const terminalReasons = new Set(['already_available', 'invalid_request',
+const terminalReasons = new Set(['already_available', 'already_monitored_elsewhere', 'invalid_request',
   'idempotency_key_conflict', 'request_cancelled',
   'ambiguous_movie_scope', 'account_access_changed',
   'adult_access_disabled']);

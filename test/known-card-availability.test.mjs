@@ -282,3 +282,20 @@ test('a second Plex mount with a symlink to the Shoko file proves physical ident
         { appRoot: '/relay', localRoot: relayRoot }] }),
     { state: 'available', fileId: 51 });
   });
+
+test('unmapped sibling paths cannot poison independently mapped physical proof',async()=>{
+ for(const side of ['shoko','plex']) for(const order of ['first','last']){
+ const input=await fixture();
+ if(side==='shoko') input.shoko.files[0].sourcePaths[order==='first'?'unshift':'push']('/outside/01.mkv');
+ else input.plex.parts[order==='first'?'unshift':'push']({...input.plex.parts[0],plexPath:'/outside/01.mkv'});
+ assert.equal((await observeKnownCardAvailability(input)).state,'available');
+ }
+});
+test('requested recovery file is proved independently among playable versions',async()=>{
+ const input=await fixture();await writeFile(path.join(input.shokoMount.localRoot,'Anime','Example','02.mkv'),'other');
+ input.shoko.files.push({...input.shoko.files[0],fileId:52,sourcePaths:['/pure/Anime/Example/02.mkv']});
+ input.plex.parts.push({...input.plex.parts[0],plexPath:'/source-pure/Anime/Example/02.mkv'});
+ const target={...input.target,fileId:52}, result=await observeKnownCardAvailability({...input,target});
+ assert.equal(result.state,'available');assert.equal(result.fileId,52);
+ input.plex.parts.pop();assert.notEqual((await observeKnownCardAvailability({...input,target})).state,'available');
+});

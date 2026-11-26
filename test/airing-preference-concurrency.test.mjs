@@ -66,7 +66,7 @@ test('atomic tracking preserves account ownership, validation, idempotence and c
 });
 
 test('automatic tracking submits an add intent and never a stale whole-list replacement',()=>{
-  let called;autoTrackSavedAiringRequest({result:{requestId:1},requesterId:7,anidbId:22,
+  let called;autoTrackSavedAiringRequest({result:{requestId:1,created:true},requesterId:7,anidbId:22,
     readRequest:()=>({id:1,requesterId:7,anidbId:22,kind:'series',monitorFuture:true,status:'held'}),
     accounts:{getAiringPreferences:()=>{throw Error('must not pre-read')},setAiringPreferences:()=>{throw Error('must not replace')},changeAiringPreferences:input=>called=input}});
   assert.deepEqual(called,{userId:7,action:'track',anidbId:22});

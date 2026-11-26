@@ -40,3 +40,26 @@ test('filter values are bounded enums and source is independent from resolution'
  assert.equal(releaseFacts('[G] Show BDRip 1920x1080').resolution,1080);
  assert.equal(releaseFacts('[G] Show UHD 3840x2160').resolution,2160);
 });
+
+test('source and resolution hints normalize release separators without changing group or audio hints',()=>{
+ for(const separator of [' ','_','.','-']){
+  for(const [source,expected] of [['BD','BD'],['BDRip','BD'],['BDRemux','BD'],[`Blu${separator}ray`,'BD'],[`WEB${separator}DL`,'WEB'],['WEBRip','WEB'],['DVD','DVD']]){
+   const title=`[Actual_Group] Example${separator}${source}${separator}1080p${separator}HEVC`,facts=releaseFacts(title);
+   assert.equal(facts.source,expected,title);assert.equal(facts.resolution,1080,title);
+   assert.equal(facts.group,'Actual_Group');assert.equal(facts.audio,'unknown');
+  }
+  for(const [tag,resolution] of [['2160p',2160],['4K',2160],['UHD',2160],['3840x2160',2160],['1440p',1440],['1920x1080',1080],['1280x720',720]]){
+   assert.equal(releaseFacts(`Example${separator}WEB${separator}${tag}${separator}HEVC`).resolution,resolution,tag+separator);
+  }
+ }
+});
+test('separator normalization preserves BD720 default and explicit audio filters',()=>{
+ for(const separator of [' ','_','.','-']){
+  const title=fields=>`[Actual_Group] ${fields.join(separator)}`;
+  assert.equal(matchesReleaseFilters({title:title(['Example','BD','720p','HEVC'])}),true);
+  assert.equal(matchesReleaseFilters({title:title(['Example','WEB','720p','HEVC'])}),false);
+  const dub=title(['Example','BD','1080p','English','Dub']);assert.equal(matchesReleaseFilters({title:dub}),false);
+  assert.equal(matchesReleaseFilters({title:dub},{...filters,audio:'english'}),true);
+  assert.equal(matchesReleaseFilters({title:title(['Example','BD','1080p','Dual','Audio'])}),true);
+ }
+});

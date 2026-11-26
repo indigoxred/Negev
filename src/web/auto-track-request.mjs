@@ -1,5 +1,7 @@
 export function autoTrackSavedAiringRequest({ result, requesterId, anidbId,
   readRequest, accounts }) {
+  // Acquisition replay must respect a later explicit removal from the list.
+  if (result?.created !== true) return;
   if (!Number.isSafeInteger(result?.requestId) || result.requestId < 1) return;
   try {
     const saved = readRequest(result.requestId);

@@ -15,7 +15,7 @@ test('only a saved airing series owned by the requester enters tracking', () => 
   };
   const request = { requesterId: 2, anidbId: 8, kind: 'series',
     monitorFuture: true, status: 'held' };
-  const input = { result: { requestId: 7 }, requesterId: 2, anidbId: 8,
+  const input = { result: { requestId: 7, created: true }, requesterId: 2, anidbId: 8,
     readRequest: () => request, accounts };
   autoTrackSavedAiringRequest(input);
   autoTrackSavedAiringRequest(input);

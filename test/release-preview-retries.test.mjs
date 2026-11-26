@@ -64,7 +64,7 @@ test('changed authorization still prevents a new preview commit',async t=>{
 
 test('a legitimate repeat does not consume or require a free preview slot',async t=>{
  const x=await fixture(t),first=await x.open();const saved=await x.choose(first);
- for(let n=0;n<9;n++)await x.open({...x.input,requestKey:'draft-'+n});
+ for(let n=0;n<10;n++)await x.open({...x.input,requestKey:'draft-'+n});
  assert.equal((await x.sessions.open({...x.input,requestKey:'overflow'})).reason,'release_preview_limit');
  assert.deepEqual(await x.sessions.open(x.input),{state:'existing',requestId:saved.requestId,created:false});assert.deepEqual(x.wakes,[saved.requestId]);
 });

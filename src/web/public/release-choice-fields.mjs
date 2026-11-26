@@ -21,12 +21,13 @@ export function releaseCoverageHint(title = '') {
 }
 
 export function releaseFacts(title = '') {
-  const source = /\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title) ? 'BD' :
-    /\bDVD(?:rip)?\b/i.test(title) ? 'DVD' : /\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title) ? 'WEB' : null;
-  const namedResolution = /\b(?:2160p?|4k|UHD)\b|3840x2160/i.test(title) ? 2160 :
-    /\b1080p?\b|1920x1080/i.test(title) ? 1080 : /\b720p?\b|1280x720/i.test(title) ? 720 :
-      /\b(?:480|576)p?\b|(?:640|720)x480/i.test(title) ? 480 : null;
-  const numeric = Number(/\b(\d{3,4})p\b/i.exec(title)?.[1] ?? /\b\d{3,4}x(\d{3,4})\b/i.exec(title)?.[1] ?? 0);
+  const qualityTitle = title.replaceAll('_', ' ');
+  const source = /\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(qualityTitle) ? 'BD' :
+    /\bDVD(?:rip)?\b/i.test(qualityTitle) ? 'DVD' : /\bWEB(?:[ ._-]?DL|rip)?\b/i.test(qualityTitle) ? 'WEB' : null;
+  const namedResolution = /\b(?:2160p?|4k|UHD)\b|3840x2160/i.test(qualityTitle) ? 2160 :
+    /\b1080p?\b|1920x1080/i.test(qualityTitle) ? 1080 : /\b720p?\b|1280x720/i.test(qualityTitle) ? 720 :
+      /\b(?:480|576)p?\b|(?:640|720)x480/i.test(qualityTitle) ? 480 : null;
+  const numeric = Number(/\b(\d{3,4})p\b/i.exec(qualityTitle)?.[1] ?? /\b\d{3,4}x(\d{3,4})\b/i.exec(qualityTitle)?.[1] ?? 0);
   const resolution = Math.max(namedResolution ?? 0,numeric >= 240 && numeric <= 4320 ? numeric : 0) || null;
   const languageTitle = title.replaceAll('_', ' ');
   const dual = /\b(?:dual[ ._-]*audio|multi[ ._-]*audio|dual)\b/i.test(languageTitle);

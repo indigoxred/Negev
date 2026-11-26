@@ -35,7 +35,7 @@ const release = (guid,title,numbers=[1],seeders=10) => ({guid,indexerId:3,title,
   names:numbers.map(n=>'Example - '+String(n).padStart(2,'0')+'.mkv')});
 
 // Real stage/ledger/discovery/preflight/submission. Only outside services are synthetic.
-async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null,prequelRead=null,prequelRelationRead=null,owned=[],wholeShow=false,ignorePriorities=false}={}) {
+async function fixture(t,{title='Example',aliases=[],items,episodes=2,requested=[1],completed=false,registered=false,prediction=true,specials=[],requestedSpecials=[],prequelEpisodes=null,prequelRead=null,prequelRelationRead=null,owned=[],wholeShow=false,ignorePriorities=false,addResponse=()=>200}={}) {
   const root=await mkdtemp(path.join(tmpdir(),'negev-worker-quality-season-'));
   let clock=NOW;const metadataPages=[];
   const dbPath=path.join(root,'db.sqlite');const cleanups=[];let requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath);
@@ -86,6 +86,7 @@ const detail={state:'details',anidbId:42,title,kind:'series',restricted:false,co
     if(url.pathname.endsWith('/start')){started.push(active.guid);startPriorities.push(active.metadata.files.map((file,index)=>({name:file.name,priority:priorities.get(index)??1})));return new Response('Ok.');}
     if(url.pathname.endsWith('/version'))return new Response('v5.3.0');
     if(url.pathname.endsWith('/add')){
+      const status=addResponse();if(status!==200)return new Response(null,{status});
       const blob=options.body.get('torrents');const meta=inspectTorrentMetainfo({bytes:new Uint8Array(await blob.arrayBuffer())});
       active=records.find(c=>c.metadata.hash===meta.hash);assert.ok(active);added.push(active.guid);
       assert.equal(options.body.get('stopped'),'true','normal stage must add stopped');return new Response('Ok.');
@@ -289,4 +290,55 @@ test('sufficient consistent offsets proceed during an unrelated partial filename
  const f=await fixture(t,{title:'Example Season 2',episodes:5,requested:[1,2,3,4,5],completed:true,registered:true,prequelEpisodes:24,
   prediction:filename=>{const n=Number(/ - (\d+)/.exec(filename)[1]);if(n===29)return{status:503};if(n<27)return{status:204};const id=1000+n-26;return{status:200,release:{ProviderName:'Offline Importer',IsCorrupted:false,OriginalFilename:filename,ID:'offline://42-'+id,CrossReferences:[{AnidbAnimeID:42,AnidbEpisodeID:id,PercentageStart:0,PercentageEnd:100}]}}},items:[release('strong','[G] Example Season 2 1080p Batch',[25,26,27,28,29],30)]});
  const result=await f.run();assert.equal(result.state,'stopped_observed',JSON.stringify({result,previews:f.previews}));assert.deepEqual(f.added,['strong']);
+});
+
+for(const recover of [true,false]) test('explicit Auto listing outage delegates bounded worker '+(recover?'1080p recovery':'720p fallback')+' across reopen',async t=>{
+ let ready=false;
+ const f=await fixture(t,{title:'Himitsu no Mise (2025)',aliases:['Secret Shop (2025)'],completed:true,registered:true,episodes:2,requested:[1,2],prediction:filename=>ready||!filename.startsWith('Secret Shop')?true:{status:503},items:[
+  {...release('strong','[G] Secret Shop Season 02 [2025] Complete 1080p',[1,2],30),names:['Secret Shop S02E01.mkv','Secret Shop S02E02.mkv']},
+  {...release('weak','[G] Himitsu no Mise (2025) 720p Batch',[1,2],30),names:['Himitsu no Mise - 01.mkv','Himitsu no Mise - 02.mkv']}]});
+ assert.equal(f.selection.begin(f.requestId,'auto',f.selection.snapshot(f.requestId).revision).state,'updated');
+ const found=await f.selection.search(f.requestId),strong=found.items.find(c=>c.guid==='strong');
+ const inspected=await f.selection.inspect(f.requestId,strong.token);
+ assert.equal(inspected.state,'inspection');assert.equal(inspected.reason,'provider_unavailable');assert.equal(inspected.files.length,2);
+ assert.equal((await f.selection.auto(f.requestId,f.selection.snapshot(f.requestId).revision)).state,'updated');
+ assert.equal(f.selection.snapshot(f.requestId).phase,'consumed','temporary stronger listing failure must not pin weak release');
+ let clock=NOW,queue=openAcquisitionRequestQueue(f.dbPath);f.cleanup(()=>queue.close());
+ const run=()=>createAcquisitionPageWorker({queue,now:()=>clock,limit:1,processRequest:input=>f.run(input)}).runOnce({priorityRequestId:f.requestId});
+ let result=(await run()).results[0];assert.equal(result.state,'held');assert.deepEqual(f.added,[]);
+ queue.close();f.reopen();queue=openAcquisitionRequestQueue(f.dbPath);ready=recover;
+ for(let tick=0;tick<12&&!f.added.length;tick++){
+  clock=Math.max(clock+1000,queue.getResult(f.requestId).nextDueMs);f.setClock(clock);result=(await run()).results[0];
+ }
+ assert.equal(result.state,'stopped_observed',JSON.stringify(result));assert.deepEqual(f.added,[recover?'strong':'weak']);
+ assert.ok(clock-NOW<=183000,'normal bounded worker preference must expire');
+ assert.equal((await f.runStart(result.attemptId)).state,'start_unknown');assert.deepEqual(f.started,[recover?'strong':'weak']);
+});
+
+test('explicit Auto deterministic listed rejection still selects valid lower quality immediately',async t=>{
+ const f=await fixture(t,{episodes:2,requested:[1],registered:true,items:[
+  {...release('wrong','[G] Example - 01 1080p'),names:['Example - 02.mkv']},
+  release('valid','[G] Example - 01 720p') ]});
+ assert.equal(f.selection.begin(f.requestId,'auto',f.selection.snapshot(f.requestId).revision).state,'updated');
+ const found=await f.selection.search(f.requestId),wrong=found.items.find(c=>c.guid==='wrong');
+ const inspected=await f.selection.inspect(f.requestId,wrong.token);assert.equal(inspected.state,'inspection');assert.equal(inspected.reason,'no_requested_video');
+ const result=await f.selection.auto(f.requestId,f.selection.snapshot(f.requestId).revision);assert.equal(result.state,'updated');
+ assert.equal(f.selection.snapshot(f.requestId).phase,'chosen');assert.equal(f.selection.snapshot(f.requestId).selection.candidate.guid,'valid');
+});
+
+test('normal request worker retries refused stopped add after reopen and starts exact candidate once',async t=>{
+ let refused=true;
+ const f=await fixture(t,{episodes:2,requested:[1,2],registered:true,addResponse:()=>refused?403:200,items:[release('exact','[G] Example - 01 1080p'),release('next','[G] Example - 02 1080p',[2],5)]});
+ let clock=NOW,queue=openAcquisitionRequestQueue(f.dbPath);f.cleanup(()=>queue.close());
+ const run=()=>createAcquisitionPageWorker({queue,now:()=>clock,limit:1,processRequest:input=>f.run(input)}).runOnce({priorityRequestId:f.requestId});
+ const first=(await run()).results[0];assert.equal(first.state,'held');assert.deepEqual(f.added,[]);assert.deepEqual(f.started,[]);
+ assert.equal(f.acquisitions.getAttempt(1).status,'dispatch_rejected');assert.equal(queue.getResult(f.requestId).nextDueMs,NOW+60000);
+ queue.close();f.reopen();queue=openAcquisitionRequestQueue(f.dbPath);refused=false;clock=NOW+60000;f.setClock(clock);
+ const second=(await run()).results[0];assert.equal(second.state,'stopped_observed',JSON.stringify(second));assert.deepEqual(f.added,['exact']);
+ assert.notEqual(second.attemptId,1);assert.equal(f.acquisitions.getAttempt(second.attemptId).torrentHash,f.records[0].metadata.hash);
+ assert.equal((await f.runStart(second.attemptId)).state,'start_unknown');await f.runStart(second.attemptId);assert.deepEqual(f.started,['exact']);
+ f.available.add(1001);clock=queue.getResult(f.requestId).nextDueMs;f.setClock(clock);
+ const next=(await run()).results[0];assert.equal(next.state,'stopped_observed',JSON.stringify(next));assert.deepEqual(f.added,['exact','next']);
+ assert.deepEqual(f.acquisitions.getFilePlan(next.attemptId).flatMap(file=>file.episodeIds),[1002]);
+ assert.equal((await f.runStart(next.attemptId)).state,'start_unknown');assert.deepEqual(f.started,['exact','next']);
 });

@@ -25,6 +25,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 test('title and library controls recover from pending and failed reads without duplicate writes',
   { skip: browser ? false : browserSkipReason }, async () => {
     let monitoredTitle = false;let seasonResult=null;
+    let recoveryMode = null, recoveryPageFails = true;
+    const recoveryPreviewIds = [], recoverySeasonIds = [];
     let previewPending=false;let previewExisting=false;let previewOpens=0;const preferenceCommands=[];const submittedModes=[]; let filmResult=null; let control={mode:"manual",phase:"selecting",revision:1};
     let holdNextRequest = false;
     let heldRequestResponse = null;
@@ -106,6 +108,20 @@ test('title and library controls recover from pending and failed reads without d
           : { state: 'display', anidbId: 2, title: 'Recovered title',
             description: 'The recovered catalogue summary.', tags: [] },
         recoveredDisplayReads === 1 ? 503 : 200);
+      } else if (path === '/api/catalogue/50' || path === '/api/catalogue/51') {
+        const id=Number(path.split('/').at(-1));const paging=id===50&&recoveryMode==='paging';
+        if(paging&&url.searchParams.get('page')==='2'&&recoveryPageFails){json(response,{reason:'provider_unavailable'},503);return;}
+        const page=paging&&url.searchParams.get('page')==='2'?2:1;
+        json(response,{state:'details',anidbId:id,title:`Recovery installment ${id}`,kind:'series',restricted:false,
+          requestsOpen:!(id===50&&recoveryMode==='closed'),page,total:paging?2:1,nextPage:paging&&page===1?2:null,
+          ...(paging?{endDate:'2020-01-01',episodeCount:2,libraryPresence:{state:'in_library',verifiedEpisodeCount:2}}:{}),
+          episodes:[{id:id*10+page,number:page,type:'Episode',title:`Episode ${page}`,availability:'missing'}]});
+      } else if (path === '/api/catalogue/50/display' || path === '/api/catalogue/51/display') {
+        json(response,{state:'display',title:`Recovery installment ${path.split('/')[3]}`,type:'TV Series',tags:[]});
+      } else if (path === '/api/catalogue/50/related') {
+        json(response,{state:'related_titles',anidbId:50,completeness:'unproven',items:recoveryMode==='paging'?[]:[{anidbId:51,title:'Recovery installment 51',relation:'Sequel'}]});
+      } else if (path === '/api/catalogue/51/related') {
+        json(response,{state:'related_titles',anidbId:51,completeness:'unproven',items:[]});
       } else if (path === '/api/catalogue/3') {
         json(response,{state:'details',anidbId:3,title:'Series example',kind:'series',restricted:false,page:1,total:1,nextPage:null,...(monitoredTitle?{futureEpisodesMonitored:true,activeWatchRequestId:123}:{}),episodes:[{id:31,number:1,type:'Episode',title:'First episode',availability:'missing'}]});
       } else if(path === '/api/catalogue/3/display') {
@@ -113,6 +129,11 @@ test('title and library controls recover from pending and failed reads without d
       } else if(path.endsWith('/related')) {json(response,{state:'related',items:[],nextPage:null});
       } else if(path === '/api/release-previews') {
         previewOpens++;let body='';for await(const chunk of request)body+=chunk;
+        const input=JSON.parse(body);
+        if(recoveryMode==='manual'){
+          recoveryPreviewIds.push(input.anidbId);
+          if(input.anidbId===50){json(response,{reason:'already_available'},409);return;}
+        }
         json(response,previewPending?{state:'pending',intentId:900,created:false}:previewExisting?{state:'existing',requestId:123,created:false}:{state:'preview',previewId:'preview-'+previewOpens});
       } else if(path.startsWith('/api/release-previews/')&&path.endsWith('/release-choice')) {
         if(request.method==='POST'){let body='';for await(const chunk of request)body+=chunk;const value=JSON.parse(body);if(value.action==='preference')preferenceCommands.push(value);control={...control,mode:value.mode??control.mode,phase:'selecting',revision:control.revision+1,...(value.action==='preference'?{preference:{group:value.group,audio:value.audio}}:{})};}
@@ -122,6 +143,11 @@ test('title and library controls recover from pending and failed reads without d
       } else if(path === '/api/requests/seasons' || path === '/api/requests' && request.method === 'POST') {
         let body='';for await(const chunk of request)body+=chunk;
         const value=JSON.parse(body);submittedModes.push(value.seasons?.[0]?.releaseMode??value.releaseMode);
+        if(recoveryMode==='partial'&&value.seasons){
+          recoverySeasonIds.push(value.seasons.map(x=>x.anidbId));
+          json(response,{items:value.seasons.map(x=>({anidbId:x.anidbId,status:x.anidbId===51&&value.seasons.length>1?503:201,
+            result:x.anidbId===51&&value.seasons.length>1?{reason:'provider_unavailable'}:{state:'saved',created:true,requestId:123,targetIds:x.anidbId===50?[501]:[]}}))});return;
+        }
         if (holdNextRequest) { holdNextRequest = false; heldRequestResponse = response; return; }
         json(response,value.seasons?{items:[{anidbId:3,status:201,result:seasonResult??{state:'saved',created:true,requestId:123}}]}:filmResult??{state:'saved',created:true,requestId:123});
       } else if(path === '/api/requests/7/release-choice') {
@@ -669,6 +695,51 @@ test('title and library controls recover from pending and failed reads without d
       await evaluate("document.querySelector('dialog[open] .request-receipt-link').click()");
       await until("!document.querySelector('#view-requests').hidden");
       seasonResult=null;
+      const openRecoveryChooser=async()=>{
+        await navigate('#/discover');await until("!document.querySelector('#view-discover').hidden");
+        await navigate('#/title/50');
+        await until("document.querySelector('.season-request-trigger:not([disabled])')");
+        await evaluate("document.querySelector('.season-request-trigger').click()");
+        await until("document.querySelector('dialog[open] [data-anidb-id=\"51\"] input:not([disabled])')");
+      };
+      recoveryMode='manual';
+      await openRecoveryChooser();
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Select all shown').click()");
+      const beforeRecoveryWrites=submittedModes.length;
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Manual Pick').click()");
+      await until("document.querySelector('dialog.release-search-dialog[open]')");
+      assert.deepEqual(recoveryPreviewIds,[50,51],'Manual continues after the first installment becomes available');
+      assert.equal(submittedModes.length,beforeRecoveryWrites,'Manual browsing creates no durable request');
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Close').click()");
+      recoveryMode='partial';
+      await openRecoveryChooser();
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Select all shown').click()");
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      await until("document.querySelector('dialog.season-request-dialog[open] .request-feedback')?.textContent.includes('could not be saved')");
+      assert.match(await evaluate("document.querySelector('dialog[open] .request-feedback').textContent"),/#123/);
+      await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
+      await until("document.querySelector('dialog.season-request-dialog[open] .request-feedback')?.textContent.includes('1 season requested')");
+      assert.deepEqual(recoverySeasonIds,[[50,51],[51]],'partial Auto retries only failed rows');
+      await evaluate("document.querySelector('dialog[open] .season-request-close').click()");
+      recoveryMode='closed';
+      await openRecoveryChooser();
+      assert.equal(await evaluate("document.querySelector('dialog[open] [data-anidb-id=\"50\"] input').disabled"),true);
+      assert.equal(await evaluate("document.querySelector('dialog[open] [data-anidb-id=\"51\"] input').disabled"),false);
+      await evaluate("document.querySelector('dialog[open] .season-request-close').click()");
+      recoveryMode='paging';
+      for(const surface of ['retry','advanced']){
+        recoveryPageFails=true;
+        await navigate('#/discover');await until("!document.querySelector('#view-discover').hidden");
+        await navigate('#/title/50');
+        await until("[...document.querySelectorAll('#detail > button')].some(b=>b.textContent==='Continue availability check'&&!b.hidden)");
+        assert.equal(await evaluate("document.querySelector('.season-request-trigger').disabled"),true);
+        recoveryPageFails=false;
+        if(surface==='retry')await evaluate("[...document.querySelectorAll('#detail > button')].find(b=>b.textContent==='Continue availability check').click()");
+        else await evaluate("document.querySelector('#detail .episode-tools').open=true;[...document.querySelectorAll('#detail button')].find(b=>b.textContent==='Show more episodes').click()");
+        await until("document.querySelector('.season-request-trigger')?.disabled===false");
+        assert.equal(await evaluate("[...document.querySelectorAll('#detail > button')].find(b=>b.textContent==='Continue availability check').hidden"),true);
+      }
+      recoveryMode=null;
       monitoredTitle = true;
       await navigate("#/title/3");
       await until("document.querySelector('.season-already-monitored')?.hidden === false");

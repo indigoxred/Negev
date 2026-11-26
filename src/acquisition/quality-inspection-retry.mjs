@@ -1,7 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { assessRelease } from './release-preference.mjs';
-export const transientInspectionFailure = result => !result || !['held','preflight','inspection'].includes(result.state) || result.state==='preflight'&&(!Array.isArray(result.episodeIds)||!result.episodeIds.length||!Array.isArray(result.files)||!result.files.length) || result.state==='held' && ['provider_unavailable','torrent_preflight_unavailable','related_title_unavailable','shoko_settings_unavailable','metadata_reader_busy','detail_unavailable','candidate_changed','torrent_unavailable'].includes(result.reason);
+// A read-only inspection can retain a file listing while its provider check
+// fails. Classify that wrapped reason just like the original held result.
+export const transientInspectionFailure = result => !result || !['held','preflight','inspection'].includes(result.state) || result.state==='preflight'&&(!Array.isArray(result.episodeIds)||!result.episodeIds.length||!Array.isArray(result.files)||!result.files.length) || ['held','inspection'].includes(result.state) && ['provider_unavailable','torrent_preflight_unavailable','related_title_unavailable','shoko_settings_unavailable','metadata_reader_busy','detail_unavailable','candidate_changed','torrent_unavailable'].includes(result.reason);
 const key=c=>createHash('sha256').update(JSON.stringify([c.indexerId,c.guid])).digest('hex');
 // Only failed inspection hints are retained, never an authorization to submit.
 // Three spaced checks or three elapsed minutes release the quality preference.

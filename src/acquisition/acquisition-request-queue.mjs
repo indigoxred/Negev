@@ -441,6 +441,17 @@ export function openAcquisitionRequestQueue(dbPath,
     WHERE r.anidb_id=? AND r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND c.state='held'
       AND c.reason='shoko_metadata_missing' AND c.next_due_ms>?`);
+  // An RSS observation permits a fresh guarded search during a group wait.
+  // Only scheduling changes: the independent per-episode fallback deadline,
+  // unfinished claims, recovery holds and migration suspensions remain intact.
+  const wakePreferred = db.prepare(`UPDATE acquisition_request_checks
+    SET next_due_ms=? WHERE request_id=? AND state='held'
+      AND reason='preferred_group_wait' AND recovery_hold=0 AND next_due_ms>?
+      AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s
+        WHERE s.request_id=acquisition_request_checks.request_id)
+      AND EXISTS (SELECT 1 FROM requests r WHERE r.id=acquisition_request_checks.request_id
+        AND r.status='held' AND r.cancelled_ms IS NULL AND ${cohortFilter}
+        EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id))`);
   const wakeMetadata = db.prepare(`UPDATE acquisition_request_checks
     SET next_due_ms=? WHERE request_id=? AND state='held'
       AND reason='shoko_metadata_missing' AND next_due_ms>?`);
@@ -615,6 +626,14 @@ export function openAcquisitionRequestQueue(dbPath,
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       const row = suspended.get(requestId);
       return row ? { ...row } : null;
+    },
+    wakePreferredGroupWait({ requestId, nowMs = Date.now() } = {}) {
+      if (!validId(requestId) || !validTime(nowMs)) {
+        throw new TypeError('Invalid preferred-group release wake');
+      }
+      return transact(() => wakePreferred.run(nowMs, requestId, nowMs,
+        ...(allowedAnidbIds ?? [])).changes === 1
+        ? { state: 'woken' } : held('request_not_wakeable'));
     },
     wakeHydratedTitle({ anidbId, nowMs = Date.now() } = {}) {
       if (!validId(anidbId) || !validTime(nowMs)) {

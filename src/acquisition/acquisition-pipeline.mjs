@@ -151,6 +151,8 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
       return requestWorker.runOnce({ priorityRequestId:
         priorityRequestId ?? resumed[0] ?? null });
     } }, 'request'),
+    wakeRequest: (input) => closed ? held('pipeline_closed') :
+      requestQueue.wakePreferredGroupWait(input),
     wakeHydratedTitle: (input) => closed ? [] :
       requestQueue.wakeHydratedTitle(input),
     listMetadataRetries: () => closed ? [] :

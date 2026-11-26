@@ -1,6 +1,6 @@
 {
   "name": "negev",
-  "version": "0.0.327",
+  "version": "0.0.328",
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "type": "module",

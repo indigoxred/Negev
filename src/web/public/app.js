@@ -503,6 +503,14 @@ async function api(url, options = {}) {
     if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
     if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
     if (!response.ok) {
+      if (data.reason === 'request_cancelled' && sessionResponses.isCurrent(session) &&
+          state.user?.id === userId && ['/api/requests', '/api/release-previews'].includes(url)) {
+        const body = JSON.parse(fetchOptions.body ?? '{}');
+        const selections = body.scope === 'episodes' && body.episodeIds?.length === 1
+          ? [`episode-${body.episodeIds[0]}`, `film-entry-${body.episodeIds[0]}`] : ['installment'];
+        for (const selection of selections) requestKeys.rejected({ userId,
+          anidbId: body.anidbId, selection }, data, body.requestKey);
+      }
       if (response.status === 401 && !['/api/login', '/api/register'].includes(url) &&
           sessionResponses.isCurrent(session)) clearWorkspace();
       const error = new Error(data.error || data.reason || 'Request failed ('+response.status+')');
@@ -555,7 +563,11 @@ async function openPreviewReleaseRequests(jobs) {
       });
       void releaseDialog.open({previewId:preview.previewId,title:preferredDisplayTitle(item),mode:'manual',
         next:index+1<jobs.length?()=>{void show(index+1);}:null});
-    }catch(error){message(requestFailureMessage(error),true);}
+    }catch(error){
+      message(requestFailureMessage(error),true);
+      if(![401,403].includes(error.status)&&
+          (error.reason??error.message)!=='account_access_changed'&&index+1<jobs.length)await show(index+1);
+    }
   };
   await show(0);
 }
@@ -1116,7 +1128,8 @@ async function loadPreparations(silent = false, append = false) {
       row.append(posterImage(item));
       const heading = element('div');
       heading.append(titleLabel(item),
-        element('small', item.reason === 'release_state_unknown'
+        element('small', item.state === 'complete' && item.reason === 'already_monitored_elsewhere'
+          ? requestFailureMessage(item) : item.reason === 'release_state_unknown'
           ? 'Checking catalogue release dates' : 'Preparing episode details'),
         element('small', `Requested by ${item.requesterName || 'your account'}`));
       const open = element('a', 'View title →', 'text-link');
@@ -3117,7 +3130,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           : presentation.triggerText;
         trigger.classList.toggle('primary', !currentMonitored && !presentation.showAvailable);
         trigger.classList.toggle('quiet', currentMonitored || presentation.showAvailable);
-        trigger.disabled = data.requestsOpen === false || saving || (rows.size > 0 &&
+        trigger.disabled = saving || (rows.size > 0 &&
           !canOpenSeasonRequest([...rows.values()], family.next() !== null));
         selectAll.disabled = saving || selectable.length === 0;
         selectAll.textContent = selectable.length > 0 && selectable.every((row) => row.input.checked)
@@ -3238,7 +3251,12 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         refresh();
       };
       syncSeasonRows();
+      let continueCheck = null;
       refreshRequestAction = () => {
+        if (pager.nextPage === null) {
+          checkingCompleteSeries = false;
+          if (continueCheck) continueCheck.hidden = true;
+        }
         const row = rows.get(item.anidbId);
         if (row) updateRow(row, { ...data, episodes: pager.episodes,
           nextPage: pager.nextPage });
@@ -3305,23 +3323,33 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         const failed = [];
         let alreadyMonitored = 0;
         let closedByPilot = 0;
+        const requesterId = state.user.id;
+        const requestSession = sessionResponses.current();
+        const responseIsCurrent = () => sessionResponses.isCurrent(requestSession) &&
+          state.user?.id === requesterId && isCurrentDetail();
         try {
+          const submittedSeasons = selected.map((row) => ({
+            anidbId: row.anidbId,
+            ...(releasePicker?{releaseMode:releasePicker.value()}:{}),
+            requestKey: requestKeys.pending({ userId: requesterId, anidbId: row.anidbId }),
+          }));
+          const submittedKeys = new Map(submittedSeasons.map(season =>
+            [season.anidbId, season.requestKey]));
           const result = await api('/api/requests/seasons', { method: 'POST',
-            body: JSON.stringify({ seasons: selected.map((row) => ({
-              anidbId: row.anidbId,
-              ...(releasePicker?{releaseMode:releasePicker.value()}:{}),
-              requestKey: requestKeys.pending({ userId: state.user.id,
-                anidbId: row.anidbId }),
-            })) }) });
+            body: JSON.stringify({ seasons: submittedSeasons }) });
+          if (!responseIsCurrent()) return;
           for (const itemResult of result.items ?? []) {
             const row = rows.get(itemResult.anidbId);
-            if (!row) continue;
+            if (!row || !submittedKeys.has(row.anidbId)) continue;
             const payload = itemResult.result ?? {};
+            requestKeys.rejected({ userId: requesterId, anidbId: row.anidbId },
+              payload, submittedKeys.get(row.anidbId));
             if (itemResult.status >= 200 && itemResult.status < 300) {
               if (Number.isSafeInteger(payload.requestId) && payload.requestId > 0) {
                 savedRequestId ??= payload.requestId;
               }
-              requestKeys.saved({ userId: state.user.id, anidbId: row.anidbId });
+              requestKeys.saved({ userId: requesterId, anidbId: row.anidbId },
+                submittedKeys.get(row.anidbId));
               row.requested = true;
               if (payload.reason === 'already_monitored') {
                 alreadyMonitored++;
@@ -3357,6 +3385,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
           }
           if (saved.length) refreshTrackingAfterRequest();
         } catch (error) {
+          if (!responseIsCurrent()) return;
           for (const row of selected) {
             row.statusText.textContent = requestFailureMessage(error);
             failed.push(row.title);
@@ -3377,13 +3406,13 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
         view.href = savedRequestId !== null ? requestRoute(savedRequestId) : '#/requests';
         refresh();
         if (saved.length) loadRequests();
-        if(isCurrentDetail()&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
+        if(isCurrentDetail()&&!failed.length&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
       });
       if (checkingCompleteSeries && loadNextEpisodePage) {
-        const continueCheck = element('button', 'Continue availability check', 'quiet');
+        continueCheck = element('button', 'Continue availability check', 'quiet');
         continueCheck.hidden = true;
         continueCheck.type = 'button';
-        action.append(continueCheck);
+        panel.append(continueCheck);
         const checkPages = async () => {
           continueCheck.hidden = true;
           for (let page = 0; page < 20 && pager.nextPage !== null; page++) {

@@ -571,6 +571,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         fileIds: fileProofs?.getRecentAvailableIds({anidbId})??[] });
       return verifyCachedPositiveCoverage({ request, cached,
         cache: acquisitionCoverageCache, now,
+        readWitnessVersion:()=>directAvailability.getWitnessVersion(),
+        isWitnessCurrent:input=>directAvailability.isWitnessCurrent(input),
         ownedEpisodeIds:episodeIds.filter(episodeId=>inventory.getObservedFileIds({anidbId,episodeId}).length>0),
         readRevision:target=>JSON.stringify([plexObserver.getScopeGeneration(),
           inventory.getObservedFileIds(target).map(fileId=>[fileId,inventory.getFile(fileId)?.observedMs]),

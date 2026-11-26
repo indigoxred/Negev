@@ -48,3 +48,29 @@ test('preview HTTP lifecycle reuses real preparation without persisting until Gr
  current={...user,id:8};const stranger=await app.inject({method:'POST',url:parallelBase+'/release-choice',headers,payload:{action:'choose',revision:1,token:parallelSearch.json().items[0].token}});assert.notEqual(stranger.statusCode,200);
 
 });
+
+test('HTTP commits release draft quota while retaining receipt replay and expiry',async t=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-preview-quota-http-'));const requests=openRequestLedger(path.join(dir,'db.sqlite'));
+ t.after(async()=>{requests.close();await rm(dir,{recursive:true,force:true});});let clock=1000;
+ const user={id:7,username:'Member',role:'member',adultAllowed:true,sessionVersion:1};
+ const prepare=async input=>({state:'prepared',submission:{...input,commandKey:'exact',intent:{state:'ready',anidbId:input.anidbId,kind:'series',title:'Example',episodeIds:[input.anidbId],monitorFuture:true},nowMs:clock}});
+ const releasePreviews=createReleasePreviews({requests,prepare,now:()=>clock,selectionOptions:{}});
+ const accounts={authenticate:async()=>user,getSessionUser:()=>user,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false};const origin='http://localhost:3000';
+ const app=await buildUserApp({accounts,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,releasePreviews,releaseSelection:releasePreviews.selection,submitRequest:async()=>{throw Error('ordinary submission forbidden');},readRequest:id=>requests.getRequest(id)});t.after(()=>app.close());
+ const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Member',password:'long-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];
+ const session=await app.inject({url:'/api/session',headers:{cookie}});const headers={cookie,origin,'x-negev-csrf':session.json().csrfToken};
+ const open=async id=>app.inject({method:'POST',url:'/api/release-previews',headers,payload:{anidbId:id,scope:'installment',requestKey:'key'+id}});
+ const command=(id,payload)=>app.inject({method:'POST',url:`/api/release-previews/${id}/release-choice`,headers,payload});
+ let first,last;
+ for(let id=1;id<=11;id++){
+  const opened=await open(id);assert.equal(opened.statusCode,200,opened.body);const previewId=opened.json().previewId;assert.ok(previewId);
+  assert.equal(requests.listRequests({requesterId:7}).items.length,id-1,'browsing must not save');
+  const begun=await command(previewId,{action:'begin',mode:'auto',revision:1});assert.equal(begun.statusCode,200,begun.body);
+  const saved=await command(previewId,{action:'auto',revision:begun.json().control.revision});assert.equal(saved.statusCode,202,saved.body);assert.ok(saved.json().requestId);
+  first??=previewId;last=previewId;
+ }
+ const replay=await command(last,{action:'auto',revision:2});assert.equal(replay.statusCode,200,replay.body);assert.equal(replay.json().created,false);
+ clock+=600001;const expired=await command(first,{action:'auto',revision:2});assert.equal(expired.statusCode,404);
+ assert.equal((await open(211)).statusCode,200);
+ assert.equal(requests.listRequests({requesterId:7}).items.length,11);
+});

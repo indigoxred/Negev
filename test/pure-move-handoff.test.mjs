@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { preparePureMove } from '../src/acquisition/pure-move-handoff.mjs';
+import { torrentFileKind } from '../src/acquisition/evaluate-stopped-manifest.mjs';
+import { publishPureMove } from '../src/acquisition/publish-pure-move.mjs';
 
 async function withRoots(run) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-move-'));
@@ -17,6 +19,48 @@ async function withRoots(run) {
 }
 
 const file = { name: 'Show/01.mkv', size: 3, episodeIds: [1001] };
+
+test('filename policy rejects drive-like paths on every platform', () => {
+  for (const name of ['C:/Show/01.mkv', 'C:01.mkv', '../Show/01.mkv', '/Show/01.mkv']) {
+    assert.equal(torrentFileKind(name), null, name);
+  }
+  assert.equal(torrentFileKind('Show/Title: Episode 01.mkv'),
+    process.platform === 'win32' ? null : 'video');
+});
+
+test('Linux-valid colon names survive interrupted preparation and publication unchanged',
+  { skip: process.platform === 'win32' }, async () => withRoots(async roots => {
+    const files = [
+      { name: 'Show: Season 1/Title: 01.mkv', size: 3, episodeIds: [1001] },
+      { name: 'Show: Season 1/Title: 01.en.ass', size: 3 },
+    ];
+    await mkdir(path.join(roots.stagingRoot, 'Show: Season 1'));
+    for (const item of files) await writeFile(path.join(roots.stagingRoot, item.name), 'abc');
+    const before = await stat(path.join(roots.stagingRoot, files[0].name));
+    let manifest, moves = 0;
+    const recordIntent = async value => { manifest = value; return { state: 'recorded' }; };
+    const first = await preparePureMove({ ...roots, attemptId: 7, torrentHash: 'a'.repeat(40),
+      files, recordIntent, renameFile: async (from, to) => {
+        if (++moves === 2) throw Error('restart');
+        return rename(from, to);
+      } });
+    assert.deepEqual(first, { state: 'held', reason: 'move_outcome_unknown' });
+    const second = await preparePureMove({ ...roots, attemptId: 7, torrentHash: 'a'.repeat(40),
+      files, recordIntent });
+    assert.equal(second.state, 'prepared');
+    const row = { status: 'prepared', manifest };
+    const ledger = { getIntent: () => row,
+      beginPublish: () => { row.status = 'publish_unknown'; return { state: 'publish_unknown' }; },
+      markPublished: () => { row.status = 'published_observed'; return { state: 'published_observed' }; } };
+    const result = await publishPureMove({ attemptId: 7, ledger, holdingRoot: roots.holdingRoot,
+      importRoot: roots.importRoot, nowMs: 100 });
+    assert.equal(result.state, 'published_observed');
+    for (const item of files) assert.equal(await readFile(path.join(roots.importRoot,
+      'negev-7-aaaaaaaaaaaaaaaa', item.name), 'utf8'), 'abc');
+    assert.equal((await stat(path.join(roots.importRoot, 'negev-7-aaaaaaaaaaaaaaaa', files[0].name))).ino, before.ino);
+    assert.equal((await publishPureMove({ attemptId: 7, ledger, holdingRoot: roots.holdingRoot,
+      importRoot: roots.importRoot, nowMs: 101 })).state, 'published_observed');
+  }));
 
 test('journals before moving selected files, preserves inode and leaves Import untouched', async () =>
   withRoots(async (roots) => {

@@ -129,3 +129,24 @@ test('season-labelled single episodes are not packs, while multi-episode ranges 
   assert.equal(hasSingleEpisodeHint(item(title)),false,title);
  }
 });
+
+test('quality assessment treats underscores, spaces, dots and hyphens as equivalent separators',()=>{
+ for(const [source,resolution,quality] of [['WEB',720,2],['BD',720,3],['WEB',1080,4],['BD',1080,5],['WEB',1440,4],['WEB',2160,6],['BD',2160,7]]){
+  const expected=assessRelease(item(`[Actual_Group] Example ${source} ${resolution}p HEVC`,12,{selectionPolicy:{allowUhd:true}}));
+  assert.equal(expected.quality,quality);assert.equal(expected.resolution,resolution);
+  for(const separator of [' ','_','.','-']){
+   const title=`[Actual_Group] Example${separator}${source}${separator}${resolution}p${separator}HEVC`;
+   assert.deepEqual(assessRelease(item(title,12,{selectionPolicy:{allowUhd:true}})),expected,title);
+  }
+ }
+});
+test('separator parsing preserves explicit UHD policy and quality ranking',()=>{
+ for(const separator of [' ','_','.','-']){
+  const title=(source,resolution)=>`Example${separator}${source}${separator}${resolution}p${separator}HEVC`;
+  const uhd=item(title('WEB',2160)),bd=item(title('BD',1080)),fallback=item(title('BD',720),50);
+  assert.equal(assessRelease(uhd).eligible,false,uhd.title);assert.equal(assessRelease(uhd).reason,'outside_quality_profile');
+  assert.deepEqual([fallback,uhd,bd].sort(compareReleases),[bd,fallback,uhd]);
+  const allowed={...uhd,selectionPolicy:{allowUhd:true}};
+  assert.equal(assessRelease(allowed).eligible,true);assert.equal([bd,fallback,allowed].sort(compareReleases)[0],allowed);
+ }
+});
