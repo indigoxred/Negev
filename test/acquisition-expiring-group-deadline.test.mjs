@@ -197,10 +197,10 @@ for (const legacyPhase of ['chosen', 'consumed']) test('legacy ' + legacyPhase +
       assert.equal(reopened.candidateOffset, undefined);
       assert.equal(reopened.candidateFingerprint, undefined);
       assert.equal(queue.getDecisionTiming(1), null);
-      for (const id of [3, 5]) assert.deepEqual(queue.getResult(id), before.get(id));
+      for (const id of [3, 5, 6]) assert.deepEqual(queue.getResult(id), before.get(id));
       // Current retained full/no/malformed choices do not prove what the old
       // processor actually checked; the member may have changed them later.
-      for (const id of [2, 6, 7, 8]) assert.equal(queue.getResult(id).reason,'request_scope_recheck');
+      for (const id of [2, 7, 8]) assert.equal(queue.getResult(id).reason,'request_scope_recheck');
       assert.deepEqual(queue.getSuspension(4), originalSuspension);
       assert.equal(queue.getResult(4).reason, 'request_scope_recheck');
       assert.equal(queue.getResult(4).nextDueMs, 0);

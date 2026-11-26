@@ -12,3 +12,8 @@ export const changedRequestScopeSql = `(c.scan_targets_json IS NOT NULL AND
 export const currentRequestCompletionSql = `(c.state='held' AND
   c.reason='request_fully_available' AND c.scan_targets_json IS NOT NULL AND
   c.scan_targets_json=${currentRequestScopeSql})`;
+
+// Ordinary choice writes advance the revision and retain a non-NULL control.
+// This is positive untouched-Auto provenance, not just a current Auto label.
+// A caller must still require an exact unchanged checked target scope.
+export const untouchedAutoSql = `(r.release_control IS NULL AND c.checked_release_revision=0)`;
