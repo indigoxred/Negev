@@ -12,6 +12,32 @@ const beginCleanup = (cancel) => {
 export async function cancelResponseBody(response) {
   beginCleanup(() => response?.body?.cancel?.());
 }
+
+// A failed parallel request leaves its fulfilled siblings without consumers.
+// Start cleanup without delaying the original failure, including responses
+// that arrive after Promise.all has already rejected.
+export async function fetchResponsesOrCancel(requests) {
+  const received = [];
+  let failed = false;
+  try {
+    return await Promise.all(requests.map(request => {
+      const pending = Promise.resolve(request()).then(response => {
+        if (failed) void cancelResponseBody(response);
+        else received.push(response);
+        return response;
+      });
+      // A later request may throw before Promise.all receives this promise.
+      // Observe its rejection immediately while keeping it in the aggregate.
+      void pending.catch(() => {});
+      return pending;
+    }));
+  } catch (error) {
+    failed = true;
+    for (const response of received) void cancelResponseBody(response);
+    throw error;
+  }
+}
+
 async function consumeChunks(response, maxBytes, consume) {
   validate(response, maxBytes);
   const body = response.body;

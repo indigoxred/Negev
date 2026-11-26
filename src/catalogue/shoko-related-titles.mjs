@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { readAniDbRelations } from './shoko-relations.mjs';
 
 const FAMILY_TYPES = new Set(['SameSetting', 'AlternativeSetting',
@@ -24,6 +24,7 @@ export async function readAniDbRelatedTitles({ baseUrl, apiKey, anidbId,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     body = await readBoundedJson(response, 500_000);
   } catch { return { state: 'unavailable' }; }

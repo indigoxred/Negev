@@ -1,5 +1,5 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const cleanText = (value, maxLength) => {
@@ -41,6 +41,7 @@ export function createAniDbDisplayReader({ fetchImpl = fetch,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return withCatalogueRetry(unavailable(), response);
       const data = await readBoundedJson(response, 96_000);
       if (data?.anidb_id !== anidbId || typeof data.restricted !== 'boolean' ||

@@ -20,7 +20,7 @@ function acquisitionRetries(db, exists, nowMs, raw) {
     request_targets: ['request_id','target_id'], targets:['id','anidb_id','episode_id'],
     acquisition_request_suspensions: ['request_id'],
     acquisition_request_checks: ['request_id','state','reason','next_due_ms',
-      'checked_release_revision','scan_target_count','scan_targets_json'],
+      'checked_release_revision','scan_target_count','scan_targets_json','recovery_hold'],
   };
   const available = Object.entries(required).every(([table, columns]) => exists(table) &&
     columns.every(name => db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === name)));
@@ -32,7 +32,7 @@ function acquisitionRetries(db, exists, nowMs, raw) {
   const value = db.prepare(`WITH eligible AS (
     SELECT c.next_due_ms FROM acquisition_request_checks c
     JOIN requests r ON r.id=c.request_id
-    WHERE r.status='held' AND r.cancelled_ms IS NULL AND c.state IS NOT NULL
+    WHERE r.status='held' AND r.cancelled_ms IS NULL AND c.state IS NOT NULL AND c.recovery_hold=0
       AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s WHERE s.request_id=r.id)
       AND EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id)
       AND NOT ((r.monitor_future=0 OR r.watch_closed=1) AND

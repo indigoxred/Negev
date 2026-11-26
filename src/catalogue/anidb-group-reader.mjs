@@ -1,5 +1,5 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const normalize = value => typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase() : '';
 const neutral = Object.freeze({ match: () => null });
@@ -37,6 +37,7 @@ export function createAniDbGroupReader({ fetchImpl = fetch, now = Date.now, time
           (async () => {
             const response = await fetchImpl('https://animap.id/api/anidb/groups', {
               method: 'GET', redirect: 'manual', headers: { Accept: 'application/json' }, signal: controller.signal });
+            if (response.status !== 200) await cancelResponseBody(response);
             if (response.status !== 200) { retryAt = catalogueRetryAt(response); return null; }
             return indexGroups(await readBoundedJson(response, 8_000_000));
           })().catch(error => { retryAt = catalogueRetryAt(error); return null; }),

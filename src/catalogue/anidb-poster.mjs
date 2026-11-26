@@ -1,5 +1,5 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedText } from '../http/bounded-response.mjs';
 
 const MAX_IMAGE_BYTES = 2_000_000;
 
@@ -25,6 +25,7 @@ export async function readAniDbPoster({ anidbId, fetchImpl = fetch, now = Date.n
     const options = { method: 'GET', redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs) };
     const metadata = await fetchImpl(`https://animap.id/api/anidb/${anidbId}`, options);
+    if (metadata.status !== 200) await cancelResponseBody(metadata);
     if (metadata.status !== 200) return transientStatus(metadata.status)
       ? temporary(metadata) : { state: 'unavailable' };
     const data = JSON.parse(await readBoundedText(metadata, 64_000));
@@ -34,15 +35,20 @@ export async function readAniDbPoster({ anidbId, fetchImpl = fetch, now = Date.n
     }
     const image = await fetchImpl(`https://cdn.anidb.net/images/main/${data.picture}`,
       options);
+    if (image.status !== 200) await cancelResponseBody(image);
     if (image.status !== 200) return transientStatus(image.status)
       ? temporary(image) : { state: 'unavailable' };
     if (
         image.headers?.get?.('content-type')?.split(';')[0]?.trim().toLowerCase() !== 'image/jpeg') {
+      await cancelResponseBody(image);
       return { state: 'unavailable' };
     }
     const imageLength = image.headers?.get?.('content-length');
     if (imageLength && (!/^\d+$/.test(imageLength) ||
-        Number(imageLength) > MAX_IMAGE_BYTES)) return { state: 'unavailable' };
+        Number(imageLength) > MAX_IMAGE_BYTES)) {
+      await cancelResponseBody(image);
+      return { state: 'unavailable' };
+    }
     const chunks = [];
     let total = 0;
     for await (const chunk of image.body) {

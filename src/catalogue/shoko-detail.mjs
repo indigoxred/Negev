@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const SERIES_TYPES = new Set(['TV', 'TVSeries', 'TVShort', 'OVA', 'TVSpecial', 'Web', 'Other']);
 
@@ -10,6 +10,7 @@ async function readJson(url, apiKey, fetchImpl, timeoutMs) {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { status: response.status };
     return { status: 200, value: await readBoundedJson(response, 2_000_000) };
   } catch { return { status: 0 }; }

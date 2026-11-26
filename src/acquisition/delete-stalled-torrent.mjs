@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { lstat } from 'node:fs/promises';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 import { stagingSavePath, validStagingSaveRoot } from './staging-save-path.mjs';
@@ -53,6 +53,7 @@ export async function deleteStalledTorrent({ ledger, attemptId, baseUrl,
     url.searchParams.set(parameter, hash);
     const response = await fetchImpl(url, { method: 'GET', headers,
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) throw new Error('qBittorrent read failed');
     return readBoundedJson(response, 100_000);
   };
@@ -96,10 +97,11 @@ export async function deleteStalledTorrent({ ledger, attemptId, baseUrl,
   if (send.state !== 'delete_unknown' || !send.sendNow) return send;
   const body = new URLSearchParams({ hashes: hash, deleteFiles: 'true' });
   try {
-    await fetchImpl(new URL('/api/v2/torrents/delete', base), {
+    const receipt = await fetchImpl(new URL('/api/v2/torrents/delete', base), {
       method: 'POST', headers: { Cookie: qbittorrentSessionCookie(sessionId) },
       body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
+    await cancelResponseBody(receipt);
   } catch { /* The delete may have reached qBittorrent. Never send again. */ }
   return { state: 'delete_unknown', sendNow: true };
 }

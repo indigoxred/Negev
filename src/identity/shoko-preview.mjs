@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const PROVIDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ED2K = /^[0-9A-F]{32}$/;
@@ -29,10 +29,12 @@ export async function previewAniDbRelease({
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (response.status === 204) {
+      await cancelResponseBody(response);
       // This is unknown, not proof that AniDB has no registered file. An
       // independent Shoko provider may still offer provisional identity.
       return { status: 204 };
     }
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { status: response.status };
     return { status: 200, release: await readBoundedJson(response, 1_000_000) };
   } catch {

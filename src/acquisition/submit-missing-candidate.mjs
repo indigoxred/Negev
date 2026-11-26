@@ -14,7 +14,7 @@ import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs
 import { basename } from 'node:path';
 import { planPackBonuses } from './pack-bonus-plan.mjs';
 import { refreshBonusOwnership } from './bonus-ownership.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
 function exactFilePlan(prepared, plannedFiles, episodeIds, allowOptionalClips) {
@@ -216,6 +216,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     try {
       response = await observeHash();
       if (response.status === 403 && renewQbittorrent) {
+        await cancelResponseBody(response);
         const renewed = await renewQbittorrent(sid);
         if (renewed?.state !== 'authenticated' ||
             typeof renewed.sessionId !== 'string' ||
@@ -226,6 +227,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
         fetchImpl = renewed.fetchImpl;
         response = await observeHash();
       }
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status === 403) return held('provider_http_403');
       if (response.status !== 200) return held('provider_unavailable');
       const existing = await readBoundedJson(response, 100_000);

@@ -1,5 +1,5 @@
 import { withCatalogueRetry } from './catalogue-retry.mjs';
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedText } from '../http/bounded-response.mjs';
 
 const abortError=()=>new DOMException('Catalogue read aborted','AbortError');
 // Only fixed public metadata routes participate. Never cache credentials,
@@ -47,22 +47,22 @@ export function createCatalogueFetch({fetchImpl=fetch,now=Date.now,concurrency=4
  // slot, including declared oversize bodies which never enter the read loop.
  const readText=async(r,max,signal)=>{
   const declared=r.headers?.get?.('content-length');
-  if(declared!=null&&(!/^\d+$/.test(declared)||Number(declared)>max)){await r.body?.cancel().catch(()=>{});throw Error('Catalogue response too large');}
+  if(declared!=null&&(!/^\d+$/.test(declared)||Number(declared)>max)){await cancelResponseBody(r);throw Error('Catalogue response too large');}
   if(!r.body?.getReader)return readBoundedText(r,max);
   const reader=r.body.getReader(),decoder=new TextDecoder('utf-8',{fatal:true});let bytes=0,text='',finished=false;
-  const abort=()=>{void reader.cancel().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});
+  const abort=()=>{void cancelResponseBody({body:reader});};signal.addEventListener('abort',abort,{once:true});
   try{while(true){signal.throwIfAborted();const part=await reader.read();signal.throwIfAborted();if(part.done){finished=true;break;}bytes+=part.value.byteLength;if(bytes>max)throw Error('Catalogue response too large');text+=decoder.decode(part.value,{stream:true});}return text+decoder.decode();}
-  finally{signal.removeEventListener('abort',abort);if(!finished)await reader.cancel().catch(()=>{});reader.releaseLock();}
+  finally{signal.removeEventListener('abort',abort);if(!finished)await cancelResponseBody({body:reader});reader.releaseLock();}
  };
  const consume=async job=>{
   const hold=cooldown(job.route.provider);if(hold)return throttled(hold);
   const controller=new AbortController();let timer;let abort;
   const timeout=new Promise((_,reject)=>{abort=()=>reject(abortError());controller.signal.addEventListener('abort',abort,{once:true});timer=setTimeout(()=>controller.abort(),timeoutMs);});
   try{
-   const fetching=Promise.resolve().then(()=>fetchImpl(job.input,{...job.options,signal:controller.signal})).then(async r=>{if(controller.signal.aborted){await r.body?.cancel().catch(()=>{});throw abortError();}return r;});
+   const fetching=Promise.resolve().then(()=>fetchImpl(job.input,{...job.options,signal:controller.signal})).then(async r=>{if(controller.signal.aborted){await cancelResponseBody(r);throw abortError();}return r;});
    const r=await Promise.race([fetching,timeout]);const deadline=observe(job.route.provider,r);
    const headers={};for(const name of ['content-type']){const value=r.headers?.get?.(name);if(value)headers[name]=value;}
-   if(r.status!==200){await r.body?.cancel().catch(()=>{});const retryAt=cooldown(job.route.provider)?.until??deadline;
+   if(r.status!==200){await cancelResponseBody(r);const retryAt=cooldown(job.route.provider)?.until??deadline;
     const value={status:r.status,headers,expires:Math.min(now()+failureMs,retryAt??Infinity),...(retryAt===undefined?{}:{retryAt})};remember(job.route.key,value);return value;}
    const text=await readText(r,job.route.max,controller.signal);JSON.parse(text);
    const value={status:200,headers,text,expires:now()+cacheMs};remember(job.route.key,value);return value;

@@ -1,3 +1,4 @@
+import { cancelResponseBody } from '../http/bounded-response.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 import { observeTorrentCompletion } from './qbittorrent-observation.mjs';
@@ -61,6 +62,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
       body, redirect: 'manual', signal: AbortSignal.timeout(10_000),
     });
   } catch { return held('stop_outcome_unknown'); }
+  await cancelResponseBody(response);
   if (response.status !== 200) return held(response.status === 403
     ? 'provider_http_403' : 'stop_outcome_unknown');
   let after;

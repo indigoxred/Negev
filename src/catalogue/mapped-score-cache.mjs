@@ -1,7 +1,7 @@
 import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0 &&
   value <= 2_147_483_647;
@@ -52,6 +52,7 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
         headers: { Accept: 'application/json' },
         signal: AbortSignal.timeout(timeoutMs),
       });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) throw withCatalogueRetry(new Error('Score source unavailable'), response);
       const data = await readBoundedJson(response, 128_000);
       if (data?.mal_id !== malId) throw new Error('Score identity changed');

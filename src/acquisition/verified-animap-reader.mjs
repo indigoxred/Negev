@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readBoundedText, cancelResponseBody } from '../http/bounded-response.mjs';
+import { readBoundedText, cancelResponseBody, fetchResponsesOrCancel } from '../http/bounded-response.mjs';
 
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
 const CHECKSUM_URL = `${MAP_URL}.sha256`;
@@ -16,10 +16,10 @@ export function createVerifiedAniMapReader({ fetchImpl = fetch, now = Date.now }
   let checkedMs = null;
   let pending = null;
   async function fetchMap(time) {
-    const [mapResponse, digestResponse] = await Promise.all([
-      fetchImpl(MAP_URL, { signal: AbortSignal.timeout(20_000),
+    const [mapResponse, digestResponse] = await fetchResponsesOrCancel([
+      () => fetchImpl(MAP_URL, { signal: AbortSignal.timeout(20_000),
         headers: { Accept: 'application/json' } }),
-      fetchImpl(CHECKSUM_URL, { signal: AbortSignal.timeout(10_000),
+      () => fetchImpl(CHECKSUM_URL, { signal: AbortSignal.timeout(10_000),
         headers: { Accept: 'text/plain' } }),
     ]);
     if (mapResponse.status !== 200 || digestResponse.status !== 200) {

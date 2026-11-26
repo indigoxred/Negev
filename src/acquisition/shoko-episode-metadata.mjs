@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 // Metadata absence is not an unknown hash or a failed download.
 export async function readShokoEpisodeMetadata({ baseUrl, apiKey, anidbId,
@@ -15,6 +15,7 @@ export async function readShokoEpisodeMetadata({ baseUrl, apiKey, anidbId,
     const response = await fetchImpl(new URL('/api/v3/Episode/AniDB/' + episodeId,base),
       {method:'GET',redirect:'manual',headers:{Authorization:'Bearer ' + apiKey,
         Accept:'application/json'},signal:AbortSignal.timeout(timeoutMs)});
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status === 404) return {state:'missing'};
     if (response.status !== 200) return {state:'unavailable'};
     const item = await readBoundedJson(response,100_000);

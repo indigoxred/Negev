@@ -1,4 +1,4 @@
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedText } from '../http/bounded-response.mjs';
 import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -28,6 +28,7 @@ export async function loginQbittorrent({
       },
       body: form.toString(), redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status === 403) return held('authentication_forbidden');
     if (response.status !== 200 && response.status !== 204) {
       return held('authentication_unavailable');

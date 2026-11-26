@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const providerId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -26,6 +26,7 @@ export async function previewOfflineRelease({ baseUrl, apiKey, filename,
   try {
     const listing = await fetchImpl(new URL('/api/v3/ReleaseInfo/Provider',
       base), options());
+    if (listing.status !== 200) await cancelResponseBody(listing);
     if (listing.status !== 200) return { status: 0 };
     const providers = await readBoundedJson(listing, 128_000);
     if (!Array.isArray(providers) || providers.length > 100) return { status: 0 };
@@ -37,6 +38,7 @@ export async function previewOfflineRelease({ baseUrl, apiKey, filename,
       '/Preview/By-Release', base);
     url.searchParams.set('id', `search://${filename}`);
     const response = await fetchImpl(url, options());
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { status: response.status };
     return { status: 200,
       release: await readBoundedJson(response, 1_000_000) };

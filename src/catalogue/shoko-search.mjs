@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { validPosterUid } from './shoko-poster.mjs';
 
 // Shoko's title cache reaches beyond locally imported series, but a search
@@ -34,6 +34,7 @@ export async function searchAniDbTitles({
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const data = await readBoundedJson(response, 1_000_000);
     if (!Number.isSafeInteger(data?.Total) || data.Total < 0 ||

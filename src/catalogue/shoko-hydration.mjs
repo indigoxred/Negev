@@ -1,4 +1,4 @@
-import { readBoundedText } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedText } from '../http/bounded-response.mjs';
 
 // Deliberately separate from catalogue GETs. Calling this supported Shoko
 // action changes its AniDB metadata cache and must be rate limited by the
@@ -28,6 +28,7 @@ export async function requestAniDbHydration({
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return { state: 'unavailable' };
     const body = await readBoundedText(response, 16);
     if (body === 'false') return { state: 'queued' };

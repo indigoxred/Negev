@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import path from 'node:path';
 
 const held = () => ({ state: 'held', reason: 'shoko_source_unverified' });
@@ -28,6 +28,7 @@ export async function verifyShokoSourceFolder({ baseUrl, apiKey,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`,
         Accept: 'application/json' }, signal: AbortSignal.timeout(10_000) });
+    if (response.status !== 200) await cancelResponseBody(response);
     if (response.status !== 200) return held();
     const folder = await readBoundedJson(response, 16_384);
     return folder?.ID === folderId &&

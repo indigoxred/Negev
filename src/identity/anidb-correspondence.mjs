@@ -1,6 +1,6 @@
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from '../acquisition/torrent-file-limits.mjs';
 import { basename } from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const hex = (value, length) => typeof value === 'string' &&
@@ -77,6 +77,7 @@ export function createAniDbCorrespondence({ fetchImpl = fetch,
       url.searchParams.set(kind, hash); url.searchParams.set('size', String(size));
       const response = await fetchImpl(url, { method: 'GET', redirect: 'error',
         headers: { Accept: 'application/json' }, signal });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return null;
       const rows = await readBoundedJson(response, 200_000);
       return Array.isArray(rows) && rows.length <= 200 ? rows : null;

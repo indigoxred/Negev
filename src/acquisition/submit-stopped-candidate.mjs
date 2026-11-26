@@ -1,4 +1,4 @@
-import { readBoundedJson, readBoundedText } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson, readBoundedText } from '../http/bounded-response.mjs';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
@@ -98,6 +98,7 @@ async function submitOwnedCandidate({
         method: 'GET', headers, redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
       });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       version = (await readBoundedText(response, 32)).trim();
     } catch { return held('provider_unavailable'); }
@@ -112,6 +113,7 @@ async function submitOwnedCandidate({
       url.searchParams.set('hashes', expected.hash);
       const response = await fetchImpl(url, { method: 'GET', headers,
         redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       existing = await readBoundedJson(response, 100_000);
     } catch { return held('provider_unavailable'); }
@@ -124,10 +126,11 @@ async function submitOwnedCandidate({
     if (intent.sendNow) {
       addAttempted = true;
       try {
-        await fetchImpl(new URL('/api/v2/torrents/add', base), {
+        const receipt = await fetchImpl(new URL('/api/v2/torrents/add', base), {
           method: 'POST', headers, body: prepared.form, redirect: 'manual',
           signal: AbortSignal.timeout(timeoutMs),
         });
+        await cancelResponseBody(receipt);
       } catch { /* Response is uncertain; observe by exact hash below. */ }
     }
   }
@@ -158,11 +161,12 @@ async function submitOwnedCandidate({
       id: observed.passive.map((file) => String(file.index)).join('|'),
       priority: '0' });
     try {
-      await fetchImpl(new URL('/api/v2/torrents/filePrio', base), {
+      const receipt = await fetchImpl(new URL('/api/v2/torrents/filePrio', base), {
         method: 'POST', headers: { ...headers,
           'Content-Type': 'application/x-www-form-urlencoded' },
         body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
       });
+      await cancelResponseBody(receipt);
     } catch { /* An uncertain response is resolved by the exact manifest below. */ }
     observed = await observeStoppedManifest({ baseUrl, sessionId, expected,
       fetchImpl, timeoutMs, plannedFileNames, expectedFiles: metainfo.files, saveRoot });
