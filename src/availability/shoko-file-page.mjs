@@ -1,4 +1,4 @@
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import path from 'node:path';
 
 const unavailable = () => ({ state: 'unavailable' });
@@ -76,7 +76,10 @@ export async function readShokoFilePage({ baseUrl, apiKey, page = 1,
     const response = await fetchImpl(url, { method: 'GET', redirect: 'manual',
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     data = await readBoundedJson(response, 1_000_000);
   } catch { return unavailable(); }
   if (!Number.isSafeInteger(data?.Total) || data.Total < 0 ||

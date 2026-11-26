@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 import { preferredWaitDuration } from './preferred-release.mjs';
+import { changedRequestScopeSql, currentRequestCompletionSql } from '../requests/request-check-scope.mjs';
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -135,6 +136,30 @@ export function openAcquisitionRequestQueue(dbPath,
         .some(item => item.name === column)) {
         db.exec(`ALTER TABLE acquisition_request_checks ADD COLUMN ${column} ${type}`);
       }
+    }
+    // A completion applies only to the targets actually admitted for its
+    // check. Restore old exact snapshots only when the existing hash proves
+    // the same scope; unknown/stale completion gets a normal fresh check.
+    if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+      .some(column => column.name === 'scan_targets_json')) {
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec('ALTER TABLE acquisition_request_checks ADD COLUMN scan_targets_json TEXT');
+        const oldScopes = db.prepare(`SELECT request_id,scan_scope
+          FROM acquisition_request_checks WHERE scan_scope IS NOT NULL`).all();
+        const targets = db.prepare(`SELECT t.anidb_id,t.episode_id FROM targets t
+          JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=?
+          ORDER BY t.episode_id,t.anidb_id`);
+        const restore = db.prepare(`UPDATE acquisition_request_checks SET scan_targets_json=?
+          WHERE request_id=?`);
+        for (const row of oldScopes) {
+          const scope = targets.all(row.request_id);
+          if (createHash('sha256').update(JSON.stringify(scope)).digest('hex') === row.scan_scope) {
+            restore.run(JSON.stringify(scope.map(t => [t.anidb_id,t.episode_id])), row.request_id);
+          }
+        }
+        db.exec('COMMIT');
+      } catch (error) { db.exec('ROLLBACK'); throw error; }
     }
     db.exec(`UPDATE acquisition_request_checks SET
       next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
@@ -337,8 +362,9 @@ export function openAcquisitionRequestQueue(dbPath,
       ${cohortFilter}
       EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
       (c.request_id IS NULL OR NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
-        c.state='held' AND c.reason='request_fully_available')) AND
+        ${currentRequestCompletionSql})) AND
       (c.request_id IS NULL OR (c.state IS NOT NULL AND (c.next_due_ms<=? OR (${newChoice}) OR
+        ${changedRequestScopeSql} OR
         c.scan_target_count IS NOT NULL AND c.scan_target_count<>(
           SELECT COUNT(*) FROM request_targets rt2 WHERE rt2.request_id=r.id))))
     ORDER BY r.id LIMIT 1`;
@@ -348,8 +374,8 @@ export function openAcquisitionRequestQueue(dbPath,
   const fresh = db.prepare(nextSql.replace('r.id>?', 'r.id=?'));
   const advance = db.prepare('UPDATE acquisition_request_cursor SET after_id=? WHERE id=1 AND after_id=? AND pass=?');
   const wrap = db.prepare('UPDATE acquisition_request_cursor SET after_id=0,pass=pass+1 WHERE id=1 AND after_id=? AND pass=?');
-  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,checked_release_revision,coverage_policy_revision,request_scope_policy_revision,verification_policy_revision)
-    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1,2) ON CONFLICT(request_id) DO UPDATE SET
+  const claim = db.prepare(`INSERT INTO acquisition_request_checks(request_id,pass,state,reason,attempt_id,checked_ms,next_due_ms,scan_started_ms,scan_scope,scan_target_count,scan_targets_json,checked_release_revision,coverage_policy_revision,request_scope_policy_revision,verification_policy_revision)
+    VALUES (?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests WHERE id=?),0),1,1,2) ON CONFLICT(request_id) DO UPDATE SET
     pass=excluded.pass,state=NULL,coverage_policy_revision=1,request_scope_policy_revision=1,verification_policy_revision=2,
     reason=CASE WHEN acquisition_request_checks.reason IN
       ('season_pack_scan_complete','season_pack_uncertain_complete')
@@ -363,6 +389,7 @@ export function openAcquisitionRequestQueue(dbPath,
       THEN excluded.scan_started_ms
       ELSE COALESCE(acquisition_request_checks.scan_started_ms,excluded.scan_started_ms) END,
     scan_scope=excluded.scan_scope,scan_target_count=excluded.scan_target_count,
+    scan_targets_json=excluded.scan_targets_json,
     checked_release_revision=COALESCE((SELECT json_extract(release_control,'$.revision')
       FROM requests WHERE id=excluded.request_id),0),
     candidate_offset=CASE WHEN reason IN ('no_safe_release','no_release_candidates')
@@ -372,11 +399,12 @@ export function openAcquisitionRequestQueue(dbPath,
       AND COALESCE((SELECT json_extract(release_control,'$.revision') FROM requests
         WHERE id=excluded.request_id),0)>checked_release_revision THEN NULL ELSE candidate_fingerprint END`);
   const targetScope = db.prepare(`SELECT t.anidb_id,t.episode_id FROM targets t
-    JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id`);
+    JOIN request_targets rt ON rt.target_id=t.id WHERE rt.request_id=? ORDER BY t.episode_id,t.anidb_id`);
   const claimRequest = (id, pass, nowMs) => {
     const targets = targetScope.all(id);
     return claim.run(id, pass, nowMs,
-      createHash('sha256').update(JSON.stringify(targets)).digest('hex'), targets.length, id);
+      createHash('sha256').update(JSON.stringify(targets)).digest('hex'), targets.length,
+      JSON.stringify(targets.map(t => [t.anidb_id,t.episode_id])), id);
   };
   const save = db.prepare(`UPDATE acquisition_request_checks SET
     state=?,reason=?,attempt_id=?,checked_ms=?,next_due_ms=?,empty_since_ms=?,
@@ -409,15 +437,16 @@ export function openAcquisitionRequestQueue(dbPath,
     SET next_due_ms=? WHERE request_id=? AND state='held'
       AND reason='shoko_metadata_missing' AND next_due_ms>?`);
   const pendingMetadata = db.prepare(`SELECT r.id AS requestId,
-      CASE WHEN c.scan_target_count IS NOT NULL AND c.scan_target_count<>
+      CASE WHEN ${changedRequestScopeSql} OR c.scan_target_count IS NOT NULL AND c.scan_target_count<>
         (SELECT COUNT(*) FROM request_targets rt2 WHERE rt2.request_id=r.id)
         THEN 0 ELSE c.next_due_ms END AS nextDueMs
     FROM requests r JOIN acquisition_request_checks c ON c.request_id=r.id
     LEFT JOIN acquisition_request_suspensions s ON s.request_id=r.id
     WHERE r.status='held' AND r.cancelled_ms IS NULL
       AND s.request_id IS NULL AND ${cohortFilter}
-      c.state IS NOT NULL AND c.next_due_ms IS NOT NULL AND
-      NOT ((r.monitor_future=0 OR r.watch_closed=1) AND COALESCE(c.reason,'')='request_fully_available')
+      EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id) AND
+      c.state IS NOT NULL AND (c.next_due_ms IS NOT NULL OR ${changedRequestScopeSql}) AND
+      NOT ((r.monitor_future=0 OR r.watch_closed=1) AND ${currentRequestCompletionSql})
     ORDER BY nextDueMs,r.id LIMIT ?`);
   const advanceLegacyMetadata = db.prepare(`UPDATE acquisition_request_checks
     SET metadata_since_ms=COALESCE(checked_ms,?),

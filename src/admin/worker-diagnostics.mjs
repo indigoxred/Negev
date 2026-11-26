@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { changedRequestScopeSql, currentRequestCompletionSql } from '../requests/request-check-scope.mjs';
 
 const safeReasons = new Set(['provider_unavailable', 'provider_http_error', 'provider_timeout',
   'provider_transport', 'provider_invalid_response', 'no_safe_release', 'no_release_candidates',
@@ -16,9 +17,10 @@ const safeReasons = new Set(['provider_unavailable', 'provider_http_error', 'pro
 function acquisitionRetries(db, exists, nowMs, raw) {
   const required = {
     requests: ['id','status','cancelled_ms','monitor_future','watch_closed','release_control'],
-    request_targets: ['request_id'], acquisition_request_suspensions: ['request_id'],
+    request_targets: ['request_id','target_id'], targets:['id','anidb_id','episode_id'],
+    acquisition_request_suspensions: ['request_id'],
     acquisition_request_checks: ['request_id','state','reason','next_due_ms',
-      'checked_release_revision','scan_target_count'],
+      'checked_release_revision','scan_target_count','scan_targets_json'],
   };
   const available = Object.entries(required).every(([table, columns]) => exists(table) &&
     columns.every(name => db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === name)));
@@ -34,8 +36,9 @@ function acquisitionRetries(db, exists, nowMs, raw) {
       AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s WHERE s.request_id=r.id)
       AND EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id)
       AND NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
-        c.state='held' AND c.reason='request_fully_available')
+        ${currentRequestCompletionSql})
       AND (c.next_due_ms<=? OR
+        ${changedRequestScopeSql} OR
         (c.reason IN ('no_safe_release','no_release_candidates') AND
           (json_extract(r.release_control,'$.phase')='chosen' OR
             (json_extract(r.release_control,'$.mode')='auto' AND

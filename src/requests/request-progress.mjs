@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { currentRequestCompletionSql } from './request-check-scope.mjs';
 
 // Read-only journal summary for a request page. It never infers Plex playback
 // from a torrent, a Shoko import intent, or a private handoff record.
@@ -159,10 +160,12 @@ export function openRequestProgress(dbPath, { now = Date.now,
     // Acquisition is opt-in and its queue may open after this reader.
     if (!oneTimeCompletion) {
       if (!hasAcquisitionChecks.get()) return false;
+      if (!db.prepare('PRAGMA table_info(acquisition_request_checks)').all()
+        .some(column => column.name === 'scan_targets_json')) return false;
       oneTimeCompletion = db.prepare(`SELECT 1 FROM requests r
         JOIN acquisition_request_checks c ON c.request_id=r.id
         WHERE r.id=? AND (r.monitor_future=0 OR r.watch_closed=1)
-          AND c.state='held' AND c.reason='request_fully_available'`);
+          AND ${currentRequestCompletionSql}`);
     }
     return Boolean(oneTimeCompletion.get(requestId));
   };
