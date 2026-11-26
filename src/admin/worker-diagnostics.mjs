@@ -11,6 +11,48 @@ const safeReasons = new Set(['provider_unavailable', 'provider_http_error', 'pro
   'interrupted_attempt_present', 'interrupted_before_publish', 'move_outcome_unknown',
   'start_outcome_unknown', 'shoko_rescan_pending', 'request_inflight']);
 
+// Persisted queue eligibility only: runtime cohorts and external ownership
+// gates are not evaluated by this read-only diagnostic.
+function acquisitionRetries(db, exists, nowMs, raw) {
+  const required = {
+    requests: ['id','status','cancelled_ms','monitor_future','watch_closed','release_control'],
+    request_targets: ['request_id'], acquisition_request_suspensions: ['request_id'],
+    acquisition_request_checks: ['request_id','state','reason','next_due_ms',
+      'checked_release_revision','scan_target_count'],
+  };
+  const available = Object.entries(required).every(([table, columns]) => exists(table) &&
+    columns.every(name => db.prepare(`PRAGMA table_info(${table})`).all().some(column => column.name === name)));
+  const recorded = { recordedDueRetries: raw.dueRetries,
+    recordedOldestDueAgeMs: raw.oldestDueAgeMs };
+  // Historical journal totals alone cannot establish actionable work.
+  if (!available) return { ...recorded, eligibility: 'not_established',
+    dueRetries: null, retainedDueRetries: null, oldestDueAgeMs: null };
+  const value = db.prepare(`WITH eligible AS (
+    SELECT c.next_due_ms FROM acquisition_request_checks c
+    JOIN requests r ON r.id=c.request_id
+    WHERE r.status='held' AND r.cancelled_ms IS NULL AND c.state IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM acquisition_request_suspensions s WHERE s.request_id=r.id)
+      AND EXISTS (SELECT 1 FROM request_targets rt WHERE rt.request_id=r.id)
+      AND NOT ((r.monitor_future=0 OR r.watch_closed=1) AND
+        c.state='held' AND c.reason='request_fully_available')
+      AND (c.next_due_ms<=? OR
+        (c.reason IN ('no_safe_release','no_release_candidates') AND
+          (json_extract(r.release_control,'$.phase')='chosen' OR
+            (json_extract(r.release_control,'$.mode')='auto' AND
+              json_extract(r.release_control,'$.phase')='consumed' AND
+              json_extract(r.release_control,'$.selection') IS NULL)) AND
+          json_extract(r.release_control,'$.revision')>c.checked_release_revision) OR
+        (c.scan_target_count IS NOT NULL AND c.scan_target_count<>
+          (SELECT COUNT(*) FROM request_targets rt WHERE rt.request_id=r.id)))
+    ) SELECT COUNT(*) AS dueRetries,
+      COALESCE(SUM(next_due_ms<=?),0) AS timestampDue,
+      MIN(CASE WHEN next_due_ms<=? THEN next_due_ms ELSE ? END) AS oldestDueMs
+    FROM eligible`).get(nowMs, nowMs, nowMs, nowMs);
+  return { ...recorded, eligibility: 'persisted_queue_rules', dueRetries: value.dueRetries,
+    retainedDueRetries: raw.dueRetries - value.timestampDue,
+    oldestDueAgeMs: value.oldestDueMs === null ? null : nowMs - value.oldestDueMs };
+}
+
 // Explicit operator invocation only. No provider calls, migrations, timer,
 // mutations or HTTP readiness claim. Directory access is the auth boundary.
 export async function readWorkerDiagnostics({ dataDir, nowMs = Date.now() } = {}) {
@@ -50,6 +92,8 @@ export async function readWorkerDiagnostics({ dataDir, nowMs = Date.now() } = {}
       const { oldestDueMs, ...counts } = value;
       stages[name] = { state: 'snapshot', ...counts,
         oldestDueAgeMs: oldestDueMs === null ? null : nowMs - oldestDueMs, reasons };
+      if (name === 'acquisition') Object.assign(stages[name],
+        acquisitionRetries(db, exists, nowMs, stages[name]));
     }
     const plex = exists('plex_card_cursors') ? { cursors: db.prepare(
       'SELECT kind,offset FROM plex_card_cursors ORDER BY library_id,kind LIMIT 20').all().map(row => ({ ...row })) } : null;

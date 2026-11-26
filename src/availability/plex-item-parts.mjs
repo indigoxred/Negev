@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const unavailable = () => ({ state: 'unavailable' });
 const positive = (value) => {
@@ -76,8 +76,10 @@ export async function readPlexItemParts({ baseUrl, token, ratingKey, expectedTyp
       headers: { 'X-Plex-Token': token, Accept: 'application/json',
         'X-Plex-Client-Identifier': 'negev-availability-observer' },
       signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 404) return { state: 'not_found' };
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return response.status === 404 ? { state: 'not_found' } : unavailable();
+    }
     body = await readBoundedJson(response, 2_000_000);
   } catch { return unavailable(); }
   const container = body?.MediaContainer;

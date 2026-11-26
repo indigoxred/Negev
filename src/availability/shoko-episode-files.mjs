@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { readLocalFileRanges } from './shoko-file-ranges.mjs';
-import { readBoundedJson } from '../http/bounded-response.mjs';
+import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { evaluatePreview } from '../identity/evaluate-preview.mjs';
 import { exactShokoOfflineLink } from './shoko-offline-link.mjs';
 import { normalizeShokoCoverage } from './shoko-coverage.mjs';
@@ -45,8 +45,10 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       const response = await fetchImpl(metadataUrl, { method: 'GET',
         redirect: 'manual', headers: { Authorization: `Bearer ${apiKey}`,
           Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
-      if (response.status === 404) return 'missing';
-      if (response.status !== 200) return 'unavailable';
+      if (response.status !== 200) {
+        await cancelResponseBody(response);
+        return response.status === 404 ? 'missing' : 'unavailable';
+      }
       const metadata = await readBoundedJson(response, 100_000);
       if (metadata?.ID !== episodeId || metadata.AnimeID !== anidbId) return 'unavailable';
       metadataCache?.set(metadataKey, true);
@@ -59,6 +61,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status === 404) {
+      await cancelResponseBody(response);
       // Shoko uses this 404 both for absent AniDB metadata and for an AniDB
       // episode with no local Shoko episode. Confirm which case occurred.
       const metadata = await exactMetadataExists();
@@ -68,7 +71,10 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
       }
       return unavailable();
     }
-    if (response.status !== 200) return unavailable();
+    if (response.status !== 200) {
+      await cancelResponseBody(response);
+      return unavailable();
+    }
     episode = await readBoundedJson(response, 2_000_000);
   } catch { return unavailable(); }
   if (episode?.IDs?.AniDB !== episodeId || !Array.isArray(episode.Files) ||
@@ -122,6 +128,7 @@ export async function readShokoEpisodeFiles({ baseUrl, apiKey, anidbId, episodeI
             redirect: 'manual', headers: { Authorization: `Bearer ${apiKey}`,
               Accept: 'application/json' },
             signal: AbortSignal.timeout(timeoutMs) });
+          if (response.status !== 200) await cancelResponseBody(response);
           const metadata = response.status === 200
             ? await readBoundedJson(response, 100_000) : null;
           unscopedUserEpisodeVerified = metadata?.ID === episodeId &&
