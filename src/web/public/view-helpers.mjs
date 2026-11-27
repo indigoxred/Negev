@@ -1,5 +1,5 @@
 import { attachPosterRecovery } from './poster-recovery.mjs';
-import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
+import { detailAliasText } from './title-preference.mjs';
 
 // Owns DOM construction, title presentation and poster rendering. Construction does not register event handlers.
 export function createViewHelpers({ byId, state, document = globalThis.document }) {
@@ -8,18 +8,18 @@ export function createViewHelpers({ byId, state, document = globalThis.document 
     node.textContent = text;
     node.classList.toggle('error', error);
   }
-  
+
   function element(tag, text, className) {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = text;
     if (className) node.className = className;
     return node;
   }
-  
+
   function preferredDisplayTitle(item) {
     return state.preferEnglish && item.englishTitle?.trim() || item.title;
   }
-  
+
   function titleLabel(item, { tag = 'strong', className } = {}) {
     const english = item.englishTitle?.trim();
     const label = element(tag, preferredDisplayTitle(item),
@@ -31,7 +31,7 @@ export function createViewHelpers({ byId, state, document = globalThis.document 
     }
     return label;
   }
-  
+
   function applyTitlePreference() {
     const toggle = byId('english-title-toggle');
     toggle.textContent = 'Show English titles';
@@ -48,11 +48,11 @@ export function createViewHelpers({ byId, state, document = globalThis.document 
         alias.dataset.originalTitle, alias.dataset.titleAlias);
     }
   }
-  
+
   const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
     ? `/api/catalogue/posters/${item.posterUid}`
     : `/api/catalogue/posters/anidb/${item.anidbId}`;
-  
+
   function posterImage(item, className = '') {
     const poster = document.createElement('img');
     poster.alt = '';

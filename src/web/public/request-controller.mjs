@@ -1,8 +1,7 @@
 import { requestPresentation, requestNeedsReleaseChoice, requestHasPendingAcquisition, requestCanEditReleasePreference } from './request-progress-text.mjs';
-import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
-import { episodeScheduleLabel, nextAirDateLabel, watchingNextAirLabel } from './episode-schedule.mjs';
-import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
-  seasonRoute, browseReturnDestination, requestRoute } from './consumer-route.mjs';
+import { requestFailureMessage } from './request-feedback.mjs';
+import { watchingNextAirLabel } from './episode-schedule.mjs';
+import { titleRoute, requestRoute } from './consumer-route.mjs';
 
 // Owns request lists, preparation history and request status rendering. Construction does not register event handlers.
 export function createRequestController({ api, byId, element, message, posterImage, preferredDisplayTitle, releaseDialog, requestResponses, restoreRoutePosition, sessionResponses, state, titleLabel, document = globalThis.document, window = globalThis.window }) {
@@ -11,7 +10,7 @@ export function createRequestController({ api, byId, element, message, posterIma
       .map(row => [row.dataset.requestId,
         new Set([...row.querySelectorAll('details[open]')].map(details => details.className))]));
   }
-  
+
   async function loadRequestView(view, append = false, silent = false) {
     if (!state.user) return;
     const session = sessionResponses.current();
@@ -193,14 +192,14 @@ export function createRequestController({ api, byId, element, message, posterIma
       }
     }
   }
-  
+
   const historyGroupOrder = ['attention', 'active', 'completed', 'cancelled'];
-  
+
   const historyGroupTitles = {
     attention: 'Needs attention', active: 'Active', completed: 'Completed',
     cancelled: 'Cancelled',
   };
-  
+
   function requestGroupRows(list, group, expandedGroups = new Set()) {
     const category = historyGroupOrder.includes(group) ? group : 'active';
     let section = [...list.children].find((child) =>
@@ -219,7 +218,7 @@ export function createRequestController({ api, byId, element, message, posterIma
     }
     return section.lastElementChild;
   }
-  
+
   function renderRequestStatus(status, presentation) {
     status.className = `request-status status-${presentation.group}`;
     let detail=presentation.detail,note=presentation.note;
@@ -248,7 +247,7 @@ export function createRequestController({ api, byId, element, message, posterIma
     if (note&&note!==detail) status.append(element('span', note,
       'request-note'));
   }
-  
+
   function requestItemPresentation(item) {
     if(requestNeedsReleaseChoice(item)&&item.releaseSelection?.phase==='selecting'&&item.releaseSelection.mode==='auto') {
       return {stage:'Choosing a release',detail:'Auto-Pick is comparing eligible releases.',note:'Your request is saved; you can leave this page.',group:'active'};
@@ -271,7 +270,7 @@ export function createRequestController({ api, byId, element, message, posterIma
       : requestPresentation(item.progress, item.kind,
         { monitorFuture: item.monitorFuture, watchClosed: item.watchClosed });
   }
-  
+
   function refreshRequestStatusAges() {
     for (const status of document.querySelectorAll('.request-status')) {
       const item = status.negevRequest;
@@ -279,7 +278,7 @@ export function createRequestController({ api, byId, element, message, posterIma
       renderRequestStatus(status, requestItemPresentation(item));
     }
   }
-  
+
   async function refreshExpandedHistory() {
     const session = sessionResponses.current();
     const epoch = requestResponses.history.invalidate();
@@ -330,7 +329,7 @@ export function createRequestController({ api, byId, element, message, posterIma
       }
     } catch { /* Keep loaded history and its retry control on a failed poll. */ }
   }
-  
+
   function loadRequests({ silent = false } = {}) {
     if (!state.user) return;
     if (state.focusedRequestId) {
@@ -342,7 +341,7 @@ export function createRequestController({ api, byId, element, message, posterIma
     void loadRequestView('watching', false, silent);
     void loadRequestView('history', false, silent);
   }
-  
+
   async function loadPreparations(silent = false, append = false) {
     const session = sessionResponses.current();
     const epoch = requestResponses.preparing.invalidate();
@@ -417,7 +416,7 @@ export function createRequestController({ api, byId, element, message, posterIma
       }
     }
   }
-  
+
   function refreshVisibleRequests() {
     if (!state.user || state.routePage !== 'requests') return;
     refreshRequestStatusAges();

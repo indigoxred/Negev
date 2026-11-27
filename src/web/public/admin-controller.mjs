@@ -1,11 +1,10 @@
 import { reviewReasonText } from './review-reason.mjs';
-import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
-  seasonRoute, browseReturnDestination, requestRoute } from './consumer-route.mjs';
+import { titleRoute, requestRoute } from './consumer-route.mjs';
 
 // Owns account tools, invitation links and operational review pagination. Construction does not register event handlers.
 export function createAdminController({ api, applyAdultVisibility, byId, element, message, titleLabel, readAdultPreference, reviewResponses, sessionResponses, state, window = globalThis.window, location = globalThis.location, navigator = globalThis.navigator }) {
   let nextReviewAttemptId = null;
-  
+
   function reviewActionsFor(stage) {
     if (stage === 'start_hold') return [
       ['retry', 'Retry now', 'Check this download again now? Every normal safety check runs again.'],
@@ -16,7 +15,7 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
     ];
     return [];
   }
-  
+
   async function loadOperationalReview(append = false) {
     if (state.user?.role !== 'admin') return;
     const session = sessionResponses.current();
@@ -84,7 +83,7 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
       }
     }
   }
-  
+
   function showShareLink(title, url, note, session) {
     if (!sessionResponses.isCurrent(session) || !state.user) return false;
     const box = byId('invite-code');
@@ -116,9 +115,9 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
     field.focus();
     return true;
   }
-  
+
   const linkFor = (kind, code) => `${location.origin}/#${kind}=${code}`;
-  
+
   async function createInviteLink() {
     const session = sessionResponses.current();
     try {
@@ -130,9 +129,9 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
       if (state.usersLoaded) void loadInvites();
     } catch (error) { if (sessionResponses.isCurrent(session)) message(error.message, true); }
   }
-  
+
   const inviteStatusText = { active: 'Active', used: 'Used', expired: 'Expired', revoked: 'Revoked' };
-  
+
   async function loadInvites() {
     if (state.user?.role !== 'admin') return;
     const list = byId('admin-invites');
@@ -175,7 +174,7 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
       list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
     }
   }
-  
+
   async function loadUsers() {
     if (state.user?.role !== 'admin') return;
     const list = byId('admin-users');
