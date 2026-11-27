@@ -2,6 +2,7 @@ import { findTestBrowser, browserSkipReason } from './helpers/browser-executable
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { readdirSync } from 'node:fs';
 import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,21 +10,13 @@ import { test } from 'node:test';
 
 const browser = findTestBrowser();
 const staticRoot = new URL('../src/web/public/', import.meta.url);
+// Serve public/ the way the server does: every page, script, stylesheet and font.
 const assets = new Map([
-  ['/', ['index.html', 'text/html']], ['/app.js', ['app.js', 'text/javascript']],
-  ['/style.css', ['style.css', 'text/css']],
-  ['/consumer.css', ['consumer.css', 'text/css']],
-  ...['wix-madefor-display-500.ttf','wix-madefor-text-400.ttf','wix-madefor-text-500.ttf','wix-madefor-text-600.ttf'].map(name=>['/fonts/'+name,['fonts/'+name,'font/ttf']]),
-  ...['card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs', 'poster-recovery.mjs',
-    'request-progress-text.mjs', 'response-epoch.mjs',
-    'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'adult-search-visibility.mjs', 'chinese-visibility.mjs',
-    'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'title-preference.mjs', 'release-dialog.mjs', 'release-choice-fields.mjs', 'release-row.mjs',
-    'season-request-selection.mjs', 'episode-schedule.mjs',
-    'airing-tracking-controls.mjs',
-    'detail-refresh.mjs', 'relation-label.mjs']
-    .map((name) => [`/${name}`, [name, 'text/javascript']]),
+  ...readdirSync(staticRoot).filter((name) => /\.(?:html|m?js|css)$/.test(name)).map((name) =>
+    [name === 'index.html' ? '/' : `/${name}`, [name, name.endsWith('.html') ? 'text/html'
+      : name.endsWith('.css') ? 'text/css' : 'text/javascript']]),
+  ...readdirSync(new URL('fonts/', staticRoot)).filter((name) => name.endsWith('.ttf'))
+    .map((name) => [`/fonts/${name}`, [`fonts/${name}`, 'font/ttf']]),
 ]);
 
 const dump = async (url, profile, captureName, viewport = '1440,900', virtualTimeMs = 6000) => new Promise((resolve, reject) => {
@@ -1569,7 +1562,7 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.deepEqual(mobile.filtered, { adultHidden: true, normalVisible: true });
       assert.deepEqual(mobile.liveToggle, { adultVisible: true, adultHiddenAgain: true });
       assert.deepEqual(mobile.chineseChoice,
-        { before: true, hidden: true, restored: true, label: 'Chinese: On' });
+        { before: true, hidden: true, restored: true, label: 'Show Chinese productions' });
       assert.deepEqual(mobile.franchise.before,
         { button: 'Show more related titles', visible: true, count: 2, capacity: 2 });
       assert.match(mobile.franchise.listed, /The Garden of Words/);
