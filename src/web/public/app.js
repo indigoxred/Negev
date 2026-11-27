@@ -1,3 +1,4 @@
+import { createAuthController } from './auth-controller.mjs';
 import { createRequestController } from './request-controller.mjs';
 import { createAdminController } from './admin-controller.mjs';
 import { createViewHelpers } from './view-helpers.mjs';
@@ -31,13 +32,7 @@ const byId = (id) => document.getElementById(id);
 // Invitation and password reset links carry their one-time code in the URL
 // fragment, which browsers never send to the server. Read it once and remove
 // it from the address bar before routing starts.
-let pendingLinkCode = (() => {
-  const match = /^#(invite|reset)=([a-f0-9]{64})$/i.exec(location.hash);
-  if (!match) return null;
-  try { history.replaceState(null, '', location.pathname + location.search); }
-  catch { /* The code still applies; it only stays visible in the address bar. */ }
-  return { kind: match[1].toLowerCase(), code: match[2].toLowerCase() };
-})();
+
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: generateRequestKey });
 const state = { csrf: null, user: null, selected: null,
@@ -617,8 +612,8 @@ function showSession(data) {
   byId('auth').hidden = true;
   byId('session-loading').hidden = true;
   byId('workspace').hidden = false;
-  if (pendingLinkCode) {
-    message(pendingLinkCode.kind === 'invite'
+  if (auth.pendingLink) {
+    message(auth.pendingLink.kind === 'invite'
       ? 'You opened an invitation link while signed in. Sign out first if it is for a new account.'
       : 'You opened a password reset link while signed in. Sign out first to use it.');
   }
@@ -726,25 +721,8 @@ function clearWorkspace() {
   byId('auth').hidden = false;
 }
 // Fill the matching form from an invitation or reset link (once).
-function applyPendingLinkCode() {
-  const link = pendingLinkCode;
-  if (!link) return;
-  pendingLinkCode = null;
-  if (link.kind === 'invite') {
-    authTab(true);
-    byId('register-form').elements.code.value = link.code;
-    message('Invitation found. Choose a username and password to create your account.');
-    byId('register-form').elements.username.focus();
-  } else {
-    byId('login-form').hidden = true;
-    byId('register-form').hidden = true;
-    const form = byId('reset-form');
-    form.hidden = false;
-    form.elements.code.value = link.code;
-    message('Choose a new password for your account.');
-    form.elements.password.focus();
-  }
-}
+const auth = createAuthController({ api: (...args) => api(...args), byId, clearWorkspace: (...args) => clearWorkspace(...args), message: (...args) => message(...args), refreshSession: (...args) => refreshSession(...args), sessionResponses, state });
+const { applyPendingLinkCode, authTab, retrySession, handleLoginSubmit, handleRegisterSubmit, signOut, handleResetSubmit } = auth;
 async function refreshSession() {
   const started = sessionResponses.current();
   try {
@@ -1441,70 +1419,15 @@ const { reviewActionsFor, loadOperationalReview, showShareLink, createInviteLink
 
 byId('refresh-review').addEventListener('click', () => { void loadOperationalReview(); });
 byId('more-review').addEventListener('click', () => { void loadOperationalReview(true); });
-function authTab(register) {
-  byId('login-form').hidden = register;
-  byId('register-form').hidden = !register;
-  const reset = byId('reset-form');
-  if (reset) reset.hidden = true;
-  byId('login-tab').classList.toggle('selected', !register);
-  byId('register-tab').classList.toggle('selected', register);
-  message('');
-}
+
 byId('login-tab').addEventListener('click', () => authTab(false));
 byId('register-tab').addEventListener('click', () => authTab(true));
-byId('session-retry').addEventListener('click', () => {
-  byId('session-retry').hidden = true;
-  byId('session-loading-text').textContent = 'Checking your session…';
-  message('');
-  void refreshSession();
-});
-byId('login-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const fields = new FormData(form);
-  try {
-    await api('/api/login', { method: 'POST', body: JSON.stringify({
-      username: fields.get('username'), password: fields.get('password'),
-    }) });
-    sessionResponses.invalidate();
-    form.reset();
-    if (await refreshSession()) message('Signed in. Search for a show or film.');
-  } catch (error) { message(error.message, true); }
-});
-byId('register-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const fields = new FormData(form);
-  try {
-    await api('/api/register', { method: 'POST', body: JSON.stringify({
-      code: fields.get('code'), username: fields.get('username'),
-      password: fields.get('password'),
-    }) });
-    form.reset();
-    authTab(false);
-    message('Account created. Sign in to continue.');
-  } catch (error) {
-    message(error.message, true);
-    if (['code','username','password'].includes(error.field)) form.elements.namedItem(error.field)?.focus();
-  }
-});
+byId('session-retry').addEventListener('click', auth.retrySession);
+byId('login-form').addEventListener('submit', auth.handleLoginSubmit);
+byId('register-form').addEventListener('submit', auth.handleRegisterSubmit);
 byId('signout').addEventListener('click', () => { void signOut(false); });
 byId('signout-everywhere').addEventListener('click', () => { void signOut(true); });
-async function signOut(everywhere) {
-  const session = sessionResponses.current();
-  try {
-    await api('/api/logout', { method: 'POST',
-      body: everywhere ? JSON.stringify({ everywhere: true }) : '{}' });
-  } catch (error) {
-    if (error.status === 401) { if (!state.user) message('Signed out.'); return; }
-    if (sessionResponses.isCurrent(session)) message(error.message, true);
-    return;
-  }
-  if (!sessionResponses.isCurrent(session)) return;
-  clearWorkspace();
-  message(everywhere ? 'Signed out on all devices.' : 'Signed out.');
-  if (pendingLinkCode) applyPendingLinkCode();
-}
+
 byId('adult-toggle').addEventListener('click', () => {
   if (!state.user || state.user.adultAllowed === false) return;
   state.showAdult = !state.showAdult;
@@ -1578,20 +1501,7 @@ async function classifySearchCards(searchToken) {
 
 byId('invite').addEventListener('click', () => { void createInviteLink(); });
 byId('admin-create-invite').addEventListener('click', () => { void createInviteLink(); });
-byId('reset-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const fields = new FormData(form);
-  try {
-    const result = await api('/api/password-reset', { method: 'POST', body: JSON.stringify({
-      code: fields.get('code'), password: fields.get('password') }) });
-    form.reset();
-    authTab(false);
-    byId('login-form').elements.username.value = result.username;
-    message('Password changed. Sign in with your new password.');
-    byId('login-form').elements.password.focus();
-  } catch (error) { message(error.message, true); }
-});
+byId('reset-form').addEventListener('submit', auth.handleResetSubmit);
 
 
 byId('refresh-invites').addEventListener('click', () => { void loadInvites(); });

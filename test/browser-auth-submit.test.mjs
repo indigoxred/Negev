@@ -7,34 +7,25 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-const sourcePath = process.env.NEGEV_AUTH_SOURCE
-  ?? fileURLToPath(new URL('../src/web/public/app.js', import.meta.url));
-const source = readFileSync(sourcePath, 'utf8');
+import { createAuthController } from '../src/web/public/auth-controller.mjs';
 const epochSource = readFileSync(new URL('../src/web/public/response-epoch.mjs', import.meta.url),'utf8').replace('export function','function');
 const browser = findTestBrowser();
 
-function listener(formId, nextMarker) {
-  const start = source.indexOf(`byId('${formId}').addEventListener('submit'`);
-  const end = source.indexOf(nextMarker, start);
-  assert.ok(start >= 0 && end > start, `${formId} submit listener exists`);
-  return source.slice(start, end);
-}
-
 test('browser completes successful login and registration submit transitions',
   { skip: browser ? false : browserSkipReason }, () => {
-    const login = listener('login-form', "byId('register-form').addEventListener");
-    const register = listener('register-form', "byId('signout').addEventListener");
+
+
     const html = `<!doctype html><meta charset="utf-8">
       <form id="login-form"><input name="username"><input name="password"></form>
       <form id="register-form"><input name="code"><input name="username"><input name="password"></form>
-      <pre id="result">pending</pre>
+      <button id="login-tab"></button><button id="register-tab"></button><form id="reset-form" hidden></form><pre id="result">pending</pre>
       <script>
         const byId = (id) => document.getElementById(id);
         const calls = [];
         ${epochSource}
         const sessionResponses=createResponseEpoch(), priorSession=sessionResponses.current();
         let currentMessage = '';
-        let selectedTab = 'register';
+
         let failRegistration=false;
         const api = async (path) => {
           calls.push(path);
@@ -43,10 +34,11 @@ test('browser completes successful login and registration submit transitions',
           return {};
         };
         const refreshSession = async () => { if(sessionResponses.isCurrent(priorSession))throw Error('Old session generation survived login');calls.push('refreshSession'); return true; };
-        const authTab = (register) => { selectedTab = register ? 'register' : 'login'; };
+
         const message = (value) => { currentMessage = value; };
-        ${login}
-        ${register}
+        const auth = (${createAuthController.toString()})({byId,api,message,sessionResponses,state:{user:null},refreshSession,clearWorkspace(){}});
+        byId('login-form').addEventListener('submit',auth.handleLoginSubmit);
+        byId('register-form').addEventListener('submit',auth.handleRegisterSubmit);
         const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
         (async () => {
           byId('login-form').elements.username.value = 'login-user';
@@ -64,7 +56,7 @@ test('browser completes successful login and registration submit transitions',
           byId('register-form').elements.password.value = 'secret';
           byId('register-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
           await settle();
-          const registerResult={calls:[...calls],message:currentMessage,tab:selectedTab,field:byId('register-form').elements.username.value};
+          const registerResult={calls:[...calls],message:currentMessage,tab:byId('register-form').hidden?'login':'register',field:byId('register-form').elements.username.value};
           failRegistration=true;byId('register-form').elements.username.value='bad name';
           byId('register-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await settle();
           byId('result').textContent = JSON.stringify({ login: loginResult,register:registerResult,

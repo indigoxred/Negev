@@ -6,6 +6,7 @@ import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
 import { hideChineseProduction } from '../src/web/public/chinese-visibility.mjs';
 import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibility.mjs';
 import { createCatalogueReadPacer } from '../src/web/public/search-pages.mjs';
+import { createAuthController } from '../src/web/public/auth-controller.mjs';
 
 const source = await readFile(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
 function functionSource(name) {
@@ -113,12 +114,11 @@ test('successful actual login starts a new generation before reading the authent
   const epoch = createResponseEpoch(), old = epoch.current();
   let submit, refreshWasNew = false;
   const form = { reset() {} };
-  const context = vm.createContext({ byId: () => ({ addEventListener: (_event, fn) => { submit = fn; } }),
+  const context = { byId: () => ({}), state: { user: null }, location: { hash: '' }, history: {},
     FormData: class { get() { return 'fixture'; } }, sessionResponses: epoch,
     api: async () => ({}), message() {},
-    refreshSession: async () => { refreshWasNew = !epoch.isCurrent(old); return true; } });
-  const start = source.indexOf("byId('login-form').addEventListener('submit'");
-  vm.runInContext(source.slice(start, source.indexOf("\nbyId('register-form')", start)), context);
+    refreshSession: async () => { refreshWasNew = !epoch.isCurrent(old); return true; } };
+  submit = createAuthController(context).handleLoginSubmit;
   await submit({ preventDefault() {}, currentTarget: form });
   assert.equal(refreshWasNew, true, 'old request generations must end when login succeeds, including same-account login');
 });
