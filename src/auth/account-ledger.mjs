@@ -80,6 +80,26 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms>=0)
     ) STRICT`);
     db.exec('CREATE INDEX IF NOT EXISTS user_sessions_user ON user_sessions(user_id)');
+    // Invitation bookkeeping for the admin list. Nullable, so earlier builds
+    // keep working on the same database.
+    const inviteColumns = new Set(db.prepare('PRAGMA table_info(invitations)').all()
+      .map((column) => column.name));
+    for (const [name, type] of [['created_ms', 'INTEGER CHECK(created_ms>=0)'],
+      ['revoked_ms', 'INTEGER CHECK(revoked_ms>=0)'],
+      ['used_by', 'INTEGER REFERENCES users(id)']]) {
+      if (!inviteColumns.has(name)) db.exec(`ALTER TABLE invitations ADD COLUMN ${name} ${type}`);
+    }
+    // One-time password reset links an admin hands to a user. Only the
+    // code's digest is stored; using one ends every session for the account.
+    db.exec(`CREATE TABLE IF NOT EXISTS password_resets (
+      id INTEGER PRIMARY KEY,
+      code_hash TEXT NOT NULL UNIQUE,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_ms INTEGER NOT NULL CHECK(created_ms>=0),
+      expires_ms INTEGER NOT NULL CHECK(expires_ms>=0),
+      used_ms INTEGER CHECK(used_ms>=0)
+    ) STRICT`);
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const countUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
@@ -100,9 +120,29 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     (user_id,mode,tracked_ids) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET
     mode=excluded.mode,tracked_ids=excluded.tracked_ids`);
   const insertInvite = db.prepare(`INSERT INTO invitations
-    (code_hash,created_by,expires_ms) VALUES (?,?,?)`);
-  const findInvite = db.prepare('SELECT id,expires_ms,used_ms FROM invitations WHERE code_hash=?');
-  const useInvite = db.prepare('UPDATE invitations SET used_ms=? WHERE id=? AND used_ms IS NULL');
+    (code_hash,created_by,expires_ms,created_ms) VALUES (?,?,?,?)`);
+  const findInvite = db.prepare(`SELECT id,expires_ms,used_ms,revoked_ms
+    FROM invitations WHERE code_hash=?`);
+  const useInvite = db.prepare(`UPDATE invitations SET used_ms=?,used_by=?
+    WHERE id=? AND used_ms IS NULL AND revoked_ms IS NULL`);
+  const inviteUsable = (invite, at) => invite && invite.used_ms === null &&
+    invite.revoked_ms === null && invite.expires_ms > at;
+  const listInviteRows = db.prepare(`SELECT i.id,i.created_ms,i.expires_ms,i.used_ms,
+    i.revoked_ms,c.username AS created_by_name,u.username AS used_by_name
+    FROM invitations i LEFT JOIN users c ON c.id=i.created_by
+    LEFT JOIN users u ON u.id=i.used_by ORDER BY i.id DESC LIMIT ?`);
+  const revokeInviteRow = db.prepare(`UPDATE invitations SET revoked_ms=?
+    WHERE id=? AND used_ms IS NULL AND revoked_ms IS NULL`);
+  const insertReset = db.prepare(`INSERT INTO password_resets
+    (code_hash,user_id,created_by,created_ms,expires_ms) VALUES (?,?,?,?,?)`);
+  const dropOpenResets = db.prepare(`DELETE FROM password_resets
+    WHERE user_id=? AND used_ms IS NULL`);
+  const findReset = db.prepare(`SELECT id,user_id,expires_ms,used_ms
+    FROM password_resets WHERE code_hash=?`);
+  const useReset = db.prepare(`UPDATE password_resets SET used_ms=?
+    WHERE id=? AND used_ms IS NULL`);
+  const updatePassword = db.prepare(`UPDATE users SET password_salt=?,password_hash=?,
+    session_version=session_version+1 WHERE id=?`);
   const bumpVersion = db.prepare(`UPDATE users SET session_version=session_version+1
     WHERE id=? AND disabled=0`);
   const insertSession = db.prepare(`INSERT INTO user_sessions
@@ -211,30 +251,90 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       const admin = findUser.get(adminUserId);
       if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
       const code = randomBytes(32).toString('hex');
-      insertInvite.run(digest(code), adminUserId, expiresMs);
-      return { state: 'created', code, expiresMs };
+      const id = Number(insertInvite.run(digest(code), adminUserId, expiresMs, now()).lastInsertRowid);
+      return { state: 'created', id, code, expiresMs };
+    },
+    // The 50 most recent invitations. Codes are never stored, so a lost
+    // invite cannot be shown again; revoke it and create a new one.
+    listInvites({ adminUserId }) {
+      if (!validId(adminUserId)) throw new TypeError('Invalid admin ID');
+      const admin = findUser.get(adminUserId);
+      if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+      const at = now();
+      return { state: 'invitations', items: listInviteRows.all(50).map((row) => ({
+        id: row.id,
+        status: row.revoked_ms !== null ? 'revoked' : row.used_ms !== null ? 'used'
+          : row.expires_ms <= at ? 'expired' : 'active',
+        createdMs: row.created_ms, expiresMs: row.expires_ms,
+        usedMs: row.used_ms, revokedMs: row.revoked_ms,
+        createdBy: row.created_by_name ?? null, usedBy: row.used_by_name ?? null,
+      })) };
+    },
+    revokeInvite({ adminUserId, inviteId }) {
+      if (!validId(adminUserId) || !validId(inviteId)) throw new TypeError('Invalid invitation');
+      return transact(() => {
+        const admin = findUser.get(adminUserId);
+        if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+        if (revokeInviteRow.run(now(), inviteId).changes !== 1) return held('invite_unavailable');
+        return { state: 'revoked', id: inviteId };
+      });
+    },
+    // A new link replaces any unused one for the same account.
+    createPasswordReset({ adminUserId, userId, expiresMs }) {
+      if (!validId(adminUserId) || !validId(userId) || !validTime(expiresMs) ||
+          expiresMs <= now() || expiresMs > now() + 7 * 24 * 60 * 60 * 1000) {
+        throw new TypeError('Invalid password reset');
+      }
+      return transact(() => {
+        const admin = findUser.get(adminUserId);
+        if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+        const user = findUser.get(userId);
+        if (!user) return held('user_unavailable');
+        dropOpenResets.run(userId);
+        const code = randomBytes(32).toString('hex');
+        insertReset.run(digest(code), userId, adminUserId, now(), expiresMs);
+        return { state: 'created', userId, username: user.username, code, expiresMs };
+      });
+    },
+    // Sets a new password from a reset code and signs the account out on
+    // every device. A disabled account stays disabled.
+    async resetPassword({ code, password }) {
+      if (typeof code !== 'string' || !/^[a-f0-9]{64}$/.test(code) || !validPassword(password)) {
+        throw new TypeError('Invalid password reset');
+      }
+      const codeHash = digest(code);
+      const usable = (row) => row && row.used_ms === null && row.expires_ms > now();
+      if (!usable(findReset.get(codeHash))) return held('reset_unavailable');
+      const salt = randomBytes(16).toString('hex');
+      const passwordHash = await boundedPasswordHash(password, salt);
+      if (passwordHash === null) return held('authentication_busy');
+      return transact(() => {
+        const reset = findReset.get(codeHash);
+        if (!usable(reset)) return held('reset_unavailable');
+        const user = findUser.get(reset.user_id);
+        if (!user) return held('reset_unavailable');
+        useReset.run(now(), reset.id);
+        updatePassword.run(salt, passwordHash, reset.user_id);
+        deleteUserSessions.run(reset.user_id);
+        return { state: 'reset', username: user.username };
+      });
     },
     async registerInvite({ code, username, password }) {
       if (invitedAccountValidation({ code, username, password })) {
         throw new TypeError('Invalid invited account');
       }
       const codeHash = digest(code);
-      const current = findInvite.get(codeHash);
-      if (!current || current.used_ms !== null || current.expires_ms <= now()) {
-        return held('invite_unavailable');
-      }
+      if (!inviteUsable(findInvite.get(codeHash), now())) return held('invite_unavailable');
       const salt = randomBytes(16).toString('hex');
       const passwordHash = await boundedPasswordHash(password, salt);
       if (passwordHash === null) return held('authentication_busy');
       return transact(() => {
         const invite = findInvite.get(codeHash);
-        if (!invite || invite.used_ms !== null || invite.expires_ms <= now()) {
-          return held('invite_unavailable');
-        }
+        if (!inviteUsable(invite, now())) return held('invite_unavailable');
         if (findName.get(usernameKey(username))) return held('username_unavailable');
         const id = Number(insertUser.run(username, usernameKey(username), 'member',
           salt, passwordHash, now()).lastInsertRowid);
-        useInvite.run(now(), invite.id);
+        useInvite.run(now(), id, invite.id);
         return publicUser(findUser.get(id));
       });
     },

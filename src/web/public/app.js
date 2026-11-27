@@ -24,6 +24,16 @@ import { parseConsumerRoute, searchRoute, librarySearchRoute, titleRoute,
   seasonRoute, browseReturnDestination, requestRoute } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
+// Invitation and password reset links carry their one-time code in the URL
+// fragment, which browsers never send to the server. Read it once and remove
+// it from the address bar before routing starts.
+let pendingLinkCode = (() => {
+  const match = /^#(invite|reset)=([a-f0-9]{64})$/i.exec(location.hash);
+  if (!match) return null;
+  try { history.replaceState(null, '', location.pathname + location.search); }
+  catch { /* The code still applies; it only stays visible in the address bar. */ }
+  return { kind: match[1].toLowerCase(), code: match[2].toLowerCase() };
+})();
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: generateRequestKey });
 const state = { csrf: null, user: null, selected: null,
@@ -454,6 +464,7 @@ function renderRoute() {
     if (!state.airingLoaded) void loadAiring();
   } else if (page === 'admin' && !state.usersLoaded) {
     void loadUsers();
+    void loadInvites();
   }
 }
 window.addEventListener('hashchange', renderRoute);
@@ -647,6 +658,11 @@ function showSession(data) {
   byId('auth').hidden = true;
   byId('session-loading').hidden = true;
   byId('workspace').hidden = false;
+  if (pendingLinkCode) {
+    message(pendingLinkCode.kind === 'invite'
+      ? 'You opened an invitation link while signed in. Sign out first if it is for a new account.'
+      : 'You opened a password reset link while signed in. Sign out first to use it.');
+  }
   byId('main-nav').hidden = false;
   byId('mobile-nav').hidden = false;
   byId('search-form').hidden = false;
@@ -750,6 +766,26 @@ function clearWorkspace() {
   byId('session-loading').hidden = true;
   byId('auth').hidden = false;
 }
+// Fill the matching form from an invitation or reset link (once).
+function applyPendingLinkCode() {
+  const link = pendingLinkCode;
+  if (!link) return;
+  pendingLinkCode = null;
+  if (link.kind === 'invite') {
+    authTab(true);
+    byId('register-form').elements.code.value = link.code;
+    message('Invitation found. Choose a username and password to create your account.');
+    byId('register-form').elements.username.focus();
+  } else {
+    byId('login-form').hidden = true;
+    byId('register-form').hidden = true;
+    const form = byId('reset-form');
+    form.hidden = false;
+    form.elements.code.value = link.code;
+    message('Choose a new password for your account.');
+    form.elements.password.focus();
+  }
+}
 async function refreshSession() {
   const started = sessionResponses.current();
   try {
@@ -761,8 +797,10 @@ async function refreshSession() {
     return true;
   } catch (error) {
     if (!sessionResponses.isCurrent(started)) return false;
-    if ([401, 403].includes(error?.status)) clearWorkspace();
-    else {
+    if ([401, 403].includes(error?.status)) {
+      clearWorkspace();
+      applyPendingLinkCode();
+    } else {
       byId('session-loading-text').textContent =
         'Could not check your session.';
       byId('session-retry').hidden = false;
@@ -1894,6 +1932,8 @@ byId('more-review').addEventListener('click', () => { void loadOperationalReview
 function authTab(register) {
   byId('login-form').hidden = register;
   byId('register-form').hidden = !register;
+  const reset = byId('reset-form');
+  if (reset) reset.hidden = true;
   byId('login-tab').classList.toggle('selected', !register);
   byId('register-tab').classList.toggle('selected', register);
   message('');
@@ -1951,6 +1991,7 @@ async function signOut(everywhere) {
   if (!sessionResponses.isCurrent(session)) return;
   clearWorkspace();
   message(everywhere ? 'Signed out on all devices.' : 'Signed out.');
+  if (pendingLinkCode) applyPendingLinkCode();
 }
 byId('adult-toggle').addEventListener('click', () => {
   if (!state.user || state.user.adultAllowed === false) return;
@@ -2009,14 +2050,107 @@ async function classifySearchCards(searchToken) {
     applyAdultVisibility();
   }, { current });
 }
-byId('invite').addEventListener('click', async () => {
+// Shows a one-time link with a Copy button. The link is only shown here; the
+// server keeps just a digest, so it cannot be displayed again later.
+function showShareLink(title, url, note) {
+  const box = byId('invite-code');
+  const field = element('input');
+  field.type = 'text';
+  field.readOnly = true;
+  field.value = url;
+  field.setAttribute('aria-label', title);
+  field.addEventListener('focus', () => field.select());
+  const copy = element('button', 'Copy link', 'primary');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      copy.textContent = 'Copied';
+      message('Link copied. Share it privately.');
+    } catch {
+      field.focus();
+      message('Select the link and copy it.');
+    }
+  });
+  const close = element('button', 'Done', 'quiet');
+  close.type = 'button';
+  close.addEventListener('click', () => { box.hidden = true; box.replaceChildren(); });
+  const row = element('div', undefined, 'share-link-row');
+  row.append(field, copy, close);
+  box.replaceChildren(element('strong', title), row, element('small', note));
+  box.hidden = false;
+  field.focus();
+}
+const linkFor = (kind, code) => `${location.origin}/#${kind}=${code}`;
+async function createInviteLink() {
   try {
     const result = await api('/api/invitations', { method: 'POST', body: '{}' });
-    byId('invite-code').textContent = `Invitation code: ${result.code} · Expires in 7 days. Share it privately.`;
-    byId('invite-code').hidden = false;
-    message('Invitation ready to copy.');
+    showShareLink('Invitation link', linkFor('invite', result.code),
+      'Works once and expires in 7 days. Anyone with the link can create an account.');
+    message('Invitation link ready.');
+    if (state.usersLoaded) void loadInvites();
+  } catch (error) { message(error.message, true); }
+}
+byId('invite').addEventListener('click', () => { void createInviteLink(); });
+byId('admin-create-invite').addEventListener('click', () => { void createInviteLink(); });
+byId('reset-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const fields = new FormData(form);
+  try {
+    const result = await api('/api/password-reset', { method: 'POST', body: JSON.stringify({
+      code: fields.get('code'), password: fields.get('password') }) });
+    form.reset();
+    authTab(false);
+    byId('login-form').elements.username.value = result.username;
+    message('Password changed. Sign in with your new password.');
+    byId('login-form').elements.password.focus();
   } catch (error) { message(error.message, true); }
 });
+const inviteStatusText = { active: 'Active', used: 'Used', expired: 'Expired', revoked: 'Revoked' };
+async function loadInvites() {
+  if (state.user?.role !== 'admin') return;
+  const list = byId('admin-invites');
+  list.replaceChildren(element('p', 'Loading invitations…', 'muted'));
+  try {
+    const page = await api('/api/admin/invitations');
+    if (state.user?.role !== 'admin') return;
+    if (!page.items.length) {
+      list.replaceChildren(element('p', 'No invitations yet.', 'muted'));
+      return;
+    }
+    list.replaceChildren(...page.items.map((invite) => {
+      const row = element('div', undefined, 'user-setting');
+      const when = (ms) => ms === null ? null : new Date(ms).toLocaleDateString();
+      const detail = invite.status === 'used'
+        ? `used by ${invite.usedBy ?? 'a removed account'} on ${when(invite.usedMs)}`
+        : invite.status === 'active' ? `expires ${when(invite.expiresMs)}`
+          : invite.status === 'revoked' ? `revoked ${when(invite.revokedMs)}`
+            : `expired ${when(invite.expiresMs)}`;
+      const created = invite.createdMs === null ? '' : ` · created ${when(invite.createdMs)}`;
+      row.append(element('span', `${inviteStatusText[invite.status]} · ${detail}${created}` +
+        `${invite.createdBy ? ` by ${invite.createdBy}` : ''}`));
+      if (invite.status === 'active') {
+        const revoke = element('button', 'Revoke', 'quiet');
+        revoke.type = 'button';
+        revoke.setAttribute('aria-label', `Revoke the invitation that ${detail}`);
+        revoke.addEventListener('click', async () => {
+          revoke.disabled = true;
+          try {
+            await api(`/api/admin/invitations/${invite.id}/revoke`, { method: 'POST', body: '{}' });
+            message('Invitation revoked. Its link no longer works.');
+            void loadInvites();
+          } catch (error) { message(error.message, true); revoke.disabled = false; }
+        });
+        row.append(revoke);
+      }
+      return row;
+    }));
+  } catch {
+    list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
+  }
+}
+byId('refresh-invites').addEventListener('click', () => { void loadInvites(); });
 async function loadUsers() {
   if (state.user?.role !== 'admin') return;
   const list = byId('admin-users');
@@ -2057,6 +2191,21 @@ async function loadUsers() {
         finally { button.disabled = user.disabled; }
       });
       row.append(button);
+      const reset = element('button', 'Reset password', 'quiet');
+      reset.type = 'button';
+      reset.setAttribute('aria-label', `Create a password reset link for ${user.username}`);
+      reset.addEventListener('click', async () => {
+        reset.disabled = true;
+        try {
+          const result = await api(`/api/admin/users/${user.id}/password-reset`,
+            { method: 'POST', body: '{}' });
+          showShareLink(`Password reset link for ${result.username}`, linkFor('reset', result.code),
+            'Works once and expires in 24 hours. Using it signs that account out everywhere.' +
+            (user.disabled ? ' The account stays disabled until you enable it.' : ''));
+        } catch (error) { message(error.message, true); }
+        finally { reset.disabled = false; }
+      });
+      row.append(reset);
       if (user.id !== state.user.id) {
         const access = element('button', user.disabled ? 'Enable account' : 'Disable account',
           'quiet');

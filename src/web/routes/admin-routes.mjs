@@ -3,7 +3,7 @@
 // user-app.mjs unchanged; every route still checks the admin role itself.
 export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
   safeImportReasons, accounts, readImportActivity, listOperationalReview,
-  reviewOperationalItem, reviewHeldRequest }) {
+  reviewOperationalItem, reviewHeldRequest, now = Date.now }) {
   // Read-only operator diagnostic. A quiet observation is never a download
   // permission and no file, path, torrent, or provider details leave the API.
   app.post('/api/admin/import-activity', { preHandler: writeGuards,
@@ -165,6 +165,54 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
       return reply.code(409).send({ error: 'You cannot disable your own account', reason: result.reason });
     }
     return reply.code(404).send({ error: 'Account unavailable' });
+  });
+  const adminOnly = (request, reply) => {
+    if (request.negevUser.role === 'admin') return true;
+    reply.code(403).send({ error: 'Admin required' });
+    return false;
+  };
+  const positiveParam = (value) => {
+    const id = Number(value);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
+  app.get('/api/admin/invitations', { preHandler: requireUser }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!adminOnly(request, reply)) return reply;
+    if (typeof accounts.listInvites !== 'function') {
+      return reply.code(503).send({ error: 'Invitations unavailable' });
+    }
+    return accounts.listInvites({ adminUserId: request.negevUser.id });
+  });
+  app.post('/api/admin/invitations/:id/revoke', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!adminOnly(request, reply)) return reply;
+    const inviteId = positiveParam(request.params.id);
+    if (inviteId === null || Object.keys(request.query).length ||
+        !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length) {
+      return reply.code(400).send({ error: 'Invalid invitation' });
+    }
+    if (typeof accounts.revokeInvite !== 'function') {
+      return reply.code(503).send({ error: 'Invitations unavailable' });
+    }
+    const result = accounts.revokeInvite({ adminUserId: request.negevUser.id, inviteId });
+    return result.state === 'revoked' ? result : reply.code(409).send({
+      error: 'That invitation was already used, revoked or does not exist.' });
+  });
+  app.post('/api/admin/users/:id/password-reset', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!adminOnly(request, reply)) return reply;
+    const userId = positiveParam(request.params.id);
+    if (userId === null || Object.keys(request.query).length ||
+        !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length) {
+      return reply.code(400).send({ error: 'Invalid password reset' });
+    }
+    if (typeof accounts.createPasswordReset !== 'function') {
+      return reply.code(503).send({ error: 'Password resets unavailable' });
+    }
+    const result = accounts.createPasswordReset({ adminUserId: request.negevUser.id,
+      userId, expiresMs: now() + 24 * 60 * 60 * 1000 });
+    return result.state === 'created' ? reply.code(201).send(result)
+      : reply.code(404).send({ error: 'Account unavailable' });
   });
   app.post('/api/admin/requests/:id/review', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
