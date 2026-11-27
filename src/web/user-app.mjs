@@ -2,8 +2,9 @@ import { registerAdminRoutes } from './routes/admin-routes.mjs';
 import { validRegularCoverage } from './public/card-availability.mjs';
 import { catalogueRetryAt } from '../catalogue/catalogue-retry.mjs';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
+import { airingScheduleProblem, seasonPageProblem, ShapeError } from './route-shapes.mjs';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { invitedAccountValidation, SESSION_IDLE_MS } from '../auth/account-ledger.mjs';
@@ -146,16 +147,14 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   // A tunnel presents one peer IP for many users. Signed-in accounts get
   // separate route budgets; login and registration retain peer throttling.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
-  const assetNames = ['index.html', 'app.js', 'style.css', 'consumer.css',
-    'card-availability.mjs', 'request-key.mjs', 'episode-pages.mjs', 'search-pages.mjs', 'poster-recovery.mjs',
-    'request-progress-text.mjs', 'response-epoch.mjs',
-    'franchise-explorer.mjs', 'acquisition-notice.mjs',
-    'consumer-route.mjs', 'season-availability-presentation.mjs',
-    'season-request-selection.mjs', 'episode-schedule.mjs',
-    'airing-tracking-controls.mjs',
-    'detail-refresh.mjs', 'relation-label.mjs', 'request-feedback.mjs',
-    'adult-search-visibility.mjs', 'chinese-visibility.mjs',
-    'title-preference.mjs', 'release-dialog.mjs', 'release-choice-fields.mjs', 'release-row.mjs'];
+  // Every page, script and stylesheet in public/ is served; a new module needs
+  // no registration here. index.html is read first so it anchors the revision.
+  const publicDir = new URL('./public/', import.meta.url);
+  const assetNames = (await readdir(publicDir, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /\.(?:html|m?js|css)$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort((a, b) => (a === 'index.html' ? -1 : b === 'index.html' ? 1 : a.localeCompare(b)));
+  if (assetNames[0] !== 'index.html') throw new Error('public/index.html is missing');
   const pages = await Promise.all(assetNames.map((name) =>
     readFile(new URL(`./public/${name}`, import.meta.url), 'utf8')));
   const assets = new Map(assetNames.map((name, index) => [name, pages[index]]));
@@ -174,7 +173,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     app.get(url, async (_request, reply) =>
       reply.headers(pageHeaders).type(contentType).send(assets.get(name)));
   }
-  for (const name of ['wix-madefor-display-500.ttf', 'wix-madefor-text-400.ttf', 'wix-madefor-text-500.ttf', 'wix-madefor-text-600.ttf', 'OFL.txt']) {
+  const fontNames = (await readdir(new URL('./fonts/', publicDir), { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && /\.(?:ttf|txt)$/.test(entry.name))
+    .map((entry) => entry.name).sort();
+  for (const name of fontNames) {
     const font = await readFile(new URL('./public/fonts/' + name, import.meta.url));
     app.get('/fonts/' + name, async (_request, reply) => reply.headers(pageHeaders)
       .type(name.endsWith('.ttf') ? 'font/ttf' : 'text/plain; charset=utf-8').send(font));
@@ -360,29 +362,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     try { schedule = await listAiringSchedule({ airingPreference:
       accounts.getAiringPreferences({ userId: request.negevUser.id }) }); }
     catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Airing schedule unavailable' }); }
-    if (!['ready', 'stale'].includes(schedule?.state) ||
-        !/^\d{4}-W\d{2}$/.test(schedule.week ?? '') ||
-        !Number.isSafeInteger(schedule.checkedMs) ||
-        schedule.checkedMs < 0 || schedule.checkedMs > now() ||
-        !Array.isArray(schedule.items) || schedule.items.length > 200 ||
-        schedule.items.some((item) =>
-          !Number.isSafeInteger(item?.anidbId) || item.anidbId < 1 ||
-          typeof item.title !== 'string' || !item.title.trim() ||
-          item.title.length > 250 ||
-          item.englishTitle != null &&
-            (typeof item.englishTitle !== 'string' || item.englishTitle.length > 500) ||
-          typeof item.scheduledDate !== 'string' ||
-          !/^\d{4}-\d{2}-\d{2}$/.test(item.scheduledDate) ||
-          typeof item.episodeNumber !== 'string' ||
-          item.episodeNumber.length > 24 ||
-          typeof item.adult !== 'boolean' ||
-          item.chineseProduction !== undefined &&
-            typeof item.chineseProduction !== 'boolean' ||
-          !['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
-          !Number.isSafeInteger(item.libraryPresence.verifiedEpisodeCount) ||
-          item.libraryPresence.verifiedEpisodeCount < 0 ||
-          (item.libraryPresence.state === 'in_library') !==
-            (item.libraryPresence.verifiedEpisodeCount > 0))) {
+    const scheduleProblem = airingScheduleProblem(schedule, now());
+    if (scheduleProblem) {
+      request.negevError = new ShapeError('listAiringSchedule', scheduleProblem);
       return reply.code(503).send({ error: 'Airing schedule unavailable' });
     }
     return { state: schedule.state, week: schedule.week,
@@ -469,55 +451,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         accounts.getAiringPreferences({ userId: request.negevUser.id }) } : {}) }); }
     catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
     if (page?.state === 'unavailable') return { state: 'unavailable' };
-    if (!['ready', 'partial', 'stale'].includes(page?.state) ||
-        page.year !== year || page.season !== query.season ||
-        typeof page.sourceDate !== 'string' ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(page.sourceDate) ||
-        !Array.isArray(page.items) || page.items.length > pageLimit ||
-        !Number.isSafeInteger(page.total) || page.total < 0 ||
-        page.total > 100_000 || page.total < page.items.length ||
-        !Array.isArray(page.availableTags) || page.availableTags.length > 5_000 ||
-        page.availableTags.some((tag) => typeof tag !== 'string' ||
-          !/^[a-z0-9][a-z0-9 -]{0,39}$/i.test(tag)) ||
-        page.items.some((item) => !Number.isSafeInteger(item?.anidbId) ||
-          item.anidbId < 1 || typeof item.title !== 'string' ||
-          !item.title.trim() || item.title.length > 300 ||
-          item.englishTitle !== null && item.englishTitle !== undefined &&
-            (typeof item.englishTitle !== 'string' ||
-              item.englishTitle.length > 500) ||
-          typeof item.type !== 'string' || item.type.length > 80 ||
-          typeof item.adult !== 'boolean' ||
-          item.chineseProduction !== undefined &&
-            typeof item.chineseProduction !== 'boolean' ||
-          item.libraryPresence !== undefined &&
-            (!['in_library', 'unknown'].includes(item.libraryPresence?.state) ||
-              !Number.isSafeInteger(item.libraryPresence?.verifiedEpisodeCount) ||
-              item.libraryPresence.verifiedEpisodeCount < 0 ||
-              (item.libraryPresence.state === 'unknown' &&
-                item.libraryPresence.verifiedEpisodeCount !== 0)) ||
-          item.releaseStatus !== null && (typeof item.releaseStatus !== 'string' ||
-            item.releaseStatus.length > 80)) ||
-        page.items.some((item) => item.rating !== undefined &&
-          (item.rating?.score !== null &&
-            (typeof item.rating?.score !== 'number' ||
-              !Number.isFinite(item.rating.score) || item.rating.score < 0 ||
-              item.rating.score > 10) ||
-            (item.rating.source === 'anilist'
-              ? item.rating.votes !== null
-              : !Number.isSafeInteger(item.rating.votes) || item.rating.votes < 0 ||
-                item.rating.score !== null && item.rating.votes === 0) ||
-            !Number.isSafeInteger(item.rating.members) ||
-            item.rating.members < 0 ||
-            !Number.isSafeInteger(item.rating.checkedMs) ||
-            item.rating.checkedMs < 0)) ||
-        page.orderState !== undefined &&
-          !['schedule', 'fallback', 'score', 'popularity',
-            'score_loading', 'score_unavailable', 'score_partial',
-            'anilist_score', 'anilist_popular', 'anilist_stale',
-            'anilist_unavailable'].includes(page.orderState) ||
-        page.scorePending !== undefined && typeof page.scorePending !== 'boolean' ||
-        page.nextAfter !== null && (!Number.isSafeInteger(page.nextAfter) ||
-          page.nextAfter <= after || page.nextAfter > 100_000)) {
+    const pageProblem = seasonPageProblem(page,
+      { year, season: query.season, after, pageLimit });
+    if (pageProblem) {
+      request.negevError = new ShapeError('listSeasonalTitles', pageProblem);
       return reply.code(503).send({ error: 'Seasonal browse unavailable' });
     }
     return { state: page.state, year, season: query.season,

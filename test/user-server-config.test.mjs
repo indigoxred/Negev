@@ -9,6 +9,17 @@ const valid = { NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
   NEGEV_SHOKO_API_KEY_FILE: path.join(dataDir, 'secrets', 'shoko.token'),
   NEGEV_PUBLIC_ORIGIN: 'http://localhost:3000' };
 
+test('key file settings are optional and default to the secrets folder', () => {
+  const { NEGEV_SHOKO_API_KEY_FILE: _unused, ...withoutKeyFile } = valid;
+  assert.equal(parseUserServerConfig(withoutKeyFile).shokoApiKeyPath,
+    path.join(dataDir, 'secrets', 'shoko.token'));
+  assert.throws(() => parseUserServerConfig({ ...valid,
+    NEGEV_SHOKO_API_KEY_FILE: path.resolve('outside.token') }),
+  /Private Shoko key file required: put it at .*shoko\.token/);
+  assert.throws(() => parseUserServerConfig({ ...valid, NEGEV_SHOKO_EVENTS: 'yes' }),
+    /Invalid observer flag: NEGEV_SHOKO_EVENTS must be 0 or 1/);
+});
+
 test('log level defaults to warn and accepts only known levels', () => {
   assert.equal(parseUserServerConfig(valid).logLevel, 'warn');
   for (const level of ['silent', 'error', 'warn', 'info', 'debug']) {
@@ -219,8 +230,15 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
         error.message.startsWith('Acquisition runtime is unavailable: ') &&
         message.test(error.message), Object.keys(change).join());
   }
+  // The key file setting is optional; the key always lives in secrets/.
+  assert.deepEqual(parseUserServerConfig({ ...configured,
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999' }).sonarrOwnership, {
+    baseUrl: 'http://192.168.50.138:8999',
+    keyPath: path.join(dataDir, 'secrets', 'sonarr.token') });
   assert.throws(() => parseUserServerConfig({ ...configured,
-    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999' }), TypeError);
+    NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
+    NEGEV_SONARR_API_KEY_FILE: path.resolve('elsewhere.token') }),
+  /put it at .*sonarr\.token/);
   assert.throws(() => parseUserServerConfig({ ...configured,
     NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999',
     NEGEV_SONARR_API_KEY: 'exposed' }), TypeError);
