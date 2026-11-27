@@ -65,9 +65,16 @@ export function openAcquisitionRequestQueue(dbPath,
   if (ownershipGate !== null && typeof ownershipGate?.status !== 'function') {
     throw new TypeError('Invalid acquisition ownership gate');
   }
-  const cohortFilter = allowedAnidbIds === null ? '' :
-    `r.anidb_id IN (${allowedAnidbIds.map(() => '?').join(',')}) AND`;
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
+  // A disabled account's requests wait: nothing new is searched or started
+  // for them until an admin enables the account again. Work already past
+  // this queue (a started download) finishes normally.
+  const hasUsers = Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get());
+  const cohortFilter = (hasUsers ? `NOT EXISTS (SELECT 1 FROM users owner
+      WHERE owner.id=r.requester_id AND owner.disabled=1) AND ` : '') +
+    (allowedAnidbIds === null ? '' :
+      `r.anidb_id IN (${allowedAnidbIds.map(() => '?').join(',')}) AND`);
   try {
     db.exec('PRAGMA journal_mode=WAL');
     db.exec('PRAGMA foreign_keys=ON');

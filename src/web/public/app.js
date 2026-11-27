@@ -2239,7 +2239,8 @@ async function loadUsers() {
           `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
         access.addEventListener('click', async () => {
           if (!user.disabled && !confirm(`Disable ${user.username}? They are signed out ` +
-              'everywhere and cannot sign in until you enable the account again.')) return;
+              'everywhere and cannot sign in, and their requests pause, until you enable ' +
+              'the account again.')) return;
           access.disabled = true;
           try {
             const result = await api(`/api/admin/users/${user.id}/disabled`, {

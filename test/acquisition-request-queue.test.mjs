@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
+import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from
@@ -886,6 +887,25 @@ async function fixture(run) {
   try { await run(dbPath); }
   finally { await rm(dir, { recursive: true, force: true }); }
 }
+
+test('requests from a disabled account wait until the account is enabled again', async () =>
+  fixture(async (dbPath) => {
+    const accounts = openAccountLedger(dbPath, { now: () => 1 });
+    const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
+    accounts.close();
+    assert.equal(owner.id, 1, 'the fixture requests belong to this account');
+    const db = new DatabaseSync(dbPath);
+    db.prepare('UPDATE users SET disabled=1 WHERE id=1').run();
+    let queue = openAcquisitionRequestQueue(dbPath);
+    try {
+      assert.equal(queue.claimNext({ nowMs: 10 }).state, 'pass_complete');
+      assert.equal(queue.claimNext({ nowMs: 11, priorityRequestId: 1 }).state, 'pass_complete',
+        'a priority wake does not bypass the disabled account');
+      db.prepare('UPDATE users SET disabled=0 WHERE id=1').run();
+      queue.close(); queue = openAcquisitionRequestQueue(dbPath);
+      assert.equal(queue.claimNext({ nowMs: 12, priorityRequestId: 1 }).requestId, 1);
+    } finally { queue.close(); db.close(); }
+  }));
 
 test('claims each request once per pass across two connections and survives restart', async () =>
   fixture(async (dbPath) => {
