@@ -43,12 +43,15 @@ test('complete-series background checking remains bounded and cannot enable unkn
  assert.equal(reads,20);assert.equal(retry.hidden,false);assert.equal(x.context.checkingCompleteSeries,true);assert.equal(x.rows.get(1).input.disabled,true);
 });
 
-test('settled watch ownership preparation explains completion without exposing another owner',()=>{
- const start=app.indexOf('      const row = element(',app.indexOf('async function loadPreparations('));
- const fragment=app.slice(start,app.indexOf("      const open = element('a'",start));
- const result=vm.runInNewContext('(function(){'+fragment+'return heading;})()', {item:{state:'complete',reason:'already_monitored_elsewhere',title:'Example'},element:(...args)=>new El(...args),posterImage:()=>new El('img'),titleLabel:()=>new El('span'),requestFailureMessage:feedback.requestFailureMessage});
- assert.equal(result.children[1].textContent,'Future episodes are already monitored. No second request is needed.');
- assert.equal(result.children.some(x=>x.textContent?.includes('Preparing episode details')),false);
+test('settled watch ownership preparation explains completion without exposing another owner', async()=>{
+ const {createRequestController}=await import('../src/web/public/request-controller.mjs');
+ const {createResponseEpoch}=await import('../src/web/public/response-epoch.mjs');
+ const nodes=[];const make=(...args)=>{const el=new El(...args);el.querySelector=()=>null;el.replaceChildren=(...children)=>{el.children=children;};Object.defineProperty(el,'lastElementChild',{get:()=>el.children.at(-1)});nodes.push(el);return el;};
+ const list=make('div'),more=make('button');
+ const controller=createRequestController({state:{user:{id:1},nextBeforeId:{}},sessionResponses:createResponseEpoch(),requestResponses:{preparing:createResponseEpoch()},byId:id=>id==='preparing-list'?list:more,element:make,posterImage:()=>make('img'),titleLabel:()=>make('span'),api:async()=>({items:[{state:'complete',reason:'already_monitored_elsewhere',title:'Example',anidbId:1}],nextBeforeId:null})});
+ await controller.loadPreparations();
+ const heading=nodes.find(el=>el.children[1]?.textContent==='Future episodes are already monitored. No second request is needed.');
+ assert.ok(heading);assert.equal(heading.children.some(x=>x.textContent?.includes('Preparing episode details')),false);
 });
 
 test('cancelled episode and film-entry submissions rotate only the matching command key',async()=>{

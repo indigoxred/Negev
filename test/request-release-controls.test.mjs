@@ -16,10 +16,8 @@ test('release tools are offered only while a request needs a choice',()=>{
   assert.equal(requestNeedsReleaseChoice({...waiting,progress:{...waiting.progress,publicAvailability:'verified_recently',publicVerifiedTargets:8}}),true);
 });
 
-import {readFileSync} from 'node:fs';
-import {requestPresentation} from '../src/web/public/request-progress-text.mjs';
-const appSource=readFileSync(new URL('../src/web/public/app.js',import.meta.url),'utf8');
-const present=new Function('requestPresentation','requestNeedsReleaseChoice','requestHasPendingAcquisition',appSource.slice(appSource.indexOf('function requestItemPresentation('),appSource.indexOf('function refreshRequestStatusAges('))+';return requestItemPresentation;')(requestPresentation,requestNeedsReleaseChoice,requestHasPendingAcquisition);
+import { createRequestController } from '../src/web/public/request-controller.mjs';
+const { requestItemPresentation: present } = createRequestController({});
 test('a fulfilled stale manual or auto proposal presents completion rather than an inaccessible picker',()=>{
  for(const releaseSelection of [{mode:'manual',phase:'selecting'},{mode:'auto',phase:'proposal'}]){
   const item={...waiting,kind:'series',releaseSelection,monitorFuture:true,watchClosed:false,progress:{...waiting.progress,publicAvailability:'verified_recently',publicVerifiedTargets:24}};
