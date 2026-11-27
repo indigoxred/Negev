@@ -96,6 +96,7 @@ main{max-width:1328px;padding-top:36px}.page-head{margin-bottom:24px}.page-head 
 .request-scope{background:none;border:0;padding:0;gap:12px}.request-scope-options{display:inline-flex;align-items:center;gap:3px;padding:4px;background:#ffffff06;border:1px solid #ffffff0d;border-radius:12px}
 /* Account menu switches: a fixed label with an on/off track that follows aria-pressed. */
 .menu-switch{display:flex;align-items:center;justify-content:space-between;gap:12px;text-align:left}
+.account-menu .menu-switch{white-space:normal;overflow-wrap:anywhere}
 .menu-switch::after{content:'';flex:none;width:34px;height:20px;border-radius:999px;background:var(--line) radial-gradient(circle at 10px 50%,var(--text) 6px,transparent 6.5px)}
 .menu-switch[aria-pressed=true]::after{background:#7c5cff radial-gradient(circle at 24px 50%,#fff 6px,transparent 6.5px)}
 .menu-switch:disabled::after{opacity:.4}
