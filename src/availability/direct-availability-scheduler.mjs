@@ -3,10 +3,12 @@
 export function createDirectAvailabilityScheduler({ runOnce,
   initialDelayMs = 60_000,
   idleDelayMs = 5 * 60_000,
-  activeDelayMs = 60_000,
+  activeDelayMs = 60_000, name = runOnce?.name || 'background',
+  onError = (error) => process.stderr.write(
+    `Negev ${name} tick failed: ${error?.stack ?? error}\n`),
   setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
   if (typeof runOnce !== 'function' || typeof setTimer !== 'function' ||
-      typeof clearTimer !== 'function' ||
+      typeof clearTimer !== 'function' || typeof onError !== 'function' ||
       !Number.isSafeInteger(initialDelayMs) || initialDelayMs < 1_000 ||
       initialDelayMs > 300_000 ||
       !Number.isSafeInteger(idleDelayMs) || idleDelayMs < 60_000 ||
@@ -35,7 +37,10 @@ export function createDirectAvailabilityScheduler({ runOnce,
           ['stale_claim', 'metadata_busy', 'card_changed', 'shoko_changed'].includes(result?.reason)) {
         delay = activeDelayMs;
       }
-    } catch { /* Unknown is retried by the durable queue after its lease. */ }
+    } catch (error) {
+      // Unknown is retried by the durable queue after its lease; only report it.
+      try { onError(error); } catch { /* Reporting must not stop the loop. */ }
+    }
     schedule(delay);
   };
   return {

@@ -9,6 +9,17 @@ const valid = { NEGEV_USER_SERVER: '1', NEGEV_DATA_DIR: dataDir,
   NEGEV_SHOKO_API_KEY_FILE: path.join(dataDir, 'secrets', 'shoko.token'),
   NEGEV_PUBLIC_ORIGIN: 'http://localhost:3000' };
 
+test('log level defaults to warn and accepts only known levels', () => {
+  assert.equal(parseUserServerConfig(valid).logLevel, 'warn');
+  for (const level of ['silent', 'error', 'warn', 'info', 'debug']) {
+    assert.equal(parseUserServerConfig({ ...valid, NEGEV_LOG_LEVEL: level }).logLevel, level);
+  }
+  for (const level of ['', 'WARN', 'trace', 'verbose']) {
+    assert.throws(() => parseUserServerConfig({ ...valid, NEGEV_LOG_LEVEL: level }),
+      /NEGEV_LOG_LEVEL must be/);
+  }
+});
+
 test('account-backed listener starts loopback only with explicit mode and data', () => {
   const parsed = parseUserServerConfig(valid);
   assert.equal(parsed.host, '127.0.0.1');
@@ -194,6 +205,20 @@ test('acquisition opt-in requires guarded providers and portable staging paths',
     NEGEV_ACQUISITION_RUNTIME: '1' };
   const parsed = parseUserServerConfig(configured);
   assert.equal(parsed.acquisitionRuntime, true);
+  // Each unmet acquisition requirement names the setting to fix.
+  for (const [change, message] of [
+    [{ NEGEV_SHOKO_EVENTS: undefined }, /NEGEV_SHOKO_EVENTS=1 is required/],
+    [{ NEGEV_DIRECT_AVAILABILITY: undefined }, /NEGEV_DIRECT_AVAILABILITY=1 is required/],
+    [{ NEGEV_MOUNT_WITNESS_SOCKET: '/run/witness' },
+      /NEGEV_MOUNT_WITNESS_SOCKET is no longer supported/],
+    [{ NEGEV_SHOKO_RELEASE_PROVIDER_ID: 'not-a-uuid' },
+      /NEGEV_SHOKO_RELEASE_PROVIDER_ID/],
+  ]) {
+    assert.throws(() => parseUserServerConfig({ ...configured, ...change }),
+      (error) => error instanceof TypeError &&
+        error.message.startsWith('Acquisition runtime is unavailable: ') &&
+        message.test(error.message), Object.keys(change).join());
+  }
   assert.throws(() => parseUserServerConfig({ ...configured,
     NEGEV_SONARR_OWNERSHIP_URL: 'http://192.168.50.138:8999' }), TypeError);
   assert.throws(() => parseUserServerConfig({ ...configured,

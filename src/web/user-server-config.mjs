@@ -225,6 +225,10 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Invalid acquisition runtime flag');
   }
   const acquisitionRuntime = env.NEGEV_ACQUISITION_RUNTIME === '1';
+  const logLevel = env.NEGEV_LOG_LEVEL ?? 'warn';
+  if (!['silent', 'error', 'warn', 'info', 'debug'].includes(logLevel)) {
+    throw new TypeError('NEGEV_LOG_LEVEL must be silent, error, warn, info or debug');
+  }
   const dataDir = env.NEGEV_DATA_DIR;
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir) ||
       path.normalize(dataDir) !== dataDir || dataDir.includes('\0')) {
@@ -456,41 +460,64 @@ export function parseUserServerConfig(env) {
     if (allowedAnidbIds === null && sonarrOwnership === null && !animeSoleOwner) {
       throw new TypeError('Unrestricted acquisition needs an ownership guard');
     }
-    if (!prowlarr || !plex?.sourcePolicy || !plex.guidProbe || !qbitSidecar ||
-        shokoImportFolderId === null || shokoImportRoot === null ||
-        env.NEGEV_SHOKO_EVENTS !== '1' || env.NEGEV_SHOKO_RECENT !== '1' ||
-        env.NEGEV_DIRECT_AVAILABILITY !== '1' ||
-        !validRuntimePath(stagingHostPath) || !validRuntimePath(holdingRoot) ||
-        !validRuntimePath(acquisitionImportParent) ||
-        path.basename(holdingRoot) !== 'holding' ||
-        path.basename(acquisitionImportParent) !== 'source' ||
-        path.dirname(holdingRoot) !== path.dirname(acquisitionImportParent) ||
-        path.parse(path.dirname(holdingRoot)).root === path.dirname(holdingRoot) ||
-        typeof rawAcquisitionFolderId !== 'string' ||
-        !/^[1-9]\d*$/.test(rawAcquisitionFolderId) ||
-        !validId(acquisitionImportFolderId) ||
-        acquisitionImportFolderId === shokoImportFolderId ||
-        !validSourceRoot(shokoSourcePath) ||
-        !validStagingSaveRoot(qbitStagingRoot) ||
-        within(qbitStagingRoot, qbitSidecar.importSavePath) ||
-        within(qbitSidecar.importSavePath, qbitStagingRoot) ||
-        Object.hasOwn(env, 'NEGEV_MOUNT_WITNESS_SOCKET') ||
-        stagingHostPath === shokoImportRoot ||
-        runtimePathsOverlap(shokoImportRoot, stagingHostPath) ||
-        runtimePathsOverlap(stagingHostPath, shokoImportRoot) ||
-        runtimePathsOverlap(shokoImportRoot, holdingRoot) ||
-        runtimePathsOverlap(holdingRoot, shokoImportRoot) ||
-        runtimePathsOverlap(shokoImportRoot, acquisitionImportParent) ||
-        runtimePathsOverlap(acquisitionImportParent, shokoImportRoot) ||
-        runtimePathsOverlap(acquisitionImportParent, holdingRoot) ||
-        runtimePathsOverlap(holdingRoot, acquisitionImportParent) ||
-        runtimePathsOverlap(acquisitionImportParent, stagingHostPath) ||
-        runtimePathsOverlap(stagingHostPath, acquisitionImportParent) ||
-        runtimePathsOverlap(stagingHostPath, holdingRoot) ||
-        runtimePathsOverlap(holdingRoot, stagingHostPath) ||
-        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId)) {
-      throw new TypeError('Acquisition runtime is unavailable without guarded providers and paths');
-    }
+    // Each requirement fails with its own message so an operator can see
+    // which setting to fix. The checks run in order; the first failure wins.
+    const prefix = 'Acquisition runtime is unavailable: ';
+    const requireAcquisition = (ok, reason) => {
+      if (!ok) throw new TypeError(prefix + reason);
+    };
+    const overlaps = (a, b) => runtimePathsOverlap(a, b) || runtimePathsOverlap(b, a);
+    requireAcquisition(prowlarr, 'NEGEV_PROWLARR_DISCOVERY=1 and its Prowlarr settings are required');
+    requireAcquisition(plex?.sourcePolicy, 'NEGEV_PLEX_OBSERVER=1 with NEGEV_PLEX_SOURCE_POLICY is required');
+    requireAcquisition(plex.guidProbe, 'NEGEV_PLEX_GUID_PROBE=1 is required');
+    requireAcquisition(qbitSidecar, 'NEGEV_QBITTORRENT_SIDECAR_READ=1 and its qBittorrent settings are required');
+    requireAcquisition(shokoImportRoot !== null && shokoImportFolderId !== null,
+      'NEGEV_SHOKO_IMPORT_ROOT and NEGEV_SHOKO_IMPORT_FOLDER_ID are required');
+    requireAcquisition(env.NEGEV_SHOKO_EVENTS === '1', 'NEGEV_SHOKO_EVENTS=1 is required');
+    requireAcquisition(env.NEGEV_SHOKO_RECENT === '1', 'NEGEV_SHOKO_RECENT=1 is required');
+    requireAcquisition(env.NEGEV_DIRECT_AVAILABILITY === '1', 'NEGEV_DIRECT_AVAILABILITY=1 is required');
+    requireAcquisition(validRuntimePath(stagingHostPath),
+      'NEGEV_STAGING_HOST_PATH must be a normalized absolute path below the filesystem root');
+    requireAcquisition(validRuntimePath(holdingRoot),
+      'NEGEV_HOLDING_ROOT must be a normalized absolute path below the filesystem root');
+    requireAcquisition(validRuntimePath(acquisitionImportParent),
+      'NEGEV_ACQUISITION_IMPORT_PARENT must be a normalized absolute path below the filesystem root');
+    requireAcquisition(path.basename(holdingRoot) === 'holding',
+      'NEGEV_HOLDING_ROOT must end in a directory named "holding"');
+    requireAcquisition(path.basename(acquisitionImportParent) === 'source',
+      'NEGEV_ACQUISITION_IMPORT_PARENT must end in a directory named "source"');
+    requireAcquisition(path.dirname(holdingRoot) === path.dirname(acquisitionImportParent),
+      'NEGEV_HOLDING_ROOT and NEGEV_ACQUISITION_IMPORT_PARENT must share the same parent directory');
+    requireAcquisition(path.parse(path.dirname(holdingRoot)).root !== path.dirname(holdingRoot),
+      'the holding/source parent directory cannot be the filesystem root');
+    requireAcquisition(typeof rawAcquisitionFolderId === 'string' &&
+      /^[1-9]\d*$/.test(rawAcquisitionFolderId) && validId(acquisitionImportFolderId),
+    'NEGEV_ACQUISITION_IMPORT_FOLDER_ID must be a positive integer');
+    requireAcquisition(acquisitionImportFolderId !== shokoImportFolderId,
+      'NEGEV_ACQUISITION_IMPORT_FOLDER_ID must differ from NEGEV_SHOKO_IMPORT_FOLDER_ID');
+    requireAcquisition(validSourceRoot(shokoSourcePath),
+      'NEGEV_ACQUISITION_SHOKO_SOURCE_PATH must be a normalized absolute POSIX path');
+    requireAcquisition(validStagingSaveRoot(qbitStagingRoot),
+      'NEGEV_QBITTORRENT_STAGING_ROOT is not a valid qBittorrent save root');
+    requireAcquisition(!within(qbitStagingRoot, qbitSidecar.importSavePath) &&
+      !within(qbitSidecar.importSavePath, qbitStagingRoot),
+    'NEGEV_QBITTORRENT_STAGING_ROOT and NEGEV_QBITTORRENT_IMPORT_SAVE_PATH cannot overlap');
+    requireAcquisition(!Object.hasOwn(env, 'NEGEV_MOUNT_WITNESS_SOCKET'),
+      'NEGEV_MOUNT_WITNESS_SOCKET is no longer supported; remove it');
+    requireAcquisition(stagingHostPath !== shokoImportRoot && !overlaps(shokoImportRoot, stagingHostPath),
+      'NEGEV_STAGING_HOST_PATH cannot overlap NEGEV_SHOKO_IMPORT_ROOT');
+    requireAcquisition(!overlaps(shokoImportRoot, holdingRoot),
+      'NEGEV_HOLDING_ROOT cannot overlap NEGEV_SHOKO_IMPORT_ROOT');
+    requireAcquisition(!overlaps(shokoImportRoot, acquisitionImportParent),
+      'NEGEV_ACQUISITION_IMPORT_PARENT cannot overlap NEGEV_SHOKO_IMPORT_ROOT');
+    requireAcquisition(!overlaps(acquisitionImportParent, holdingRoot),
+      'NEGEV_ACQUISITION_IMPORT_PARENT and NEGEV_HOLDING_ROOT cannot overlap');
+    requireAcquisition(!overlaps(acquisitionImportParent, stagingHostPath),
+      'NEGEV_ACQUISITION_IMPORT_PARENT and NEGEV_STAGING_HOST_PATH cannot overlap');
+    requireAcquisition(!overlaps(stagingHostPath, holdingRoot),
+      'NEGEV_STAGING_HOST_PATH and NEGEV_HOLDING_ROOT cannot overlap');
+    requireAcquisition(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(shokoProviderId ?? ''),
+      'NEGEV_SHOKO_RELEASE_PROVIDER_ID must be a UUID');
     if (pureMode && (path.basename(stagingHostPath) !== 'staging' ||
         path.dirname(stagingHostPath) !== path.dirname(holdingRoot))) {
       throw new TypeError('Pure staging must share the handoff mount');
@@ -503,7 +530,7 @@ export function parseUserServerConfig(env) {
   } else if (acquisitionNames.some((name) => Object.hasOwn(env, name))) {
     throw new TypeError('Acquisition runtime is disabled');
   }
-  return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'),
+  return { dataDir, dbPath: path.join(dataDir, 'negev.sqlite'), logLevel,
     acquisitionRuntime, acquisition, sonarrOwnership, animeSoleOwner,
     sessionKeyPath: path.join(dataDir, 'session.key'),
     shokoBaseUrl, shokoApiKeyPath, shokoImportRoot, shokoImportFolderId,

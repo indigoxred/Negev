@@ -13,6 +13,13 @@ const validPassword = (value) => typeof value === 'string' &&
   Buffer.byteLength(value, 'utf8') >= 12 && Buffer.byteLength(value, 'utf8') <= 128 &&
   !/[\x00-\x1f\x7f]/.test(value);
 const digest = (value) => createHash('sha256').update(value, 'utf8').digest('hex');
+// A signed-in device stays signed in while it is used at least once every
+// SESSION_IDLE_MS, and never longer than SESSION_MAX_MS after sign-in.
+export const SESSION_IDLE_MS = 7 * 24 * 60 * 60 * 1000;
+export const SESSION_MAX_MS = 30 * 24 * 60 * 60 * 1000;
+// Activity is written at most this often, not on every request.
+const SESSION_TOUCH_MS = 5 * 60 * 1000;
+const validSessionId = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 export function invitedAccountValidation({ code, username, password } = {}) {
   if (typeof code !== 'string' || !/^[a-f0-9]{64}$/.test(code)) return {
     field: 'code', error: 'Enter the complete 64-character invitation code supplied by the owner.' };
@@ -63,6 +70,16 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       mode TEXT NOT NULL CHECK(mode IN ('library','all','custom')),
       tracked_ids TEXT NOT NULL
     ) STRICT`);
+    // One row per signed-in device. Signing out deletes only that row;
+    // "sign out everywhere" also bumps users.session_version. Earlier builds
+    // ignore this table, so it is safe to roll back.
+    db.exec(`CREATE TABLE IF NOT EXISTS user_sessions (
+      id_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      created_ms INTEGER NOT NULL CHECK(created_ms>=0),
+      last_seen_ms INTEGER NOT NULL CHECK(last_seen_ms>=0)
+    ) STRICT`);
+    db.exec('CREATE INDEX IF NOT EXISTS user_sessions_user ON user_sessions(user_id)');
     db.exec('PRAGMA foreign_keys=ON');
   } catch (error) { db.close(); throw error; }
   const countUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
@@ -87,6 +104,17 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const useInvite = db.prepare('UPDATE invitations SET used_ms=? WHERE id=? AND used_ms IS NULL');
   const bumpVersion = db.prepare(`UPDATE users SET session_version=session_version+1
     WHERE id=? AND disabled=0`);
+  const insertSession = db.prepare(`INSERT INTO user_sessions
+    (id_hash,user_id,created_ms,last_seen_ms) VALUES (?,?,?,?)`);
+  const findSession = db.prepare(`SELECT user_id,created_ms,last_seen_ms
+    FROM user_sessions WHERE id_hash=?`);
+  const touchSession = db.prepare('UPDATE user_sessions SET last_seen_ms=? WHERE id_hash=?');
+  const deleteSession = db.prepare('DELETE FROM user_sessions WHERE id_hash=?');
+  const deleteUserSessions = db.prepare('DELETE FROM user_sessions WHERE user_id=?');
+  const pruneSessions = db.prepare(`DELETE FROM user_sessions
+    WHERE last_seen_ms<? OR created_ms<?`);
+  const sessionExpired = (row, at) => at - row.last_seen_ms > SESSION_IDLE_MS ||
+    at - row.created_ms > SESSION_MAX_MS;
   const publicUser = (row) => ({ id: row.id, username: row.username,
     role: row.role, sessionVersion: row.session_version,
     adultAllowed: row.adult_allowed === 1 });
@@ -221,10 +249,34 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       if (!timingSafeEqual(actual, expected) || !row || row.disabled) return null;
       return publicUser(row);
     },
-    getSessionUser({ userId, version }) {
+    // A session cookie without sessionId predates per-device sessions. It is
+    // still accepted until its cookie expires, exactly as before.
+    getSessionUser({ userId, version, sessionId }) {
       if (!validId(userId) || !validId(version)) return null;
       const row = findUser.get(userId);
-      return row && !row.disabled && row.session_version === version ? publicUser(row) : null;
+      if (!row || row.disabled || row.session_version !== version) return null;
+      if (sessionId === undefined) return publicUser(row);
+      if (!validSessionId(sessionId)) return null;
+      const idHash = digest(sessionId);
+      const session = findSession.get(idHash);
+      const at = now();
+      if (!session || session.user_id !== userId) return null;
+      if (sessionExpired(session, at)) { deleteSession.run(idHash); return null; }
+      const touched = at - session.last_seen_ms >= SESSION_TOUCH_MS;
+      if (touched) touchSession.run(at, idHash);
+      return { ...publicUser(row), sessionTouched: touched };
+    },
+    createSession({ userId }) {
+      if (!validId(userId)) throw new TypeError('Invalid user ID');
+      const at = now();
+      pruneSessions.run(at - SESSION_IDLE_MS, at - SESSION_MAX_MS);
+      const sessionId = randomBytes(32).toString('hex');
+      insertSession.run(digest(sessionId), userId, at, at);
+      return { sessionId };
+    },
+    endSession({ sessionId }) {
+      if (!validSessionId(sessionId)) return false;
+      return deleteSession.run(digest(sessionId)).changes === 1;
     },
     getActiveUser({ userId }) {
       if (!validId(userId)) return null;
@@ -233,7 +285,10 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     },
     revokeSessions({ userId }) {
       if (!validId(userId)) throw new TypeError('Invalid user ID');
-      return bumpVersion.run(userId).changes === 1;
+      return transact(() => {
+        deleteUserSessions.run(userId);
+        return bumpVersion.run(userId).changes === 1;
+      });
     },
     listUsers({ adminUserId }) {
       if (!validId(adminUserId)) throw new TypeError('Invalid admin ID');

@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
-import { invitedAccountValidation } from '../auth/account-ledger.mjs';
+import { invitedAccountValidation, SESSION_IDLE_MS } from '../auth/account-ledger.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
@@ -57,7 +57,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   acquisitionAllowedAnidbIds = null,
   ownershipGate = null,
-  publicAvailabilityConfigured = false } = {}) {
+  publicAvailabilityConfigured = false,
+  logger = false } = {}) {
   let origin, local;
   try { origin = new URL(publicOrigin); } catch { throw new TypeError('Invalid public origin'); }
   if (localOrigin !== null) {
@@ -99,18 +100,38 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     throw new TypeError('Invalid user app configuration');
   }
 
-  const app = Fastify({ logger: false, bodyLimit: 16 * 1024, trustProxy: false });
+  // Per-request lines are off; failures are logged by the onResponse hook.
+  const app = Fastify({ logger,
+    logController: new Fastify.LogController({ disableRequestLogging: true }),
+    bodyLimit: 16 * 1024, trustProxy: false });
+  // Every 5xx is logged once, with the underlying error when a handler
+  // caught one (request.negevError). Route guards and shape checks that answer
+  // "unavailable" without throwing are still visible this way.
+  app.addHook('onResponse', async (request, reply) => {
+    if (reply.statusCode < 500) return;
+    request.log.warn({ method: request.method,
+      route: request.routeOptions?.url ?? request.url,
+      status: reply.statusCode,
+      ...(request.negevError ? { err: request.negevError } : {}) },
+    'Negev request failed');
+  });
+  // The cookie lives for the idle window and is re-issued while the device is
+  // used. Accounts that keep per-device sessions also enforce the absolute
+  // limit server-side (SESSION_MAX_MS).
+  const sessionSeconds = Math.floor(SESSION_IDLE_MS / 1000);
+  const perDeviceSessions = typeof accounts?.createSession === 'function' &&
+    typeof accounts?.endSession === 'function';
   const primarySession = { key: sessionKey,
     ...(local ? { sessionName: 'session' } : {}),
     cookieName: secureCookies ? '__Host-negev' : 'negev-local-session',
-    expiry: 24 * 60 * 60,
+    expiry: sessionSeconds,
     cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: secureCookies,
-      maxAge: 24 * 60 * 60 } };
+      maxAge: sessionSeconds } };
   await app.register(secureSession, local ? [primarySession,
     { key: sessionKey, sessionName: 'lanSession',
-      cookieName: 'negev-lan-session', expiry: 24 * 60 * 60,
+      cookieName: 'negev-lan-session', expiry: sessionSeconds,
       cookie: { path: '/', httpOnly: true, sameSite: 'strict',
-        secure: false, maxAge: 24 * 60 * 60 } }] : primarySession);
+        secure: false, maxAge: sessionSeconds } }] : primarySession);
   const sessionFor = (request) => local && request.headers.host === local.host &&
     (request.headers.origin === localOrigin ||
       (!request.headers.origin && request.cookies?.['negev-lan-session']))
@@ -167,12 +188,19 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
   };
   const requireUser = async (request, reply) => {
+    const session = sessionFor(request);
+    const sessionId = session.get('sid');
     const user = accounts.getSessionUser({
-      userId: sessionFor(request).get('userId'),
-      version: sessionFor(request).get('version'),
+      userId: session.get('userId'),
+      version: session.get('version'),
+      ...(sessionId === undefined ? {} : { sessionId }),
     });
     if (!user) return reply.code(401).send({ error: 'Sign in required' });
-    request.negevUser = user;
+    // Re-issue the cookie with a fresh expiry while the device is in use.
+    // The ledger reports activity at most every few minutes.
+    if (sessionId !== undefined && user.sessionTouched) session.touch();
+    const { sessionTouched: _touched, ...negevUser } = user;
+    request.negevUser = negevUser;
   };
   const requireCsrf = async (request, reply) => {
     if (!constantEqual(request.headers['x-negev-csrf'],
@@ -240,9 +268,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     if (!user) return reply.code(401).send({ error: 'Invalid login' });
     const session = sessionFor(request);
+    const previousSessionId = session.get('sid');
+    if (perDeviceSessions && previousSessionId !== undefined) {
+      accounts.endSession({ sessionId: previousSessionId });
+    }
     session.regenerate();
     session.set('userId', user.id);
     session.set('version', user.sessionVersion);
+    if (perDeviceSessions) {
+      session.set('sid', accounts.createSession({ userId: user.id }).sessionId);
+    }
     session.set('csrfToken', randomBytes(32).toString('hex'));
     return { user: { id: user.id, username: user.username, role: user.role,
       adultAllowed: user.adultAllowed } };
@@ -284,7 +319,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     let page;
     try { page = await listLibraryTitles({ afterAnidbId, limit: 20 }); }
-    catch { return reply.code(503).send({ error: 'Library browse unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Library browse unavailable' }); }
     if (page?.state !== 'current_proofs' || !Array.isArray(page.items) ||
         page.items.length > 20 ||
         page.items.some((item, index) =>
@@ -326,7 +361,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     let schedule;
     try { schedule = await listAiringSchedule({ airingPreference:
       accounts.getAiringPreferences({ userId: request.negevUser.id }) }); }
-    catch { return reply.code(503).send({ error: 'Airing schedule unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Airing schedule unavailable' }); }
     if (!['ready', 'stale'].includes(schedule?.state) ||
         !/^\d{4}-W\d{2}$/.test(schedule.week ?? '') ||
         !Number.isSafeInteger(schedule.checkedMs) ||
@@ -434,7 +469,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       status: query.status ?? 'all', sort: query.sort ?? 'newest',
       ...(query.status === 'ongoing' ? { airingPreference:
         accounts.getAiringPreferences({ userId: request.negevUser.id }) } : {}) }); }
-    catch { return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Seasonal browse unavailable' }); }
     if (page?.state === 'unavailable') return { state: 'unavailable' };
     if (!['ready', 'partial', 'stale'].includes(page?.state) ||
         page.year !== year || page.season !== query.season ||
@@ -696,7 +731,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     let result;
     try { result = await startTitleCheck({ anidbId: id }); }
-    catch { return reply.code(503).send({ error: 'Title checks unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Title checks unavailable' }); }
     if (!['queued', 'shared'].includes(result?.state) ||
         !Number.isSafeInteger(result.generation) || result.generation < 1) {
       return reply.code(503).send({ error: 'Title checks unavailable' });
@@ -721,7 +756,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     let result;
     try { result = await getTitleCheck({ anidbId: id }); }
-    catch { return reply.code(503).send({ error: 'Title checks unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Title checks unavailable' }); }
     if (result === null) return { state: 'not_started' };
     if (!['loading', 'checking', 'done', 'held'].includes(result?.state) ||
         !Number.isSafeInteger(result.generation) || result.generation < 1 ||
@@ -822,9 +857,24 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state === 'detail_ready') return result;
     return reply.code(409).send(result);
   });
+  // Signing out ends this device's session only. { everywhere: true } also
+  // ends every other session for the account. A cookie issued before
+  // per-device sessions has no server record, so it can only be ended by
+  // revoking all of the account's sessions, as before.
   app.post('/api/logout', { preHandler: writeGuards }, async (request, reply) => {
-    accounts.revokeSessions({ userId: request.negevUser.id });
-    sessionFor(request).delete();
+    const body = request.body ?? {};
+    if (!allowedBody(body, ['everywhere']) ||
+        (body.everywhere !== undefined && typeof body.everywhere !== 'boolean')) {
+      return reply.code(400).send({ error: 'Invalid sign-out' });
+    }
+    const session = sessionFor(request);
+    const sessionId = session.get('sid');
+    if (body.everywhere === true || !perDeviceSessions || sessionId === undefined) {
+      accounts.revokeSessions({ userId: request.negevUser.id });
+    } else {
+      accounts.endSession({ sessionId });
+    }
+    session.delete();
     return reply.code(204).send();
   });
   app.post('/api/invitations', { preHandler: writeGuards }, async (request, reply) => {
@@ -907,7 +957,10 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       }
       let ownership;
       try { ownership = await ownershipGate.refresh(); }
-      catch { ownership = null; }
+      catch (error) {
+        reply.request?.log.warn({ err: error }, 'Negev Sonarr ownership check failed');
+        ownership = null;
+      }
       if (ownership?.state !== 'ready') return reply.code(503).send({
         state: 'held', reason: 'sonarr_ownership_unavailable',
         error: 'Anime request ownership cannot be checked right now' });
@@ -984,7 +1037,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         const result = await processRequest({ ...entry, scope: 'installment' },
           request.negevUser, rowReply);
         items.push({ anidbId: entry.anidbId, status, result });
-      } catch {
+      } catch (error) {
+        request.log.warn({ err: error, anidbId: entry.anidbId },
+          'Negev season request failed');
         items.push({ anidbId: entry.anidbId, status: 503,
           result: { error: 'Could not save this season; retry' } });
       }
@@ -1215,7 +1270,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     try {
       const result=await request.releaseSelector.search(id,request.query.query,offset,filters);
       return result?.state==='candidates'?result:reply.code(503).send(result??{reason:'release_search_unavailable'});
-    } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
+    } catch (error) { request.negevError = error; return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Background evidence reads have their own budget and never enter the draft
   // command coalescer, so an inspection cannot consume a concurrent Pick/Auto.
@@ -1229,7 +1284,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       if(result?.state==='held')return reply.code(409).send(result);
       if(request.params.previewId&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
       return result;
-    } catch {return reply.code(503).send({reason:'torrent_preflight_unavailable'});}
+    } catch (error) { request.negevError = error; return reply.code(503).send({reason:'torrent_preflight_unavailable'});}
   });
   for(const route of ['/api/requests/:id/release-choice','/api/release-previews/:previewId/release-choice']) app.get(route,{preHandler:requireUser},async(request,reply)=>{
     reply.header('Cache-Control','no-store');const id=await releaseAccess(request,reply);if(!id)return;
@@ -1260,7 +1315,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       if(result?.queued===true&&result.state==='updated')return reply.code(202).send({...result,control:publicControl(result.control)});
       if(request.params.previewId&&result?.state!=='updated'&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
       return result?.control?{...result,control:publicControl(result.control),context:b.action==='begin'&&b.mode==='auto'?request.releaseSelector.contextSnapshot?.(id):await request.releaseSelector.context?.(id)}:result;
-    } catch {return reply.code(503).send({reason:'release_search_unavailable'});}
+    } catch (error) { request.negevError = error; return reply.code(503).send({reason:'release_search_unavailable'});}
   });
   // Diagnostic only: no Unknown observation may authorize acquisition.
   app.post('/api/requests/:id/presence-probe', { preHandler: writeGuards,
@@ -1292,7 +1347,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     let result;
     try { result = await probeRequestTargets({ request: saved, episodeIds }); }
-    catch { return reply.code(503).send({ error: 'Presence probe unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Presence probe unavailable' }); }
     if (result?.state !== 'probe' || !Number.isSafeInteger(result.observedAtMs) ||
         result.observedAtMs < 0 || !Array.isArray(result.targets) ||
         result.targets.length !== episodeIds.length ||
