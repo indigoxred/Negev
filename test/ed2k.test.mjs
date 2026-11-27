@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { lstat, mkdtemp, open, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdtemp, open, readFile, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { ed2kBuffer, ed2kFile } from '../src/identity/ed2k.mjs';
+import { mutateWithDistinctCtime } from './helpers/ctime-fixture.mjs';
 
 const CHUNK_SIZE = 9_728_000;
 
@@ -134,12 +135,18 @@ test('file hashing rejects an in-place edit even when mtime is restored', async 
     await assert.rejects(() => ed2kFile(file, {
       expectedStat: before,
       pacer: { afterBytes: async () => {
-        await writeFile(file, 'xyz');
-        await utimes(file, fixed, fixed);
-        const after = await stat(file, { bigint: true });
+        const after = await mutateWithDistinctCtime({ before,
+          mutate: async () => {
+            await writeFile(file, 'xyz');
+            await utimes(file, fixed, fixed);
+          }, readStat: () => stat(file, { bigint: true }) });
+        assert.equal(after.dev, before.dev);
+        assert.equal(after.ino, before.ino);
+        assert.equal(after.size, before.size);
         assert.equal(after.mtimeNs, before.mtimeNs);
         assert.notEqual(after.ctimeNs, before.ctimeNs);
+        assert.equal(await readFile(file, 'utf8'), 'xyz');
       } },
-    }), /File changed/);
+    }), /File changed during hashing/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
