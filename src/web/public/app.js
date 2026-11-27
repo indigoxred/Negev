@@ -2108,6 +2108,7 @@ function showShareLink(title, url, note, session) {
   box.replaceChildren(element('strong', title), row, element('small', note));
   box.hidden = false;
   field.focus();
+  return true;
 }
 const linkFor = (kind, code) => `${location.origin}/#${kind}=${code}`;
 async function createInviteLink() {

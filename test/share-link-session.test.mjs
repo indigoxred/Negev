@@ -44,9 +44,14 @@ test('an invite link that arrives after sign-out is not shown', async () => {
 
 test('an invite link for the current session is shown', async () => {
   const pending = deferred();
-  const { ctx, box } = context(pending);
+  const { ctx, box, messages } = context(pending);
+  let refreshes = 0;
+  ctx.state.usersLoaded = true;
+  ctx.loadInvites = async () => { refreshes++; };
   const creating = ctx.createInviteLink();
   pending.resolve({ code: 'b'.repeat(64) });
   await creating;
   assert.equal(box.hidden, false);
+  assert.deepEqual(messages, ['Invitation link ready.']);
+  assert.equal(refreshes, 1, 'the open invitation list includes the new link');
 });
