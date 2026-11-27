@@ -788,19 +788,17 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.deepEqual(history.json().items[0].progress, { state: 'saved',
       targetCount: 1, privateVerifiedTargets: 0, activeAttempts: 0,
       reviewRequired: false, publicAvailability: 'unverified' });
-    const candidates = await service.app.inject({ method: 'GET',
-      url: `/api/requests/${id}/candidates`, headers: { cookie } });
-    assert.equal(candidates.statusCode, 200, candidates.body);
-    assert.equal(candidates.json().items[0].evidence, 'unverified');
+    const candidates = await service.discoverCandidates({ requestId: id });
+    assert.equal(candidates.state, 'candidates');
+    assert.equal(candidates.items[0].evidence, 'unverified');
     assert.equal(methods.some((method) => method === 'GET /api/v1/search'), true);
-    const inspected = await service.app.inject({ method: 'POST',
-      url: `/api/requests/${id}/preflight`, headers: auth(cookie, csrf),
-      payload: { candidate: { guid: 'synthetic-release', indexerId: 7,
-        title: 'Example Series 01', size: 1000 } } });
-    assert.equal(inspected.statusCode, 200, inspected.body);
-    assert.equal(inspected.json().registeredInAniDb, false);
-    assert.equal(inspected.json().downloadStarted, false);
-    assert.deepEqual(inspected.json().episodeIds, [1001]);
+    const inspected = await service.previewCandidate({ requestId: id,
+      candidate: { guid: 'synthetic-release', indexerId: 7,
+        title: 'Example Series 01', size: 1000 } });
+    assert.equal(inspected.state, 'preflight');
+    assert.equal(inspected.registeredInAniDb, false);
+    assert.equal(inspected.downloadStarted, false);
+    assert.deepEqual(inspected.episodeIds, [1001]);
     assert.equal(methods.filter((method) => method === 'GET /7/download').length, 2, 'preview and saved request inspect independently');
     showSecond = true;
     calendarDay = '2026-11-01';
@@ -832,20 +830,18 @@ test('signed-in user searches AniDB and saves an exact held request across resta
     assert.equal(movieRead.json().kind, 'movie');
     assert.equal(movieRead.json().monitorFuture, false);
     assert.deepEqual(movieRead.json().episodeIds, [2001]);
-    const movieCandidates = await service.app.inject({ method: 'GET',
-      url: `/api/requests/${movie.json().requestId}/candidates`,
-      headers: { cookie } });
-    assert.equal(movieCandidates.statusCode, 200, movieCandidates.body);
-    assert.equal(movieCandidates.json().items[0].guid, 'synthetic-movie');
-    const movieInspected = await service.app.inject({ method: 'POST',
-      url: `/api/requests/${movie.json().requestId}/preflight`,
-      headers: auth(cookie, csrf), payload: { candidate: {
+    const movieCandidates = await service.discoverCandidates({
+      requestId: movie.json().requestId });
+    assert.equal(movieCandidates.state, 'candidates');
+    assert.equal(movieCandidates.items[0].guid, 'synthetic-movie');
+    const movieInspected = await service.previewCandidate({
+      requestId: movie.json().requestId, candidate: {
         guid: 'synthetic-movie', indexerId: 7,
-        title: 'Example Movie', size: 1200 } } });
-    assert.equal(movieInspected.statusCode, 200, movieInspected.body);
-    assert.deepEqual(movieInspected.json().episodeIds, [2001]);
-    assert.deepEqual(movieInspected.json().files[0].episodeIds, [2001]);
-    assert.equal(movieInspected.json().downloadStarted, false);
+        title: 'Example Movie', size: 1200 } });
+    assert.equal(movieInspected.state, 'preflight');
+    assert.deepEqual(movieInspected.episodeIds, [2001]);
+    assert.deepEqual(movieInspected.files[0].episodeIds, [2001]);
+    assert.equal(movieInspected.downloadStarted, false);
     assert.equal(methods.every((method) => method.startsWith('GET ')), true);
     calendarDay = '2026-09-30';
     const future = await service.app.inject({ method: 'POST', url: '/api/requests',

@@ -1,3 +1,5 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 const held = (reason) => ({ state: 'held', reason });
 
 // Source-only pacing for one file-level tick. The runtime must opt in after
@@ -13,10 +15,9 @@ export function createFileBackfillScheduler({ tick,
       failureDelayMs < intervalMs || failureDelayMs > 30 * 60_000) {
     throw new TypeError('Invalid file backfill scheduler');
   }
-  let timer;
   let inFlight;
-  let started = false;
   let closed = false;
+  // Also callable directly; a manual run and a timer run never overlap.
   const runOnce = async () => {
     if (closed) return held('file_backfill_closed');
     if (inFlight) return held('file_backfill_busy');
@@ -26,30 +27,22 @@ export function createFileBackfillScheduler({ tick,
     catch { return held('file_backfill_unavailable'); }
     finally { inFlight = null; }
   };
-  const schedule = (delay) => {
-    if (closed || !started) return;
-    timer = setTimer(async () => {
-      timer = undefined;
+  const loop = createTimerLoop({ failureDelayMs, setTimer, clearTimer,
+    run: async () => {
       const result = await runOnce();
-      const nextDelay = ['checked', 'partial'].includes(result?.state) ||
+      return ['checked', 'partial'].includes(result?.state) ||
         (result?.state === 'held' && result.reason === 'metadata_busy')
         ? intervalMs : failureDelayMs;
-      schedule(nextDelay);
-    }, delay);
+    } });
+  const close = async () => {
+    closed = true;
+    await loop.close();
+    if (inFlight) await Promise.allSettled([inFlight]);
   };
   return {
     runOnce,
-    start() {
-      if (closed || started) return;
-      started = true;
-      schedule(intervalMs);
-    },
-    async close() {
-      closed = true;
-      started = false;
-      if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
-      if (inFlight) await Promise.allSettled([inFlight]);
-    },
+    start() { if (!closed) loop.start(intervalMs); },
+    close,
+    stop: close,
   };
 }

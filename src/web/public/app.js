@@ -2028,7 +2028,12 @@ async function loadUsers() {
     list.replaceChildren();
     for (const user of page.items) {
       const row = element('div', undefined, 'user-setting');
-      row.append(element('span', `${user.username} · ${user.role}`));
+      const label = element('span');
+      const showLabel = () => {
+        label.textContent = `${user.username} · ${user.role}${user.disabled ? ' · disabled' : ''}`;
+      };
+      showLabel();
+      row.append(label);
       const button = element('button', user.adultAllowed ? '18+ allowed' : '18+ blocked',
         'quiet');
       button.type = 'button';
@@ -2052,6 +2057,30 @@ async function loadUsers() {
         finally { button.disabled = user.disabled; }
       });
       row.append(button);
+      if (user.id !== state.user.id) {
+        const access = element('button', user.disabled ? 'Enable account' : 'Disable account',
+          'quiet');
+        access.type = 'button';
+        access.setAttribute('aria-label',
+          `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
+        access.addEventListener('click', async () => {
+          if (!user.disabled && !confirm(`Disable ${user.username}? They are signed out ` +
+              'everywhere and cannot sign in until you enable the account again.')) return;
+          access.disabled = true;
+          try {
+            const result = await api(`/api/admin/users/${user.id}/disabled`, {
+              method: 'PATCH', body: JSON.stringify({ disabled: !user.disabled }) });
+            user.disabled = result.disabled;
+            access.textContent = user.disabled ? 'Enable account' : 'Disable account';
+            access.setAttribute('aria-label',
+              `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
+            button.disabled = user.disabled;
+            showLabel();
+          } catch (error) { message(error.message, true); }
+          finally { access.disabled = false; }
+        });
+        row.append(access);
+      }
       list.append(row);
     }
   } catch {
@@ -2276,6 +2305,57 @@ function setPendingTitleKind(action, item, kind) {
     action.querySelector('.primary').textContent = pendingTitleLabel(kind);
   }
 }
+// Whole-title Plex check, for titles imported outside Negev (e.g. manually
+// through Shoko). Shown only when the server enables NEGEV_TITLE_CHECK.
+function titleCheckSummary(anidbId, isCurrent) {
+  const url = `/api/catalogue/${anidbId}/title-check`;
+  const checkTitle = element('button', 'Check whole title in Plex');
+  checkTitle.type = 'button';
+  const progress = element('p', '', 'muted');
+  progress.setAttribute('aria-live', 'polite');
+  let pollTimer;
+  let progressEpoch = 0;
+  const showProgress = async () => {
+    if (!isCurrent()) return;
+    const epoch = ++progressEpoch;
+    if (pollTimer) clearTimeout(pollTimer);
+    try {
+      const status = await api(url);
+      if (!isCurrent() || epoch !== progressEpoch) return;
+      if (status.state === 'not_started') {
+        progress.textContent = 'This title has not been checked in Plex yet.';
+      } else if (status.state === 'held') {
+        progress.textContent = 'The check needs another try. No episodes were marked missing.';
+      } else {
+        const olderCount = Math.max(0,
+          (status.lastVerifiedAvailableCount ?? status.recentAvailableCount) -
+            status.recentAvailableCount);
+        const olderText = olderCount
+          ? ` · ${olderCount} found earlier, recheck needed` : '';
+        progress.textContent = status.totalCount === null
+          ? `Loading the episode list…${olderText}`
+          : `${status.state === 'done' ? 'Finished: ' : ''}` +
+            `${status.checkedCount} of ${status.totalCount} checked · ` +
+            `${status.recentAvailableCount} playable in Plex${olderText}`;
+      }
+      if (['loading', 'checking'].includes(status.state)) {
+        pollTimer = setTimeout(() => { void showProgress(); }, 15_000);
+      }
+    } catch { progress.textContent = 'Check progress is temporarily unavailable.'; }
+  };
+  checkTitle.addEventListener('click', async () => {
+    checkTitle.disabled = true;
+    try {
+      await api(url, { method: 'POST', body: JSON.stringify({}) });
+      await showProgress();
+    } catch (error) { message(error.message, true); }
+    finally { checkTitle.disabled = false; }
+  });
+  const summary = element('div', undefined, 'title-check-summary');
+  summary.append(checkTitle, progress);
+  void showProgress();
+  return summary;
+}
 async function showDetail(item, franchise = null, refreshAttempt = 0) {
   const previousAction = state.selected === item.anidbId
     ? byId('detail').querySelector('.request-action[data-pending="true"]')
@@ -2459,6 +2539,7 @@ async function showDetail(item, franchise = null, refreshAttempt = 0) {
     updateTrackControls();
     setPendingTitleKind(earlyRequest, { title: data.title || item.title }, data.kind);
     panel.append(displaySummary);
+    if (state.titleChecks) panel.append(titleCheckSummary(item.anidbId, isCurrentDetail));
     void displayRead.then((display) => renderDisplay(display, originalTitle));
     if (data.state === 'detail_pending') {
       if (data.futureEpisodesMonitored) {

@@ -1,3 +1,5 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 // One clock, independent deadlines for installed Prowlarr indexers. A feed hit
 // only wakes an existing guarded request through the durable feed ledger.
 export function createReleaseFeedScheduler({ indexerIds, feedLedger,
@@ -12,37 +14,30 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
       [readFeed,now,setTimer,clearTimer].some(fn => typeof fn !== 'function')) {
     throw new TypeError('Invalid release feed scheduler');
   }
-  let started = false, stopped = false, timer, running, lastResult = null;
+  let lastResult = null;
   const feeds = new Map(indexerIds.map(id => [id,
     { failures:0, lastAttemptMs:null, nextPollMs:null, blockedUntilMs:0 }]));
   const recheckMs = 3_600_000;
-  const schedule = delay => {
-    if (stopped) return;
-    timer = setTimer(() => {
-      timer = undefined;
-      running = tick().finally(() => { running = undefined; });
-      return running;
-    }, delay);
-  };
   const due = (state,cadence,clock) => Math.max(state.blockedUntilMs,
     state.lastAttemptMs === null ? clock :
       Math.min(state.nextPollMs ?? clock,state.lastAttemptMs + cadence));
+  // Returns the next delay; returns nothing when stopped mid-pass.
   const tick = async () => {
     let pageWakes=0;
     try { pageWakes=feedLedger.drainPendingWatches?.().wokenRequests ?? 0; }
-    catch { lastResult={state:'unavailable'};schedule(300_000);return; }
+    catch { lastResult={state:'unavailable'};return 300_000; }
     let cadence;
     try { cadence = feedLedger.getPollIntervalMs({ nowMs:now() }); }
-    catch { lastResult={state:'unavailable'};schedule(300_000);return; }
+    catch { lastResult={state:'unavailable'};return 300_000; }
     if (cadence === null) {
-      lastResult={state:'idle'};schedule(feedLedger.hasPendingWatches?.() ? 1000 : 60_000);return;
+      lastResult={state:'idle'};return feedLedger.hasPendingWatches?.() ? 1000 : 60_000;
     }
     if (!Number.isSafeInteger(cadence) || cadence < 1 || cadence > 86_400_000) {
-      lastResult={state:'unavailable'};schedule(300_000);return;
+      lastResult={state:'unavailable'};return 300_000;
     }
     let wokenRequests = pageWakes, attempted = false;
     for (const indexerId of indexerIds) {
-      if (stopped) return;
+      if (loop.stopped) return undefined;
       const state=feeds.get(indexerId);
       if (now() < due(state,cadence,now())) continue;
       attempted=true;
@@ -72,19 +67,15 @@ export function createReleaseFeedScheduler({ indexerIds, feedLedger,
     if (attempted) lastResult={state:[...feeds.values()].some(f=>f.failures>0)
       ? 'unavailable' : 'checked',wokenRequests};
     const nextDueMs=Math.min(...[...feeds.values()].map(state=>due(state,cadence,now())));
-    schedule(feedLedger.hasPendingWatches?.() ? 1000 : Math.min(recheckMs,Math.max(1,nextDueMs-now())));
+    return feedLedger.hasPendingWatches?.() ? 1000 : Math.min(recheckMs,Math.max(1,nextDueMs-now()));
   };
+  const loop = createTimerLoop({ run: tick, failureDelayMs: 300_000, setTimer, clearTimer });
   return {
     start() {
-      if (started || stopped) throw new Error('Release feed scheduler already started');
-      started=true;schedule(60_000);
+      if (!loop.start(60_000)) throw new Error('Release feed scheduler already started');
     },
-    async stop() {
-      stopped=true;
-      if (timer !== undefined) clearTimer(timer);
-      timer=undefined;
-      if (running) await running;
-    },
+    stop: () => loop.close(),
+    close: () => loop.close(),
     getLastResult() { return lastResult; },
   };
 }

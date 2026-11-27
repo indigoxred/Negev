@@ -145,6 +145,27 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     return result.state === 'updated' ? result :
       reply.code(404).send({ error: 'Account unavailable' });
   });
+  app.patch('/api/admin/users/:id/disabled', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
+    const userId = Number(request.params.id);
+    if (!Number.isSafeInteger(userId) || userId <= 0 ||
+        Object.keys(request.query).length ||
+        !allowedBody(request.body, ['disabled']) ||
+        typeof request.body.disabled !== 'boolean') {
+      return reply.code(400).send({ error: 'Invalid account setting' });
+    }
+    if (typeof accounts.setDisabled !== 'function') {
+      return reply.code(503).send({ error: 'Account changes unavailable' });
+    }
+    const result = accounts.setDisabled({ adminUserId: request.negevUser.id,
+      userId, disabled: request.body.disabled });
+    if (result.state === 'updated') return result;
+    if (result.reason === 'cannot_disable_self') {
+      return reply.code(409).send({ error: 'You cannot disable your own account', reason: result.reason });
+    }
+    return reply.code(404).send({ error: 'Account unavailable' });
+  });
   app.post('/api/admin/requests/:id/review', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });

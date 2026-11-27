@@ -917,8 +917,9 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       observedMs: 902, title:'Anime 1236',englishTitle:null }]);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/admin/review?limit=100', headers: { cookie } })).statusCode, 400);
+    // Release search needs the release dialog's selection service.
     assert.deepEqual(session.json().capabilities, {
-      releaseSearch: true, detailLoad: false, availabilityChecks: false,
+      releaseSearch: false, detailLoad: false, availabilityChecks: false,
       acquisitionState: 'disabled' });
     acquisitionState = 'waiting';
     const activeSession = await app.inject({ method: 'GET', url: '/api/session',
@@ -968,22 +969,16 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       payload: { anidbId: 1234, scope: 'installment', requestKey: 'first' } });
     assert.equal(submitted.statusCode, 202, submitted.body);
     assert.equal(requestLedger.getRequest(1).requesterId, owner.id);
-    const candidates = await app.inject({ method: 'GET',
-      url: '/api/requests/1/candidates', headers: { cookie } });
-    assert.equal(candidates.statusCode, 200);
-    assert.equal(candidates.json().items[0].evidence, 'unverified');
-    assert.deepEqual(discovered, [1]);
-    const preflight = await app.inject({ method: 'POST',
+    // The pre-dialog candidate and preflight routes were removed; release
+    // search goes through /releases and /release-inspection instead.
+    assert.equal((await app.inject({ method: 'GET',
+      url: '/api/requests/1/candidates', headers: { cookie } })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'POST',
       url: '/api/requests/1/preflight', headers: { cookie, origin,
         'x-negev-csrf': csrf }, payload: { candidate: { guid: 'synthetic',
-        indexerId: 7, title: 'Unverified release', size: 1000 } } });
-    assert.equal(preflight.statusCode, 200, preflight.body);
-    assert.equal(preflight.json().downloadStarted, false);
-    assert.deepEqual(previewed, [1]);
-    assert.equal((await app.inject({ method: 'POST',
-      url: '/api/requests/1/preflight', headers: { cookie, origin },
-      payload: { candidate: { guid: 'synthetic', indexerId: 7,
-        title: 'Unverified release', size: 1000 } } })).statusCode, 403);
+        indexerId: 7, title: 'Unverified release', size: 1000 } } })).statusCode, 404);
+    assert.deepEqual(discovered, []);
+    assert.deepEqual(previewed, []);
     const available = await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1001/availability', headers: { cookie } });
     assert.equal(available.statusCode, 200);
@@ -1012,17 +1007,10 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     assert.equal(display.json().durationMinutes, 23);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/9999/display', headers: { cookie } })).statusCode, 404);
-    const checkedPage = await app.inject({ method: 'GET',
+    // Replaced by the whole-title check shown on the detail page.
+    assert.equal((await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/availability-page?page=1&offset=0',
-      headers: { cookie } });
-    assert.equal(checkedPage.statusCode, 200, checkedPage.body);
-    assert.deepEqual(checkedPage.json(), { state: 'checked_page', anidbId: 1234,
-      page: 1, offset: 0, nextOffset: 5,
-      items: [{ episodeId: 1001, state: 'available' },
-        { episodeId: 1002, state: 'unknown' },
-        { episodeId: 1003, state: 'available' },
-        { episodeId: 1004, state: 'available' },
-        { episodeId: 1005, state: 'available' }] });
+      headers: { cookie } })).statusCode, 404);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1002/availability', headers: { cookie } })).statusCode, 404);
     const mine = await app.inject({ method: 'GET', url: '/api/requests',
@@ -1099,15 +1087,6 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const hidden = await app.inject({ method: 'GET', url: '/api/requests/1',
       headers: { cookie: friendCookie } });
     assert.equal(hidden.statusCode, 404);
-    assert.equal((await app.inject({ method: 'GET',
-      url: '/api/requests/1/candidates', headers: { cookie: friendCookie } })).statusCode, 403);
-    assert.deepEqual(discovered, [1]);
-    assert.equal((await app.inject({ method: 'POST',
-      url: '/api/requests/1/preflight', headers: { cookie: friendCookie,
-        origin, 'x-negev-csrf': friendSession.json().csrfToken },
-      payload: { candidate: { guid: 'synthetic', indexerId: 7,
-        title: 'Unverified release', size: 1000 } } })).statusCode, 403);
-    assert.deepEqual(previewed, [1]);
     assert.equal((await app.inject({ method: 'GET',
       url: '/api/requests/1/episodes/1001/availability',
       headers: { cookie: friendCookie } })).statusCode, 404);

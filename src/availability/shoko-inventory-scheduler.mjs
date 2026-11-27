@@ -1,3 +1,5 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 // Deliberately slow, opt-in reconciliation. It never reads more than one
 // bounded Shoko file page per timer and does not infer deletion from a pass.
 export function createShokoInventoryScheduler({ tick,
@@ -9,23 +11,8 @@ export function createShokoInventoryScheduler({ tick,
   const pageDelay = 60_000;
   const passDelay = 24 * 60 * 60_000;
   const failureDelay = 5 * 60_000;
-  let timer;
-  let scheduledDelay;
-  let running;
   let requestedDuringPage = false;
-  let started = false;
-  let stopping = false;
   let lastState = 'not_started';
-  const schedule = (delay) => {
-    if (stopping) return;
-    scheduledDelay = delay;
-    timer = setTimer(() => {
-      timer = undefined;
-      scheduledDelay = undefined;
-      running = run().finally(() => { running = undefined; });
-      return running;
-    }, delay);
-  };
   const run = async () => {
     let delay = failureDelay;
     try {
@@ -52,33 +39,26 @@ export function createShokoInventoryScheduler({ tick,
       delay = Math.min(delay, pageDelay);
       requestedDuringPage = false;
     }
-    if (!stopping) schedule(delay);
+    return delay;
+  };
+  const loop = createTimerLoop({ run, failureDelayMs: failureDelay,
+    setTimer, clearTimer });
+  const close = async () => {
+    await loop.close();
+    lastState = 'stopped';
   };
   return {
     start() {
-      if (stopping || started) return;
-      started = true;
-      lastState = 'waiting';
-      schedule(pageDelay);
+      if (loop.start(pageDelay)) lastState = 'waiting';
     },
-    getState() { return { state: lastState, active: Boolean(running),
-      scheduled: timer !== undefined }; },
+    getState() { return { state: lastState, active: loop.running,
+      scheduled: loop.scheduled }; },
     requestSoon() {
-      if (!started || stopping) return;
-      if (running) { requestedDuringPage = true; return; }
-      if (timer !== undefined && scheduledDelay > pageDelay) {
-        clearTimer(timer);
-        timer = undefined;
-        schedule(pageDelay);
-      }
+      if (!loop.started || loop.stopped) return;
+      if (loop.running) { requestedDuringPage = true; return; }
+      if (loop.scheduled && loop.scheduledDelay > pageDelay) loop.reschedule(pageDelay);
     },
-    async close() {
-      stopping = true;
-      if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
-      scheduledDelay = undefined;
-      if (running) await running;
-      lastState = 'stopped';
-    },
+    close,
+    stop: close,
   };
 }

@@ -94,6 +94,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const listAccounts = db.prepare(`SELECT id,username,role,disabled,adult_allowed
     FROM users ORDER BY id`);
   const updateAdult = db.prepare(`UPDATE users SET adult_allowed=? WHERE id=? AND disabled=0`);
+  const updateDisabled = db.prepare('UPDATE users SET disabled=? WHERE id=?');
   const findAiring = db.prepare('SELECT mode,tracked_ids FROM airing_preferences WHERE user_id=?');
   const saveAiring = db.prepare(`INSERT INTO airing_preferences
     (user_id,mode,tracked_ids) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET
@@ -308,6 +309,26 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
         if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
         if (updateAdult.run(Number(allowed), userId).changes !== 1) return held('user_unavailable');
         return { state: 'updated', userId, adultAllowed: allowed };
+      });
+    },
+    // Disabling signs the account out everywhere and blocks sign-in until an
+    // admin enables it again. Requests and history are kept. An admin cannot
+    // disable their own account, so there is always one admin left.
+    setDisabled({ adminUserId, userId, disabled }) {
+      if (!validId(adminUserId) || !validId(userId) || typeof disabled !== 'boolean') {
+        throw new TypeError('Invalid account setting');
+      }
+      return transact(() => {
+        const admin = findUser.get(adminUserId);
+        if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
+        if (userId === adminUserId) return held('cannot_disable_self');
+        if (!findUser.get(userId)) return held('user_unavailable');
+        if (disabled) {
+          deleteUserSessions.run(userId);
+          bumpVersion.run(userId);
+        }
+        updateDisabled.run(Number(disabled), userId);
+        return { state: 'updated', userId, disabled };
       });
     },
     close() { db.close(); },
