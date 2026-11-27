@@ -4,7 +4,20 @@ import { hideChineseProduction } from './chinese-visibility.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute } from './consumer-route.mjs';
 
 // Owns search requests, response classification and session-scoped metadata hydration. Construction does not register event handlers.
-export function createSearchController({ verifier, api, applyAdultVisibility, byId, element, message, restoreRoutePosition, searchResultCard, sessionResponses, state, document = globalThis.document, location = globalThis.location }) {
+export function createSearchController({
+  verifier,
+  api,
+  applyAdultVisibility,
+  byId,
+  element,
+  message,
+  restoreRoutePosition,
+  searchResultCard,
+  sessionResponses,
+  state,
+  document = globalThis.document,
+  location = globalThis.location
+}) {
   let classificationToken = 0;
 
   const adultSearchVerifier = verifier ?? createAdultSearchVerifier({ readDisplay: (id) =>

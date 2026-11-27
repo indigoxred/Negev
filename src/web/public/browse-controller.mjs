@@ -3,7 +3,30 @@ import { observeCatalogueContinuation, createCataloguePrefetchBudget } from './s
 import { parseConsumerRoute, titleRoute, seasonRoute } from './consumer-route.mjs';
 
 // Owns catalogue browse pages, filters, continuation observers and pacing budgets. Construction does not register event handlers.
-export function createBrowseController({ airingResponses, airingSeasonResponses, api, byId, element, ensureTrackingPreferences, genreSelections, libraryResponses, markAdult, posterImage, renderTrackedTitles, restoreRoutePosition, seasonalResponses, sessionResponses, state, titleLabel, trackedCard, document = globalThis.document, window = globalThis.window, location = globalThis.location, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout }) {
+export function createBrowseController({
+  airingResponses,
+  airingSeasonResponses,
+  api,
+  byId,
+  element,
+  ensureTrackingPreferences,
+  genreSelections,
+  libraryResponses,
+  markAdult,
+  posterImage,
+  renderTrackedTitles,
+  restoreRoutePosition,
+  seasonalResponses,
+  sessionResponses,
+  state,
+  titleLabel,
+  trackedCard,
+  document = globalThis.document,
+  window = globalThis.window,
+  location = globalThis.location,
+  setTimeout = globalThis.setTimeout,
+  clearTimeout = globalThis.clearTimeout
+}) {
   let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
 
   function discoveryCard(item, note, badge, available = false) {

@@ -1,3 +1,4 @@
+import { createSessionController } from './session-controller.mjs';
 import { createReleaseController } from './release-controller.mjs';
 import { createApiClient } from './api-client.mjs';
 import { createDetailController } from './detail-controller.mjs';
@@ -10,32 +11,16 @@ import { createRequestController } from './request-controller.mjs';
 import { createAdminController } from './admin-controller.mjs';
 import { createViewHelpers } from './view-helpers.mjs';
 
-
-
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
-
-
-
-
-
 
 import { createResponseEpoch } from './response-epoch.mjs';
 
 import { acquisitionNotice } from './acquisition-notice.mjs';
 
-
-
-
-
-
 import { hideChineseProduction } from './chinese-visibility.mjs';
 import { parseConsumerRoute, searchRoute, librarySearchRoute, browseReturnDestination } from './consumer-route.mjs';
 
 const byId = (id) => document.getElementById(id);
-// Invitation and password reset links carry their one-time code in the URL
-// fragment, which browsers never send to the server. Read it once and remove
-// it from the address bar before routing starts.
-
 const requestKeys = createRequestKeyStore({ storage: sessionStorage,
   createKey: generateRequestKey });
 const state = { csrf: null, user: null, selected: null,
@@ -58,7 +43,6 @@ const requestResponses = {
 };
 const displayCache = new Map();
 
-
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -71,11 +55,6 @@ const airingResponses = createResponseEpoch();
 const airingSeasonResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
 
-
-
-
-
-
 const genreSelections = { season: new Set(), airing: new Set() };
 const dropdownSelector = '#identity[open], #tracked-titles[open], .genre-picker[open]';
 document.querySelector('.skip-link')?.addEventListener('click', event => {
@@ -86,6 +65,11 @@ document.querySelector('.skip-link')?.addEventListener('click', event => {
 const routePositions = new Map();
 let renderedHash = null;
 let pendingScrollRestore = null;
+function resetRoutePosition() {
+  routePositions.clear();
+  pendingScrollRestore = null;
+  renderedHash = null;
+}
 function restoreRoutePosition() {
   if (!pendingScrollRestore || pendingScrollRestore.hash !== location.hash) return;
   const { y } = pendingScrollRestore;
@@ -116,16 +100,18 @@ const viewHelpers = createViewHelpers({ byId, state });
 const { message, element, preferredDisplayTitle, titleLabel, applyTitlePreference, posterImage } = viewHelpers;
 const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState);
 
-
-
-
-const tracking = createTrackingController({ api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, element: (...args) => element(...args), loadAiring: (...args) => loadAiring(...args), markAdult: (...args) => markAdult(...args), message: (...args) => message(...args), sessionResponses, state });
+const tracking = createTrackingController({
+  api: (...args) => api(...args),
+  applyAdultVisibility: (...args) => applyAdultVisibility(...args),
+  byId,
+  element: (...args) => element(...args),
+  loadAiring: (...args) => loadAiring(...args),
+  markAdult: (...args) => markAdult(...args),
+  message: (...args) => message(...args),
+  sessionResponses,
+  state
+});
 const { updateTrackControls, ensureTrackingPreferences, changeTrackingPreferences, refreshTrackingAfterRequest, makeTrackButton, trackedCard, renderTrackedTitles, handleViewModeChange } = tracking;
-
-
-
-
-
 
 byId('tracked-titles').addEventListener('toggle', () => {
   if (byId('tracked-titles').open) renderTrackedTitles();
@@ -176,7 +162,6 @@ function applyAdultVisibility() {
   chinese.setAttribute('aria-pressed', String(state.showChinese));
   chinese.title = 'Show or hide titles tagged Chinese production';
 }
-
 
 function renderRoute() {
   if (!state.user) return;
@@ -316,224 +301,68 @@ for (const button of document.querySelectorAll('[data-request-scope]')) {
 const client = createApiClient({ clearWorkspace: (...args) => clearWorkspace(...args), requestKeys, sessionResponses, state });
 const { api } = client;
 
-
-const releases = createReleaseController({ api: (...args) => api(...args), element: (...args) => element(...args), loadRequests: (...args) => loadRequests(...args), message: (...args) => message(...args), preferredDisplayTitle: (...args) => preferredDisplayTitle(...args), refreshTrackingAfterRequest: (...args) => refreshTrackingAfterRequest(...args), sessionResponses, state });
+const releases = createReleaseController({
+  api: (...args) => api(...args),
+  element: (...args) => element(...args),
+  loadRequests: (...args) => loadRequests(...args),
+  message: (...args) => message(...args),
+  preferredDisplayTitle: (...args) => preferredDisplayTitle(...args),
+  refreshTrackingAfterRequest: (...args) => refreshTrackingAfterRequest(...args),
+  sessionResponses,
+  state
+});
 const { releaseDialog, dismissRequestDialogs, openPreviewReleaseRequests, openSavedReleaseRequests } = releases;
 
-
-function showSession(data) {
-  if (state.user?.id !== data.user.id) {
-    dismissRequestDialogs();
-    sessionResponses.invalidate();
-    invalidateRequestResponses();
-    reviewResponses.invalidate();
-    detail.invalidate();
-    stopLibraryPageObserver();
-    stopBrowsePageObserver('discover');
-    stopBrowsePageObserver('airing');
-    libraryResponses.invalidate();
-    airingResponses.invalidate();
-    airingSeasonResponses.invalidate();
-    seasonalResponses.invalidate();
-    state.selected = null;
-    state.detailHydrationQueued.clear();
-    displayCache.clear();
-    byId('request-list').replaceChildren();
-    byId('preparing-list').replaceChildren();
-    byId('more-preparations').hidden = true;
-    byId('watch-list').replaceChildren();
-    byId('review-list').replaceChildren();
-    byId('detail').replaceChildren(element('p',
-      'Select a result to see its details.', 'muted'));
-    state.nextBeforeId = { watching: null, history: null, preparing: null };
-    state.requestHistoryExpanded = false;
-    state.requestScope = data.user.role === 'admin' ? 'all' : 'mine';
-    state.libraryLoaded = false;
-    state.libraryAfter = null;
-    state.airingLoaded = false;
-    state.airingPreferences = null;
-    tracking.resetTracking();
-    byId('airing-view-mode').disabled = false;
-    browse.setAiringFilters({ year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' });
-    genreSelections.airing.clear();
-    genreSelections.season.clear();
-    state.seasonalRouteKey = null;
-    state.routePage = null;
-    admin.resetReview();
-  }
-  state.user = data.user;
-  void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
-  state.showAdult = data.user.adultAllowed !== false &&
-    readAdultPreference(data.user.id);
-  state.showChinese = readChinesePreference(data.user.id);
-  state.preferEnglish = readEnglishTitlePreference(data.user.id);
-  state.csrf = data.csrfToken;
-  state.releaseSearch = data.capabilities?.releaseSearch === true;
-  state.detailLoad = data.capabilities?.detailLoad === true;
-  state.titleChecks = data.capabilities?.titleChecks === true;
-  state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
-  byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
-    ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
-    : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
-  byId('auth').hidden = true;
-  byId('session-loading').hidden = true;
-  byId('workspace').hidden = false;
-  if (auth.pendingLink) {
-    message(auth.pendingLink.kind === 'invite'
-      ? 'You opened an invitation link while signed in. Sign out first if it is for a new account.'
-      : 'You opened a password reset link while signed in. Sign out first to use it.');
-  }
-  byId('main-nav').hidden = false;
-  byId('mobile-nav').hidden = false;
-  byId('search-form').hidden = false;
-  byId('identity').hidden = false;
-  byId('browse-preferences').hidden = false;
-  byId('adult-toggle').hidden = false;
-  byId('chinese-toggle').hidden = false;
-  applyAdultVisibility();
-  applyTitlePreference();
-  byId('username').textContent = data.user.username;
-  byId('profile-initial').textContent = String(data.user.username).slice(0,1).toUpperCase();
-  byId('invite').hidden = data.user.role !== 'admin';
-  byId('admin-link').hidden = data.user.role !== 'admin';
-  byId('admin-review').hidden = data.user.role !== 'admin';
-  byId('request-scope').hidden = data.user.role !== 'admin';
-  byId('requests-heading').textContent = 'Requests';
-  byId('requests-description').textContent = data.user.role === 'admin'
-    ? 'Follow everyone’s anime requests.' : 'Follow your anime requests.';
-  updateRequestScopeButtons();
-  renderRoute();
-}
-function clearWorkspace() {
-  routePositions.clear();
-  pendingScrollRestore = null;
-  renderedHash = null;
-  for (const id of ['results', 'library-search-results']) {
-    delete byId(id).dataset.query;
-    delete byId(id).dataset.complete;
-  }
-  stopLibraryPageObserver();
-  stopBrowsePageObserver('discover');
-  stopBrowsePageObserver('airing');
-  sessionResponses.invalidate();
-  invalidateRequestResponses();
-  reviewResponses.invalidate();
-  detail.invalidate();
-  libraryResponses.invalidate();
-  airingResponses.invalidate();
-  airingSeasonResponses.invalidate();
-  seasonalResponses.invalidate();
-  dismissRequestDialogs();
-  state.user = null;
-  state.requestScope = 'mine';
-  state.showAdult = true;
-  state.showChinese = true;
-  state.usersLoaded = false;
-  state.csrf = null;
-  state.selected = null;
-  state.detailHydrationQueued.clear();
-  displayCache.clear();
-  state.searchToken++;
-  state.lastSearchQuery = '';
-  state.lastBrowseDestination = { href: '#/discover', label: 'Discover' };
-  state.searchItems.clear();
-  state.libraryLoaded = false;
-  state.libraryAfter = null;
-  state.airingLoaded = false;
-  state.airingPreferences = null;
-  tracking.resetTracking();
-  byId('airing-view-mode').disabled = false;
-  browse.setAiringFilters({ year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' });
-  genreSelections.airing.clear();
-  genreSelections.season.clear();
-  state.seasonalRouteKey = null;
-  state.routePage = null;
-  state.nextBeforeId = { watching: null, history: null, preparing: null };
-  state.requestHistoryExpanded = false;
-  admin.resetReview();
-  state.releaseSearch = false;
-  state.detailLoad = false;
-  state.titleChecks = false;
-  state.acquisitionState = 'disabled';
-  byId('service-notice').textContent =
-    'Negev is in preview. Sign in to see acquisition status.';
-  byId('request-list').replaceChildren();
-  byId('preparing-list').replaceChildren();
-  byId('more-preparations').hidden = true;
-  byId('watch-list').replaceChildren();
-  byId('review-list').replaceChildren();
-  byId('main-nav').hidden = true;
-  byId('mobile-nav').hidden = true;
-  byId('more-review').hidden = true;
-  byId('admin-review').hidden = true;
-  byId('results').replaceChildren(element('p', 'Search by title to begin.', 'muted'));
-  byId('detail').replaceChildren(element('p', 'Select a result to see its details.', 'muted'));
-  byId('search-form').reset();
-  byId('search-form').hidden = true;
-  byId('invite-code').textContent = '';
-  byId('invite-code').hidden = true;
-  byId('identity').hidden = true;
-  byId('browse-preferences').hidden = true;
-  byId('adult-toggle').hidden = true;
-  byId('chinese-toggle').hidden = true;
-  byId('identity').open = false;
-  byId('workspace').hidden = true;
-  byId('session-loading').hidden = true;
-  byId('auth').hidden = false;
-}
 // Fill the matching form from an invitation or reset link (once).
-const auth = createAuthController({ api: (...args) => api(...args), byId, clearWorkspace: (...args) => clearWorkspace(...args), message: (...args) => message(...args), refreshSession: (...args) => refreshSession(...args), sessionResponses, state });
+const auth = createAuthController({
+  api: (...args) => api(...args),
+  byId,
+  clearWorkspace: (...args) => clearWorkspace(...args),
+  message: (...args) => message(...args),
+  refreshSession: (...args) => refreshSession(...args),
+  sessionResponses,
+  state
+});
 const { applyPendingLinkCode, authTab, retrySession, handleLoginSubmit, handleRegisterSubmit, signOut, handleResetSubmit } = auth;
-async function refreshSession() {
-  const started = sessionResponses.current();
-  try {
-    const data = await api('/api/session');
-    if (!sessionResponses.isCurrent(started)) return;
-    showSession(data);
-    loadRequests();
-    if (data.user.role === 'admin') void loadOperationalReview();
-    return true;
-  } catch (error) {
-    if (!sessionResponses.isCurrent(started)) return false;
-    if ([401, 403].includes(error?.status)) {
-      clearWorkspace();
-      applyPendingLinkCode();
-    } else {
-      byId('session-loading-text').textContent =
-        'Could not check your session.';
-      byId('session-retry').hidden = false;
-      byId('session-loading').hidden = false;
-      message('Could not check your session. Retry the session check.', true);
-    }
-    return false;
-  }
-}
-const requestsView = createRequestController({ api: (...args) => api(...args), byId, element, message, posterImage, preferredDisplayTitle, releaseDialog, requestResponses, restoreRoutePosition: (...args) => restoreRoutePosition(...args), sessionResponses, state, titleLabel });
+
+const requestsView = createRequestController({
+  api: (...args) => api(...args),
+  byId,
+  element,
+  message,
+  posterImage,
+  preferredDisplayTitle,
+  releaseDialog,
+  requestResponses,
+  restoreRoutePosition: (...args) => restoreRoutePosition(...args),
+  sessionResponses,
+  state,
+  titleLabel
+});
 const { expandedRequestDetails, loadRequestView, requestGroupRows, renderRequestStatus, requestItemPresentation, refreshRequestStatusAges, refreshExpandedHistory, loadRequests, loadPreparations, refreshVisibleRequests } = requestsView;
-
-
-
-
-
-
-
-
-
-
 
 setInterval(refreshVisibleRequests, 60_000);
 document.addEventListener('visibilitychange', refreshVisibleRequests);
-const browse = createBrowseController({ airingResponses, airingSeasonResponses, api: (...args) => api(...args), byId, element: (...args) => element(...args), ensureTrackingPreferences: (...args) => ensureTrackingPreferences(...args), genreSelections, libraryResponses, markAdult: (...args) => markAdult(...args), posterImage: (...args) => posterImage(...args), renderTrackedTitles: (...args) => renderTrackedTitles(...args), restoreRoutePosition: (...args) => restoreRoutePosition(...args), seasonalResponses, sessionResponses, state, titleLabel: (...args) => titleLabel(...args), trackedCard: (...args) => trackedCard(...args) });
+const browse = createBrowseController({
+  airingResponses,
+  airingSeasonResponses,
+  api: (...args) => api(...args),
+  byId,
+  element: (...args) => element(...args),
+  ensureTrackingPreferences: (...args) => ensureTrackingPreferences(...args),
+  genreSelections,
+  libraryResponses,
+  markAdult: (...args) => markAdult(...args),
+  posterImage: (...args) => posterImage(...args),
+  renderTrackedTitles: (...args) => renderTrackedTitles(...args),
+  restoreRoutePosition: (...args) => restoreRoutePosition(...args),
+  seasonalResponses,
+  sessionResponses,
+  state,
+  titleLabel: (...args) => titleLabel(...args),
+  trackedCard: (...args) => trackedCard(...args)
+});
 const { loadLibrary, loadSeasonal, loadAiring, loadCurrentAiring, seasonChoice, stopLibraryPageObserver, stopBrowsePageObserver, publicPresenceBadge, scheduleFilterApply, handleSeasonSubmit, handleSeasonSort, handleAiringSubmit, handleAiringSort, handleFilterRouteChange, handleLibraryRefresh } = browse;
-
-
-
-
-
-
-
-
-
 
 for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
   const option = element('option', String(year));
@@ -541,8 +370,6 @@ for (let year = new Date().getUTCFullYear() + 2; year >= 1900; year--) {
   byId('season-year').append(option);
   byId('airing-year').append(option.cloneNode(true));
 }
-
-
 
 byId('season-form').addEventListener('submit', browse.handleSeasonSubmit);
 byId('season-sort').addEventListener('change', browse.handleSeasonSort);
@@ -557,12 +384,9 @@ byId('airing-filters-toggle').addEventListener('click', event => {
   event.currentTarget.setAttribute('aria-expanded', String(expanded));
 });
 
-
-
 byId('airing-form').addEventListener('submit', browse.handleAiringSubmit);
 byId('airing-sort').addEventListener('change', browse.handleAiringSort);
 // Filters apply as soon as they change; there is no Apply button.
-
 
 window.addEventListener('hashchange', browse.handleFilterRouteChange);
 for (const [prefix, ids] of [['season', ['season-year', 'season-name', 'season-kind']],
@@ -578,7 +402,18 @@ byId('more-preparations').addEventListener('click', () => { void loadPreparation
 byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
 // Buttons offered for a parked review item. Retry re-runs every normal check;
 // release only applies to a download that never started.
-const admin = createAdminController({ element, message, titleLabel, api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, readAdultPreference: (...args) => readAdultPreference(...args), reviewResponses, sessionResponses, state });
+const admin = createAdminController({
+  element,
+  message,
+  titleLabel,
+  api: (...args) => api(...args),
+  applyAdultVisibility: (...args) => applyAdultVisibility(...args),
+  byId,
+  readAdultPreference: (...args) => readAdultPreference(...args),
+  reviewResponses,
+  sessionResponses,
+  state
+});
 const { reviewActionsFor, loadOperationalReview, showShareLink, createInviteLink, loadInvites, loadUsers } = admin;
 
 byId('refresh-review').addEventListener('click', () => { void loadOperationalReview(); });
@@ -621,26 +456,40 @@ byId('english-title-toggle').addEventListener('click', () => {
     state.preferEnglish ? 'on' : 'off'); } catch { /* Applies for this session. */ }
   applyTitlePreference();
 });
-const search = createSearchController({ api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, element: (...args) => element(...args), message: (...args) => message(...args), restoreRoutePosition: (...args) => restoreRoutePosition(...args), searchResultCard: (...args) => searchResultCard(...args), sessionResponses, state });
+const search = createSearchController({
+  api: (...args) => api(...args),
+  applyAdultVisibility: (...args) => applyAdultVisibility(...args),
+  byId,
+  element: (...args) => element(...args),
+  message: (...args) => message(...args),
+  restoreRoutePosition: (...args) => restoreRoutePosition(...args),
+  searchResultCard: (...args) => searchResultCard(...args),
+  sessionResponses,
+  state
+});
 const { classifySearchCards, submitInlineSearch, handleSearchSubmit } = search;
 // Shows a one-time link with a Copy button. The link is only shown here; the
 // server keeps just a digest, so it cannot be displayed again later.
 // `session` is sessionResponses.current() from before the request: a link
 // that arrives after sign-out (or an account switch) is never shown.
 
-
-
 byId('invite').addEventListener('click', () => { void createInviteLink(); });
 byId('admin-create-invite').addEventListener('click', () => { void createInviteLink(); });
 byId('reset-form').addEventListener('submit', auth.handleResetSubmit);
-
 
 byId('refresh-invites').addEventListener('click', () => { void loadInvites(); });
 
 byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
 
-
-const searchCard = createSearchCard({ element: (...args) => element(...args), markAdult: (...args) => markAdult(...args), posterImage: (...args) => posterImage(...args), publicPresenceBadge: (...args) => publicPresenceBadge(...args), state, titleLabel: (...args) => titleLabel(...args), trackedCard: (...args) => trackedCard(...args) });
+const searchCard = createSearchCard({
+  element: (...args) => element(...args),
+  markAdult: (...args) => markAdult(...args),
+  posterImage: (...args) => posterImage(...args),
+  publicPresenceBadge: (...args) => publicPresenceBadge(...args),
+  state,
+  titleLabel: (...args) => titleLabel(...args),
+  trackedCard: (...args) => trackedCard(...args)
+});
 const { searchResultCard } = searchCard;
 for (const [inputId, buttonId, destination] of [
   ['discover-query', 'discover-search-button', 'discover'],
@@ -657,14 +506,71 @@ for (const [inputId, buttonId, destination] of [
 }
 
 byId('search-form').addEventListener('submit', search.handleSearchSubmit);
-const detail = createDetailController({ api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, currentAcquisitionNotice, displayCache, element: (...args) => element(...args), loadRequests: (...args) => loadRequests(...args), makeTrackButton: (...args) => makeTrackButton(...args), message: (...args) => message(...args), openPreviewReleaseRequests: (...args) => openPreviewReleaseRequests(...args), openSavedReleaseRequests: (...args) => openSavedReleaseRequests(...args), posterImage: (...args) => posterImage(...args), preferredDisplayTitle: (...args) => preferredDisplayTitle(...args), refreshTrackingAfterRequest: (...args) => refreshTrackingAfterRequest(...args), requestKeys, sessionResponses, state, titleLabel: (...args) => titleLabel(...args), updateTrackControls: (...args) => updateTrackControls(...args) });
+const detail = createDetailController({
+  api: (...args) => api(...args),
+  applyAdultVisibility: (...args) => applyAdultVisibility(...args),
+  byId,
+  currentAcquisitionNotice,
+  displayCache,
+  element: (...args) => element(...args),
+  loadRequests: (...args) => loadRequests(...args),
+  makeTrackButton: (...args) => makeTrackButton(...args),
+  message: (...args) => message(...args),
+  openPreviewReleaseRequests: (...args) => openPreviewReleaseRequests(...args),
+  openSavedReleaseRequests: (...args) => openSavedReleaseRequests(...args),
+  posterImage: (...args) => posterImage(...args),
+  preferredDisplayTitle: (...args) => preferredDisplayTitle(...args),
+  refreshTrackingAfterRequest: (...args) => refreshTrackingAfterRequest(...args),
+  requestKeys,
+  sessionResponses,
+  state,
+  titleLabel: (...args) => titleLabel(...args),
+  updateTrackControls: (...args) => updateTrackControls(...args)
+});
 const { showDetail } = detail;
-
 
 // Whole-title Plex check, for titles imported outside Negev (e.g. manually
 // through Shoko). Shown only when the server enables NEGEV_TITLE_CHECK.
 
-
+const session = createSessionController({
+  admin,
+  airingResponses,
+  airingSeasonResponses,
+  api: (...args) => api(...args),
+  applyAdultVisibility: (...args) => applyAdultVisibility(...args),
+  applyPendingLinkCode: (...args) => applyPendingLinkCode(...args),
+  applyTitlePreference: (...args) => applyTitlePreference(...args),
+  auth,
+  browse,
+  byId,
+  currentAcquisitionNotice,
+  detail,
+  dismissRequestDialogs: (...args) => dismissRequestDialogs(...args),
+  displayCache,
+  element: (...args) => element(...args),
+  ensureTrackingPreferences: (...args) => ensureTrackingPreferences(...args),
+  genreSelections,
+  invalidateRequestResponses: (...args) => invalidateRequestResponses(...args),
+  libraryResponses,
+  loadOperationalReview: (...args) => loadOperationalReview(...args),
+  loadRequests: (...args) => loadRequests(...args),
+  message: (...args) => message(...args),
+  readAdultPreference: (...args) => readAdultPreference(...args),
+  readChinesePreference: (...args) => readChinesePreference(...args),
+  readEnglishTitlePreference: (...args) => readEnglishTitlePreference(...args),
+  renderRoute: (...args) => renderRoute(...args),
+  renderTrackedTitles: (...args) => renderTrackedTitles(...args),
+  resetRoutePosition: (...args) => resetRoutePosition(...args),
+  reviewResponses,
+  seasonalResponses,
+  sessionResponses,
+  state,
+  stopBrowsePageObserver: (...args) => stopBrowsePageObserver(...args),
+  stopLibraryPageObserver: (...args) => stopLibraryPageObserver(...args),
+  tracking,
+  updateRequestScopeButtons: (...args) => updateRequestScopeButtons(...args)
+});
+const { showSession, clearWorkspace, refreshSession } = session;
 void refreshSession();
 const loadedClientRevision = document.querySelector(
   'meta[name="negev-client-revision"]')?.content;
@@ -702,4 +608,3 @@ setInterval(refreshClientRevision, 60_000);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshClientRevision();
 });
-

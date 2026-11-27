@@ -2,7 +2,19 @@ import { createReleaseDialog } from './release-dialog.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 
 // Owns release preview callbacks and dialog sequencing. Construction does not register event handlers.
-export function createReleaseController({ dialog, api, element, loadRequests, message, preferredDisplayTitle, refreshTrackingAfterRequest, sessionResponses, state, document = globalThis.document, location = globalThis.location }) {
+export function createReleaseController({
+  dialog,
+  api,
+  element,
+  loadRequests,
+  message,
+  preferredDisplayTitle,
+  refreshTrackingAfterRequest,
+  sessionResponses,
+  state,
+  document = globalThis.document,
+  location = globalThis.location
+}) {
   const releasePreviewSaved=new Map();
 
   const releaseDialog=dialog ?? createReleaseDialog({api,element,onSaved:data=>{
@@ -73,4 +85,3 @@ export function createReleaseController({ dialog, api, element, loadRequests, me
   }
   return { releaseDialog, dismissRequestDialogs, openPreviewReleaseRequests, openSavedReleaseRequests };
 }
-

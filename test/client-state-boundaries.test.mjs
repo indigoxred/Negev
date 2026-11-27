@@ -1,6 +1,7 @@
+import { createSessionController } from '../src/web/public/session-controller.mjs';
 import { createApiClient } from '../src/web/public/api-client.mjs';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+
 import vm from 'node:vm';
 import { test } from 'node:test';
 import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
@@ -16,14 +17,6 @@ function attachTracking(context) {
   Object.assign(context, controller); context.tracking = controller;
 }
 
-
-const source = await readFile(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
-function functionSource(name) {
-  const asyncStart = source.indexOf(`async function ${name}(`);
-  const start = asyncStart >= 0 ? asyncStart : source.indexOf(`function ${name}(`);
-  const next = source.indexOf('\n}', start);
-  return source.slice(start, next + 2);
-}
 const deferred = () => { let resolve; const promise = new Promise(r => resolve = r); return { promise, resolve }; };
 
 test('actual API boundary clears expired session and ignores delayed 401 from old generation', async () => {
@@ -157,9 +150,8 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
     renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
     api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
-  attachTracking(context); vm.runInContext(functionSource('clearWorkspace'), context);
-  const handlerStart = source.indexOf("byId('airing-view-mode').addEventListener('change'");
-  vm.runInContext(source.slice(handlerStart, source.indexOf("\nbyId('refresh-requests')", handlerStart)), context);
+  attachTracking(context); Object.assign(context,createSessionController({...context,resetRoutePosition() {}}));
+  change = context.tracking.handleViewModeChange;
   const select = context.byId('airing-view-mode');
   state.airingPreferences = { mode: 'library', trackedAnidbIds: [] };
   select.value = 'all';
@@ -274,5 +266,3 @@ test('actual Airing refresh invalidates both old reads before preferences finish
   assert.equal(browse.isCurrent(oldBrowse), false);
   f.deps.sessionResponses.invalidate(); pending.resolve(null); await read;
 });
-
-

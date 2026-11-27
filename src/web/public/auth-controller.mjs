@@ -1,7 +1,17 @@
-
-
 // Owns authentication forms and one-time invitation/reset fragments. Construction does not register event handlers.
-export function createAuthController({ api, byId, clearWorkspace, message, refreshSession, sessionResponses, state, location = globalThis.location, history = globalThis.history, FormData = globalThis.FormData }) {
+export function createAuthController({
+  api,
+  byId,
+  clearWorkspace,
+  message,
+  refreshSession,
+  sessionResponses,
+  state,
+  location = globalThis.location,
+  history = globalThis.history,
+  FormData = globalThis.FormData
+}) {
+  // Read one-time codes from the fragment, then remove them from the address bar.
   let pendingLinkCode = (() => {
     const match = /^#(invite|reset)=([a-f0-9]{64})$/i.exec(location.hash);
     if (!match) return null;
