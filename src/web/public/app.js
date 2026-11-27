@@ -1,3 +1,4 @@
+import { createTrackingController } from './tracking-controller.mjs';
 import { createAuthController } from './auth-controller.mjs';
 import { createRequestController } from './request-controller.mjs';
 import { createAdminController } from './admin-controller.mjs';
@@ -19,7 +20,7 @@ import { acquisitionNotice } from './acquisition-notice.mjs';
 import { titleAvailabilitySummary,
   installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
 import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
-import { trackingAction } from './airing-tracking-controls.mjs';
+
 import { canOpenSeasonRequest, relatedAvailabilityText, seasonRequestStatus,
   seasonSelectionSummary, seasonSelectionScope, seasonTriggerPresentation } from './season-request-selection.mjs';
 import { relationLabel } from './relation-label.mjs';
@@ -71,10 +72,10 @@ const airingSeasonResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
 
 let detailPollTimer = null;
-let trackingPrefsPromise = null;
-let trackingSaving = false;
-let trackingPreferencesRevision = 0;
-let trackingMutationTail = Promise.resolve();
+
+
+
+
 const genreSelections = { season: new Set(), airing: new Set() };
 const dropdownSelector = '#identity[open], #tracked-titles[open], .genre-picker[open]';
 document.querySelector('.skip-link')?.addEventListener('click', event => {
@@ -118,152 +119,14 @@ const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState)
 
 
 
-function updateTrackControls() {
-  for (const button of document.querySelectorAll('[data-track-id]')) {
-    const id = Number(button.dataset.trackId);
-    button.textContent = trackingAction(state.airingPreferences, id);
-    button.disabled = !state.airingPreferences || trackingSaving;
-    button.setAttribute('aria-pressed', String(Boolean(
-      state.airingPreferences?.trackedAnidbIds.includes(id))));
-    button.setAttribute('aria-label', `${button.textContent}: ${button.dataset.trackTitle}`);
-  }
-}
-async function ensureTrackingPreferences() {
-  if (state.airingPreferences) return state.airingPreferences;
-  const userId = state.user?.id;
-  if (!userId) return null;
-  if (trackingPrefsPromise) return trackingPrefsPromise;
-  const session = sessionResponses.current();
-  const revision = trackingPreferencesRevision;
-  const pending = api('/api/airing/preferences').then((preferences) => {
-    if (sessionResponses.isCurrent(session) && state.user?.id === userId &&
-        revision === trackingPreferencesRevision) {
-      state.airingPreferences = preferences;
-      updateTrackControls();
-    }
-    return sessionResponses.isCurrent(session) ? state.airingPreferences : null;
-  }).finally(() => {
-    if (trackingPrefsPromise === pending) trackingPrefsPromise = null;
-  });
-  trackingPrefsPromise = pending;
-  return trackingPrefsPromise;
-}
-async function changeTrackingPreferences(action) {
-  const session = sessionResponses.current();
-  trackingPreferencesRevision++;
-  trackingPrefsPromise = null;
-  const pending = trackingMutationTail.catch(() => {}).then(async () => {
-    if (!sessionResponses.isCurrent(session) || !state.user) return false;
-    const preferences = await api('/api/airing/preferences', {
-      method: 'PATCH', body: JSON.stringify(action) });
-    if (!sessionResponses.isCurrent(session)) return false;
-    trackingPreferencesRevision++;
-    state.airingPreferences = preferences;
-    return true;
-  });
-  trackingMutationTail = pending;
-  return pending;
-}
-function refreshTrackingAfterRequest() {
-  trackingPreferencesRevision++;
-  state.airingPreferences = null;
-  trackingPrefsPromise = null;
-  updateTrackControls();
-  void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
-}
-function makeTrackButton(item) {
-  const button = element('button', trackingAction(state.airingPreferences,
-    item.anidbId), 'quiet track-toggle');
-  button.type = 'button';
-  button.dataset.trackId = String(item.anidbId);
-  button.dataset.trackTitle = item.title;
-  button.disabled = !state.airingPreferences;
-  button.setAttribute('aria-pressed', String(Boolean(
-    state.airingPreferences?.trackedAnidbIds.includes(item.anidbId))));
-  button.setAttribute('aria-label', `${button.textContent}: ${item.title}`);
-  button.addEventListener('click', async () => {
-    if (trackingSaving) return;
-    const session = sessionResponses.current();
-    const current = state.airingPreferences;
-    if (!current) return;
-    const action = current.trackedAnidbIds.includes(item.anidbId) ? 'untrack' : 'track';
-    trackingSaving = true;
-    updateTrackControls();
-    try {
-      if (!await changeTrackingPreferences({ action, anidbId: item.anidbId })) return;
-      updateTrackControls();
-      renderTrackedTitles();
-      if (state.routePage === 'airing' && current.mode === 'custom') void loadAiring();
-    } catch (error) { if (sessionResponses.isCurrent(session)) message(error.message, true); }
-    finally { if (sessionResponses.isCurrent(session)) { trackingSaving = false; updateTrackControls(); } }
-  });
-  if (!state.airingPreferences) void ensureTrackingPreferences().catch(() => {
-    button.textContent = 'Tracking unavailable';
-    button.disabled = true;
-  });
-  return button;
-}
-function trackedCard(card, item, { hideUnknown = false } = {}) {
-  const wrapper = markAdult(element('div', undefined, 'tracked-title'), item,
-    { hideUnknown });
-  // The wrapper owns visibility and identity so a card counts only once.
-  delete card.dataset.anidbId;
-  delete card.dataset.adult;
-  delete card.dataset.chineseProduction;
-  card.hidden = false;
-  wrapper.append(card);
-  return wrapper;
-}
-function renderTrackedTitles() {
-  const list = byId('tracked-titles-list');
-  const panel = byId('tracked-titles');
-  if (!list || !panel || !state.airingPreferences) return;
-  const ids = state.airingPreferences.trackedAnidbIds;
-  byId('tracked-count').textContent = `(${ids.length})`;
-  list.replaceChildren();
-  if (!ids.length) {
-    list.append(element('p', 'No titles tracked yet. Search or browse, then choose Track this title.', 'muted'));
-    return;
-  }
-  let shown = 0;
-  const appendPage = () => {
-    const end = Math.min(shown + 20, ids.length);
-    const userId = state.user?.id;
-    for (const id of ids.slice(shown, end)) {
-      const known = state.searchItems.get(id);
-      const title = known?.title && !/^Anime \d+$/.test(known.title)
-        ? known.title : `AniDB ${id}`;
-      const item = { anidbId: id, title, adult: known?.adult,
-        chineseProduction: known?.chineseProduction };
-      const row = markAdult(element('div', undefined, 'tracked-list-row'), item);
-      const link = element('a', title, 'text-link');
-      link.href = titleRoute(id);
-      row.append(link, makeTrackButton(item));
-      list.append(row);
-      if (title === `AniDB ${id}` && panel.open) {
-        void api(`/api/catalogue/${id}/display`).then((display) => {
-          if (state.user?.id !== userId || !row.isConnected ||
-              display?.state !== 'display') return;
-          link.textContent = display.title;
-          row.querySelector('[data-track-id]').dataset.trackTitle = display.title;
-          state.searchItems.set(id, { anidbId: id, title: display.title,
-            adult: display.restricted });
-          row.dataset.adult = String(display.restricted);
-          applyAdultVisibility();
-          updateTrackControls();
-        }).catch(() => {});
-      }
-    }
-    shown = end;
-    if (shown < ids.length) {
-      const more = element('button', 'Show more tracked titles', 'quiet');
-      more.type = 'button';
-      more.addEventListener('click', () => { more.remove(); appendPage(); });
-      list.append(more);
-    }
-  };
-  appendPage();
-}
+const tracking = createTrackingController({ api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, element: (...args) => element(...args), loadAiring: (...args) => loadAiring(...args), markAdult: (...args) => markAdult(...args), message: (...args) => message(...args), sessionResponses, state });
+const { updateTrackControls, ensureTrackingPreferences, changeTrackingPreferences, refreshTrackingAfterRequest, makeTrackButton, trackedCard, renderTrackedTitles, handleViewModeChange } = tracking;
+
+
+
+
+
+
 byId('tracked-titles').addEventListener('toggle', () => {
   if (byId('tracked-titles').open) renderTrackedTitles();
 });
@@ -583,10 +446,7 @@ function showSession(data) {
     state.libraryAfter = null;
     state.airingLoaded = false;
     state.airingPreferences = null;
-    trackingPrefsPromise = null;
-    trackingPreferencesRevision++;
-    trackingMutationTail = Promise.resolve();
-    trackingSaving = false;
+    tracking.resetTracking();
     byId('airing-view-mode').disabled = false;
     airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
     genreSelections.airing.clear();
@@ -677,10 +537,7 @@ function clearWorkspace() {
   state.libraryAfter = null;
   state.airingLoaded = false;
   state.airingPreferences = null;
-  trackingPrefsPromise = null;
-  trackingPreferencesRevision++;
-  trackingMutationTail = Promise.resolve();
-  trackingSaving = false;
+  tracking.resetTracking();
   byId('airing-view-mode').disabled = false;
   airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
   genreSelections.airing.clear();
@@ -1382,25 +1239,7 @@ async function loadAiring() {
       'empty-state'));
   }
 }
-byId('airing-view-mode').addEventListener('change', async (event) => {
-  const select = event.currentTarget;
-  const session = sessionResponses.current();
-  const previous = state.airingPreferences;
-  if (!previous) return;
-  const mode = select.value;
-  select.disabled = true;
-  try {
-    if (!await changeTrackingPreferences({ action: 'mode', mode })) return;
-    renderTrackedTitles();
-    updateTrackControls();
-    state.airingLoaded = false;
-    void loadAiring();
-  } catch (error) {
-    if (!sessionResponses.isCurrent(session)) return;
-    select.value = previous.mode;
-    byId('airing-season-state').textContent = error.message;
-  } finally { if (sessionResponses.isCurrent(session)) select.disabled = false; }
-});
+byId('airing-view-mode').addEventListener('change', tracking.handleViewModeChange);
 byId('refresh-requests').addEventListener('click', () => { void loadRequests(); });
 byId('refresh-library').addEventListener('click', () => {
   if (parseConsumerRoute(location.hash).query) {

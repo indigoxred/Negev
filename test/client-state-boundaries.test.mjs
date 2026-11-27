@@ -7,6 +7,12 @@ import { hideChineseProduction } from '../src/web/public/chinese-visibility.mjs'
 import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibility.mjs';
 import { createCatalogueReadPacer } from '../src/web/public/search-pages.mjs';
 import { createAuthController } from '../src/web/public/auth-controller.mjs';
+import { createTrackingController } from '../src/web/public/tracking-controller.mjs';
+function attachTracking(context) {
+  const controller = createTrackingController({ ...context, document: context.document ?? { querySelectorAll: () => [] } });
+  Object.assign(context, controller); context.tracking = controller;
+}
+
 
 const source = await readFile(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
 function functionSource(name) {
@@ -60,12 +66,11 @@ test('actual preference read cannot overwrite a newer mutation or same-user sess
   const epoch = createResponseEpoch();
   const state = { user: { id: 1 }, airingPreferences: null };
   const context = vm.createContext({ state, sessionResponses: epoch,
-    trackingPrefsPromise: null, trackingPreferencesRevision: 0,
-    api: () => pending.promise, updateTrackControls() {} });
-  vm.runInContext(functionSource('ensureTrackingPreferences'), context);
+    api: (_url, options) => options?.method === 'PATCH'
+      ? Promise.resolve({ mode: 'custom', trackedAnidbIds: [2] }) : pending.promise });
+  attachTracking(context);
   const read = context.ensureTrackingPreferences();
-  context.trackingPreferencesRevision++;
-  state.airingPreferences = { mode: 'custom', trackedAnidbIds: [2] };
+  await context.changeTrackingPreferences({ action: 'mode', mode: 'custom' });
   pending.resolve({ mode: 'all', trackedAnidbIds: [] });
   await read;
   assert.deepEqual(state.airingPreferences, { mode: 'custom', trackedAnidbIds: [2] });
@@ -95,11 +100,10 @@ test('actual preference mutations send explicit intent and ignore old-session re
   const requests = [], pending = deferred(), epoch = createResponseEpoch();
   const state = { user: { id: 1 }, airingPreferences: { mode: 'library', trackedAnidbIds: [] } };
   const context = vm.createContext({ state, sessionResponses: epoch,
-    trackingPreferencesRevision: 0, trackingPrefsPromise: null,
-    trackingMutationTail: Promise.resolve(), api: async (url, options) => {
+    api: async (url, options) => {
       requests.push({ url, ...options }); return pending.promise;
     } });
-  vm.runInContext(functionSource('changeTrackingPreferences'), context);
+  attachTracking(context);
   const write = context.changeTrackingPreferences({ action: 'track', anidbId: 2 });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(requests[0].method, 'PATCH');
@@ -128,9 +132,8 @@ test('a later failed preference intent preserves an earlier successful saved cha
   let calls = 0;
   const state = { user: { id: 1 }, airingPreferences: { mode: 'library', trackedAnidbIds: [] } };
   const context = vm.createContext({ state, sessionResponses: createResponseEpoch(),
-    trackingPreferencesRevision: 0, trackingPrefsPromise: null, trackingMutationTail: Promise.resolve(),
     api: async () => { if (++calls === 1) return saved.promise; throw new Error('offline'); } });
-  vm.runInContext(functionSource('changeTrackingPreferences'), context);
+  attachTracking(context);
   const first = context.changeTrackingPreferences({ action: 'track', anidbId: 2 });
   const second = context.changeTrackingPreferences({ action: 'mode', mode: 'all' });
   const rejected = assert.rejects(second, /offline/);
@@ -153,13 +156,12 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     libraryResponses: createResponseEpoch(), airingResponses: createResponseEpoch(),
     airingSeasonResponses: createResponseEpoch(), seasonalResponses: createResponseEpoch(),
     detailPollTimer: null, dismissRequestDialogs() {}, displayCache: new Map(),
-    trackingPrefsPromise: null, trackingPreferencesRevision: 0, trackingSaving: true,
-    trackingMutationTail: Promise.resolve(), genreSelections: { airing: new Set(), season: new Set() },
+    genreSelections: { airing: new Set(), season: new Set() },
     admin: { resetReview() {} }, element: () => ({}),
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
     renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
     api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
-  vm.runInContext(functionSource('clearWorkspace') + '\n' + functionSource('changeTrackingPreferences'), context);
+  attachTracking(context); vm.runInContext(functionSource('clearWorkspace'), context);
   const handlerStart = source.indexOf("byId('airing-view-mode').addEventListener('change'");
   vm.runInContext(source.slice(handlerStart, source.indexOf("\nbyId('refresh-requests')", handlerStart)), context);
   const select = context.byId('airing-view-mode');
