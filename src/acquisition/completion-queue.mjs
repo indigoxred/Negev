@@ -323,8 +323,10 @@ export function createCompletionWorker({ queue, processAttempt, now = Date.now }
             pass: claim.pass, state: savedState,
             reason: savedState === 'held' ? reason ?? 'worker_unavailable' : null,
             checkedMs: now(),
-            transfer: savedState === 'held' && reason === 'incomplete'
-              ? result?.transfer ?? null : null });
+            // Progress is display-only. Drop an invalid snapshot rather than
+            // fail the save, which would leave this claim stuck until restart.
+            transfer: savedState === 'held' && reason === 'incomplete' &&
+              validTransfer(result?.transfer) ? result.transfer : null });
           if (saved.state !== 'recorded') return held('queue_unavailable');
         } catch { return held('queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,

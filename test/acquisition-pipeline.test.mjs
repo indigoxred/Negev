@@ -551,3 +551,45 @@ test('pending bonuses resume from the completion clock without holding the media
  const pipeline=openAcquisitionPipeline({dbPath,acquisitions:{...acquisitions,listPendingBonuses:()=>[{attemptId:8,name:'Extras/OVA.mkv'}]},qbBaseUrl,sessionGate:authorizedSession,processRequest:async()=>{},processStart:async()=>{},processCompletion:async()=>{},processPublish:async()=>{},processBonus:async()=>{calls++;await wait;return {state:'bonus_waiting'}},now:()=>100});
  try{await pipeline.initialize();await pipeline.tickCompletions();assert.equal(calls,1);await pipeline.tickCompletions();assert.equal(calls,1,'one active bonus observation only');finish();await pipeline.close();}finally{finish();await pipeline.close();handoffs.close();acquisitions.close();requests.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('a bonus that cannot save its next check does not starve later bonuses', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-bonus-fair-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath), acquisitions = openAcquisitionLedger(dbPath),
+    handoffs = openHandoffLedger(dbPath);
+  let clock = 100;
+  const seen = [];
+  const settled = [];
+  // The ledger keeps returning both, oldest first: the first never saves.
+  const pending = [{ attemptId: 8, name: 'Extras/Stuck.mkv' }, { attemptId: 9, name: 'Extras/OVA.mkv' }];
+  const pipeline = openAcquisitionPipeline({ dbPath,
+    acquisitions: { ...acquisitions, listPendingBonuses: ({ limit }) => pending.slice(0, limit) },
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async () => {}, processStart: async () => {},
+    processCompletion: async () => ({ state: 'pass_complete' }), processPublish: async () => {},
+    processBonus: async ({ item }) => {
+      seen.push(item.name);
+      const done = Promise.resolve({ state: 'bonus_waiting' });
+      settled.push(done);
+      return done;
+    },
+    now: () => clock });
+  try {
+    await pipeline.initialize();
+    for (let i = 0; i < 3; i++) {
+      await pipeline.tickCompletions();
+      await Promise.all(settled);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.deepEqual(seen, ['Extras/Stuck.mkv', 'Extras/OVA.mkv'],
+      'the second bonus gets a turn and neither repeats within a minute');
+    clock += 60_000;
+    await pipeline.tickCompletions();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seen.at(-1), 'Extras/Stuck.mkv', 'it is retried after a minute');
+  } finally {
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

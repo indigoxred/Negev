@@ -80,6 +80,8 @@ export async function processBonusImport({ item, acquisitions, pureMoves,
   const matchingPlans = Array.isArray(plan) ? plan.filter((file) => sameFile(file, item)) : [];
   if (matchingPlans.length !== 1 || matchingPlans[0].evidence !== 'shoko_filename_prediction' ||
       (item.evidence !== undefined && item.evidence !== matchingPlans[0].evidence)) {
+    // Save a later check time so this bonus does not stay first in line.
+    save(currentStatus, { reason: 'bonus_plan_conflict', delay: true });
     return waiting('bonus_plan_conflict');
   }
   if (typeof parent?.torrentHash !== 'string' ||

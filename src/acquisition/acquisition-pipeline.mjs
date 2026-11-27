@@ -69,7 +69,27 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let closed = false;
   let closing;
   const running = { request: false, media: false, bonus: false };
-  const bonusWorker=typeof processBonus==='function'&&typeof acquisitions.listPendingBonuses==='function'?{runOnce:async()=>{const item=acquisitions.listPendingBonuses({nowMs:now(),limit:1})[0];return item?processBonus({item}):{state:'idle'};}}:null;
+  // Optional bonus files are observed one at a time. A bonus whose check
+  // could not save a later due time (for example a plan conflict, or a
+  // journal error) would otherwise stay first in line and starve the rest,
+  // so skip any bonus this process already tried within the last minute.
+  const BONUS_RETRY_MS = 60_000;
+  const triedBonuses = new Map();
+  const bonusWorker = typeof processBonus === 'function' &&
+    typeof acquisitions.listPendingBonuses === 'function' ? {
+      runOnce: async () => {
+        const nowMs = now();
+        for (const [key, triedMs] of triedBonuses) {
+          if (nowMs - triedMs >= BONUS_RETRY_MS || nowMs < triedMs) triedBonuses.delete(key);
+        }
+        const key = (item) => `${item.attemptId}\u0000${item.name}`;
+        const item = acquisitions.listPendingBonuses({ nowMs, limit: 20 })
+          .find((candidate) => !triedBonuses.has(key(candidate)));
+        if (!item) return { state: 'idle' };
+        triedBonuses.set(key(item), nowMs);
+        return processBonus({ item });
+      },
+    } : null;
   let holdingRecovered = false;
   let recoveryAfterId = 0;
   let preferRecognitionRecovery = false;
