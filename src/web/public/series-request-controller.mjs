@@ -281,7 +281,7 @@ export function createSeriesRequestController(detailView) {
       if (row.detailFailed || !row.status) loadRow(row);
     }
     if (family.next() && !detailView.lastRelatedFailure) {
-      if (detailView.relatedLoading) expandForOpenPopup = true;
+      if (detailView.relatedLoading) detailView.expandForOpenPopup = true;
       else void loadRelated({ batch: true });
     }
   });
@@ -440,6 +440,5 @@ export function createSeriesRequestController(detailView) {
   panel.insertBefore(detailActionRow(availableButton, trigger,
     monitoredButton, monitoredLink), relatedHeading);
   panel.append(action);
-  return { rows, refresh, trigger, action, feedback, modeActions, submit };
-}
 
+}

@@ -1,20 +1,45 @@
+import { createInstallmentRequestControls } from './detail-installment-request.mjs';
+import { createDetailEpisodeControls } from './detail-episodes.mjs';
+import { createDetailRelated } from './detail-related.mjs';
+import { createDetailDisplay } from './detail-display.mjs';
 import { createSeriesRequestController } from './series-request-controller.mjs';
 import { makeReleaseActions } from './release-dialog.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
-import { createFranchiseExplorer, createRelatedDetailCache, expandFranchiseBatch,
-  groupFranchiseItems } from './franchise-explorer.mjs';
-import { titleAvailabilitySummary,
-  installmentRequestState, filmEntryRequestState } from './season-availability-presentation.mjs';
-import { episodeScheduleLabel, nextAirDateLabel } from './episode-schedule.mjs';
-import { relatedAvailabilityText } from './season-request-selection.mjs';
-import { relationLabel } from './relation-label.mjs';
-import { detailOriginalTitle, detailAliasText } from './title-preference.mjs';
-import { titleRoute, requestRoute } from './consumer-route.mjs';
+
+import { titleAvailabilitySummary, installmentRequestState } from './season-availability-presentation.mjs';
+
+import { detailOriginalTitle } from './title-preference.mjs';
+import { requestRoute } from './consumer-route.mjs';
 
 // Owns detail response epochs, polling, and title request actions. Construction does not register event handlers.
-export function createDetailController({ api, applyAdultVisibility, byId, currentAcquisitionNotice, displayCache, element, loadRequests, makeTrackButton, message, openPreviewReleaseRequests, openSavedReleaseRequests, posterImage, preferredDisplayTitle, refreshTrackingAfterRequest, requestKeys, sessionResponses, state, titleLabel, updateTrackControls, document = globalThis.document, location = globalThis.location, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout, requestAnimationFrame = globalThis.requestAnimationFrame }) {
+export function createDetailController({
+  api,
+  applyAdultVisibility,
+  byId,
+  currentAcquisitionNotice,
+  displayCache,
+  element,
+  loadRequests,
+  makeTrackButton,
+  message,
+  openPreviewReleaseRequests,
+  openSavedReleaseRequests,
+  posterImage,
+  preferredDisplayTitle,
+  refreshTrackingAfterRequest,
+  requestKeys,
+  sessionResponses,
+  state,
+  titleLabel,
+  updateTrackControls,
+  document = globalThis.document,
+  location = globalThis.location,
+  setTimeout = globalThis.setTimeout,
+  clearTimeout = globalThis.clearTimeout,
+  requestAnimationFrame = globalThis.requestAnimationFrame
+}) {
   const detailResponses = createResponseEpoch();
 
   let detailPollTimer = null;
@@ -230,82 +255,8 @@ export function createDetailController({ api, applyAdultVisibility, byId, curren
       displayCache.set(item.anidbId, displayRead);
       if (displayCache.size > 100) displayCache.delete(displayCache.keys().next().value);
     }
-    let displayReleaseStatus = null;
-    let nextAirData = null;
-    let nextAirElement = null;
-    const refreshNextAir = () => {
-      if (!nextAirElement) return;
-      const label = nextAirDateLabel({ kind: nextAirData.kind,
-        releaseState: nextAirData.releaseState, releaseStatus: displayReleaseStatus,
-        schedule: nextAirData.regularSchedule });
-      nextAirElement.hidden = !label;
-      nextAirElement.textContent = label ?? '';
-    };
-    const renderDisplay = (display, title) => {
-      if (!isCurrentDetail() || display?.state !== 'display') return;
-      if (display.restricted !== false &&
-          (!state.showAdult || state.user?.adultAllowed !== true)) return;
-      displayReleaseStatus = display.releaseStatus;
-      refreshNextAir();
-      panel.querySelector('.detail-title')?.replaceWith(titleLabel({ title,
-        englishTitle: display.englishTitle ?? item.englishTitle },
-      { tag: 'h1', className: 'detail-title' }));
-      setPendingTitleKind(earlyRequest, { title },
-        /movie|film/i.test(display.type ?? '') ? 'movie' :
-          /series|tv|ova|ona/i.test(display.type ?? '') ? 'series' : null);
-      displaySummary.replaceChildren();
-      const main = element('div', undefined, 'detail-main');
-      titleBlock.querySelectorAll('.detail-facts, .detail-alias').forEach(node => node.remove());
-      const facts = [display.type, display.startYear, display.releaseStatus?.replaceAll('_', ' ').toLowerCase()].filter(Boolean).join(' · ');
-      if (facts) titleBlock.append(element('p', facts, 'detail-facts'));
-      if (display.englishTitle && display.englishTitle !== title) {
-        const alias = element('p', detailAliasText(state.preferEnglish,
-          title, display.englishTitle), 'detail-alias');
-        alias.dataset.originalTitle = title;
-        alias.dataset.titleAlias = display.englishTitle;
-        titleBlock.append(alias);
-      }
-      const synopsis = typeof display.description === 'string'
-        ? display.description.trim() : '';
-      const description = element('p', synopsis ||
-        'No synopsis is available for this title yet.', 'detail-description');
-      main.append(description);
-      if (synopsis) {
-        if (synopsis.length > 280) {
-          description.classList.add('is-collapsed');
-          const toggle = element('button', 'Read full synopsis',
-            'detail-description-toggle');
-          toggle.type = 'button';
-          toggle.setAttribute('aria-expanded', 'false');
-          toggle.addEventListener('click', () => {
-            const expanded = !description.classList.toggle('is-collapsed');
-            toggle.setAttribute('aria-expanded', String(expanded));
-            toggle.textContent = expanded ? 'Show less' : 'Read full synopsis';
-          });
-          main.append(toggle);
-        }
-      }
-      const quickFacts = element('dl', undefined, 'detail-quickfacts');
-      for (const [label, value] of [
-        ['Season', display.season], ['Studio', display.studio],
-        ['Runtime', display.durationMinutes ? `${display.durationMinutes} min` : null],
-        ['First aired', display.startDate],
-        ['Last aired', display.endDate],
-
-      ]) {
-        if (value === null || value === undefined || value === '') continue;
-        const fact = element('div');
-        fact.append(element('dt', label), element('dd', String(value)));
-        quickFacts.append(fact);
-      }
-      if (display.tags?.length) {
-        const tags = element('div', undefined, 'detail-tags');
-        for (const tag of display.tags) tags.append(element('span', tag));
-        main.append(tags);
-      }
-      displaySummary.append(main);
-      if (quickFacts.childElementCount) displaySummary.append(quickFacts);
-    };
+    const display = createDetailDisplay({ isCurrentDetail, state, panel, titleLabel, item, setPendingTitleKind, earlyRequest, displaySummary, element, titleBlock });
+    const { renderDisplay } = display;
     void displayRead.then((display) => {
       if (isCurrentDetail() && typeof display?.restricted === 'boolean') {
         state.searchItems.set(item.anidbId,
@@ -422,10 +373,9 @@ export function createDetailController({ api, applyAdultVisibility, byId, curren
         panel.append(sourceDetails);
       }
       if (data.kind === 'series' && data.releaseState === 'airing') {
-        nextAirData = data;
-        nextAirElement = element('p', undefined,
+        const nextAirElement = element('p', undefined,
           `detail-next-air${data.regularSchedule?.nextAirDate ? '' : ' unknown'}`);
-        refreshNextAir();
+        display.mountNextAir(data, nextAirElement);
         panel.append(nextAirElement);
       }
       let refreshAvailabilitySummary = () => {};
@@ -503,210 +453,8 @@ export function createDetailController({ api, applyAdultVisibility, byId, curren
           ? 'AniDB has no exact film entry listed yet. You can save a request; Negev will wait for an exact film entry before any download.'
           : 'AniDB has no episodes listed yet. An airing-series request can watch for future episodes.',
         'muted'));
-      const family = franchise ?? createFranchiseExplorer({ anidbId: item.anidbId,
-        title: data.title || item.title });
-      const relatedDetails = createRelatedDetailCache({ read: (anidbId) =>
-        api(`/api/catalogue/${anidbId}`,
-          { signal: AbortSignal.timeout(5_000) }) });
-      const checkedCards = new Set();
-      const checkCard = (anidbId) => {
-        if (checkedCards.has(anidbId)) return;
-        checkedCards.add(anidbId);
-        void relatedDetails.get(anidbId).then(() => {
-          if (isCurrentDetail()) renderFamily();
-        });
-      };
-      const relatedObserver = new IntersectionObserver((entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            relatedObserver.unobserve(entry.target);
-            checkCard(Number(entry.target.dataset.anidbId));
-          }
-        }
-      }, { rootMargin: '250px' });
-      const relatedButton = element('button', 'Show more related titles', 'text-link related-trigger');
-      const relatedList = element('div', undefined, 'related-list');
-      let relatedExpanded = false;
-      const relatedRowCapacity = () => Math.max(1,
-        getComputedStyle(relatedList).gridTemplateColumns.trim().split(/\s+/).length);
-      let installmentSelect = null;
-      let selectedInstallmentId = item.anidbId;
-      let selectedAvailability = 'unknown';
-      let selectedCheckVersion = 0;
-      let updateRequestReview = () => {};
-      let syncSeasonRows = () => {};
-      const syncInstallmentChoice = () => {
-        if (!installmentSelect) return;
-        installmentSelect.replaceChildren();
-        const titles = new Map(family.items().map((entry) =>
-          [entry.anidbId, entry.title]));
-        for (const entry of family.items()) {
-          const source = entry.relatedFrom && entry.relatedFrom !== item.anidbId
-            ? titles.get(entry.relatedFrom) : null;
-          const option = element('option', entry.anidbId === item.anidbId
-            ? `${entry.title} · this installment`
-            : `${entry.title} · ${relationLabel(entry.relation)}` +
-              (source ? ` via ${source}` : ''));
-          option.value = String(entry.anidbId);
-          installmentSelect.append(option);
-        }
-        installmentSelect.value = String(selectedInstallmentId);
-      };
-      const renderFamily = () => {
-        relatedObserver.disconnect();
-        relatedList.replaceChildren();
-        const groups = groupFranchiseItems(family.items(), item.anidbId);
-        const capacity = relatedRowCapacity();
-        const allRelated = groups.flatMap((group) => group.items);
-        const visibleIds = new Set((relatedExpanded ? allRelated :
-          allRelated.slice(0, capacity)).map((entry) => entry.anidbId));
-        const firstRowIds = new Set(allRelated.slice(0, capacity).map((entry) =>
-          entry.anidbId));
-        const titles = new Map(family.items().map((entry) =>
-          [entry.anidbId, entry.title]));
-        if (groups.length === 0) relatedList.append(element('p',
-          'No related anime links are available from the current metadata. Other installments may still exist; search by title to find them.', 'muted'));
-        for (const group of groups) {
-          // Direct relation labels already appear on each card. Keep those
-          // cards together in one compact grid; only separate indirect hops.
-          for (const installment of group.items) {
-            if (!visibleIds.has(installment.anidbId)) continue;
-            const open = element('button', undefined, 'related-card');
-            open.title = installment.title;
-            open.dataset.anidbId = String(installment.anidbId);
-            const art = element('span', 'N', 'related-art poster-fallback');
-            const image = posterImage(installment);
-            image.addEventListener('load', () => art.classList.add('has-poster'));
-            art.append(image);
-            const copy = element('span', undefined, 'related-copy');
-            const relation = relationLabel(installment.relation);
-            const source = installment.relatedFrom === item.anidbId ? null
-              : titles.get(installment.relatedFrom);
-            copy.append(element('small', source
-              ? `${relation} · via ${source}` : relation, 'related-relation'));
-            copy.append(element('strong', installment.title));
-            const relatedDetail = relatedDetails.peek(installment.anidbId);
-            const knownCount = installment.libraryPresence?.state === 'in_library'
-              ? installment.libraryPresence.verifiedEpisodeCount : 0;
-            const availabilityText = relatedDetail
-              ? relatedAvailabilityText(relatedDetail) : knownCount > 0
-                ? `${knownCount} verified item${knownCount === 1 ? '' : 's'} in library · loading details…`
-                : 'Loading title details…';
-            copy.append(element('span', availabilityText,
-              `related-presence ${availabilityText.startsWith('Available')
-                ? 'available' : availabilityText.startsWith('Partial')
-                  ? 'partial' : 'unconfirmed'}`));
-            open.append(art, copy);
-            open.addEventListener('click', () => {
-              state.searchItems.set(installment.anidbId, installment);
-              location.hash = titleRoute(installment.anidbId);
-            });
-            relatedList.append(open);
-            if (firstRowIds.has(installment.anidbId)) {
-              checkCard(installment.anidbId);
-            } else relatedObserver.observe(open);
-          }
-        }
-        const overflow = allRelated.length > capacity;
-        relatedButton.textContent = 'Show more related titles';
-        relatedButton.hidden = relatedExpanded || !overflow;
-        relatedButton.disabled = relatedButton.hidden;
-        syncInstallmentChoice();
-        syncSeasonRows();
-      };
-      if (franchise) renderFamily();
-      else {
-        relatedList.append(element('p', 'Finding related titles…', 'muted'));
-        relatedButton.textContent = 'Finding related titles…';
-        relatedButton.disabled = true;
-      }
-      let relatedLoading = false;
-      let lastRelatedFailure = null;
-      let syncSeasonLookup = () => {};
-      let expandForOpenPopup = false;
-      let openSeasonDialog = null;
-      const loadRelated = async ({ batch = false, initial = false } = {}) => {
-        const next = family.next();
-        if (!next || relatedLoading) return;
-        relatedLoading = true;
-        relatedButton.disabled = true;
-        relatedButton.textContent = 'Loading related titles…';
-        syncSeasonLookup();
-        try {
-          const result = await expandFranchiseBatch({ explorer: family,
-            read: (anidbId) => api(`/api/catalogue/${anidbId}/related`),
-            maxReads: initial ? 12 : batch ? 8 : 1,
-            minNewItems: initial ? Math.min(49, Math.max(1,
-              relatedRowCapacity() + 1 - (family.items().length - 1))) : batch ? 8 : 1,
-            shouldContinue: isCurrentDetail });
-          if (isCurrentDetail()) {
-            renderFamily();
-            lastRelatedFailure = result.failures === 0 ? null :
-              result.state === 'rate_limited'
-                ? 'Related titles are temporarily rate limited. Try again in about a minute.'
-                : result.state === 'temporarily_unavailable'
-                ? 'Related titles are temporarily unavailable. Try again shortly.'
-                : result.state === 'root_unavailable'
-                ? 'Related titles could not be loaded. Try again or search for another installment.'
-                : 'Some relationships could not be loaded. You can open that title directly or continue exploring.';
-            if (!lastRelatedFailure) return;
-            const error = element('p', lastRelatedFailure, 'muted related-error');
-            if (relatedList.querySelector('.related-card')) {
-              relatedList.querySelector('.related-error')?.remove();
-              relatedList.append(error);
-            } else relatedList.replaceChildren(error);
-            if (family.next()) {
-              relatedButton.textContent = 'Try related titles again';
-              relatedButton.hidden = false;
-              relatedButton.disabled = false;
-            }
-          }
-        } catch {
-          if (!isCurrentDetail()) return;
-          lastRelatedFailure = 'Related titles could not be loaded. Try again shortly.';
-          renderFamily();
-          relatedList.querySelector('.related-error')?.remove();
-          relatedList.append(element('p', lastRelatedFailure, 'muted related-error'));
-          relatedButton.textContent = 'Try related titles again';
-          relatedButton.hidden = false;
-          relatedButton.disabled = false;
-        } finally {
-          relatedLoading = false;
-          syncSeasonLookup();
-          if (expandForOpenPopup) {
-            expandForOpenPopup = false;
-            if (openSeasonDialog?.open && family.next() && !lastRelatedFailure) {
-              void loadRelated({ batch: true });
-            }
-          }
-        }
-      };
-      relatedButton.addEventListener('click', () => {
-        if (!relatedExpanded && family.items().length - 1 > relatedRowCapacity()) {
-          relatedExpanded = true;
-          renderFamily();
-        }
-        if (family.next()) void loadRelated({ batch: true });
-      });
-      const relatedHeading = element('h2', 'Related titles', 'related-heading');
-      panel.append(relatedHeading, relatedList, relatedButton);
-      let relatedWidth = -1;
-      let initialRelatedStarted = false;
-      const relatedResize = new ResizeObserver(([entry]) => {
-        if (!isCurrentDetail()) { relatedResize.disconnect(); return; }
-        const width = Math.round(entry.contentRect.width);
-        if (width <= 0 || width === relatedWidth) return;
-        relatedWidth = width;
-        renderFamily();
-        // Grid capacity is unreliable before the panel is mounted. Fill the
-        // actual visible row (plus one overflow card) after layout is known.
-        if (!initialRelatedStarted && family.next() &&
-            family.items().length - 1 <= relatedRowCapacity()) {
-          initialRelatedStarted = true;
-          void loadRelated({ initial: true });
-        }
-      });
-      relatedResize.observe(relatedList);
+      const related = createDetailRelated({ franchise, item, data, api, isCurrentDetail, element, posterImage, state, panel });
+      const { family, relatedDetails, syncInstallmentChoice, loadRelated, relatedHeading } = related;
       if (!pager) return;
       let filmChoiceSelect = null;
       let refreshRequestAction = () => {};
@@ -723,193 +471,13 @@ export function createDetailController({ api, applyAdultVisibility, byId, curren
         pager.nextPage !== null;
       let checkingCompleteSeries = Boolean(likelyCompleteSeries);
       let loadNextEpisodePage = null;
-      // One explicit check at a time: a pending or incomplete public observation
-      // is Unknown, never a claim that an episode is missing.
-      if (pager.episodes.length > 0 && !notReleased) {
-        const check = element('div', undefined, 'availability-check');
-        if (pager.episodes.some((episode) => episode.availability)) {
-          check.append(element('p',
-            'Playable labels use recent, verified public Plex evidence. Unlabelled episodes are not confirmed yet.',
-            'muted'));
-        }
-        const label = element('label', data.kind === 'movie' ? 'Check a film target in Plex' : 'Check an episode in Plex');
-        const select = element('select');
-        const chooseFilmEntry = data.kind === 'movie' && data.total > 1;
-        if (chooseFilmEntry) {
-          const placeholder = element('option', 'Choose one film entry');
-          placeholder.value = '';
-          select.append(placeholder);
-        }
-        const optionText = (episode) => {
-          const schedule = data.kind === 'series' && episode.type === 'Episode'
-            ? episodeScheduleLabel(episode, data.scheduleAsOf ??
-              data.regularSchedule?.asOf) : '';
-          return `${episode.type === 'Episode' ? 'Episode' : episode.type} ${episode.number}` +
-          `${episode.title && episode.title.toLowerCase() !== `episode ${episode.number}` ? ` · ${episode.title}` : ''}` +
-          `${schedule ? ` · ${schedule}` : ''}` +
-          `${episode.availability === 'available' ?
-            episode.availabilityNote === 'alternate_card'
-              ? ' · Playable in Plex; episode card not linked to this episode'
-              : ' · Playable in Plex' :
-            episode.availability === 'previously_available'
-              ? ' · Previously playable; recheck needed' : ''}`;
-        };
-        const appendOptions = (episodes) => {
-          for (const episode of episodes) {
-            const option = element('option', optionText(episode));
-            option.value = String(episode.id);
-            select.append(option);
-            if (filmChoiceSelect && episode.type === 'Episode') {
-              filmChoiceSelect.append(option.cloneNode(true));
-            }
-          }
-        };
-        const updateOption = (episodeId, availability, presentation) => {
-          const episode = pager.episodes.find((entry) => entry.id === episodeId);
-          const option = [...select.options].find((entry) => entry.value === String(episodeId));
-          if (episode && option) {
-            episode.availability = availability;
-            episode.availabilityNote = presentation === 'alternate_card'
-              ? 'alternate_card' : undefined;
-            option.textContent = optionText(episode);
-            refreshAvailabilitySummary();
-            refreshRequestAction();
-            refreshSelectedRequestAction();
-          }
-        };
-        appendOptions(pager.episodes);
-        label.append(select);
-        const button = element('button', data.kind === 'series'
-          ? 'Check selected episode' : 'Check selected film entry');
-        const result = element('p', '', 'muted');
-        button.disabled = !select.value;
-        select.addEventListener('change', () => {
-          result.textContent = '';
-          button.disabled = !select.value;
-        });
-        button.addEventListener('click', async () => {
-          if (!select.value) return;
-          button.disabled = true;
-          select.disabled = true;
-          result.textContent = 'Checking the public library…';
-          try {
-            const status = await api(`/api/catalogue/${item.anidbId}/episodes/${select.value}/availability?kind=${data.kind}`);
-            if (status.state === 'available') {
-              updateOption(Number(select.value), status.state, status.presentation);
-            }
-            select.dispatchEvent(new Event('change'));
-            result.textContent = status.state === 'available' ?
-              status.presentation === 'alternate_card'
-                ? 'Playable in Plex; episode card not linked to this episode'
-                : 'Playable in Plex' :
-              'This entry could not be verified now. The season result above is unchanged.';
-          } catch (error) { result.textContent = 'Availability check is temporarily unavailable'; }
-          finally { button.disabled = !select.value; select.disabled = false; }
-        });
-        check.append(label, button, result);
-        if (data.kind === 'series' && typeof data.restricted === 'boolean') {
-          const requestSelected = element('button', 'Request selected episode');
-          let requesting = false;
-          const updateSelection = () => {
-            const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-            requestSelected.disabled = requesting ||
-              !['Episode', 'Special'].includes(episode?.type) ||
-              episode?.availability === 'available' ||
-              episode?.type === 'Episode' &&
-                episodeScheduleLabel(episode, data.scheduleAsOf ??
-                  data.regularSchedule?.asOf).startsWith('Upcoming');
-            requestSelected.textContent = episode?.type === 'Special'
-              ? 'Request this Special' : 'Request this episode';
-          };
-          select.addEventListener('change', updateSelection);
-          updateSelection();
-          requestSelected.addEventListener('click', async () => {
-            if (requesting) return;
-            const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-            if (!['Episode', 'Special'].includes(episode?.type) ||
-                episode.availability === 'available' ||
-                episode.type === 'Episode' &&
-                  episodeScheduleLabel(episode, data.scheduleAsOf ??
-                    data.regularSchedule?.asOf).startsWith('Upcoming')) return;
-            const scope = { userId: state.user.id, anidbId: item.anidbId,
-              selection: `episode-${episode.id}` };
-            requesting = true;
-            updateSelection();
-            try {
-              const saved = await api('/api/requests', { method: 'POST',
-                body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
-                  episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
-              requestKeys.saved(scope);
-              message(`Request #${saved.requestId} saved for ${episode.type.toLowerCase()} ${episode.number}. ${currentAcquisitionNotice()}`);
-              loadRequests();
-            } catch (error) { message(error.message, true); }
-            finally { requesting = false; updateSelection(); }
-          });
-          check.append(requestSelected);
-        }
-        if (chooseFilmEntry && typeof data.restricted === 'boolean') {
-          const requestSelected = element('button', 'Request selected film entry');
-          let requesting = false;
-          const selectedFilmState = () => filmEntryRequestState({
-            episodes: pager.episodes, nextPage: pager.nextPage,
-            selectedId: Number(select.value),
-          });
-          const updateSelection = () => {
-            requestSelected.disabled = requesting ||
-              selectedFilmState() !== 'requestable';
-          };
-          refreshSelectedRequestAction = updateSelection;
-          select.addEventListener('change', updateSelection);
-          updateSelection();
-          requestSelected.addEventListener('click', async () => {
-            const episode = pager.episodes.find((entry) => String(entry.id) === select.value);
-            if (requesting || selectedFilmState() !== 'requestable' ||
-                episode?.type !== 'Episode') return;
-            const scope = { userId: state.user.id, anidbId: item.anidbId,
-              selection: `film-entry-${episode.id}` };
-            requesting = true;
-            updateSelection();
-            try {
-              const saved = await api('/api/requests', { method: 'POST',
-                body: JSON.stringify({ anidbId: item.anidbId, scope: 'episodes',
-                  episodeIds: [episode.id], requestKey: requestKeys.pending(scope) }) });
-              requestKeys.saved(scope);
-              message(`Request #${saved.requestId} saved for film entry ${episode.number}. ${currentAcquisitionNotice()}`);
-              loadRequests();
-            } catch (error) { message(error.message, true); }
-            finally { requesting = false; updateSelection(); }
-          });
-          check.append(requestSelected);
-        }
-        const advanced = element('details', undefined, 'episode-tools');
-        advanced.append(element('summary', 'Episode and Special options'), check);
-        panel.append(advanced);
-        if (pager.nextPage !== null) {
-          const more = element('button', 'Show more episodes');
-          loadNextEpisodePage = async (notifyError = true) => {
-            if (pager.nextPage === null || more.disabled) return false;
-            more.disabled = true;
-            try {
-              const page = await api(`/api/catalogue/${item.anidbId}?page=${pager.nextPage}`);
-              if (!isCurrentDetail()) return false;
-              const added = pager.append(page);
-              if (added.state !== 'appended') throw new Error('Episode list changed; select the title again');
-              appendOptions(added.episodes);
-              refreshAvailabilitySummary();
-              refreshRequestAction();
-              if (pager.nextPage === null) more.remove();
-              else more.disabled = false;
-              return true;
-            } catch (error) {
-              if (notifyError) message(error.message, true);
-              more.disabled = false;
-              return false;
-            }
-          };
-          more.addEventListener('click', () => { void loadNextEpisodePage(); });
-          advanced.append(more);
-        }
-      }
+      createDetailEpisodeControls({
+        api, currentAcquisitionNotice, data, element, isCurrentDetail, item, loadRequests, message, notReleased, pager, panel, refreshAvailabilitySummary, requestKeys, state,
+        get filmChoiceSelect() { return filmChoiceSelect; }, set filmChoiceSelect(value) { filmChoiceSelect = value; },
+        get refreshRequestAction() { return refreshRequestAction; }, set refreshRequestAction(value) { refreshRequestAction = value; },
+        get refreshSelectedRequestAction() { return refreshSelectedRequestAction; }, set refreshSelectedRequestAction(value) { refreshSelectedRequestAction = value; },
+        get loadNextEpisodePage() { return loadNextEpisodePage; }, set loadNextEpisodePage(value) { loadNextEpisodePage = value; }
+      });
       if (typeof data.restricted !== 'boolean') {
         panel.append(element('p',
           'This title is not requestable until its catalogue status is verified.', 'muted'));
@@ -935,312 +503,25 @@ export function createDetailController({ api, applyAdultVisibility, byId, curren
       if (data.kind === 'series') {
         createSeriesRequestController({
           data, pager, item, notReleased, panel, detailActionRow, relatedHeading, loadRelated, family, relatedDetails, isCurrentDetail, element, document, state, makeReleaseActions, titleLabel, preferredDisplayTitle, requestKeys, sessionResponses, api, refreshTrackingAfterRequest, loadRequests, openPreviewReleaseRequests, openSavedReleaseRequests,
-          get openSeasonDialog() { return openSeasonDialog; }, set openSeasonDialog(value) { openSeasonDialog = value; },
-          get syncSeasonLookup() { return syncSeasonLookup; }, set syncSeasonLookup(value) { syncSeasonLookup = value; },
-          get syncSeasonRows() { return syncSeasonRows; }, set syncSeasonRows(value) { syncSeasonRows = value; },
+          get openSeasonDialog() { return related.openSeasonDialog; }, set openSeasonDialog(value) { related.openSeasonDialog = value; },
+          get syncSeasonLookup() { return related.syncSeasonLookup; }, set syncSeasonLookup(value) { related.syncSeasonLookup = value; },
+          get syncSeasonRows() { return related.syncSeasonRows; }, set syncSeasonRows(value) { related.syncSeasonRows = value; },
           get refreshRequestAction() { return refreshRequestAction; }, set refreshRequestAction(value) { refreshRequestAction = value; },
           get checkingCompleteSeries() { return checkingCompleteSeries; }, set checkingCompleteSeries(value) { checkingCompleteSeries = value; },
           get loadNextEpisodePage() { return loadNextEpisodePage; }, set loadNextEpisodePage(value) { loadNextEpisodePage = value; },
-          get relatedLoading() { return relatedLoading; }, set relatedLoading(value) { relatedLoading = value; },
-          get lastRelatedFailure() { return lastRelatedFailure; }, set lastRelatedFailure(value) { lastRelatedFailure = value; }
+          get relatedLoading() { return related.relatedLoading; }, set relatedLoading(value) { related.relatedLoading = value; },
+          get lastRelatedFailure() { return related.lastRelatedFailure; }, set lastRelatedFailure(value) { related.lastRelatedFailure = value; },
+          get expandForOpenPopup() { return related.expandForOpenPopup; }, set expandForOpenPopup(value) { related.expandForOpenPopup = value; }
         });
         return;
       }
-      const requestAction = element('section', undefined, 'request-action');
-      requestAction.append(element('h2', 'Request this installment'));
-      requestAction.append(element('p', data.kind === 'movie'
-        ? 'A film request includes one main film entry, not extras or trailers.'
-        : notReleased
-          ? 'This installment has not aired yet. The request will watch for its first episode. Other installments have separate requests.'
-        : data.monitorFuture === true
-          ? 'This airing installment includes its aired regular episodes and watches for new ones. Other installments have separate requests; Specials can be requested separately.'
-          : 'This anime installment includes its regular episodes. Choose another season or installment under Related titles. Specials can be requested separately.',
-      'muted'));
-      if (data.kind === 'series') {
-        const installmentLabel = element('label', 'Choose a season or installment',
-          'installment-choice');
-        installmentSelect = element('select');
-        installmentSelect.addEventListener('change', () => {
-          const selectedId = Number(installmentSelect.value);
-          if (Number.isSafeInteger(selectedId) &&
-              family.items().some((entry) => entry.anidbId === selectedId)) {
-            if (selectedInstallmentId !== selectedId) {
-              reviewingRequest = false;
-              requestReview.hidden = true;
-            }
-            selectedInstallmentId = selectedId;
-            selectedAvailability = selectedId === item.anidbId ? 'unknown' : 'checking';
-            const checkVersion = ++selectedCheckVersion;
-            requestStatus.textContent = '';
-            updateRequestReview();
-            refreshRequestAction();
-            if (selectedId !== item.anidbId) {
-              void checkSelectedAvailability(selectedId, checkVersion);
-            }
-          }
-        });
-        installmentLabel.append(installmentSelect);
-        requestAction.append(installmentLabel);
-        syncInstallmentChoice();
-      }
-      panel.insertBefore(requestAction, relatedHeading);
-      const requestStatus = element('p', '', 'muted request-feedback');
-      requestStatus.setAttribute('role', 'status');
-      const viewRequest = element('a', 'View in My Requests →',
-        'text-link request-receipt-link');
-      viewRequest.href = '#/requests';
-      viewRequest.hidden = true;
-      const alreadyAvailable = () => selectedInstallmentId === item.anidbId
-        ? installmentRequestState({ kind: data.kind,
-          episodes: pager.episodes, nextPage: pager.nextPage,
-          monitorFuture: data.monitorFuture,
-          regularSeason: data.regularSeason }) === 'already_available'
-        : selectedAvailability === 'already_available';
-      const requestLabel = () => data.kind === 'movie'
-        ? filmChoiceSelect?.value ? 'Request selected film' : 'Request film' :
-        selectedInstallmentId !== item.anidbId ? 'Request selected installment' :
-        data.monitorFuture === true && pager.episodes.some((episode) =>
-          episode.type === 'Episode' && episode.availability === 'available')
-          ? 'Watch future episodes' : 'Request series';
-      const button = element('button', requestLabel(), 'primary');
-      let requestSaving = false;
-      let requestSaved = false;
-      let reviewingRequest = earlyRequest?.dataset.reviewing === 'true';
-      const requestReview = element('div', undefined, 'request-review');
-      requestReview.hidden = !reviewingRequest;
-      requestReview.append(element('strong', 'Review your request'));
-      const reviewSummary = element('p', data.kind === 'movie'
-        ? `${data.title || item.title} · one film entry`
-        : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
-      requestReview.append(reviewSummary);
-      let filmReleaseMode='auto_review';
-      const filmReleasePicker=state.releaseSearch?{value:()=>filmReleaseMode}:null;
-      const filmPopup=state.releaseSearch?element('dialog',undefined,'season-request-dialog release-request-submenu'):null;
-      let filmActions=null,filmClose=null;
-      const filmFeedback=element('p','','muted');filmFeedback.setAttribute('role','status');
-      if(filmPopup){
-        filmPopup.setAttribute('aria-label',data.kind==='movie'?'Request Movie':'Request Series');
-        openSeasonDialog=filmPopup;
-        const heading=element('div',undefined,'season-request-popup-heading');
-        const close=element('button','Cancel','quiet');filmClose=close;close.addEventListener('click',()=>{if(!requestSaving)filmPopup.close();});
-        heading.append(element('h2',data.kind==='movie'?'Request Movie':'Request Series'),close);
-        filmPopup.append(heading,element('p',data.title||item.title));
-        filmActions=makeReleaseActions(element,{
-          onAuto:()=>{if(requestSaving)return;filmReleaseMode='auto_review';reviewingRequest=true;button.click();},
-          onManual:()=>{if(requestSaving)return;filmReleaseMode='manual';reviewingRequest=true;button.click();}});
-        filmPopup.append(filmActions.element,filmFeedback);requestAction.append(filmPopup);
-        filmPopup.addEventListener('cancel',event=>{if(requestSaving)event.preventDefault();});
-        filmPopup.addEventListener('close',()=>{reviewingRequest=false;requestReview.hidden=true;if(!requestSaved){requestStatus.textContent='';refreshRequestAction();}});
-      }
-      requestReview.append(element('p',
-        'You can cancel the saved request until Negev starts processing a release. Cancellation does not remove files.',
-        'muted'));
-      updateRequestReview = () => {
-        const selected = family.items().find((entry) => entry.anidbId === selectedInstallmentId);
-        reviewSummary.textContent = selectedInstallmentId === item.anidbId
-          ? `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`
-          : `${selected?.title ?? 'Selected installment'} · Negev will check its film or episodes before saving`;
-      };
-      const cancelReview = element('button', 'Cancel', 'quiet');
-      cancelReview.type = 'button';
-      cancelReview.addEventListener('click', () => {
-        reviewingRequest = false;
-        requestReview.hidden = true;
-        requestStatus.textContent = '';
-        refreshRequestAction();
+      createInstallmentRequestControls({
+        api, currentAcquisitionNotice, data, detailActionRow, earlyRequest, element, family, isCurrentDetail, item, loadRequests, message, notReleased, openPreviewReleaseRequests, openSavedReleaseRequests, pager, panel, refreshTrackingAfterRequest, related, relatedHeading, requestKeys, state, syncInstallmentChoice,
+        get filmChoiceSelect() { return filmChoiceSelect; }, set filmChoiceSelect(value) { filmChoiceSelect = value; },
+        get refreshRequestAction() { return refreshRequestAction; }, set refreshRequestAction(value) { refreshRequestAction = value; },
+        get checkingCompleteSeries() { return checkingCompleteSeries; }, set checkingCompleteSeries(value) { checkingCompleteSeries = value; },
+        get loadNextEpisodePage() { return loadNextEpisodePage; }, set loadNextEpisodePage(value) { loadNextEpisodePage = value; }
       });
-      requestReview.append(cancelReview);
-      refreshRequestAction = () => {
-        if (requestSaving || requestSaved) return;
-        const blocked = alreadyAvailable();
-        const checkingSelected = selectedInstallmentId === item.anidbId
-          ? checkingCompleteSeries : selectedAvailability === 'checking';
-        button.disabled = blocked || checkingSelected;
-        if(filmActions){filmActions.auto.disabled=button.disabled;filmActions.manual.disabled=button.disabled;}
-        button.textContent = blocked ? 'Already available' :
-          checkingSelected ? selectedInstallmentId === item.anidbId
-            ? 'Checking availability…' : 'Checking selected installment…' :
-            reviewingRequest ? 'Confirm request' : requestLabel();
-        if (blocked) requestStatus.textContent = 'This installment is already verified in Negev’s Library.';
-        else if (checkingSelected && selectedInstallmentId !== item.anidbId) {
-          requestStatus.textContent = 'Checking this installment’s current Plex availability…';
-        }
-        else if (requestStatus.textContent === 'This installment is already verified in Negev’s Library.') {
-          requestStatus.textContent = '';
-        }
-      };
-      const checkSelectedAvailability = async (selectedId, checkVersion) => {
-        let result = 'unknown';
-        try {
-          const selected = await api(`/api/catalogue/${selectedId}`, {
-            signal: AbortSignal.timeout(4_000) });
-          if (selected.state === 'details' && selected.anidbId === selectedId &&
-              ['series', 'movie'].includes(selected.kind) &&
-              Array.isArray(selected.episodes)) {
-            result = installmentRequestState({ kind: selected.kind,
-              episodes: selected.episodes, nextPage: selected.nextPage,
-              monitorFuture: selected.monitorFuture,
-              regularSeason: selected.regularSeason });
-          }
-        } catch { /* The final request check remains authoritative. */ }
-        if (!isCurrentDetail() || checkVersion !== selectedCheckVersion ||
-            selectedInstallmentId !== selectedId) return;
-        selectedAvailability = result;
-        requestStatus.textContent = result === 'unknown'
-          ? 'Availability could not be confirmed here. Negev will check before saving.' : '';
-        refreshRequestAction();
-      };
-      refreshRequestAction();
-      const filmEntries = data.kind === 'movie'
-        ? pager.episodes.filter((episode) => episode.type === 'Episode') : [];
-      const needsFilmChoice = data.kind === 'movie' &&
-        (filmEntries.length !== 1 || pager.nextPage !== null);
-      let filmChoice;
-      if (needsFilmChoice) {
-        filmChoice = element('div', undefined, 'film-request-choice');
-        filmChoice.hidden = true;
-        const label = element('label', 'Choose the film version or part');
-        filmChoiceSelect = element('select');
-        filmChoiceSelect.addEventListener('change', () => {
-          reviewingRequest = false;
-          requestReview.hidden = true;
-          requestStatus.textContent = '';
-          refreshRequestAction();
-        });
-        const placeholder = element('option', 'Select a main film entry');
-        placeholder.value = '';
-        filmChoiceSelect.append(placeholder);
-        for (const episode of filmEntries) {
-          const option = element('option', `Episode ${episode.number}${episode.title ? ` · ${episode.title}` : ''}`);
-          option.value = String(episode.id);
-          filmChoiceSelect.append(option);
-        }
-        label.append(filmChoiceSelect);
-        filmChoice.append(label);
-        if (pager.nextPage !== null) filmChoice.append(element('p',
-          'More film entries may be listed under Episode and Special options below.', 'muted'));
-        if(filmPopup)filmPopup.insertBefore(filmChoice,filmActions.element);else requestAction.append(filmChoice);
-      }
-      button.addEventListener('click', async () => {
-        if (alreadyAvailable() || selectedAvailability === 'checking' ||
-            requestSaving || requestSaved) return;
-        if(filmPopup&&!filmPopup.open){
-          if(filmChoice)filmChoice.hidden=false;
-          filmPopup.showModal();return;
-        }
-        if (needsFilmChoice && !filmChoiceSelect.value) {
-          filmChoice.hidden = false;
-          button.textContent = 'Request selected film';
-          requestStatus.textContent = 'Choose one main film entry above.';
-          filmChoiceSelect.focus();
-          return;
-        }
-        if (!reviewingRequest) {
-          if (needsFilmChoice) {
-            const selectedFilm = pager.episodes.find((episode) =>
-              String(episode.id) === filmChoiceSelect.value);
-            reviewSummary.textContent = `${data.title || item.title} · ` +
-              `main film entry ${selectedFilm?.number ?? '?'}${selectedFilm?.title ? ` · ${selectedFilm.title}` : ''}`;
-          }
-          reviewingRequest = true;
-          requestReview.hidden = false;
-          button.textContent = 'Confirm request';
-          requestStatus.textContent = 'Review this installment, then confirm.';
-          return;
-        }
-        if(filmReleasePicker?.value()==='manual'){
-          const selectedFilmId=needsFilmChoice?Number(filmChoiceSelect.value):null;
-          const keyScope={userId:state.user.id,anidbId:selectedInstallmentId,
-            ...(selectedFilmId?{selection:'film-entry-'+selectedFilmId}:{})};
-          filmPopup?.close();
-          await openPreviewReleaseRequests([{title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle,
-            body:{anidbId:selectedInstallmentId,scope:selectedFilmId?'episodes':'installment',
-              ...(selectedFilmId?{episodeIds:[selectedFilmId]}:{}),requestKey:requestKeys.pending(keyScope)},
-            saved:result=>{requestKeys.saved(keyScope);requestSaved=true;reviewingRequest=false;requestReview.hidden=true;
-              button.textContent='Requested';button.disabled=true;requestStatus.textContent=savedRequestMessage(result);
-              if(Number.isSafeInteger(result.requestId)&&result.requestId>0)viewRequest.href=requestRoute(result.requestId);
-              viewRequest.hidden=false;}}]);
-          return;
-        }
-        requestSaving = true;
-        if(filmActions){filmActions.auto.disabled=true;filmActions.manual.disabled=true;filmClose.disabled=true;filmFeedback.textContent='Saving request…';}
-        if (installmentSelect) installmentSelect.disabled = true;
-        if (filmChoiceSelect) filmChoiceSelect.disabled = true;
-        button.disabled = true;
-        button.textContent = 'Saving request…';
-        requestStatus.textContent = 'Saving your request…';
-        const selectedFilmId = needsFilmChoice ? Number(filmChoiceSelect.value) : null;
-        const scope = { userId: state.user.id, anidbId: selectedInstallmentId,
-          ...(selectedFilmId ? { selection: `film-entry-${selectedFilmId}` } : {}) };
-        try {
-          const requestKey = requestKeys.pending(scope);
-          const saved = await api('/api/requests', { method: 'POST', body: JSON.stringify({
-            anidbId: selectedInstallmentId,
-            scope: selectedFilmId ? 'episodes' : 'installment',
-            ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
-            ...(filmReleasePicker?{releaseMode:filmReleasePicker.value()}:{}),
-          }) });
-          requestKeys.saved(scope);
-          refreshTrackingAfterRequest();
-          requestSaved = true;
-          reviewingRequest = false;
-          requestReview.hidden = true;
-          button.textContent = 'Requested';
-          requestStatus.textContent = savedRequestMessage(saved);
-          filmPopup?.close();
-          if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle}],filmReleasePicker.value());}
-          if (Number.isSafeInteger(saved.requestId) && saved.requestId > 0) {
-            viewRequest.href = requestRoute(saved.requestId);
-          }
-          viewRequest.hidden = false;
-          message(saved.state === 'pending'
-            ? 'Request saved. Follow it under My Requests.'
-            : `Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
-          loadRequests();
-        } catch (error) {
-          const feedback = requestFailureMessage(error);
-          filmFeedback.textContent=feedback;if(filmClose)filmClose.disabled=false;
-          requestStatus.textContent = feedback;
-          message(feedback, true);
-          requestSaving = false;
-          if (installmentSelect) installmentSelect.disabled = false;
-          if (filmChoiceSelect) filmChoiceSelect.disabled = false;
-          refreshRequestAction();
-        }
-      });
-      requestAction.append(requestReview, detailActionRow(button), requestStatus, viewRequest);
-      if (checkingCompleteSeries && loadNextEpisodePage) {
-        // A title-level count is only a hint. Keep the request closed until
-        // every exact regular episode has been checked, even after page eight.
-        const continueCheck = element('button', 'Continue availability check', 'quiet');
-        continueCheck.hidden = true;
-        continueCheck.type = 'button';
-        requestAction.append(continueCheck);
-        const checkPages = async () => {
-          continueCheck.hidden = true;
-          requestStatus.textContent = 'Checking the complete episode list…';
-          for (let page = 0; page < 20 && pager.nextPage !== null; page++) {
-            if (!isCurrentDetail()) return;
-            if (!await loadNextEpisodePage(false)) {
-              if (!isCurrentDetail()) return;
-              requestStatus.textContent = 'The full availability check could not finish. Try again.';
-              continueCheck.hidden = false;
-              return;
-            }
-          }
-          if (!isCurrentDetail()) return;
-          if (pager.nextPage !== null) {
-            requestStatus.textContent = 'More episodes remain to check before a new request can be made.';
-            continueCheck.hidden = false;
-            return;
-          }
-          checkingCompleteSeries = false;
-          requestStatus.textContent = '';
-          refreshRequestAction();
-        };
-        continueCheck.addEventListener('click', () => { void checkPages(); });
-        void checkPages();
-      }
     } catch (error) {
       if (!isCurrentDetail()) return;
       const retry = element('button', 'Try again');
