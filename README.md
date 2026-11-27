@@ -63,6 +63,8 @@ Use a local browser with the exact configured `http://localhost:3000` origin for
 
 ### Admin tools
 
+- **Create invite link** (account menu or Administration) gives a link with a **Copy link** button. The link works once, expires after 7 days, and fills in the registration form. The **Invitations** list on the Administration page shows each link's status (active, used, expired or revoked) and who used it; **Revoke** stops an unused link working. Links are shown only once, because Negev stores only a digest of each code.
+- **Reset password** next to an account gives a one-time link that expires after 24 hours. Opening it lets that person choose a new password, which also signs the account out everywhere. Creating a new link cancels any earlier unused one. Negev never shows or stores the password itself.
 - **Disable account** in the admin account list signs that person out on every device and blocks sign-in until you enable the account again. Their requests and history are kept. You cannot disable your own account.
 - With `NEGEV_TITLE_CHECK=1`, a title's page shows **Check whole title in Plex**. Use it for titles imported outside Negev, for example manually through Shoko; it checks every episode and reports how many are playable.
 - Two admin-only diagnostic endpoints have no UI and never start a download: `POST /api/admin/import-activity` (`{}`) reports whether Shoko is importing, and `POST /api/requests/:id/presence-probe` (`{"episodeIds":[…]}`) re-checks up to 10 of a request's episodes in Plex. Both need a signed-in admin session with its CSRF header.

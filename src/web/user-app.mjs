@@ -228,7 +228,37 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store').send({ revision: clientRevision }));
   registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
     safeImportReasons, accounts, readImportActivity, listOperationalReview,
-    reviewOperationalItem, reviewHeldRequest });
+    reviewOperationalItem, reviewHeldRequest, now });
+  // Public: sets a new password from an admin's one-time reset link.
+  app.post('/api/password-reset', { preHandler: requireOrigin,
+    config: { rateLimit: authRate } }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    const body = request.body;
+    if (!allowedBody(body, ['code', 'password']) ||
+        !['code', 'password'].every((key) => Object.hasOwn(body, key))) {
+      return reply.code(400).send({ error: 'Use the password reset form.' });
+    }
+    const code = typeof body.code === 'string' ? body.code.trim().toLowerCase() : body.code;
+    const invalid = invitedAccountValidation({ code, username: 'placeholder', password: body.password });
+    if (invalid) {
+      return reply.code(400).send(invalid.field === 'code'
+        ? { field: 'code', error: 'This reset link is incomplete. Open the full link from the owner.' }
+        : invalid);
+    }
+    if (typeof accounts.resetPassword !== 'function') {
+      return reply.code(503).send({ error: 'Password resets unavailable' });
+    }
+    const result = await accounts.resetPassword({ code, password: body.password });
+    if (result.state === 'held' && result.reason === 'authentication_busy') {
+      return reply.header('Retry-After', '1').code(503)
+        .send({ error: 'Authentication busy; retry shortly' });
+    }
+    if (result.state !== 'reset') {
+      return reply.code(409).send({ field: 'code',
+        error: 'This reset link is invalid, expired or already used. Ask the owner for a new one.' });
+    }
+    return { state: 'reset', username: result.username };
+  });
   app.post('/api/register', { preHandler: requireOrigin,
     config: { rateLimit: authRate } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

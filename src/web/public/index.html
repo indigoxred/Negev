@@ -33,7 +33,7 @@
     <button id="chinese-toggle" class="adult-toggle" type="button" aria-pressed="true" hidden><span>Chinese: On</span></button>
 </section><p class="menu-label account-section-label">Account</p>
         <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
-        <button id="invite" class="quiet" hidden>Create invite</button>
+        <button id="invite" class="quiet" hidden>Create invite link</button>
         <button id="signout" class="quiet">Sign out</button>
         <button id="signout-everywhere" class="quiet" title="Also signs out your other browsers and devices">Sign out of all devices</button>
       </div>
@@ -45,7 +45,7 @@
     <button id="update-dismiss" class="quiet" type="button">Later</button>
   </div>
   <p id="message" class="message" role="status" aria-live="polite"></p>
-  <p id="invite-code" class="invite-code" hidden></p>
+  <div id="invite-code" class="invite-code" role="status" hidden></div>
   <main id="main-content" tabindex="-1">
     <section id="session-loading" class="session-loading" role="status" aria-live="polite">
       <p id="session-loading-text">Checking your session…</p>
@@ -69,6 +69,13 @@
           <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
           <small>Use a long password. Maximum 128 UTF-8 bytes; no tabs or line breaks.</small>
           <button class="primary" type="submit">Create account</button>
+        </form>
+        <form id="reset-form" method="post" action="/api/password-reset" hidden>
+          <p>Choose a new password. Any other signed-in browsers are signed out.</p>
+          <input name="code" type="hidden">
+          <label>New password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+          <small>Use a long password. Maximum 128 UTF-8 bytes; no tabs or line breaks.</small>
+          <button class="primary" type="submit">Set new password</button>
         </form>
       </div>
     </section>
@@ -233,8 +240,12 @@
           <div id="review-list"></div><button id="more-review" type="button" hidden>Show more</button>
         </section>
         <section class="panel" aria-labelledby="users-title"><div class="section-head"><h2 id="users-title">User management</h2><button id="refresh-users" class="quiet" type="button">Refresh</button></div>
-          <p class="muted">Allow or block 18+ requests for each account. Users can hide 18+ titles for themselves with the top-right switch.</p>
+          <p class="muted">Allow or block 18+ requests, send a password reset link, or disable an account. Users can hide 18+ titles for themselves with the top-right switch.</p>
           <div id="admin-users"></div>
+        </section>
+        <section class="panel" aria-labelledby="invites-title"><div class="section-head"><h2 id="invites-title">Invitations</h2><button id="admin-create-invite" type="button">Create invite link</button><button id="refresh-invites" class="quiet" type="button">Refresh</button></div>
+          <p class="muted">Each invitation link works once and expires after 7 days. Revoke a link you no longer want used.</p>
+          <div id="admin-invites"></div>
         </section>
       </section>
     </div>
