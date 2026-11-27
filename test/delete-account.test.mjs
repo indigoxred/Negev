@@ -10,6 +10,7 @@ import { deleteAccount } from '../src/auth/delete-account.mjs';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openPendingTitleLedger } from '../src/requests/pending-title-ledger.mjs';
 import { openParentWatchLedger } from '../src/requests/parent-watch-ledger.mjs';
+import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { buildUserApp } from '../src/web/user-app.mjs';
 
 const origin = 'http://localhost:3000';
@@ -21,6 +22,7 @@ async function withData(run) {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-delete-account-'));
   const dbPath = path.join(dir, 'negev.sqlite');
   const accounts = openAccountLedger(dbPath, { now: () => 1_000 });
+  let acquisitions;
   try {
     const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: ownerPassword });
     const { code } = accounts.createInvite({ adminUserId: owner.id, expiresMs: 900_000 });
@@ -29,9 +31,8 @@ async function withData(run) {
     openRequestLedger(dbPath).close();
     openPendingTitleLedger(dbPath).close();
     openParentWatchLedger(dbPath).close();
+    acquisitions = openAcquisitionLedger(dbPath);
     const db = new DatabaseSync(dbPath);
-    db.exec(`CREATE TABLE IF NOT EXISTS acquisition_attempts (id INTEGER PRIMARY KEY,
-      request_id INTEGER NOT NULL REFERENCES requests(id)) STRICT`);
     const addRequest = (requesterId, key) => Number(db.prepare(`INSERT INTO requests
       (requester_id,request_key,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
       VALUES (?,?,100,'series','all',1,1000,'held','saved')`).run(requesterId, key).lastInsertRowid);
@@ -45,7 +46,15 @@ async function withData(run) {
     db.prepare('INSERT INTO request_targets (request_id,target_id) VALUES (?,?)').run(ownerRequest, target);
     db.prepare(`INSERT INTO rss_watch_timing (request_id,next_metadata_ms,feed_interval_ms)
       VALUES (?,0,60000)`).run(withChildren);
-    db.prepare('INSERT INTO acquisition_attempts (request_id) VALUES (?)').run(started);
+    db.prepare('INSERT INTO request_targets (request_id,target_id) VALUES (?,?)').run(started, target);
+    const candidate = { indexerId: 7, guid: 'fixture-started-release' };
+    const hash = 'a'.repeat(40);
+    const attemptId = acquisitions.reserve({ requestId: started, candidate,
+      episodeIds: [1], nowMs: 1000 }).attemptId;
+    acquisitions.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 1001 });
+    acquisitions.beginDispatch({ attemptId, nowMs: 1002 });
+    acquisitions.recordTorrent({ attemptId, hash, nowMs: 1003 });
+    acquisitions.beginStart({ attemptId, hash, manifestDigest: 'b'.repeat(64), nowMs: 1004 });
     db.prepare(`INSERT INTO pending_title_intents (requester_id,request_key,anidb_id,title,
       created_ms,state,next_due_ms) VALUES (?,'p',200,'Pending',1000,'pending',0)`).run(member.id);
     db.prepare(`INSERT INTO parent_watches (tvdb_id,requester_id,source_series_id,enabled,
@@ -55,6 +64,7 @@ async function withData(run) {
     db.close();
     await run({ dbPath, accounts, owner, member, ids: { plain, withChildren, started, ownerRequest } });
   } finally {
+    acquisitions?.close();
     accounts.close();
     await rm(dir, { recursive: true, force: true });
   }

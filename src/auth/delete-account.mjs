@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { rememberIdFloor } from '../runtime/durable-id.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
@@ -8,23 +9,32 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 const REQUEST_CHILD_TABLES = ['request_targets', 'rss_watch_timing',
   'acquisition_request_checks', 'acquisition_request_suspensions',
   'preferred_release_waits', 'acquisition_quality_retry', 'rss_release_wakes'];
+const RESERVATION_CHILD_TABLES = ['acquisition_target_claims', 'acquisition_file_plans',
+  'acquisition_bonus_files', 'acquisition_bonus_plans', 'acquisition_releases'];
+const EXTERNAL_ATTEMPT_TABLES = ['handoff_intents', 'pure_move_intents', 'completion_checks',
+  'start_checks', 'recognition_recoveries', 'acquisition_dispatch_refusals',
+  'acquisition_start_rejections', 'acquisition_retirements',
+  'acquisition_prestart_mismatch_retirements', 'acquisition_stall_retirement_intents',
+  'acquisition_media_retirement_intents'];
 
 // Permanently removes a disabled account and its requests, in one
 // transaction. A request that already started a download keeps its record,
 // because that record describes files already in Plex or still downloading;
 // it stops watching for new episodes so nothing more is fetched for it.
-// Foreign keys are left off on this connection: invitations the account
-// created stay listed, without a creator name.
+// An undispatched reservation is removable under the same write lock as the
+// dispatch transition. Anything sent without a start receipt must reconcile
+// first. Foreign keys stay enabled; used invitations lose their creator link.
 export function deleteAccount(dbPath, { adminUserId, userId }) {
   if (typeof dbPath !== 'string' || !dbPath || !validId(adminUserId) || !validId(userId)) {
     throw new TypeError('Invalid account deletion');
   }
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
+    db.exec('PRAGMA foreign_keys=ON');
+    db.exec('BEGIN IMMEDIATE');
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'")
       .all().map((row) => row.name));
     const has = (name) => tables.has(name);
-    db.exec('BEGIN IMMEDIATE');
     try {
       const findUser = db.prepare('SELECT id,username,role,disabled FROM users WHERE id=?');
       const admin = findUser.get(adminUserId);
@@ -40,17 +50,42 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
       const requestIds = has('requests')
         ? db.prepare('SELECT id FROM requests WHERE requester_id=?').all(userId).map((row) => row.id)
         : [];
-      const startedIds = new Set(has('acquisition_attempts') && requestIds.length
-        ? db.prepare(`SELECT DISTINCT request_id FROM acquisition_attempts
-          WHERE request_id IN (SELECT id FROM requests WHERE requester_id=?)`).all(userId)
-          .map((row) => row.request_id)
-        : []);
+      const startedIds = new Set();
+      const reservations = [];
+      if (has('acquisition_attempts') && requestIds.length) {
+        const attempts = db.prepare(`SELECT * FROM acquisition_attempts WHERE request_id IN
+          (SELECT id FROM requests WHERE requester_id=?)`).all(userId);
+        for (const attempt of attempts) {
+          if (has('acquisition_starts') && db.prepare(
+            'SELECT 1 FROM acquisition_starts WHERE attempt_id=?').get(attempt.id)) {
+            startedIds.add(attempt.request_id);
+          } else if (attempt.status === 'reserved' && attempt.torrent_hash === null &&
+              !EXTERNAL_ATTEMPT_TABLES.filter(has).some(table => db.prepare(
+                `SELECT 1 FROM ${table} WHERE attempt_id=?`).get(attempt.id))) {
+            reservations.push(attempt.id);
+          } else {
+            db.exec('ROLLBACK');
+            return held('acquisition_unsettled');
+          }
+        }
+      }
+      // Save ID floors before deleting rows: stale workers must see missing
+      // records even when another request or candidate is created immediately.
+      rememberIdFloor(db, 'users');
+      if (has('requests')) rememberIdFloor(db, 'requests');
+      if (has('acquisition_attempts')) rememberIdFloor(db, 'acquisition_attempts');
+      for (const attemptId of reservations) {
+        for (const table of RESERVATION_CHILD_TABLES.filter(has)) {
+          db.prepare(`DELETE FROM ${table} WHERE attempt_id=?`).run(attemptId);
+        }
+        db.prepare('DELETE FROM acquisition_attempts WHERE id=?').run(attemptId);
+      }
       const removable = requestIds.filter((id) => !startedIds.has(id));
       const childDeletes = REQUEST_CHILD_TABLES.filter(has)
         .map((table) => db.prepare(`DELETE FROM ${table} WHERE request_id=?`));
       const clearInstallment = has('parent_watch_installments')
         ? db.prepare('UPDATE parent_watch_installments SET request_id=NULL WHERE request_id=?') : null;
-      const deleteRequest = db.prepare('DELETE FROM requests WHERE id=?');
+      const deleteRequest = has('requests') ? db.prepare('DELETE FROM requests WHERE id=?') : null;
       for (const requestId of removable) {
         for (const statement of childDeletes) statement.run(requestId);
         clearInstallment?.run(requestId);
@@ -85,6 +120,7 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
         }
         // Unused invitations from a removed admin no longer have an owner.
         db.prepare(`DELETE FROM invitations WHERE created_by=? AND used_ms IS NULL`).run(userId);
+        db.prepare('UPDATE invitations SET created_by=NULL WHERE created_by=?').run(userId);
       }
       db.prepare('DELETE FROM users WHERE id=?').run(userId);
       db.exec('COMMIT');

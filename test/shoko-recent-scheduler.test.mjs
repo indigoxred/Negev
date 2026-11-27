@@ -23,6 +23,19 @@ function fakeClock() {
   };
 }
 
+test('starting twice preserves the pending drain after a scan', async () => {
+  const clock = fakeClock(); const calls = [];
+  const scheduler = createShokoRecentScheduler({ ...clock,
+    scan: async () => { calls.push('scan'); return { state: 'caught_up' }; },
+    drainOne: async () => { calls.push('drain'); return { state: 'idle' }; },
+  });
+  try {
+    scheduler.start(); await clock.fire();
+    scheduler.start(); await clock.fire();
+    assert.deepEqual(calls, ['scan', 'drain']);
+  } finally { await scheduler.close(); }
+});
+
 test('disabled start makes no Shoko call and a gap schedules one delayed scan', async () => {
   const clock = fakeClock();
   const calls = [];

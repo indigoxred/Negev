@@ -1,3 +1,4 @@
+import { activeRequestOwnerSql } from './request-owner.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
 import { LIVE_ATTEMPTS } from './live-attempts.mjs';
@@ -85,7 +86,7 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
     LEFT JOIN start_checks c ON c.attempt_id=a.id
     WHERE a.status IN ('dispatch_unknown','torrent_observed') AND
-      hold.request_id IS NULL AND
+      hold.request_id IS NULL AND ${activeRequestOwnerSql(db, 'a.request_id')} AND
       s.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);

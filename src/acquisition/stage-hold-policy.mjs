@@ -33,6 +33,8 @@ export const PREFLIGHT_PUBLISH_HOLDS = Object.freeze([
 
 // Start holds with their own short schedules (kept from earlier builds).
 export const START_SESSION_RETRY_HOLDS = Object.freeze([
+  // The owner can be re-enabled; a pause must not become terminal review.
+  'account_access_changed',
   'provider_unavailable', 'provider_http_403', 'authentication_backoff',
   'authentication_unavailable', 'metadata_reader_busy',
   'availability_evidence_stale', 'import_activity_unverified',
@@ -57,6 +59,7 @@ export const COMPLETION_SESSION_RETRY_HOLDS = Object.freeze([
 
 // Request search holds retried after a minute or after five minutes.
 export const REQUEST_SESSION_RETRY_HOLDS = Object.freeze([
+  'account_access_changed',
   'provider_http_403', 'authentication_backoff',
   'authentication_unavailable', 'release_search_incomplete',
   'import_quiet_window_unverified', 'torrent_hash_in_use',

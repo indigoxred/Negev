@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { allocateDurableId } from '../runtime/durable-id.mjs';
 import { initializeReleaseControl, readReleaseControl, updateReleaseControl, updateReleasePreference } from '../acquisition/release-control.mjs';
 import { checkPreferredRelease, getPreferredFallback, closePreferredWaits, getPreferredWait } from '../acquisition/preferred-release.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
@@ -111,8 +112,8 @@ export function openRequestLedger(dbPath) {
     WHERE anidb_id=? AND requester_id<>? AND kind='series' AND monitor_future=1
       AND watch_closed=0 AND cancelled_ms IS NULL LIMIT 1`);
   const insertRequest = db.prepare(`INSERT INTO requests
-    (requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
-    VALUES (?,?,?,?,?,?,?,?,?,'held',?)`);
+    (id,requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
+    VALUES (?,?,?,?,?,?,?,?,?,?,'held',?)`);
   const insertTarget = db.prepare(`INSERT INTO targets(anidb_id,episode_id,status,reason)
     VALUES (?,?,'held',?) ON CONFLICT(anidb_id,episode_id) DO NOTHING`);
   const findTarget = db.prepare('SELECT id FROM targets WHERE anidb_id=? AND episode_id=?');
@@ -344,7 +345,7 @@ export function openRequestLedger(dbPath) {
             return held('already_monitored_elsewhere');
           }
         }
-        const requestId = Number(insertRequest.run(requesterId, requestKey, commandKey, item.title, item.anidbId,
+        const requestId = Number(insertRequest.run(allocateDurableId(db, 'requests'), requesterId, requestKey, commandKey, item.title, item.anidbId,
           item.kind, item.episodeKey, Number(item.monitorFuture), nowMs, REASON).lastInsertRowid);
         const targetIds = [];
         if (initialReleaseControl === null && releaseMode !== 'auto' && item.episodeIds.length) {

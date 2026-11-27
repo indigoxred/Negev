@@ -8,6 +8,7 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { startStoppedCandidate } from '../src/acquisition/start-stopped-candidate.mjs';
+import { openAccountLedger } from '../src/auth/account-ledger.mjs';
 
 const hash = 'a'.repeat(40);
 const candidate = { indexerId: 7, guid: 'synthetic-release' };
@@ -51,6 +52,26 @@ const options = { expected, hostPath, baseUrl: 'http://qbittorrent.internal:8080
       beforeObservedAtMs: 203, afterObservedAtMs: 204 },
     plex: { state: 'ok', complete: true, sourceVerified: true,
       libraryIds: [102], parts: [] } }) };
+
+test('disabling the owner during the final mount check prevents the downloader start', async () =>
+  withObservedTorrent(async ({ ledger, dbPath, attemptId, readRequest }) => {
+    const accounts = openAccountLedger(dbPath);
+    const owner = await accounts.bootstrapAdmin({ username: 'FixtureOwner', password: 'fixture-owner-password' });
+    const db = new DatabaseSync(dbPath); let starts = 0;
+    db.prepare('UPDATE requests SET requester_id=?').run(owner.id);
+    try {
+      const result = await startStoppedCandidate({ ...options, ledger, attemptId, readRequest,
+        inspectMounts: async () => { db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(owner.id); return mounts; },
+        fetchImpl: async url => {
+          const endpoint = new URL(url).pathname;
+          if (endpoint.endsWith('/start')) { starts++; return new Response(''); }
+          if (endpoint.endsWith('/properties')) return Response.json({ save_path: expected.savePath, download_path: '' });
+          return Response.json(endpoint.endsWith('/files') ? files : [torrent]);
+        } });
+      assert.deepEqual(result, { state: 'held', reason: 'account_access_changed' });
+      assert.equal(starts, 0); assert.equal(ledger.getStart(attemptId), null);
+    } finally { db.close(); accounts.close(); }
+  }));
 
 test('start rechecks Shoko video support before starting a saved torrent', async () =>
   withObservedTorrent(async ({ ledger, attemptId, readRequest }) => {

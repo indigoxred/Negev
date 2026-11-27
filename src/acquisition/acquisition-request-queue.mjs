@@ -1,4 +1,5 @@
 import { pendingRecognitionSql, unreconciledAttemptSql } from './recognition-release-sql.mjs';
+import { activeRequestOwnerSql } from './request-owner.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { REQUEST_RELATED_RETRY_HOLDS, REQUEST_SESSION_RETRY_HOLDS }
   from './stage-hold-policy.mjs';
@@ -71,10 +72,7 @@ export function openAcquisitionRequestQueue(dbPath,
   // A disabled account's requests wait: nothing new is searched or started
   // for them until an admin enables the account again. Work already past
   // this queue (a started download) finishes normally.
-  const hasUsers = Boolean(db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").get());
-  const cohortFilter = (hasUsers ? `NOT EXISTS (SELECT 1 FROM users owner
-      WHERE owner.id=r.requester_id AND owner.disabled=1) AND ` : '') +
+  const cohortFilter = `${activeRequestOwnerSql(db, 'r.id')} AND ` +
     (allowedAnidbIds === null ? '' :
       `r.anidb_id IN (${allowedAnidbIds.map(() => '?').join(',')}) AND`);
   try {

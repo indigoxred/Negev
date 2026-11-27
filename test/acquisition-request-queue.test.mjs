@@ -893,15 +893,16 @@ test('requests from a disabled account wait until the account is enabled again',
     const accounts = openAccountLedger(dbPath, { now: () => 1 });
     const owner = await accounts.bootstrapAdmin({ username: 'Owner', password: 'long-owner-passphrase' });
     accounts.close();
-    assert.equal(owner.id, 1, 'the fixture requests belong to this account');
     const db = new DatabaseSync(dbPath);
-    db.prepare('UPDATE users SET disabled=1 WHERE id=1').run();
+    // The legacy fixture predates accounts; do not reuse its orphan owner ID.
+    db.prepare('UPDATE requests SET requester_id=?').run(owner.id);
+    db.prepare('UPDATE users SET disabled=1 WHERE id=?').run(owner.id);
     let queue = openAcquisitionRequestQueue(dbPath);
     try {
       assert.equal(queue.claimNext({ nowMs: 10 }).state, 'pass_complete');
       assert.equal(queue.claimNext({ nowMs: 11, priorityRequestId: 1 }).state, 'pass_complete',
         'a priority wake does not bypass the disabled account');
-      db.prepare('UPDATE users SET disabled=0 WHERE id=1').run();
+      db.prepare('UPDATE users SET disabled=0 WHERE id=?').run(owner.id);
       queue.close(); queue = openAcquisitionRequestQueue(dbPath);
       assert.equal(queue.claimNext({ nowMs: 12, priorityRequestId: 1 }).requestId, 1);
     } finally { queue.close(); db.close(); }

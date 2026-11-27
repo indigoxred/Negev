@@ -1,6 +1,8 @@
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
+import { allocateDurableId } from '../runtime/durable-id.mjs';
+import { migrateInvitationCreators } from './invitation-schema.mjs';
 
 const scrypt = promisify(scryptCallback);
 const held = (reason) => ({ state: 'held', reason });
@@ -42,6 +44,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const db = new DatabaseSync(dbPath, { timeout: 5_000 });
   try {
     db.exec('PRAGMA journal_mode=WAL');
+    db.exec('PRAGMA foreign_keys=ON');
     db.exec(`CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY,
       username TEXT NOT NULL,
@@ -61,7 +64,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
     db.exec(`CREATE TABLE IF NOT EXISTS invitations (
       id INTEGER PRIMARY KEY,
       code_hash TEXT NOT NULL UNIQUE,
-      created_by INTEGER NOT NULL REFERENCES users(id),
+      created_by INTEGER REFERENCES users(id),
       expires_ms INTEGER NOT NULL CHECK(expires_ms>=0),
       used_ms INTEGER CHECK(used_ms>=0)
     ) STRICT`);
@@ -89,6 +92,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       ['used_by', 'INTEGER REFERENCES users(id)']]) {
       if (!inviteColumns.has(name)) db.exec(`ALTER TABLE invitations ADD COLUMN ${name} ${type}`);
     }
+    migrateInvitationCreators(db);
     // One-time password reset links an admin hands to a user. Only the
     // code's digest is stored; using one ends every session for the account.
     db.exec(`CREATE TABLE IF NOT EXISTS password_resets (
@@ -104,8 +108,8 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   } catch (error) { db.close(); throw error; }
   const countUsers = db.prepare('SELECT COUNT(*) AS count FROM users');
   const insertUser = db.prepare(`INSERT INTO users
-    (username,username_key,role,password_salt,password_hash,created_ms)
-    VALUES (?,?,?,?,?,?)`);
+    (id,username,username_key,role,password_salt,password_hash,created_ms)
+    VALUES (?,?,?,?,?,?,?)`);
   const findName = db.prepare('SELECT id FROM users WHERE username_key=?');
   const findAuth = db.prepare(`SELECT id,username,role,password_salt,password_hash,
     session_version,disabled,adult_allowed FROM users WHERE username_key=?`);
@@ -238,7 +242,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       const passwordHash = await hashPassword(password, salt);
       return transact(() => {
         if (countUsers.get().count !== 0) return null;
-        const id = Number(insertUser.run(username, usernameKey(username), 'admin',
+        const id = Number(insertUser.run(allocateDurableId(db, 'users'), username, usernameKey(username), 'admin',
           salt, passwordHash, now()).lastInsertRowid);
         return publicUser(findUser.get(id));
       });
@@ -332,7 +336,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
         const invite = findInvite.get(codeHash);
         if (!inviteUsable(invite, now())) return held('invite_unavailable');
         if (findName.get(usernameKey(username))) return held('username_unavailable');
-        const id = Number(insertUser.run(username, usernameKey(username), 'member',
+        const id = Number(insertUser.run(allocateDurableId(db, 'users'), username, usernameKey(username), 'member',
           salt, passwordHash, now()).lastInsertRowid);
         useInvite.run(now(), id, invite.id);
         return publicUser(findUser.get(id));

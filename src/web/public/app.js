@@ -2261,9 +2261,9 @@ async function loadUsers() {
         remove.hidden = !user.disabled;
         remove.setAttribute('aria-label', `Permanently delete the account ${user.username}`);
         remove.addEventListener('click', async () => {
-          if (!confirm(`Permanently delete ${user.username}? Their account and requests are ` +
-              'removed. Requests that already started a download stay as history and stop ' +
-              'watching for new episodes. This cannot be undone.')) return;
+          if (!confirm(`Permanently delete ${user.username}? Their account and undispatched requests are ` +
+              'removed. Downloads that started or may have started stay as closed history. ' +
+              'Unsettled downloads must be reconciled first. This cannot be undone.')) return;
           remove.disabled = true;
           try {
             const result = await api(`/api/admin/users/${user.id}/delete`,

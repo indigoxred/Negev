@@ -197,6 +197,7 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     const messages = {
       cannot_delete_self: 'You cannot delete your own account.',
       disable_first: 'Disable the account before deleting it.',
+      acquisition_unsettled: 'A download is still being prepared or reconciled. Wait for it to settle before deleting the account.',
     };
     return reply.code(messages[result.reason] ? 409 : 404).send({
       error: messages[result.reason] ?? 'Account unavailable', reason: result.reason });

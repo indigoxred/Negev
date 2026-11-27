@@ -7,6 +7,8 @@ import { releaseReservationGate } from './release-control.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
+import { allocateDurableId } from '../runtime/durable-id.mjs';
+import { requestOwnerActive } from './request-owner.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -253,8 +255,8 @@ export function openAcquisitionLedger(dbPath) {
         OR (r.reason='file_wrong_identity' AND a.anidb_id=?))
     LIMIT 1`);
   const insertAttempt = db.prepare(`INSERT INTO acquisition_attempts
-    (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
-    VALUES (?,?,?,?,'reserved',?,?,?)`);
+    (id,request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
+    VALUES (?,?,?,?,?,'reserved',?,?,?)`);
   const claimTarget = db.prepare('INSERT INTO acquisition_target_claims(attempt_id,anidb_id,episode_id) VALUES (?,?,?)');
   // Why a never-started attempt may be retired before its start: a recorded
   // wrong-installment check, or an admin release of that exact parked check.
@@ -465,6 +467,7 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
+        if (!requestOwnerActive(db, requestId)) return held('account_access_changed');
         const selectionReason = releaseReservationGate(db,requestId,candidate,episodeIds,nowMs,preparedHash,plannedFiles);
         if (selectionReason) return held(selectionReason);
         const digest = digestForCandidate(candidate, request.anidb_id);
@@ -491,7 +494,7 @@ export function openAcquisitionLedger(dbPath) {
           return held('uncertain_attempt_exhausted');
         }
         if (episodeIds.some((id) => busyTarget.get(request.anidb_id, id))) return held('target_busy');
-        const id = Number(insertAttempt.run(requestId, request.anidb_id, candidate.indexerId,
+        const id = Number(insertAttempt.run(allocateDurableId(db, 'acquisition_attempts'), requestId, request.anidb_id, candidate.indexerId,
           digest, evidencePolicy, nowMs, nowMs).lastInsertRowid);
         for (const episodeId of episodeIds) claimTarget.run(id, request.anidb_id, episodeId);
         return { state: 'reserved', attemptId: id };
@@ -992,6 +995,7 @@ export function openAcquisitionLedger(dbPath) {
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'reserved' && !row.expected_hash) return held('torrent_not_prepared');
         if (row.status === 'reserved') {
+          if (!requestOwnerActive(db, row.request_id)) return held('account_access_changed');
           begin.run(nowMs, attemptId);
           return { state: 'dispatch_unknown', sendNow: true };
         }
@@ -1059,6 +1063,7 @@ export function openAcquisitionLedger(dbPath) {
           if (existing.manifest_digest !== normalizedDigest) return held('start_manifest_conflict');
           return { state: existing.status, sendNow: false };
         }
+        if (!requestOwnerActive(db, row.request_id)) return held('account_access_changed');
         insertStart.run(attemptId, normalizedHash, normalizedDigest, nowMs, nowMs);
         db.prepare('UPDATE acquisition_starts SET send_token=? WHERE attempt_id=?').run(sendToken,attemptId);
         return { state: 'start_unknown', sendNow: true };

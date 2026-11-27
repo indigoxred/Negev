@@ -53,6 +53,7 @@ export function createShokoRecentScheduler({ scan, drainOne,
   };
   return {
     start() {
+      if (loop.started || loop.stopped) return;
       nextKind = 'scan';
       if (loop.start(initialDelay)) lastState = 'waiting';
     },
