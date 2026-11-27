@@ -2250,10 +2250,31 @@ async function loadUsers() {
               `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
             button.disabled = user.disabled;
             showLabel();
+            remove.hidden = !user.disabled;
           } catch (error) { message(error.message, true); }
           finally { access.disabled = false; }
         });
-        row.append(access);
+        // Deleting is only offered once the account is disabled.
+        const remove = element('button', 'Delete account', 'quiet danger');
+        remove.type = 'button';
+        remove.hidden = !user.disabled;
+        remove.setAttribute('aria-label', `Permanently delete the account ${user.username}`);
+        remove.addEventListener('click', async () => {
+          if (!confirm(`Permanently delete ${user.username}? Their account and requests are ` +
+              'removed. Requests that already started a download stay as history and stop ' +
+              'watching for new episodes. This cannot be undone.')) return;
+          remove.disabled = true;
+          try {
+            const result = await api(`/api/admin/users/${user.id}/delete`,
+              { method: 'POST', body: '{}' });
+            message(`Deleted ${result.username}: ${result.deletedRequests} request` +
+              `${result.deletedRequests === 1 ? '' : 's'} removed` +
+              (result.keptStartedRequests ? `, ${result.keptStartedRequests} started ` +
+                `download${result.keptStartedRequests === 1 ? '' : 's'} kept as history.` : '.'));
+            void loadUsers();
+          } catch (error) { message(error.message, true); remove.disabled = false; }
+        });
+        row.append(access, remove);
       }
       list.append(row);
     }

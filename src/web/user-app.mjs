@@ -54,7 +54,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   startTitleCheck, getTitleCheck,
   probeRequestTargets, releaseSelection, releasePreviews,
   readImportActivity,
-  listOperationalReview, reviewOperationalItem,
+  listOperationalReview, reviewOperationalItem, deleteAccount,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   acquisitionAllowedAnidbIds = null,
   ownershipGate = null,
@@ -231,7 +231,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store').send({ revision: clientRevision }));
   registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
     safeImportReasons, accounts, readImportActivity, listOperationalReview,
-    reviewOperationalItem, reviewHeldRequest, now });
+    reviewOperationalItem, reviewHeldRequest, deleteAccount, now });
   // Public: sets a new password from an admin's one-time reset link.
   app.post('/api/password-reset', { preHandler: requireOrigin,
     config: { rateLimit: authRate } }, async (request, reply) => {

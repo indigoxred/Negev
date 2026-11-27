@@ -3,7 +3,7 @@
 // user-app.mjs unchanged; every route still checks the admin role itself.
 export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
   safeImportReasons, accounts, readImportActivity, listOperationalReview,
-  reviewOperationalItem, reviewHeldRequest, now = Date.now }) {
+  reviewOperationalItem, reviewHeldRequest, deleteAccount, now = Date.now }) {
   // Read-only operator diagnostic. A quiet observation is never a download
   // permission and no file, path, torrent, or provider details leave the API.
   app.post('/api/admin/import-activity', { preHandler: writeGuards,
@@ -175,6 +175,32 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     const id = Number(value);
     return Number.isSafeInteger(id) && id > 0 ? id : null;
   };
+  // Permanent. The account must be disabled first; see src/auth/delete-account.mjs.
+  app.post('/api/admin/users/:id/delete', { preHandler: writeGuards }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (!adminOnly(request, reply)) return reply;
+    const userId = positiveParam(request.params.id);
+    if (userId === null || Object.keys(request.query).length ||
+        !allowedBody(request.body ?? {}, []) || Object.keys(request.body ?? {}).length) {
+      return reply.code(400).send({ error: 'Invalid account deletion' });
+    }
+    if (typeof deleteAccount !== 'function') {
+      return reply.code(503).send({ error: 'Account deletion unavailable' });
+    }
+    let result;
+    try { result = await deleteAccount({ adminUserId: request.negevUser.id, userId }); }
+    catch (error) {
+      request.negevError = error;
+      return reply.code(503).send({ error: 'Account deletion unavailable' });
+    }
+    if (result.state === 'deleted') return result;
+    const messages = {
+      cannot_delete_self: 'You cannot delete your own account.',
+      disable_first: 'Disable the account before deleting it.',
+    };
+    return reply.code(messages[result.reason] ? 409 : 404).send({
+      error: messages[result.reason] ?? 'Account unavailable', reason: result.reason });
+  });
   app.get('/api/admin/invitations', { preHandler: requireUser }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     if (!adminOnly(request, reply)) return reply;
