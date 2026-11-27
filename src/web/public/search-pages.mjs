@@ -4,35 +4,46 @@ const validItem = (item) => Number.isSafeInteger(item?.anidbId) &&
 
 // Catalogue pages are a browsing aid. A changed result set must be searched
 // again rather than silently mixing different snapshots.
+// The server can hide titles an account may not see (18+). It reports how
+// many with `hidden`, and shown plus hidden still counts toward `total`.
+const hiddenCount = (page) => page.hidden === undefined ? 0
+  : Number.isSafeInteger(page.hidden) && page.hidden >= 0 && page.hidden <= 20 ? page.hidden : null;
+
 export function createSearchPager(first) {
+  const firstHidden = first ? hiddenCount(first) : null;
   if (first?.state !== 'results' || first.page !== 1 ||
       !Number.isSafeInteger(first.total) || first.total < 0 ||
-      !Array.isArray(first.items) || first.items.length > 20 ||
-      first.items.length > first.total ||
-      (first.total > 0 && first.items.length === 0) ||
+      !Array.isArray(first.items) || firstHidden === null ||
+      first.items.length + firstHidden > 20 ||
+      first.items.length + firstHidden > first.total ||
+      (first.total > 0 && first.items.length + firstHidden === 0) ||
       first.items.some((item) => !validItem(item)) ||
       new Set(first.items.map((item) => item.anidbId)).size !== first.items.length) {
     throw new TypeError('Invalid first catalogue page');
   }
   const items = [...first.items];
   const ids = new Set(items.map((item) => item.anidbId));
-  let nextPage = items.length < first.total ? 2 : null;
+  let seen = items.length + firstHidden;
+  let nextPage = seen < first.total ? 2 : null;
   return {
     get items() { return [...items]; },
     get nextPage() { return nextPage; },
     append(page) {
+      const hidden = page ? hiddenCount(page) : null;
       if (nextPage === null || nextPage > 1000 || page?.state !== 'results' ||
           page.page !== nextPage || page.total !== first.total ||
           page.catalogueSource !== first.catalogueSource ||
-          !Array.isArray(page.items) || page.items.length < 1 ||
-          page.items.length > 20 || items.length + page.items.length > first.total ||
+          !Array.isArray(page.items) || hidden === null ||
+          page.items.length + hidden < 1 || page.items.length + hidden > 20 ||
+          seen + page.items.length + hidden > first.total ||
           page.items.some((item) => !validItem(item) || ids.has(item.anidbId)) ||
           new Set(page.items.map((item) => item.anidbId)).size !== page.items.length) {
         return { state: 'held' };
       }
       items.push(...page.items);
       for (const item of page.items) ids.add(item.anidbId);
-      nextPage = items.length === first.total ? null : nextPage + 1;
+      seen += page.items.length + hidden;
+      nextPage = seen === first.total ? null : nextPage + 1;
       return { state: 'appended', items: [...page.items] };
     },
   };

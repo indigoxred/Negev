@@ -230,20 +230,37 @@ test('real exact submitter keeps an Airing title watched for future episodes',
     } finally { requests.close(); }
   }));
 
-test('deactivated account prevents a queued request from resolving',
+test('a disabled account pauses a queued request, which resolves once the account is enabled',
   async () => withLedger(async ({ ledger }) => {
     ledger.enqueue(item);
     let submitted = 0;
-    const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+    let enabled = false;
+    let nowMs = 1_000;
+    const worker = createPendingTitleWorker({ ledger, now: () => nowMs,
       authorize: async ({ requesterId }) => {
         assert.equal(requesterId, 4);
-        return false;
+        return enabled;
       },
       submitRequest: async () => { submitted++; return { state: 'held',
         requestId: 44 }; } });
-    assert.deepEqual(await worker.runOnce(), { state: 'complete', intentId: 1,
-      reason: 'account_access_changed' });
+    const paused = await worker.runOnce();
+    assert.equal(paused.state, 'pending', 'a disabled account must not close the request');
+    assert.equal(paused.reason, 'account_access_changed');
     assert.equal(submitted, 0);
+    assert.equal(ledger.get(1).normalRequestId, null);
+    enabled = true;
+    nowMs = paused.nextDueMs;
+    assert.deepEqual(await worker.runOnce(), { state: 'resolved', intentId: 1, requestId: 44 });
+    assert.equal(submitted, 1);
+  }));
+
+test('a submit that reports the account paused also waits instead of closing',
+  async () => withLedger(async ({ ledger }) => {
+    ledger.enqueue(item);
+    const worker = createPendingTitleWorker({ ledger, now: () => 1_000,
+      authorize: async () => true,
+      submitRequest: async () => ({ state: 'held', reason: 'account_access_changed' }) });
+    assert.equal((await worker.runOnce()).state, 'pending');
   }));
 
 test('a restricted pending title cannot become a request after adult access is disabled',

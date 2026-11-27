@@ -525,8 +525,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     }
     // Match Airing and Discover: accounts without 18+ access never receive
     // titles known to be restricted (unknown ones stay; their detail is gated).
+    // `hidden` keeps the page count honest: shown plus hidden still adds up
+    // to `total`, so the browser pager can finish (search-pages.mjs).
     if (!request.negevUser.adultAllowed && Array.isArray(result.items)) {
-      return { ...result, items: result.items.filter((item) => item?.adult !== true) };
+      const items = result.items.filter((item) => item?.adult !== true);
+      return { ...result, items, hidden: result.items.length - items.length };
     }
     return result;
   });

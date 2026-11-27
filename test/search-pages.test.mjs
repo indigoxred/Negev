@@ -36,6 +36,27 @@ test('a fallback source cannot be spliced into a dump search page', () => {
   { state: 'held' });
 });
 
+test('pages that had titles hidden still add up to the total and finish', () => {
+  // total 5: page 1 shows 1 and hides 1, page 2 hides everything, page 3 shows 2.
+  const pager = createSearchPager({ state: 'results', page: 1, total: 5,
+    items: [item(1)], hidden: 1 });
+  assert.equal(pager.nextPage, 2);
+  assert.deepEqual(pager.append({ state: 'results', page: 2, total: 5, items: [], hidden: 1 }),
+    { state: 'appended', items: [] });
+  assert.equal(pager.nextPage, 3);
+  assert.equal(pager.append({ state: 'results', page: 3, total: 5,
+    items: [item(4), item(5)] }).state, 'appended');
+  assert.equal(pager.nextPage, null, 'shown plus hidden reached the total');
+  assert.deepEqual(pager.items.map((entry) => entry.anidbId), [1, 4, 5]);
+});
+
+test('a first page where every title was hidden is valid and continues', () => {
+  const pager = createSearchPager({ state: 'results', page: 1, total: 3, items: [], hidden: 2 });
+  assert.equal(pager.nextPage, 2);
+  assert.throws(() => createSearchPager({ state: 'results', page: 1, total: 3, items: [], hidden: -1 }),
+    TypeError);
+});
+
 test('empty search has no further page', () => {
   const pager = createSearchPager({ state: 'results', page: 1,
     total: 0, items: [] });

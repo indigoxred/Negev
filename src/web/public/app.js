@@ -2368,8 +2368,9 @@ byId('search-form').addEventListener('submit', async (event) => {
       'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
     if (data.catalogueCacheWriteFailed) results.append(element('p',
       'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
-    if (data.items.length === 0) results.append(element('p',
-      'No matching anime titles found. Try another name or browse the catalogue.', 'muted'));
+    if (data.items.length === 0) results.append(element('p', pager.nextPage === null
+      ? 'No matching anime titles found. Try another name or browse the catalogue.'
+      : 'The first results are hidden for your account. Show more to keep looking.', 'muted'));
     appendItems(data.items);
     results.dataset.complete = 'true';
     restoreRoutePosition();

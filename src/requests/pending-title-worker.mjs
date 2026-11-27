@@ -1,7 +1,9 @@
 const terminalReasons = new Set(['already_available', 'already_monitored_elsewhere', 'invalid_request',
   'idempotency_key_conflict', 'request_cancelled',
-  'ambiguous_movie_scope', 'account_access_changed',
-  'adult_access_disabled']);
+  'ambiguous_movie_scope', 'adult_access_disabled']);
+// A disabled account can be enabled again, so its intents wait rather than
+// close. A deleted account's intents are removed with the account.
+const ACCOUNT_PAUSE_MS = 15 * 60_000;
 
 // One paced resolution attempt. The only way this worker creates an
 // acquisition-visible request is through the existing exact submitter.
@@ -25,10 +27,13 @@ export function createPendingTitleWorker({ ledger, submitRequest,
       let authorized;
       try { authorized = await authorize({ requesterId: claim.requesterId }); }
       catch { authorized = null; }
-      if (authorized === false) {
-        return ledger.finish({ intentId: claim.id, version: claim.version,
-          reason: 'account_access_changed', nowMs: now() });
-      }
+      const pause = () => {
+        const deferred = ledger.defer({ intentId: claim.id, version: claim.version,
+          nowMs: now(), delayMs: ACCOUNT_PAUSE_MS, reason: 'account_access_changed' });
+        return deferred.state === 'pending' ? { state: 'pending', intentId: claim.id,
+          reason: 'account_access_changed', nextDueMs: deferred.nextDueMs } : deferred;
+      };
+      if (authorized === false) return pause();
       let result;
       try {
         if (authorized !== true) throw new TypeError('Account status unavailable');
@@ -54,6 +59,7 @@ export function createPendingTitleWorker({ ledger, submitRequest,
       }
       const reason = typeof result?.reason === 'string' &&
         result.reason.length <= 100 ? result.reason : 'submit_unavailable';
+      if (reason === 'account_access_changed') return pause();
       if (terminalReasons.has(reason)) {
         return ledger.finish({ intentId: claim.id, version: claim.version,
           reason, nowMs: now() });
