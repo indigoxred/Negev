@@ -338,6 +338,75 @@ test('unverified interrupted request holds its claim while a later request advan
   }
 });
 
+test('repeated reconciliation never rewrites a live request search', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-live-reconcile-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath);
+  requests.submit({ requesterId: 1, requestKey: 'stale', nowMs: 1,
+    intent: { state: 'ready', anidbId: 42, kind: 'movie',
+      episodeIds: [1001], monitorFuture: false } });
+  const live = requests.submit({ requesterId: 1, requestKey: 'live', nowMs: 2,
+    intent: { state: 'ready', anidbId: 43, kind: 'movie',
+      episodeIds: [1002], monitorFuture: false } });
+  const acquisitions = openAcquisitionLedger(dbPath);
+  const handoffs = openHandoffLedger(dbPath);
+  const oldQueue = openAcquisitionRequestQueue(dbPath);
+  oldQueue.claimNext({ nowMs: 100 }); // request 1: crash leftover
+  oldQueue.close();
+  const inspectRequest = acquisitions.inspectRequestAttempts.bind(acquisitions);
+  let available = false;
+  acquisitions.inspectRequestAttempts = (...args) => {
+    if (!available) throw new Error('ledger unavailable');
+    return inspectRequest(...args);
+  };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let searching;
+  const searchStarted = new Promise((resolve) => { searching = resolve; });
+  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async ({ requestId }) => {
+      // The live search reserves a release before it finishes.
+      acquisitions.reserve({ requestId, candidate: { indexerId: 7, guid: 'live' },
+        episodeIds: [1002], nowMs: 210 });
+      searching();
+      await gate;
+      return { state: 'held', reason: 'no_safe_release' };
+    },
+    processStart: async () => ({ state: 'held', reason: 'disabled' }),
+    processCompletion: async () => ({ state: 'held', reason: 'disabled' }),
+    processPublish: async () => ({ state: 'held', reason: 'disabled' }),
+    now: () => 200 });
+  const reader = openAcquisitionRequestQueue(dbPath);
+  try {
+    const first = await pipeline.initialize();
+    assert.deepEqual(first.requests.held, [1]);
+    const tick = pipeline.tickRequests({ priorityRequestId: live.requestId });
+    await searchStarted;
+    available = true;
+    const during = await pipeline.initialize();
+    assert.equal(during.requests.state, 'deferred');
+    assert.deepEqual(during.requests.held, [1],
+      'the stale claim stays held for a later pass');
+    assert.equal(reader.getResult(live.requestId).state, null,
+      'the live claim is left to its worker');
+    release();
+    const page = await tick;
+    assert.deepEqual(page.results.map((item) => [item.requestId, item.reason]),
+      [[live.requestId, 'no_safe_release']]);
+    assert.equal(reader.getResult(live.requestId).reason, 'no_safe_release');
+    const after = await pipeline.initialize();
+    assert.deepEqual(after.requests.resolved, [1]);
+    assert.deepEqual(after.requests.held, []);
+  } finally {
+    release();
+    reader.close();
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('a completed transfer progresses while a request search is still running', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'negev-pipeline-drain-'));
   const dbPath = path.join(dir, 'state.sqlite');
@@ -481,4 +550,46 @@ test('pending bonuses resume from the completion clock without holding the media
  const dir=await mkdtemp(path.join(tmpdir(),'negev-bonus-clock-'));const dbPath=path.join(dir,'state.sqlite');const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath),handoffs=openHandoffLedger(dbPath);let calls=0,finish;const wait=new Promise(r=>finish=r);
  const pipeline=openAcquisitionPipeline({dbPath,acquisitions:{...acquisitions,listPendingBonuses:()=>[{attemptId:8,name:'Extras/OVA.mkv'}]},qbBaseUrl,sessionGate:authorizedSession,processRequest:async()=>{},processStart:async()=>{},processCompletion:async()=>{},processPublish:async()=>{},processBonus:async()=>{calls++;await wait;return {state:'bonus_waiting'}},now:()=>100});
  try{await pipeline.initialize();await pipeline.tickCompletions();assert.equal(calls,1);await pipeline.tickCompletions();assert.equal(calls,1,'one active bonus observation only');finish();await pipeline.close();}finally{finish();await pipeline.close();handoffs.close();acquisitions.close();requests.close();await rm(dir,{recursive:true,force:true});}
+});
+
+test('a bonus that cannot save its next check does not starve later bonuses', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-bonus-fair-'));
+  const dbPath = path.join(dir, 'state.sqlite');
+  const requests = openRequestLedger(dbPath), acquisitions = openAcquisitionLedger(dbPath),
+    handoffs = openHandoffLedger(dbPath);
+  let clock = 100;
+  const seen = [];
+  const settled = [];
+  // The ledger keeps returning both, oldest first: the first never saves.
+  const pending = [{ attemptId: 8, name: 'Extras/Stuck.mkv' }, { attemptId: 9, name: 'Extras/OVA.mkv' }];
+  const pipeline = openAcquisitionPipeline({ dbPath,
+    acquisitions: { ...acquisitions, listPendingBonuses: ({ limit }) => pending.slice(0, limit) },
+    qbBaseUrl, sessionGate: authorizedSession,
+    processRequest: async () => {}, processStart: async () => {},
+    processCompletion: async () => ({ state: 'pass_complete' }), processPublish: async () => {},
+    processBonus: async ({ item }) => {
+      seen.push(item.name);
+      const done = Promise.resolve({ state: 'bonus_waiting' });
+      settled.push(done);
+      return done;
+    },
+    now: () => clock });
+  try {
+    await pipeline.initialize();
+    for (let i = 0; i < 3; i++) {
+      await pipeline.tickCompletions();
+      await Promise.all(settled);
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.deepEqual(seen, ['Extras/Stuck.mkv', 'Extras/OVA.mkv'],
+      'the second bonus gets a turn and neither repeats within a minute');
+    clock += 60_000;
+    await pipeline.tickCompletions();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(seen.at(-1), 'Extras/Stuck.mkv', 'it is retried after a minute');
+  } finally {
+    await pipeline.close();
+    handoffs.close(); acquisitions.close(); requests.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });

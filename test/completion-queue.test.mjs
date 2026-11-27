@@ -536,3 +536,17 @@ test('two queue connections cannot claim the same completed attempt', async () =
     } finally { second.close(); }
   });
 });
+
+test('an invalid progress snapshot is dropped instead of stranding the claim', async () =>
+  fixture(async (ctx) => {
+    const worker = createCompletionWorker({ queue: ctx.queue, now: () => 1_000,
+      processAttempt: async () => ({ state: 'held', reason: 'incomplete',
+        transfer: { progressBasisPoints: 37.5, etaSeconds: 120,
+          speedBytesPerSecond: 512, transferState: 'active' } }) });
+    const result = await worker.runOnce();
+    assert.equal(result.state, 'processed');
+    const saved = ctx.queue.getResult(result.attemptId);
+    assert.equal(saved.state, 'held');
+    assert.equal(saved.reason, 'incomplete');
+    assert.ok(saved.nextDueMs > 1_000, 'the claim keeps its normal retry');
+  }));

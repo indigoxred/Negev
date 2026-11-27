@@ -1,4 +1,8 @@
 import { DatabaseSync } from 'node:sqlite';
+import { LIVE_ATTEMPTS } from './live-attempts.mjs';
+import { COMPLETION_SESSION_RETRY_HOLDS,
+  COMPLETION_TRANSIENT_PROVIDER_HOLDS as TRANSIENT_PROVIDER_REASONS }
+  from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -17,12 +21,6 @@ const validTransfer = (value) => value &&
   ['active', 'stalled', 'queued', 'paused'].includes(value.transferState);
 const RETRY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
-// These are failed observations, not evidence of changed ownership or files.
-const TRANSIENT_PROVIDER_REASONS = [
-  'provider_http_error', 'provider_unavailable', 'provider_timeout',
-  'provider_transport', 'provider_invalid_response',
-  'torrent_unavailable', 'torrent_unavailable_after_stop', 'stop_outcome_unknown',
-];
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
 // Pure-move completion only reads bounded qBittorrent metadata until the
 // torrent is complete; it does not hash or copy video bytes on this retry.
@@ -118,19 +116,13 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
   const outsideStagingFilter = pureMode
     ? "AND (c.attempt_id IS NULL OR c.reason!='incomplete_path_outside_staging')"
     : '';
-  const next = db.prepare(`SELECT a.id FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+  const next = db.prepare(`SELECT a.id FROM ${LIVE_ATTEMPTS} a
     JOIN acquisition_starts s ON s.attempt_id=a.id AND s.torrent_hash=a.torrent_hash
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
-    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
     LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
     LEFT JOIN ${checksTable} c ON c.attempt_id=a.id
     WHERE a.id>? AND a.status='torrent_observed' AND
-      hold.request_id IS NULL AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
+      hold.request_id IS NULL AND
       h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
       ${outsideStagingFilter}
@@ -164,16 +156,9 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
     FROM ${checksTable} c
-    JOIN acquisition_attempts a ON a.id=c.attempt_id AND a.status='torrent_observed'
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+    JOIN ${LIVE_ATTEMPTS} a ON a.id=c.attempt_id AND a.status='torrent_observed'
     LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state IS NULL AND h.attempt_id IS NULL
-      AND j.attempt_id IS NULL AND x.attempt_id IS NULL AND t.attempt_id IS NULL
-      AND si.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
@@ -234,11 +219,8 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const temporaryProviderFailure = pureMode &&
           TRANSIENT_PROVIDER_REASONS.includes(reason);
-        const delay = temporaryProviderFailure || ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable', 'completion_transition', 'torrent_not_stopped',
-          'torrent_still_present', 'staging_not_empty',
-          'media_retirement_pending', 'media_retirement_unavailable']
-          .includes(reason) ? SESSION_RETRY_MS :
+        const delay = temporaryProviderFailure ||
+          COMPLETION_SESSION_RETRY_HOLDS.includes(reason) ? SESSION_RETRY_MS :
           reason === 'incomplete'
             ? (pureMode ? PURE_INCOMPLETE_RETRY_MS : INCOMPLETE_RETRY_MS) :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;
@@ -341,8 +323,10 @@ export function createCompletionWorker({ queue, processAttempt, now = Date.now }
             pass: claim.pass, state: savedState,
             reason: savedState === 'held' ? reason ?? 'worker_unavailable' : null,
             checkedMs: now(),
-            transfer: savedState === 'held' && reason === 'incomplete'
-              ? result?.transfer ?? null : null });
+            // Progress is display-only. Drop an invalid snapshot rather than
+            // fail the save, which would leave this claim stuck until restart.
+            transfer: savedState === 'held' && reason === 'incomplete' &&
+              validTransfer(result?.transfer) ? result.transfer : null });
           if (saved.state !== 'recorded') return held('queue_unavailable');
         } catch { return held('queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,

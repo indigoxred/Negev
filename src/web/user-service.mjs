@@ -115,6 +115,8 @@ import { readShokoImportActivity } from '../availability/shoko-import-activity.m
 import { combineImportActivity } from '../availability/combined-import-activity.mjs';
 import { importFeedState } from
   '../acquisition/import-quiet-window.mjs';
+import { runPrestartMismatchRetirement } from
+  '../acquisition/run-prestart-mismatch-retirement.mjs';
 
 const withinRoot = (root, candidate) => {
   const relative = path.relative(root, candidate);
@@ -636,6 +638,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
     let acquisitionRuntime;
+    // Set once acquisition workers open; an admin release needs qBittorrent.
+    let releaseProviders = null;
     const publicAvailableIdsForTitle = (anidbId, checkedMs) =>
       plexObserver ? new Set([
         ...directAvailability.getRecentAvailableIds({ anidbId, nowMs: checkedMs }),
@@ -972,6 +976,38 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return titleChecks.getProgress({ anidbId, nowMs: now() });
       } : undefined,
       discoverCandidates, previewCandidate, releaseSelection, releasePreviews,
+      // Admin action on one parked review item. Retry makes it due now for
+      // its normal guarded worker. Release retires a never-started attempt
+      // through the guarded prestart path (torrent removed without its
+      // files, staging proven empty) so its episodes can be acquired again.
+      reviewOperationalItem: async ({ stage, attemptId, action, actorId }) => {
+        if (stopping) return { state: 'held', reason: 'service_stopping' };
+        const nowMs = now();
+        if (action === 'retry') {
+          if (stage === 'start_hold') {
+            return startReview.retryReview({ attemptId, actorId, nowMs });
+          }
+          if (stage === 'import_hold') {
+            return publishReview.retryReview({ attemptId, actorId, nowMs });
+          }
+          return { state: 'held', reason: 'action_unavailable' };
+        }
+        if (action !== 'release' || stage !== 'start_hold') {
+          return { state: 'held', reason: 'action_unavailable' };
+        }
+        if (!releaseProviders) return { state: 'held', reason: 'release_unavailable' };
+        const attempt = acquisitions.getAttempt(attemptId);
+        if (attempt?.status !== 'torrent_observed' || !attempt.torrentHash) {
+          return { state: 'held', reason: 'not_in_review' };
+        }
+        const recorded = startReview.recordReleaseRequest({ attemptId, actorId, nowMs });
+        if (recorded.state !== 'release_recorded') return recorded;
+        const p = releaseProviders;
+        return track(runPrestartMismatchRetirement({ ledger: acquisitions,
+          attemptId, hash: attempt.torrentHash, baseUrl: p.qbBaseUrl,
+          stagingRoot: p.stagingHostPath, saveRoot: p.qbitStagingRoot,
+          verifyStagingRoot: p.verifyStagingRoot, sessionGate: p.sessionGate, now }));
+      },
       listOperationalReview: async (input) => {
         await titleSource?.refresh();
         const page = listOperationalReview({
@@ -1270,6 +1306,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i
               .test(shokoProviderId)) {
           throw new TypeError('Acquisition provider evidence unconfigured');
+        }
+        if (typeof verifyStagingRoot === 'function') {
+          releaseProviders = { qbBaseUrl, sessionGate, stagingHostPath,
+            qbitStagingRoot, verifyStagingRoot };
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
           dbPath, requests, acquisitions, handoffs, pureMoves,

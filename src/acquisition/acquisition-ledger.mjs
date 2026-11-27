@@ -256,6 +256,24 @@ export function openAcquisitionLedger(dbPath) {
     (request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,created_ms,updated_ms)
     VALUES (?,?,?,?,'reserved',?,?,?)`);
   const claimTarget = db.prepare('INSERT INTO acquisition_target_claims(attempt_id,anidb_id,episode_id) VALUES (?,?,?)');
+  // Why a never-started attempt may be retired before its start: a recorded
+  // wrong-installment check, or an admin release of that exact parked check.
+  const hasTable = (name) => Boolean(db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
+  const prestartRetirementBasis = (attemptId) => {
+    if (!hasTable('start_checks')) return null;
+    if (db.prepare(`SELECT 1 FROM start_checks WHERE attempt_id=? AND
+      state='held' AND reason='related_installment_mismatch'`).get(attemptId)) {
+      return 'mismatch';
+    }
+    if (hasTable('operator_review_actions') && db.prepare(`SELECT 1
+      FROM start_checks c JOIN operator_review_actions o ON o.attempt_id=c.attempt_id
+        AND o.stage='start' AND o.action='release' AND o.check_version=c.version
+      WHERE c.attempt_id=? AND c.state='held' AND c.next_due_ms IS NULL`).get(attemptId)) {
+      return 'operator_release';
+    }
+    return null;
+  };
   const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
   const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
@@ -519,11 +537,7 @@ export function openAcquisitionLedger(dbPath) {
           ? { state: existing.status === 'requested'
             ? 'retirement_requested' : 'delete_unknown' }
           : held('torrent_conflict');
-        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='start_checks'").get() ||
-            !db.prepare(`SELECT 1 FROM start_checks WHERE attempt_id=? AND
-              state='held' AND reason='related_installment_mismatch'`).get(attemptId)) {
-          return held('mismatch_not_recorded');
-        }
+        if (!prestartRetirementBasis(attemptId)) return held('mismatch_not_recorded');
         insertStallIntent.run(attemptId, normalizedHash, nowMs, nowMs);
         return { state: 'retirement_requested' };
       });
@@ -578,18 +592,18 @@ export function openAcquisitionLedger(dbPath) {
               db.prepare('SELECT 1 FROM completion_checks WHERE attempt_id=?').get(attemptId))) {
           return held('prestart_state_changed');
         }
-        if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='start_checks'").get() ||
-            !db.prepare(`SELECT 1 FROM start_checks WHERE attempt_id=? AND
-              state='held' AND reason='related_installment_mismatch'`).get(attemptId)) {
-          return held('mismatch_not_recorded');
-        }
+        const basis = prestartRetirementBasis(attemptId);
+        if (!basis) return held('mismatch_not_recorded');
         const intent = findStallIntent.get(attemptId);
         if (intent?.torrent_hash !== normalizedHash ||
             intent.status !== 'delete_unknown') {
           return held('retirement_not_requested');
         }
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
-        insertRetirement.run(attemptId, normalizedHash, 'file_wrong_identity', nowMs);
+        // An admin release says nothing about the file's identity: retire it
+        // as a policy reset so the same release can be chosen again later.
+        insertRetirement.run(attemptId, normalizedHash,
+          basis === 'operator_release' ? 'policy_reset' : 'file_wrong_identity', nowMs);
         insertPrestartMismatchRetirement.run(attemptId, nowMs);
         deactivateClaims.run(attemptId);
         bonuses.deactivateBonuses(attemptId,nowMs);

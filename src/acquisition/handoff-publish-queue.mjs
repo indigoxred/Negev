@@ -1,4 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
+import { PREFLIGHT_PUBLISH_HOLDS, actOnReviewHold, reviveTransientHolds }
+  from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -40,6 +42,17 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       checked_ms INTEGER CHECK(checked_ms>=0),
       next_due_ms INTEGER CHECK(next_due_ms>=0)
     ) STRICT`);
+    // Retry caps count consecutive holds for the same reason, not every claim
+    // of the attempt. Additive columns: earlier builds ignore them. Seed them
+    // from the claim version so existing rows keep their previous allowance.
+    if (!db.prepare(`PRAGMA table_info(${checksTable})`).all()
+      .some((column) => column.name === 'reason_run')) {
+      db.exec(`ALTER TABLE ${checksTable} ADD COLUMN last_reason TEXT;
+        ALTER TABLE ${checksTable} ADD COLUMN reason_run INTEGER NOT NULL DEFAULT 0
+          CHECK(reason_run>=0);
+        UPDATE ${checksTable} SET last_reason=reason,reason_run=version
+          WHERE state='held' AND reason IS NOT NULL`);
+    }
     if (pureMode) {
       // A same-filesystem move can fail after its durable intent, for example
       // when qBittorrent's staging directory is not writable by Negev. The
@@ -47,10 +60,15 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       // intents briefly after the filesystem setting is corrected.
       db.exec(`UPDATE pure_move_publish_checks SET next_due_ms=checked_ms+60000
         WHERE state='held' AND reason='move_outcome_unknown' AND
-          next_due_ms IS NULL AND checked_ms IS NOT NULL AND version<=12 AND
+          next_due_ms IS NULL AND checked_ms IS NOT NULL AND reason_run<=12 AND
           attempt_id IN (SELECT attempt_id FROM pure_move_intents
             WHERE status='moving')`);
     }
+    // A pure-mode staging check runs before any file is read. Earlier builds
+    // parked it in terminal review on its first failure; give those rows a
+    // paced turn again. Each revival is logged so it can be undone exactly.
+    reviveTransientHolds(db, { stage: pureMode ? 'pure_publish' : 'publish',
+      table: checksTable, reasons: ['staging_root_unverified'] });
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT h.attempt_id AS attemptId
@@ -63,17 +81,30 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       (c.attempt_id IS NULL OR
         (c.state IN ('held','publish_unknown') AND c.next_due_ms<=?))
     ORDER BY h.attempt_id LIMIT 1`);
+  const preflightList = PREFLIGHT_PUBLISH_HOLDS.map((reason) => `'${reason}'`).join(',');
   const claim = db.prepare(`INSERT INTO ${checksTable}
     (attempt_id,version,state,reason,checked_ms,next_due_ms)
     VALUES (?,1,NULL,NULL,NULL,NULL) ON CONFLICT(attempt_id) DO UPDATE SET
-    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL`);
+    version=version+1,last_reason=CASE WHEN reason IN (${preflightList})
+      THEN last_reason ELSE COALESCE(reason,last_reason) END,
+    state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,version,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM ${checksTable} WHERE attempt_id=?`);
   const handoff = db.prepare(`SELECT status FROM ${handoffTable} WHERE attempt_id=?`);
   const save = db.prepare(`UPDATE ${checksTable} SET
-    state=?,reason=?,checked_ms=?,next_due_ms=?
+    state=?,reason=?,checked_ms=?,next_due_ms=?,reason_run=?
     WHERE attempt_id=? AND version=? AND state IS NULL`);
+  const prior = db.prepare(`SELECT last_reason AS lastReason,reason_run AS run
+    FROM ${checksTable} WHERE attempt_id=? AND version=? AND state IS NULL`);
+  // How many holds in a row (this one included) share this reason.
+  const reasonRun = (attemptId, version, state, reason) => {
+    if (state !== 'held') return 0;
+    const row = prior.get(attemptId, version);
+    // A preflight hold read no files; it neither counts nor breaks a run.
+    if (PREFLIGHT_PUBLISH_HOLDS.includes(reason)) return row?.run ?? 0;
+    return row && row.lastReason === reason ? row.run + 1 : 1;
+  };
   const unresolved = db.prepare(`SELECT attempt_id AS attemptId,version
     FROM ${checksTable} WHERE attempt_id>? AND state IS NULL
     ORDER BY attempt_id LIMIT ?`);
@@ -94,6 +125,14 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
     }
   };
   return {
+    // Admin: give a parked import one more guarded turn now. This may read
+    // or hash its files again, which is why it is never automatic.
+    retryReview({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: pureMode ? 'pure_publish' : 'publish',
+        table: checksTable, attemptId, actorId, nowMs, action: 'retry',
+        extraWhere: `AND attempt_id IN (SELECT attempt_id FROM ${handoffTable}
+          WHERE status IN (${pureMode ? "'moving'," : ''}'prepared','publish_unknown'))` });
+    },
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid publish clock');
       return transact(() => {
@@ -110,17 +149,18 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid publish result');
       }
-      const due = state === 'publish_unknown' ? checkedMs + 60_000 :
-        pureMode && state === 'held' && reason === 'move_outcome_unknown' &&
-          version <= 12 ? checkedMs + 60_000 :
-        state === 'held' && reason === 'handoff_mount_unavailable'
-          ? checkedMs + MOUNT_RETRY_MS :
-        pureMode && state === 'held' && reason === 'publish_outcome_unknown' &&
-          version <= 12 ? checkedMs + MOUNT_RETRY_MS :
-        state === 'held' && RETRYABLE_HOLDS.has(reason) && version === 1
-          ? checkedMs + RETRY_MS : null;
-      if (due !== null && !validTime(due)) throw new TypeError('Invalid publish clock');
+      if (!validTime(checkedMs + RETRY_MS)) throw new TypeError('Invalid publish clock');
       return transact(() => {
+        const run = reasonRun(attemptId, version, state, reason);
+        const due = state === 'publish_unknown' ? checkedMs + 60_000 :
+          pureMode && state === 'held' && reason === 'move_outcome_unknown' &&
+            run <= 12 ? checkedMs + 60_000 :
+          state === 'held' && PREFLIGHT_PUBLISH_HOLDS.includes(reason)
+            ? checkedMs + MOUNT_RETRY_MS :
+          pureMode && state === 'held' && reason === 'publish_outcome_unknown' &&
+            run <= 12 ? checkedMs + MOUNT_RETRY_MS :
+          state === 'held' && RETRYABLE_HOLDS.has(reason) && run === 1
+            ? checkedMs + RETRY_MS : null;
         const status = handoff.get(attemptId)?.status;
         if ((state === 'publish_unknown' && status !== 'publish_unknown') ||
             (state === 'published_observed' && status !== 'published_observed') ||
@@ -128,7 +168,7 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
               'prepared', 'publish_unknown'].includes(status))) {
           return held('outcome_changed');
         }
-        return save.run(state, reason, checkedMs, due, attemptId, version).changes === 1
+        return save.run(state, reason, checkedMs, due, run, attemptId, version).changes === 1
           ? { state: 'recorded' } : held('stale_claim');
       });
     },
@@ -165,6 +205,7 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
               state === 'publish_unknown' ? nowMs : null;
             if ((due !== null && !validTime(due)) ||
                 save.run(state, reason, nowMs, due,
+                  reasonRun(row.attemptId, row.version, state, reason),
                   row.attemptId, row.version).changes !== 1) {
               remaining.push(row.attemptId); continue;
             }

@@ -1811,6 +1811,18 @@ byId('refresh-library').addEventListener('click', () => {
 byId('more-requests').addEventListener('click', () => { void loadRequestView('history', true); });
 byId('more-preparations').addEventListener('click', () => { void loadPreparations(false, true); });
 byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
+// Buttons offered for a parked review item. Retry re-runs every normal check;
+// release only applies to a download that never started.
+function reviewActionsFor(stage) {
+  if (stage === 'start_hold') return [
+    ['retry', 'Retry now', 'Check this download again now? Every normal safety check runs again.'],
+    ['release', 'Release download', 'Release this download? Negev removes the stopped torrent from qBittorrent (no files are deleted) and frees its episodes so another release can be chosen.'],
+  ];
+  if (stage === 'import_hold') return [
+    ['retry', 'Retry now', 'Check this import again now? Negev may read the files again.'],
+  ];
+  return [];
+}
 async function loadOperationalReview(append = false) {
   if (state.user?.role !== 'admin') return;
   const session = sessionResponses.current();
@@ -1843,7 +1855,29 @@ async function loadOperationalReview(append = false) {
       const copy=element('div');
       copy.append(link,element('strong',label),
         element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
-      row.append(copy,openTitle);
+      const actions = element('div', undefined, 'request-actions');
+      actions.append(openTitle);
+      for (const [action, label, prompt] of reviewActionsFor(item.stage)) {
+        const control = element('button', label, action === 'retry' ? 'primary' : 'quiet');
+        control.type = 'button';
+        control.addEventListener('click', async () => {
+          if (!window.confirm(prompt)) return;
+          for (const button of actions.querySelectorAll('button')) button.disabled = true;
+          try {
+            const result = await api(`/api/admin/review/${item.attemptId}`, {
+              method: 'POST', body: JSON.stringify({ stage: item.stage, action }) });
+            message(result.state === 'released'
+              ? 'Download released. Its episodes can be picked up again. No media files were removed.'
+              : 'Retry scheduled. Negev will check this item again shortly.');
+            void loadOperationalReview();
+          } catch (error) {
+            message(error.message, true);
+            for (const button of actions.querySelectorAll('button')) button.disabled = false;
+          }
+        });
+        actions.append(control);
+      }
+      row.append(copy, actions);
       list.append(row);
     }
     nextReviewAttemptId = page.nextAfterAttemptId;

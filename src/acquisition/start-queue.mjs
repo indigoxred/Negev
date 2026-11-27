@@ -1,5 +1,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
+import { LIVE_ATTEMPTS } from './live-attempts.mjs';
+import { TRANSIENT_START_HOLDS, START_SESSION_RETRY_HOLDS,
+  START_METADATA_RETRY_HOLDS, actOnReviewHold, isTransientStartHold,
+  reviveTransientHolds, transientRetryDelayMs } from './stage-hold-policy.mjs';
+// A parked start check an admin may act on: its attempt is still live (see
+// live-attempts.mjs) and has not crossed the start boundary.
+const REVIEWABLE_START = `AND attempt_id IN (SELECT id FROM ${LIVE_ATTEMPTS} l)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_starts x
+    WHERE x.attempt_id=start_checks.attempt_id)`;
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -62,22 +71,20 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),
       checked_ms+60000) WHERE state='held' AND reason IN ('metadata_reader_busy','availability_evidence_stale','import_activity_unverified')
       AND checked_ms IS NOT NULL AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
+    // Earlier builds parked a transient start hold in terminal review after
+    // any earlier claim of the same attempt. Give those rows one more paced
+    // turn; each is logged so the change can be undone exactly.
+    reviveTransientHolds(db, { stage: 'start', table: 'start_checks',
+      reasons: TRANSIENT_START_HOLDS, extraWhere: REVIEWABLE_START });
   } catch (error) { db.close(); throw error; }
 
-  const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+  const next = db.prepare(`SELECT a.id AS attemptId FROM ${LIVE_ATTEMPTS} a
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
-    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
     LEFT JOIN start_checks c ON c.attempt_id=a.id
     WHERE a.status IN ('dispatch_unknown','torrent_observed') AND
       hold.request_id IS NULL AND
       s.attempt_id IS NULL AND
-      x.attempt_id IS NULL AND j.attempt_id IS NULL AND t.attempt_id IS NULL AND
-      si.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
@@ -94,16 +101,10 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId,
     c.reason,c.checked_ms AS checkedMs FROM start_checks c
-    JOIN acquisition_attempts a ON a.id=c.attempt_id
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+    JOIN ${LIVE_ATTEMPTS} a ON a.id=c.attempt_id
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state='held' AND c.next_due_ms IS NULL
-      AND s.attempt_id IS NULL AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL
+      AND s.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
@@ -123,6 +124,18 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
   };
   return {
     releaseOperation,
+    // Admin: give a parked start check one more guarded turn now.
+    retryReview({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: 'start', table: 'start_checks',
+        attemptId, actorId, nowMs, action: 'retry', extraWhere: REVIEWABLE_START });
+    },
+    // Admin: record that this parked, never-started attempt may be released.
+    // The guarded prestart retirement still removes the stopped torrent and
+    // proves its staging folder empty before any episode claim is freed.
+    recordReleaseRequest({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: 'start', table: 'start_checks',
+        attemptId, actorId, nowMs, action: 'release', extraWhere: REVIEWABLE_START });
+    },
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid start clock');
       return transact(() => {
@@ -149,11 +162,8 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid start result');
       }
-      const sessionRetry = ['provider_unavailable', 'provider_http_403', 'authentication_backoff',
-        'authentication_unavailable', 'metadata_reader_busy',
-        'availability_evidence_stale', 'import_activity_unverified'].includes(reason);
-      const metadataRetry = ['detail_unavailable', 'related_title_unavailable',
-        'shoko_settings_unavailable'].includes(reason);
+      const sessionRetry = START_SESSION_RETRY_HOLDS.includes(reason);
+      const metadataRetry = START_METADATA_RETRY_HOLDS.includes(reason);
       const due = state === 'held' && sessionRetry
         ? checkedMs + SESSION_RETRY_MS :
         state === 'held' && metadataRetry
@@ -161,6 +171,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
             version === 2 ? 120_000 : 300_000) :
         state === 'held' && reason === 'import_quiet_window_unverified'
           ? checkedMs + IMPORT_RETRY_MS :
+        // A failed observation never becomes terminal review; it backs off.
+        state === 'held' && isTransientStartHold(reason)
+          ? checkedMs + transientRetryDelayMs(version) :
         state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid start clock');
       return transact(() => {

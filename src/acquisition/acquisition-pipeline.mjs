@@ -69,11 +69,39 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   let closed = false;
   let closing;
   const running = { request: false, media: false, bonus: false };
-  const bonusWorker=typeof processBonus==='function'&&typeof acquisitions.listPendingBonuses==='function'?{runOnce:async()=>{const item=acquisitions.listPendingBonuses({nowMs:now(),limit:1})[0];return item?processBonus({item}):{state:'idle'};}}:null;
+  // Optional bonus files are observed one at a time. A bonus whose check
+  // could not save a later due time (for example a plan conflict, or a
+  // journal error) would otherwise stay first in line and starve the rest,
+  // so skip any bonus this process already tried within the last minute.
+  const BONUS_RETRY_MS = 60_000;
+  const triedBonuses = new Map();
+  const bonusWorker = typeof processBonus === 'function' &&
+    typeof acquisitions.listPendingBonuses === 'function' ? {
+      runOnce: async () => {
+        const nowMs = now();
+        for (const [key, triedMs] of triedBonuses) {
+          if (nowMs - triedMs >= BONUS_RETRY_MS || nowMs < triedMs) triedBonuses.delete(key);
+        }
+        const key = (item) => `${item.attemptId}\u0000${item.name}`;
+        const item = acquisitions.listPendingBonuses({ nowMs, limit: 20 })
+          .find((candidate) => !triedBonuses.has(key(candidate)));
+        if (!item) return { state: 'idle' };
+        triedBonuses.set(key(item), nowMs);
+        return processBonus({ item });
+      },
+    } : null;
   let holdingRecovered = false;
   let recoveryAfterId = 0;
   let preferRecognitionRecovery = false;
   let preferUrgentRescan = true;
+  const withLane = async (lane, previous, action) => {
+    if (running[lane]) {
+      return { state: 'deferred', resolved: [],
+        held: Array.isArray(previous?.held) ? previous.held : [] };
+    }
+    running[lane] = true;
+    try { return await action(); } finally { running[lane] = false; }
+  };
   const run = (worker, lane = 'media') => {
     if (closed) return Promise.resolve(held('pipeline_closed'));
     if (!recovery) return Promise.resolve(held('reconciliation_required'));
@@ -123,16 +151,29 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
             await recoverOrphanedHolding({ holdingRoot, dbPath });
             holdingRecovered = true;
           }
-          const requests = await reconcileUnresolvedAcquisitionClaims({
-            queue: requestQueue, now,
-            inspectRequest: (requestId) =>
-              acquisitions.inspectRequestAttempts(requestId),
-          });
-          const resumedRequests = requestQueue.resumeObservedAttemptHolds({
-            nowMs: now() });
-          const starts = startQueue.reconcileUnresolved({ nowMs: now() });
-          const completions = completionQueue.reconcileUnresolved({ nowMs: now() });
-          const publishes = publishQueue.reconcileUnresolved({ nowMs: now() });
+          // An unfinished claim is only a crash leftover when its lane is not
+          // running. A repeated reconciliation can happen while the scheduler
+          // has a live request search, so hold that lane for the duration and
+          // skip it, keeping its earlier holds, when it is already in use.
+          const previous = recovery;
+          let resumedRequests = [];
+          const requests = await withLane('request', previous?.requests,
+            async () => {
+              const reviewed = await reconcileUnresolvedAcquisitionClaims({
+                queue: requestQueue, now,
+                inspectRequest: (requestId) =>
+                  acquisitions.inspectRequestAttempts(requestId),
+              });
+              resumedRequests = requestQueue.resumeObservedAttemptHolds({
+                nowMs: now() });
+              return reviewed;
+            });
+          const starts = await withLane('media', previous?.starts,
+            () => startQueue.reconcileUnresolved({ nowMs: now() }));
+          const completions = await withLane('media', previous?.completions,
+            () => completionQueue.reconcileUnresolved({ nowMs: now() }));
+          const publishes = await withLane('media', previous?.publishes,
+            () => publishQueue.reconcileUnresolved({ nowMs: now() }));
           // Each queue excludes its own unresolved claims. Keep those claims
           // for review while independent items continue through the workers.
           recovery = { state: 'reconciled', requests, resumedRequests, starts,

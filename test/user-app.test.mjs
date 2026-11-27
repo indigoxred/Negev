@@ -452,6 +452,53 @@ test('only an admin can approve or cancel a suspended request', async () => {
   } finally { await app.close(); }
 });
 
+test('only an admin can retry or release a parked review item', async () => {
+  let user = { id: 1, username: 'Owner', role: 'admin',
+    sessionVersion: 1, adultAllowed: true };
+  const accounts = { authenticate: async () => user,
+    getSessionUser: () => user, registerInvite: async () => null,
+    createInvite: () => null, revokeSessions: () => false };
+  const calls = [];
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32),
+    publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => null, readRequest: () => null,
+    reviewOperationalItem: async (input) => {
+      calls.push(input);
+      if (input.attemptId === 9) return { state: 'held', reason: 'not_in_review' };
+      if (input.attemptId === 8) return { state: 'held', reason: 'release_unavailable' };
+      return input.action === 'retry' ? { state: 'retry_scheduled', version: 2 }
+        : { state: 'retired_prestart_mismatch' };
+    } });
+  try {
+    const login = await app.inject({ method: 'POST', url: '/api/login',
+      headers: { origin }, payload: { username: 'Owner', password: 'long-owner-passphrase' } });
+    const cookie = login.headers['set-cookie'].split(';')[0];
+    const session = await app.inject({ method: 'GET', url: '/api/session', headers: { cookie } });
+    const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+    const post = (id, payload, h = headers) => app.inject({ method: 'POST',
+      url: `/api/admin/review/${id}`, headers: h, payload });
+    assert.equal((await post(7, { stage: 'start_hold', action: 'retry' },
+      { cookie, origin })).statusCode, 403, 'CSRF is required');
+    for (const bad of [{ stage: 'import_hold', action: 'release' },
+      { stage: 'release_rejected', action: 'retry' }, { stage: 'start_hold', action: 'delete' },
+      { stage: 'start_hold', action: 'retry', extra: 1 }]) {
+      assert.equal((await post(7, bad)).statusCode, 400, JSON.stringify(bad));
+    }
+    assert.equal((await post('07', { stage: 'start_hold', action: 'retry' })).statusCode, 400);
+    const retried = await post(7, { stage: 'import_hold', action: 'retry' });
+    assert.equal(retried.statusCode, 200);
+    assert.deepEqual(retried.json(), { state: 'retry_scheduled' });
+    const released = await post(7, { stage: 'start_hold', action: 'release' });
+    assert.deepEqual(released.json(), { state: 'released' });
+    assert.equal((await post(9, { stage: 'start_hold', action: 'retry' })).statusCode, 409);
+    assert.equal((await post(8, { stage: 'start_hold', action: 'release' })).statusCode, 503);
+    assert.deepEqual(calls[0], { stage: 'import_hold', attemptId: 7, action: 'retry', actorId: 1 });
+    user = { ...user, role: 'user' };
+    assert.equal((await post(7, { stage: 'start_hold', action: 'retry' })).statusCode, 403);
+    assert.equal(calls.length, 4);
+  } finally { await app.close(); }
+});
+
 test('started release processing reports the real cancellation limit', async () => {
   const user = { id: 7, username: 'Owner', role: 'admin',
     sessionVersion: 1, adultAllowed: true };

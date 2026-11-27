@@ -1,5 +1,7 @@
 import { pendingRecognitionSql, unreconciledAttemptSql } from './recognition-release-sql.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { REQUEST_RELATED_RETRY_HOLDS, REQUEST_SESSION_RETRY_HOLDS }
+  from './stage-hold-policy.mjs';
 import { createHash } from 'node:crypto';
 import { preferredWaitDuration } from './preferred-release.mjs';
 import { changedRequestScopeSql, currentRequestCompletionSql, currentRequestScopeSql, untouchedAutoSql } from '../requests/request-check-scope.mjs';
@@ -807,19 +809,12 @@ export function openAcquisitionRequestQueue(dbPath,
       const nextDueMs = reason==='availability_check_pending' ? checkedMs+COVERAGE_CONTINUATION_MS : reason==='preferred_group_wait'&&preferredRetryMs!==null?preferredRetryMs:reason === 'interrupted_attempt_present'
         ? null : reason === 'candidate_scan_time_budget'
           ? checkedMs + SESSION_RETRY_MS :
-          ['related_title_unavailable',
-            'release_search_unavailable'].includes(reason)
+          REQUEST_RELATED_RETRY_HOLDS.includes(reason)
             ? checkedMs + RELATED_RETRY_MS :
           state === 'stopped_observed' ? checkedMs + 60_000 :
           (advanced || newScanPolicy) ?
             checkedMs : checkedMs +
-          (['provider_http_403', 'authentication_backoff',
-            'authentication_unavailable', 'release_search_incomplete',
-            'import_quiet_window_unverified', 'torrent_hash_in_use',
-            'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
-            'availability_evidence_stale', 'import_activity_unverified',
-            'provider_unavailable','release_selection_pending',
-            'release_choice_changed'].includes(reason)
+          (REQUEST_SESSION_RETRY_HOLDS.includes(reason)
             ? SESSION_RETRY_MS : metadataMissing ? metadataDelayMs :
               empty && watched?.monitor_future === 1 &&
               watched.watch_closed === 0 ? emptyDelayMs : RETRY_DELAY_MS);
