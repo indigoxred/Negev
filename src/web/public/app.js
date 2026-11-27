@@ -1748,8 +1748,20 @@ byId('airing-sort').addEventListener('change', () =>
 const filterApplyTimers = {};
 function scheduleFilterApply(prefix, delay = 0) {
   clearTimeout(filterApplyTimers[prefix]);
-  filterApplyTimers[prefix] = setTimeout(() => byId(`${prefix}-form`).requestSubmit(), delay);
+  filterApplyTimers[prefix] = setTimeout(() => {
+    delete filterApplyTimers[prefix];
+    // Leaving the page drops a pending change instead of navigating back.
+    const form = byId(`${prefix}-form`);
+    if (form.closest('.page-view')?.hidden) return;
+    form.requestSubmit();
+  }, delay);
 }
+window.addEventListener('hashchange', () => {
+  for (const prefix of Object.keys(filterApplyTimers)) {
+    clearTimeout(filterApplyTimers[prefix]);
+    delete filterApplyTimers[prefix];
+  }
+});
 for (const [prefix, ids] of [['season', ['season-year', 'season-name', 'season-kind']],
   ['airing', ['airing-year', 'airing-season', 'airing-kind']]]) {
   for (const id of ids) byId(id).addEventListener('change', () => scheduleFilterApply(prefix));
