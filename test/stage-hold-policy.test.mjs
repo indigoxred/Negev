@@ -192,3 +192,23 @@ test('legacy parked publish staging holds are revived and logged', async () =>
       .map((row) => ({ ...row })), [{ stage: 'publish', reason: 'staging_root_unverified' }]);
     raw.close();
   }));
+
+test('publish retry caps count holds per reason, not every claim', async () =>
+  publishFixture(async (ctx) => {
+    let t = 1_000;
+    const step = (reason) => {
+      const c = ctx.queue.claimNext({ nowMs: t });
+      assert.equal(c.attemptId, ctx.attemptId);
+      ctx.queue.recordResult({ ...c, state: 'held', reason, checkedMs: t });
+      const due = ctx.queue.getResult(ctx.attemptId).nextDueMs;
+      if (due !== null) t = due;
+      return due;
+    };
+    // Several preflight mount waits no longer use up the single
+    // identity retry, so the first identity failure still retries…
+    for (let i = 0; i < 4; i++) assert.notEqual(step('handoff_mount_unavailable'), null);
+    assert.notEqual(step('identity_unavailable'), null);
+    // …and a mount wait in between does not grant a second rehash.
+    assert.notEqual(step('handoff_mount_unavailable'), null);
+    assert.equal(step('identity_unavailable'), null);
+  }));

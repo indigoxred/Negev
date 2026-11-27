@@ -14,6 +14,8 @@ Decisive reasons, such as `file_plan_mismatch` or `related_installment_mismatch`
 
 `staging_root_unverified` is a preflight check, like `handoff_mount_unavailable`, and runs before any file is read. It now gets the same 5-minute paced retry, where before it went to terminal review on the first failure. Holds that may rehash a batch (`identity_unavailable`, `subtitle_unavailable`, `worker_unavailable`, `interrupted_before_publish`) are unchanged: they still get at most one automatic retry.
 
+These caps (one retry, or twelve for `move_outcome_unknown` and `publish_outcome_unknown`) now count holds in a row with the same reason (`reason_run`), not every claim of the attempt. A preflight hold neither counts nor breaks a run. So mount waits no longer use up a later identity retry, and they don't grant an extra rehash either. The two new columns, `last_reason` and `reason_run`, are additive and earlier builds ignore them. When they are added, existing rows are seeded from their claim version, so those rows keep their previous allowance.
+
 ## Revival of rows parked by earlier builds, and how to undo it
 
 When a start or publish queue opens, rows held with `next_due_ms IS NULL` for a reason now classed as transient get `next_due_ms = checked_ms + 60000`. Start rows that already have a start intent are skipped. Before each row is changed, it is recorded in `stage_hold_policy_revivals` (stage, attempt, claim version, reason, checked time, revival time). Rows are only logged and changed once.
