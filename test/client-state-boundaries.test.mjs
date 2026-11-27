@@ -9,7 +9,7 @@ import { createCatalogueReadPacer } from '../src/web/public/search-pages.mjs';
 import { createAuthController } from '../src/web/public/auth-controller.mjs';
 import { createTrackingController } from '../src/web/public/tracking-controller.mjs';
 import { createSearchController } from '../src/web/public/search-controller.mjs';
-function attachSearch(context) { Object.assign(context, createSearchController({ ...context, verifier: context.adultSearchVerifier })); } 
+function attachSearch(context) { Object.assign(context, createSearchController({ ...context, verifier: context.adultSearchVerifier })); }
 function attachTracking(context) {
   const controller = createTrackingController({ ...context, document: context.document ?? { querySelectorAll: () => [] } });
   Object.assign(context, controller); context.tracking = controller;
@@ -152,7 +152,7 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     airingSeasonResponses: createResponseEpoch(), seasonalResponses: createResponseEpoch(),
     detailPollTimer: null, dismissRequestDialogs() {}, displayCache: new Map(),
     genreSelections: { airing: new Set(), season: new Set() },
-    admin: { resetReview() {} }, browse: { setAiringFilters() {} }, element: () => ({}),
+    detail: { invalidate() {} }, admin: { resetReview() {} }, browse: { setAiringFilters() {} }, element: () => ({}),
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
     renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
     api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
@@ -273,3 +273,4 @@ test('actual Airing refresh invalidates both old reads before preferences finish
   assert.equal(browse.isCurrent(oldBrowse), false);
   f.deps.sessionResponses.invalidate(); pending.resolve(null); await read;
 });
+
