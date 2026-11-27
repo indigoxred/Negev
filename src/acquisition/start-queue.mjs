@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
+import { TRANSIENT_START_HOLDS, isTransientStartHold, reviveTransientHolds,
+  transientRetryDelayMs } from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -62,6 +64,13 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),
       checked_ms+60000) WHERE state='held' AND reason IN ('metadata_reader_busy','availability_evidence_stale','import_activity_unverified')
       AND checked_ms IS NOT NULL AND (next_due_ms IS NULL OR next_due_ms>checked_ms+60000)`);
+    // Earlier builds parked a transient start hold in terminal review after
+    // any earlier claim of the same attempt. Give those rows one more paced
+    // turn; each is logged so the change can be undone exactly.
+    reviveTransientHolds(db, { stage: 'start', table: 'start_checks',
+      reasons: TRANSIENT_START_HOLDS,
+      extraWhere: `AND NOT EXISTS (SELECT 1 FROM acquisition_starts s
+        WHERE s.attempt_id=start_checks.attempt_id)` });
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
@@ -161,6 +170,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
             version === 2 ? 120_000 : 300_000) :
         state === 'held' && reason === 'import_quiet_window_unverified'
           ? checkedMs + IMPORT_RETRY_MS :
+        // A failed observation never becomes terminal review; it backs off.
+        state === 'held' && isTransientStartHold(reason)
+          ? checkedMs + transientRetryDelayMs(version) :
         state === 'held' && version === 1 ? checkedMs + RETRY_MS : null;
       if (due !== null && !validTime(due)) throw new TypeError('Invalid start clock');
       return transact(() => {

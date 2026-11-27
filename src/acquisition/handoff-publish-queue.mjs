@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { PREFLIGHT_PUBLISH_HOLDS, reviveTransientHolds } from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -51,6 +52,11 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
           attempt_id IN (SELECT attempt_id FROM pure_move_intents
             WHERE status='moving')`);
     }
+    // A pure-mode staging check runs before any file is read. Earlier builds
+    // parked it in terminal review on its first failure; give those rows a
+    // paced turn again. Each revival is logged so it can be undone exactly.
+    reviveTransientHolds(db, { stage: pureMode ? 'pure_publish' : 'publish',
+      table: checksTable, reasons: ['staging_root_unverified'] });
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT h.attempt_id AS attemptId
@@ -113,7 +119,7 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
       const due = state === 'publish_unknown' ? checkedMs + 60_000 :
         pureMode && state === 'held' && reason === 'move_outcome_unknown' &&
           version <= 12 ? checkedMs + 60_000 :
-        state === 'held' && reason === 'handoff_mount_unavailable'
+        state === 'held' && PREFLIGHT_PUBLISH_HOLDS.includes(reason)
           ? checkedMs + MOUNT_RETRY_MS :
         pureMode && state === 'held' && reason === 'publish_outcome_unknown' &&
           version <= 12 ? checkedMs + MOUNT_RETRY_MS :
