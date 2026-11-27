@@ -5,7 +5,6 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import { createAuthController } from '../src/web/public/auth-controller.mjs';
 const epochSource = readFileSync(new URL('../src/web/public/response-epoch.mjs', import.meta.url),'utf8').replace('export function','function');
@@ -57,6 +56,9 @@ test('browser completes successful login and registration submit transitions',
           byId('register-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
           await settle();
           const registerResult={calls:[...calls],message:currentMessage,tab:byId('register-form').hidden?'login':'register',field:byId('register-form').elements.username.value};
+          // Success switches to login. Reopen registration as a user would
+          // before checking validation focus on the next submission.
+          auth.authTab(true);
           failRegistration=true;byId('register-form').elements.username.value='bad name';
           byId('register-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));await settle();
           byId('result').textContent = JSON.stringify({ login: loginResult,register:registerResult,
