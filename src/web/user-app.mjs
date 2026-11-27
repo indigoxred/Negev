@@ -5,6 +5,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import Fastify from 'fastify';
 import { airingScheduleProblem, seasonPageProblem, ShapeError } from './route-shapes.mjs';
+import { createStaticAsset } from './static-asset.mjs';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { invitedAccountValidation, SESSION_IDLE_MS } from '../auth/account-ledger.mjs';
@@ -53,7 +54,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   startTitleCheck, getTitleCheck,
   probeRequestTargets, releaseSelection, releasePreviews,
   readImportActivity,
-  listOperationalReview, reviewOperationalItem,
+  listOperationalReview, reviewOperationalItem, deleteAccount,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   acquisitionAllowedAnidbIds = null,
   ownershipGate = null,
@@ -163,23 +164,25 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   assets.set('index.html', assets.get('index.html').replace('</head>',
     `  <meta name="negev-client-revision" content="${clientRevision}">\n</head>`));
   const pageHeaders = { 'Content-Security-Policy': "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
-    'Cache-Control': 'no-store' };
+    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' };
+  // Static files hold no account data. Pages and scripts are revalidated on
+  // every load (a 304 when unchanged); fonts are reused for a week.
   for (const name of assetNames) {
     const url = name === 'index.html' ? '/' : `/${name}`;
     const contentType = name === 'index.html' ? 'text/html; charset=utf-8'
       : name.endsWith('.css') ? 'text/css; charset=utf-8'
         : 'text/javascript; charset=utf-8';
-    app.get(url, async (_request, reply) =>
-      reply.headers(pageHeaders).type(contentType).send(assets.get(name)));
+    app.get(url, createStaticAsset(assets.get(name),
+      { contentType, cacheControl: 'no-cache', headers: pageHeaders }));
   }
   const fontNames = (await readdir(new URL('./fonts/', publicDir), { withFileTypes: true }))
     .filter((entry) => entry.isFile() && /\.(?:ttf|txt)$/.test(entry.name))
     .map((entry) => entry.name).sort();
   for (const name of fontNames) {
     const font = await readFile(new URL('./public/fonts/' + name, import.meta.url));
-    app.get('/fonts/' + name, async (_request, reply) => reply.headers(pageHeaders)
-      .type(name.endsWith('.ttf') ? 'font/ttf' : 'text/plain; charset=utf-8').send(font));
+    app.get('/fonts/' + name, createStaticAsset(font, {
+      contentType: name.endsWith('.ttf') ? 'font/ttf' : 'text/plain; charset=utf-8',
+      cacheControl: 'public, max-age=604800', headers: pageHeaders }));
   }
   const requireOrigin = async (request, reply) => {
     if (request.headers.origin !== publicOrigin &&
@@ -228,7 +231,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store').send({ revision: clientRevision }));
   registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
     safeImportReasons, accounts, readImportActivity, listOperationalReview,
-    reviewOperationalItem, reviewHeldRequest, now });
+    reviewOperationalItem, reviewHeldRequest, deleteAccount, now });
   // Public: sets a new password from an admin's one-time reset link.
   app.post('/api/password-reset', { preHandler: requireOrigin,
     config: { rateLimit: authRate } }, async (request, reply) => {

@@ -28,9 +28,9 @@
     <details id="identity" class="identity" hidden>
       <summary aria-label="Account" title="Account"><span id="profile-initial" aria-hidden="true">N</span></summary>
       <div class="account-menu">
-        <span id="username"></span><section id="browse-preferences" aria-label="Browsing preferences" hidden><p class="menu-label">Browsing preferences</p>        <button id="english-title-toggle" class="quiet" type="button" aria-pressed="false">English titles: Off</button>
-    <button id="adult-toggle" class="adult-toggle" type="button" aria-pressed="true" hidden>18+ On</button>
-    <button id="chinese-toggle" class="adult-toggle" type="button" aria-pressed="true" hidden><span>Chinese: On</span></button>
+        <span id="username"></span><section id="browse-preferences" aria-label="Browsing preferences" hidden><p class="menu-label">Browsing preferences</p>        <button id="english-title-toggle" class="quiet menu-switch" type="button" aria-pressed="false">Show English titles</button>
+    <button id="adult-toggle" class="adult-toggle menu-switch" type="button" aria-pressed="true" hidden>Show 18+ titles</button>
+    <button id="chinese-toggle" class="adult-toggle menu-switch" type="button" aria-pressed="true" hidden><span>Show Chinese productions</span></button>
 </section><p class="menu-label account-section-label">Account</p>
         <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
         <button id="invite" class="quiet" hidden>Create invite link</button>
@@ -118,7 +118,6 @@
                 <small id="season-tag-count">Select up to five. A title must match each selection.</small>
               </div>
             </details>
-            <button type="submit">Apply filters</button>
 
           </form>
           <div id="discover-active-filters" class="active-filters" aria-label="Active filters" hidden></div>
@@ -172,8 +171,6 @@
               </div>
             </details>
 
-            <button type="submit">Apply filters</button>
-
           </form>
           <div id="airing-active-filters" class="active-filters" aria-label="Active Airing filters" hidden></div><p id="airing-season-state" class="muted" role="status"></p>
           <div id="airing-season-list" class="poster-grid"></div>
@@ -184,11 +181,11 @@
         </section>
       </section>
       <section id="view-library" class="page-view" hidden>
-        <header class="page-head library-page-head"><h1>Your library</h1>          <button id="refresh-library" class="quiet" type="button">Refresh</button></header>
+        <header class="page-head library-page-head"><h1>Library</h1>          <button id="refresh-library" class="quiet" type="button">Refresh</button></header>
         <div class="library-controls browse-search-lane">
 
           <label class="inline-search browse-query"><span class="sr-only">Search Negev’s Library</span>
-            <input id="library-query" type="search" minlength="2" maxlength="120" placeholder="Search your library…" autocomplete="off">
+            <input id="library-query" type="search" minlength="2" maxlength="120" placeholder="Search the library…" autocomplete="off">
           </label>
           <button id="library-search-button" class="primary" type="button">Search</button>
         </div>
@@ -204,7 +201,7 @@
       </section>
       <section id="view-requests" class="page-view" hidden>
         <p id="request-focus" hidden></p>
-        <header class="page-head requests-page-head"><h1 id="requests-heading">My requests</h1>
+        <header class="page-head requests-page-head"><h1 id="requests-heading">Requests</h1>
           <p id="requests-description">Follow your anime requests.</p><button id="refresh-requests" class="quiet" type="button">Refresh</button></header>
         <div class="request-toolbar">
         <div id="request-scope" class="request-scope" aria-label="Request owners" hidden>
@@ -215,7 +212,7 @@
           </div>
         </div>
         <div class="request-view-filter"><span class="toolbar-label">View</span><div class="request-tabs" role="tablist" aria-label="Request status">
-          <button type="button" data-request-tab="history" aria-selected="true">Recent requests</button>
+          <button type="button" data-request-tab="history" aria-selected="true">Recent</button>
           <button type="button" data-request-tab="watching" aria-selected="false">Watching</button>
         </div></div>
         </div>

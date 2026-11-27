@@ -25,6 +25,7 @@ import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mj
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
+import { deleteAccount as deleteAccountData } from '../auth/delete-account.mjs';
 import { createHeldRequestSubmitter, requestReleaseState } from '../requests/submit-held-request.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { openHydrationLedger } from '../catalogue/hydration-ledger.mjs';
@@ -985,6 +986,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       // its normal guarded worker. Release retires a never-started attempt
       // through the guarded prestart path (torrent removed without its
       // files, staging proven empty) so its episodes can be acquired again.
+      deleteAccount: ({ adminUserId, userId }) => deleteAccountData(dbPath, { adminUserId, userId }),
       reviewOperationalItem: async ({ stage, attemptId, action, actorId }) => {
         if (stopping) return { state: 'held', reason: 'service_stopping' };
         const nowMs = now();

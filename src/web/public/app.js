@@ -1,4 +1,5 @@
 import { catalogueAvailability } from './card-availability.mjs';
+import { reviewReasonText } from './review-reason.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
@@ -139,7 +140,7 @@ function titleLabel(item, { tag = 'strong', className } = {}) {
 }
 function applyTitlePreference() {
   const toggle = byId('english-title-toggle');
-  toggle.textContent = `English titles: ${state.preferEnglish ? 'On' : 'Off'}`;
+  toggle.textContent = 'Show English titles';
   toggle.setAttribute('aria-pressed', String(state.preferEnglish));
   for (const label of document.querySelectorAll('[data-english-title]')) {
     label.textContent = state.preferEnglish
@@ -338,14 +339,13 @@ function applyAdultVisibility() {
         node.dataset.chineseProduction === 'true' || known?.chineseProduction);
   }
   const toggle = byId('adult-toggle');
-  toggle.textContent = state.user?.adultAllowed === false ? '18+ Disabled' :
-    state.showAdult ? '18+ On' : '18+ Off';
+  toggle.textContent = state.user?.adultAllowed === false ? '18+ titles blocked' : 'Show 18+ titles';
   toggle.setAttribute('aria-pressed', String(state.showAdult));
   toggle.disabled = state.user?.adultAllowed === false;
   toggle.title = toggle.disabled ? '18+ access is disabled for this account' :
     'Show or hide titles marked 18+';
   const chinese = byId('chinese-toggle');
-  chinese.querySelector('span').textContent = state.showChinese ? 'Chinese: On' : 'Chinese: Off';
+  chinese.querySelector('span').textContent = 'Show Chinese productions';
   chinese.setAttribute('aria-pressed', String(state.showChinese));
   chinese.title = 'Show or hide titles tagged Chinese production';
 }
@@ -678,9 +678,9 @@ function showSession(data) {
   byId('admin-link').hidden = data.user.role !== 'admin';
   byId('admin-review').hidden = data.user.role !== 'admin';
   byId('request-scope').hidden = data.user.role !== 'admin';
-  byId('requests-heading').textContent = data.user.role === 'admin'
-    ? 'Requests' : 'My requests';
-  byId('requests-description').textContent = 'Follow your anime requests.';
+  byId('requests-heading').textContent = 'Requests';
+  byId('requests-description').textContent = data.user.role === 'admin'
+    ? 'Follow everyone’s anime requests.' : 'Follow your anime requests.';
   updateRequestScopeButtons();
   renderRoute();
 }
@@ -1362,7 +1362,7 @@ async function loadLibrary(append = false, continuation = null) {
   const notice=byId('library-state');
   if (!append) {
     list.className = 'poster-grid';
-    notice.textContent='Loading your library…';
+    notice.textContent='Loading the library…';
     list.querySelector('.library-page-marker')?.remove();
     if(!list.querySelector('.poster-card'))list.replaceChildren();
     state.libraryAfter = null;
@@ -1395,7 +1395,7 @@ async function loadLibrary(append = false, continuation = null) {
         !libraryResponses.isCurrent(epoch) || state.user?.id !== userId ||
         location.hash !== route) return;
     if (!append) {
-      notice.replaceChildren(element('span', 'Your library could not be refreshed. '));
+      notice.replaceChildren(element('span', 'The library could not be refreshed. '));
       const retry=element('button','Retry','quiet');retry.type='button';retry.addEventListener('click',()=>loadLibrary());notice.append(retry);
     }
     else continuation?.showError();
@@ -1443,6 +1443,8 @@ function renderGenres(prefix, availableTags, selected) {
         } else genreSelections[prefix].delete(tag);
         byId(`${prefix}-form`).querySelector('.genre-picker summary').textContent =
           `Genres & themes · ${genreSelections[prefix].size || 'All'}`;
+        // Several quick clicks become one read (the browse API allows 12 a minute).
+        scheduleFilterApply(prefix, 1_200);
       });
       label.append(box, document.createTextNode(tag));
       options.append(label);
@@ -1742,6 +1744,28 @@ byId('airing-form').addEventListener('submit', (event) => {
 });
 byId('airing-sort').addEventListener('change', () =>
   byId('airing-form').requestSubmit());
+// Filters apply as soon as they change; there is no Apply button.
+const filterApplyTimers = {};
+function scheduleFilterApply(prefix, delay = 0) {
+  clearTimeout(filterApplyTimers[prefix]);
+  filterApplyTimers[prefix] = setTimeout(() => {
+    delete filterApplyTimers[prefix];
+    // Leaving the page drops a pending change instead of navigating back.
+    const form = byId(`${prefix}-form`);
+    if (form.closest('.page-view')?.hidden) return;
+    form.requestSubmit();
+  }, delay);
+}
+window.addEventListener('hashchange', () => {
+  for (const prefix of Object.keys(filterApplyTimers)) {
+    clearTimeout(filterApplyTimers[prefix]);
+    delete filterApplyTimers[prefix];
+  }
+});
+for (const [prefix, ids] of [['season', ['season-year', 'season-name', 'season-kind']],
+  ['airing', ['airing-year', 'airing-season', 'airing-kind']]]) {
+  for (const id of ids) byId(id).addEventListener('change', () => scheduleFilterApply(prefix));
+}
 async function loadAiring() {
   stopBrowsePageObserver('airing');
   const session = sessionResponses.current();
@@ -1891,8 +1915,9 @@ async function loadOperationalReview(append = false) {
       link.append(titleLabel(item),element('span',` · Request #${item.requestId}`));
       const openTitle=element('a','View title →','text-link');openTitle.href=titleRoute(item.anidbId);
       const copy=element('div');
-      copy.append(link,element('strong',label),
-        element('small', `AniDB ${item.anidbId} · ${item.reason.replaceAll('_', ' ')}`));
+      const reason = element('small', `${reviewReasonText(item.reason)} · AniDB ${item.anidbId}`);
+      reason.title = `Reason code: ${item.reason}`;
+      copy.append(link, element('strong', label), reason);
       const actions = element('div', undefined, 'request-actions');
       actions.append(openTitle);
       for (const [action, label, prompt] of reviewActionsFor(item.stage)) {
@@ -2225,10 +2250,31 @@ async function loadUsers() {
               `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
             button.disabled = user.disabled;
             showLabel();
+            remove.hidden = !user.disabled;
           } catch (error) { message(error.message, true); }
           finally { access.disabled = false; }
         });
-        row.append(access);
+        // Deleting is only offered once the account is disabled.
+        const remove = element('button', 'Delete account', 'quiet danger');
+        remove.type = 'button';
+        remove.hidden = !user.disabled;
+        remove.setAttribute('aria-label', `Permanently delete the account ${user.username}`);
+        remove.addEventListener('click', async () => {
+          if (!confirm(`Permanently delete ${user.username}? Their account and requests are ` +
+              'removed. Requests that already started a download stay as history and stop ' +
+              'watching for new episodes. This cannot be undone.')) return;
+          remove.disabled = true;
+          try {
+            const result = await api(`/api/admin/users/${user.id}/delete`,
+              { method: 'POST', body: '{}' });
+            message(`Deleted ${result.username}: ${result.deletedRequests} request` +
+              `${result.deletedRequests === 1 ? '' : 's'} removed` +
+              (result.keptStartedRequests ? `, ${result.keptStartedRequests} started ` +
+                `download${result.keptStartedRequests === 1 ? '' : 's'} kept as history.` : '.'));
+            void loadUsers();
+          } catch (error) { message(error.message, true); remove.disabled = false; }
+        });
+        row.append(access, remove);
       }
       list.append(row);
     }

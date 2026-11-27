@@ -3,6 +3,7 @@ import { preferenceEditorReady, preferenceSaveReady } from './helpers/preference
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { readdirSync } from 'node:fs';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,16 +11,8 @@ import { test } from 'node:test';
 
 const browser = findTestBrowser();
 const root = new URL('../src/web/public/', import.meta.url);
-const assets = new Set(['index.html', 'app.js', 'style.css', 'consumer.css',
-  'card-availability.mjs', 'request-key.mjs', 'request-feedback.mjs', 'episode-pages.mjs', 'search-pages.mjs',
-  'request-progress-text.mjs', 'response-epoch.mjs', 'franchise-explorer.mjs',
-  'adult-search-visibility.mjs', 'chinese-visibility.mjs',
-  'airing-tracking-controls.mjs',
-  'acquisition-notice.mjs', 'consumer-route.mjs',
-  'season-availability-presentation.mjs', 'season-request-selection.mjs',
-  'episode-schedule.mjs',
-  'detail-refresh.mjs', 'poster-recovery.mjs',
-  'relation-label.mjs', 'title-preference.mjs', 'release-dialog.mjs', 'release-choice-fields.mjs', 'release-row.mjs']);
+// Serve public/ the way the server does: every page, script and stylesheet.
+const assets = new Set(readdirSync(root).filter((name) => /\.(?:html|m?js|css)$/.test(name)));
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',

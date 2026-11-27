@@ -12,6 +12,8 @@ h1,h2,h3,p{margin-top:0}h1,h2,h3{font-family:"Wix Madefor Display",sans-serif;fo
 dialog{width:min(460px,calc(100vw - 32px));max-height:88dvh;overflow:auto;overscroll-behavior:contain;border:1px solid #ffffff18;border-radius:20px;padding:28px;background:linear-gradient(135deg,#2b3040,#202532);color:var(--text);box-shadow:0 24px 100px #0009}dialog::backdrop{background:#080b10bd;backdrop-filter:blur(4px)}dialog h2{margin:0}dialog p{color:var(--muted);font-size:14px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 /* New-version notice: offered instead of reloading over open work. */
+.user-setting button[hidden] { display: none; }
+button.danger { color: #ff8a8a; border-color: #ff8a8a66; }
 .invite-code { display: grid; gap: .5rem; }
 .invite-code[hidden] { display: none; }
 .share-link-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
