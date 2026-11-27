@@ -1,4 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
+import { COMPLETION_SESSION_RETRY_HOLDS,
+  COMPLETION_TRANSIENT_PROVIDER_HOLDS as TRANSIENT_PROVIDER_REASONS }
+  from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -17,12 +20,6 @@ const validTransfer = (value) => value &&
   ['active', 'stalled', 'queued', 'paused'].includes(value.transferState);
 const RETRY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
-// These are failed observations, not evidence of changed ownership or files.
-const TRANSIENT_PROVIDER_REASONS = [
-  'provider_http_error', 'provider_unavailable', 'provider_timeout',
-  'provider_transport', 'provider_invalid_response',
-  'torrent_unavailable', 'torrent_unavailable_after_stop', 'stop_outcome_unknown',
-];
 const INCOMPLETE_RETRY_MS = 5 * 60_000;
 // Pure-move completion only reads bounded qBittorrent metadata until the
 // torrent is complete; it does not hash or copy video bytes on this retry.
@@ -234,11 +231,8 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
           ? Math.min(prior.count + 1, INCONCLUSIVE_RETRY_MS.length) : 0;
         const temporaryProviderFailure = pureMode &&
           TRANSIENT_PROVIDER_REASONS.includes(reason);
-        const delay = temporaryProviderFailure || ['provider_http_403', 'authentication_backoff',
-          'authentication_unavailable', 'completion_transition', 'torrent_not_stopped',
-          'torrent_still_present', 'staging_not_empty',
-          'media_retirement_pending', 'media_retirement_unavailable']
-          .includes(reason) ? SESSION_RETRY_MS :
+        const delay = temporaryProviderFailure ||
+          COMPLETION_SESSION_RETRY_HOLDS.includes(reason) ? SESSION_RETRY_MS :
           reason === 'incomplete'
             ? (pureMode ? PURE_INCOMPLETE_RETRY_MS : INCOMPLETE_RETRY_MS) :
           inconclusiveCount > 0 ? INCONCLUSIVE_RETRY_MS[inconclusiveCount - 1] : RETRY_MS;

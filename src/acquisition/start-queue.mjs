@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
-import { TRANSIENT_START_HOLDS, isTransientStartHold, reviveTransientHolds,
+import { TRANSIENT_START_HOLDS, START_SESSION_RETRY_HOLDS,
+  START_METADATA_RETRY_HOLDS, isTransientStartHold, reviveTransientHolds,
   transientRetryDelayMs } from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
@@ -158,11 +159,8 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
           (state === 'held' ? !validReason(reason) : reason !== null)) {
         throw new TypeError('Invalid start result');
       }
-      const sessionRetry = ['provider_unavailable', 'provider_http_403', 'authentication_backoff',
-        'authentication_unavailable', 'metadata_reader_busy',
-        'availability_evidence_stale', 'import_activity_unverified'].includes(reason);
-      const metadataRetry = ['detail_unavailable', 'related_title_unavailable',
-        'shoko_settings_unavailable'].includes(reason);
+      const sessionRetry = START_SESSION_RETRY_HOLDS.includes(reason);
+      const metadataRetry = START_METADATA_RETRY_HOLDS.includes(reason);
       const due = state === 'held' && sessionRetry
         ? checkedMs + SESSION_RETRY_MS :
         state === 'held' && metadataRetry

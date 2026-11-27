@@ -31,6 +31,44 @@ export const PREFLIGHT_PUBLISH_HOLDS = Object.freeze([
   'handoff_mount_unavailable', 'staging_root_unverified',
 ]);
 
+// Start holds with their own short schedules (kept from earlier builds).
+export const START_SESSION_RETRY_HOLDS = Object.freeze([
+  'provider_unavailable', 'provider_http_403', 'authentication_backoff',
+  'authentication_unavailable', 'metadata_reader_busy',
+  'availability_evidence_stale', 'import_activity_unverified',
+]);
+export const START_METADATA_RETRY_HOLDS = Object.freeze([
+  'detail_unavailable', 'related_title_unavailable', 'shoko_settings_unavailable',
+]);
+
+// Completion: failed provider observations (one-minute retry in pure mode)
+// and holds that always retry after a minute.
+export const COMPLETION_TRANSIENT_PROVIDER_HOLDS = Object.freeze([
+  'provider_http_error', 'provider_unavailable', 'provider_timeout',
+  'provider_transport', 'provider_invalid_response',
+  'torrent_unavailable', 'torrent_unavailable_after_stop', 'stop_outcome_unknown',
+]);
+export const COMPLETION_SESSION_RETRY_HOLDS = Object.freeze([
+  'provider_http_403', 'authentication_backoff',
+  'authentication_unavailable', 'completion_transition', 'torrent_not_stopped',
+  'torrent_still_present', 'staging_not_empty',
+  'media_retirement_pending', 'media_retirement_unavailable',
+]);
+
+// Request search holds retried after a minute or after five minutes.
+export const REQUEST_SESSION_RETRY_HOLDS = Object.freeze([
+  'provider_http_403', 'authentication_backoff',
+  'authentication_unavailable', 'release_search_incomplete',
+  'import_quiet_window_unverified', 'torrent_hash_in_use',
+  'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
+  'availability_evidence_stale', 'import_activity_unverified',
+  'provider_unavailable', 'release_selection_pending',
+  'release_choice_changed',
+]);
+export const REQUEST_RELATED_RETRY_HOLDS = Object.freeze([
+  'related_title_unavailable', 'release_search_unavailable',
+]);
+
 const transientStart = new Set(TRANSIENT_START_HOLDS);
 export const isTransientStartHold = (reason) => transientStart.has(reason);
 
