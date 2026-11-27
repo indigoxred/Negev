@@ -1,3 +1,5 @@
+import { createReleaseController } from './release-controller.mjs';
+import { createApiClient } from './api-client.mjs';
 import { createDetailController } from './detail-controller.mjs';
 import { createSearchController } from './search-controller.mjs';
 import { createSearchCard } from './search-card.mjs';
@@ -9,14 +11,14 @@ import { createAdminController } from './admin-controller.mjs';
 import { createViewHelpers } from './view-helpers.mjs';
 
 
-import { createReleaseDialog } from './release-dialog.mjs';
+
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 
-import { createCatalogueReadPacer } from './search-pages.mjs';
 
 
 
-import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
+
+
 import { createResponseEpoch } from './response-epoch.mjs';
 
 import { acquisitionNotice } from './acquisition-notice.mjs';
@@ -310,105 +312,15 @@ for (const button of document.querySelectorAll('[data-request-scope]')) {
     loadRequests();
   });
 }
-const cataloguePacers = { seasons: createCatalogueReadPacer(), library: createCatalogueReadPacer() };
-async function api(url, options = {}) {
-  const { catalogueCurrent, ...fetchOptions } = options;
-  const pacer = /^\/api\/seasons(?:\?|$)/.test(url) ? cataloguePacers.seasons :
-    /^\/api\/library(?:\?|$)/.test(url) ? cataloguePacers.library : null;
-  const userId = state.user?.id;
-  const session = sessionResponses.current();
-  const read = async () => {
-    const headers = { Accept: 'application/json', ...fetchOptions.headers };
-    if (fetchOptions.body !== undefined) headers['Content-Type'] = 'application/json';
-    if (fetchOptions.method && fetchOptions.method !== 'GET' && state.csrf) headers['x-negev-csrf'] = state.csrf;
-    const signal = fetchOptions.signal ?? (pacer ? AbortSignal.timeout(30_000) : undefined);
-    const response = await fetch(url, { credentials: 'same-origin', ...fetchOptions, headers, signal });
-    const data = await response.json().catch(() => ({}));
-    if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
-    if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
-    if (!response.ok) {
-      if (data.reason === 'request_cancelled' && sessionResponses.isCurrent(session) &&
-          state.user?.id === userId && ['/api/requests', '/api/release-previews'].includes(url)) {
-        const body = JSON.parse(fetchOptions.body ?? '{}');
-        const selections = body.scope === 'episodes' && body.episodeIds?.length === 1
-          ? [`episode-${body.episodeIds[0]}`, `film-entry-${body.episodeIds[0]}`] : ['installment'];
-        for (const selection of selections) requestKeys.rejected({ userId,
-          anidbId: body.anidbId, selection }, data, body.requestKey);
-      }
-      if (response.status === 401 && !['/api/login', '/api/register'].includes(url) &&
-          sessionResponses.isCurrent(session)) clearWorkspace();
-      const error = new Error(data.error || data.reason || 'Request failed ('+response.status+')');
-      error.status = response.status; error.reason = data.reason; error.field = data.field;
-      error.retryAfter = response.headers?.get('Retry-After'); throw error;
-    }
-    return data;
-  };
-  return pacer ? pacer.run(read, catalogueCurrent ?? (() => sessionResponses.isCurrent(session) && state.user?.id === userId)) : read();
-}
-const releasePreviewSaved=new Map();
-const releaseDialog=createReleaseDialog({api,element,onSaved:data=>{
-  if(data?.previewId&&(!Number.isSafeInteger(data.requestId)||data.requestId<1))return;
-  const saved=releasePreviewSaved.get(data?.previewId);
-  if(saved){releasePreviewSaved.delete(data.previewId);saved(data);refreshTrackingAfterRequest();}
-  void loadRequests();
-}});
-function dismissRequestDialogs() {
-  releaseDialog.close();
-  // Hiding an ancestor does not close a native modal: it still makes the
-  // newly visible page inert. Release the top layer before changing views.
-  for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
-}
-async function openPreviewReleaseRequests(jobs) {
-  if(!state.releaseSearch)return;
-  const session=sessionResponses.current(),route=location.hash;
-  const show=async index=>{
-    if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
-    const item=jobs[index];if(!item)return;
-    try{
-      const preview=await api('/api/release-previews',{method:'POST',body:JSON.stringify(item.body)});
-      if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
-      if(preview.state==='pending') {
-        item.saved(preview);refreshTrackingAfterRequest();void loadRequests();
-        message(savedRequestMessage(preview));
-        if(index+1<jobs.length)void show(index+1);
-        return;
-      }
-      if(preview.state==='existing') {
-        item.saved(preview);refreshTrackingAfterRequest();void loadRequests();
-        void releaseDialog.open({requestId:preview.requestId,title:preferredDisplayTitle(item),existing:true,
-          next:index+1<jobs.length?()=>{void show(index+1);}:null});
-        return;
-      }
-      if(preview.state!=='preview'||typeof preview.previewId!=='string')throw new Error(preview.reason??'Release preview unavailable');
-      while(releasePreviewSaved.size>=100)releasePreviewSaved.delete(releasePreviewSaved.keys().next().value);
-      const previewUserId=state.user.id;
-      releasePreviewSaved.set(preview.previewId,result=>{
-        if(state.user?.id===previewUserId)item.saved(result);
-      });
-      void releaseDialog.open({previewId:preview.previewId,title:preferredDisplayTitle(item),mode:'manual',
-        next:index+1<jobs.length?()=>{void show(index+1);}:null});
-    }catch(error){
-      message(requestFailureMessage(error),true);
-      if(![401,403].includes(error.status)&&
-          (error.reason??error.message)!=='account_access_changed'&&index+1<jobs.length)await show(index+1);
-    }
-  };
-  await show(0);
-}
-async function openSavedReleaseRequests(saved,mode) {
-  if(!state.releaseSearch)return;
-  const session = sessionResponses.current();
-  const route = location.hash;
-  const jobs=saved.filter(item=>Number.isSafeInteger(item.requestId));
-  const show=index=>{
-    if(!state.user || !sessionResponses.isCurrent(session) || location.hash!==route)return;
-    const item=jobs[index];if(!item)return;
-    void releaseDialog.open({requestId:item.requestId,title:preferredDisplayTitle(item),
-      mode:mode==='manual'?'manual':'auto',
-      next:index+1<jobs.length?()=>show(index+1):null});
-  };
-  show(0);
-}
+
+const client = createApiClient({ clearWorkspace: (...args) => clearWorkspace(...args), requestKeys, sessionResponses, state });
+const { api } = client;
+
+
+const releases = createReleaseController({ api: (...args) => api(...args), element: (...args) => element(...args), loadRequests: (...args) => loadRequests(...args), message: (...args) => message(...args), preferredDisplayTitle: (...args) => preferredDisplayTitle(...args), refreshTrackingAfterRequest: (...args) => refreshTrackingAfterRequest(...args), sessionResponses, state });
+const { releaseDialog, dismissRequestDialogs, openPreviewReleaseRequests, openSavedReleaseRequests } = releases;
+
+
 function showSession(data) {
   if (state.user?.id !== data.user.id) {
     dismissRequestDialogs();

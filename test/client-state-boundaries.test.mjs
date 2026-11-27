@@ -1,3 +1,4 @@
+import { createApiClient } from '../src/web/public/api-client.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
@@ -33,7 +34,7 @@ test('actual API boundary clears expired session and ignores delayed 401 from ol
     cataloguePacers: {}, AbortSignal, fetch: () => old.promise,
     clearWorkspace: () => { clears++; epoch.invalidate(); },
   });
-  vm.runInContext(functionSource('api'), context);
+  Object.assign(context,createApiClient({...context,fetch:(...args)=>context.fetch(...args)}));
   const first = context.api('/api/requests');
   old.resolve({ ok: false, status: 401, json: async () => ({}) });
   await assert.rejects(first);
@@ -273,4 +274,5 @@ test('actual Airing refresh invalidates both old reads before preferences finish
   assert.equal(browse.isCurrent(oldBrowse), false);
   f.deps.sessionResponses.invalidate(); pending.resolve(null); await read;
 });
+
 
