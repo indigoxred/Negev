@@ -45,22 +45,15 @@ test('actual API boundary clears expired session and ignores delayed 401 from ol
 });
 
 test('actual Airing filter submission leaves pending weekly response current', async () => {
-  const week = createResponseEpoch(), browse = createResponseEpoch();
-  const nodes = { 'airing-year': { value: '2026' }, 'airing-season': { value: 'ALL' },
-    'airing-kind': { value: 'all' }, 'airing-sort': { value: 'popular_desc' } };
-  let submit;
-  nodes['airing-form'] = { addEventListener: (_event, listener) => { submit = listener; } };
-  const context = vm.createContext({ byId: id => nodes[id], airingResponses: week,
-    airingSeasonResponses: browse, sessionResponses: createResponseEpoch(),
-    state: { user: { id: 1 } }, genreSelections: { airing: new Set() },
-    loadCurrentAiring() {} });
-  const start = source.indexOf("byId('airing-form').addEventListener('submit'");
-  vm.runInContext(source.slice(start, source.indexOf("\nbyId('airing-sort')", start)), context);
+  const { createBrowseFixture } = await import('./helpers/browse-controller-fixture.mjs');
+  const week = createResponseEpoch(), season = createResponseEpoch();
+  const f = createBrowseFixture({ airingResponses: week, airingSeasonResponses: season });
+  for (const [id, value] of [['airing-year', '2026'], ['airing-season', 'ALL'],
+    ['airing-kind', 'all'], ['airing-sort', 'popular_desc']]) f.byId(id).value = value;
   const pendingWeek = week.current();
-  submit({ preventDefault() {} });
+  f.controller.handleAiringSubmit({ preventDefault() {} });
   assert.equal(week.isCurrent(pendingWeek), true);
 });
-
 test('actual preference read cannot overwrite a newer mutation or same-user session', async () => {
   const pending = deferred();
   const epoch = createResponseEpoch();
@@ -157,7 +150,7 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     airingSeasonResponses: createResponseEpoch(), seasonalResponses: createResponseEpoch(),
     detailPollTimer: null, dismissRequestDialogs() {}, displayCache: new Map(),
     genreSelections: { airing: new Set(), season: new Set() },
-    admin: { resetReview() {} }, element: () => ({}),
+    admin: { resetReview() {} }, browse: { setAiringFilters() {} }, element: () => ({}),
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
     renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
     api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });
@@ -270,13 +263,11 @@ test('a superseded classification pass cannot resume after visibility toggles ba
 });
 
 test('actual Airing refresh invalidates both old reads before preferences finish', async () => {
+  const { createBrowseFixture } = await import('./helpers/browse-controller-fixture.mjs');
   const pending = deferred(), browse = createResponseEpoch(), oldBrowse = browse.current();
-  const context = vm.createContext({ state: { user: { id: 1 } },
-    stopBrowsePageObserver() {}, sessionResponses: createResponseEpoch(),
-    airingResponses: createResponseEpoch(), airingSeasonResponses: browse,
-    byId: () => ({}), ensureTrackingPreferences: () => pending.promise });
-  vm.runInContext(functionSource('loadAiring'), context);
-  const read = context.loadAiring();
+  const f = createBrowseFixture({ airingSeasonResponses: browse,
+    ensureTrackingPreferences: () => pending.promise });
+  const read = f.controller.loadAiring();
   assert.equal(browse.isCurrent(oldBrowse), false);
-  context.sessionResponses.invalidate(); pending.resolve(null); await read;
+  f.deps.sessionResponses.invalidate(); pending.resolve(null); await read;
 });
