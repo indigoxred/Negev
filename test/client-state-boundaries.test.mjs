@@ -8,6 +8,8 @@ import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibi
 import { createCatalogueReadPacer } from '../src/web/public/search-pages.mjs';
 import { createAuthController } from '../src/web/public/auth-controller.mjs';
 import { createTrackingController } from '../src/web/public/tracking-controller.mjs';
+import { createSearchController } from '../src/web/public/search-controller.mjs';
+function attachSearch(context) { Object.assign(context, createSearchController({ ...context, verifier: context.adultSearchVerifier })); } 
 function attachTracking(context) {
   const controller = createTrackingController({ ...context, document: context.document ?? { querySelectorAll: () => [] } });
   Object.assign(context, controller); context.tracking = controller;
@@ -78,7 +80,7 @@ test('actual search classifier only reads unknown cards when visibility requires
     sessionResponses: createResponseEpoch(), location: { hash: '#/discover?q=anime' },
     hideChineseProduction, document: { querySelectorAll: () => nodes },
     adultSearchVerifier: { verify: async ids => { reads.push(...ids); } } });
-  vm.runInContext(functionSource('classifySearchCards'), context);
+  attachSearch(context);
   await context.classifySearchCards(1);
   assert.deepEqual(reads, [], 'adult on needs no adult classification');
   context.state.showAdult = false;
@@ -194,7 +196,7 @@ for (const status of [429, 503]) test(`actual client classifier recovers a ${sta
     sessionResponses: createResponseEpoch(), location: { hash: '#/discover?q=anime' },
     hideChineseProduction, document: { querySelectorAll: () => [node] },
     adultSearchVerifier: verifier, applyAdultVisibility: () => { renders++; } });
-  vm.runInContext(functionSource('classifySearchCards'), context);
+  attachSearch(context);
   await context.classifySearchCards(1);
   assert.equal(node.dataset.adult, 'false');
   assert.equal(renders, 1);
@@ -214,7 +216,7 @@ for (const transition of ['route', 'session', 'toggle', 'expiry']) test(`actual 
   const context = vm.createContext({ state, classificationToken: 0, sessionResponses: epoch, location,
     hideChineseProduction, document: { querySelectorAll: () => [node] }, adultSearchVerifier: verifier,
     applyAdultVisibility() { assert.fail('unknown must stay hidden'); } });
-  vm.runInContext(functionSource('classifySearchCards'), context);
+  attachSearch(context);
   const run = context.classifySearchCards(1);
   await new Promise(resolve => setImmediate(resolve));
   if (transition === 'route') location.hash = '#/library';
@@ -236,7 +238,7 @@ test('actual classifier rejects a successful old-session response before caching
   const state = { user: { id: 1 }, searchToken: 1, showAdult: false, showChinese: true, searchItems: new Map() };
   const context = vm.createContext({ state, classificationToken: 0, sessionResponses: epoch, location: { hash: '#/discover' },
     hideChineseProduction, document: { querySelectorAll: () => [node] }, adultSearchVerifier: verifier, applyAdultVisibility() {} });
-  vm.runInContext(functionSource('classifySearchCards'), context);
+  attachSearch(context);
   const run = context.classifySearchCards(1);
   epoch.invalidate();
   pending.resolve({ state: 'display', anidbId: 1, restricted: false });
@@ -254,7 +256,7 @@ test('a superseded classification pass cannot resume after visibility toggles ba
     sessionResponses: createResponseEpoch(), location: { hash: '#/discover?q=anime' },
     hideChineseProduction, document: { querySelectorAll: () => [] },
     adultSearchVerifier: { verify: async (_ids, _classify, { current }) => checks.push(current) } });
-  vm.runInContext(functionSource('classifySearchCards'), context);
+  attachSearch(context);
   await context.classifySearchCards(1);
   state.showAdult = true; await context.classifySearchCards(1);
   state.showAdult = false; await context.classifySearchCards(1);

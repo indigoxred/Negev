@@ -1,18 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import vm from 'node:vm';
 import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
 import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibility.mjs';
-import { hideChineseProduction } from '../src/web/public/chinese-visibility.mjs';
-
-const source = readFileSync(new URL('../src/web/public/app.js', import.meta.url), 'utf8');
-function functionSource(name) {
-  const start = source.indexOf(`async function ${name}(`) >= 0
-    ? source.indexOf(`async function ${name}(`) : source.indexOf(`function ${name}(`);
-  assert.ok(start >= 0);
-  return source.slice(start, source.indexOf('\n}', start) + 2);
-}
+import { createSearchController } from '../src/web/public/search-controller.mjs';
+import { createSearchCard } from '../src/web/public/search-card.mjs';
 const display = { state: 'display', anidbId: 42, title: 'Verified title',
   englishTitle: 'Verified English', restricted: false, chineseProduction: true,
   libraryPresence: { state: 'in_library', verifiedEpisodeCount: 2 },
@@ -24,17 +15,17 @@ function fixture(readDisplay = async () => display) {
     replaceWith(next) { cards[cards.indexOf(this)] = next; } });
   const state = { user: { id: 1 }, showAdult: false, showChinese: true,
     searchToken: 1, searchItems: new Map([[42, { anidbId: 42 }]]) };
-  const ctx = vm.createContext({ state, classificationToken: 0,
+  const ctx = { state,
     sessionResponses: createResponseEpoch(), location: { hash: '#/library?q=example' },
-    hideChineseProduction, document: { querySelectorAll: () => cards },
+    document: { querySelectorAll: () => cards },
     adultSearchVerifier: createAdultSearchVerifier({ readDisplay,
       pacer: { run: read => read(), defer() {} } }),
     applyAdultVisibility() {}, searchResultCard: (entry, inLibrary) => {
       rendered.push({ entry, inLibrary });
       return { dataset: { adult: String(entry.adult), anidbId: '42' },
         querySelector() { return null; } };
-    } });
-  vm.runInContext(functionSource('classifySearchCards'), ctx);
+    } };
+  Object.assign(ctx, createSearchController({ ...ctx, verifier: ctx.adultSearchVerifier }));
   cards.push(placeholder());
   return { ctx, cards, rendered, placeholder };
 }
@@ -69,11 +60,10 @@ test('metadata arriving after sign-out cannot populate the next account search',
 
 test('ID-only cards do not request posters or build labels before verification', () => {
   let posters = 0, labels = 0;
-  const ctx = vm.createContext({ element: tag => ({ tag }),
+  const ctx = { element: tag => ({ tag }),
     markAdult: (node, item, options) => ({ node, item, options }),
-    posterImage: () => { posters++; }, titleLabel: () => { labels++; } });
-  vm.runInContext(functionSource('searchResultCard'), ctx);
-  const result = ctx.searchResultCard({ anidbId: 42 }, false);
+    posterImage: () => { posters++; }, titleLabel: () => { labels++; } };
+  const result = createSearchCard(ctx).searchResultCard({ anidbId: 42 }, false);
   assert.equal(result.node.tag, 'div');
   assert.equal(result.options.hideUnknown, true);
   assert.equal(posters, 0); assert.equal(labels, 0);

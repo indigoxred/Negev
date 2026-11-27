@@ -1,3 +1,5 @@
+import { createSearchController } from './search-controller.mjs';
+import { createSearchCard } from './search-card.mjs';
 import { createBrowseController } from './browse-controller.mjs';
 import { createTrackingController } from './tracking-controller.mjs';
 import { createAuthController } from './auth-controller.mjs';
@@ -9,9 +11,9 @@ import { createViewHelpers } from './view-helpers.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
 import { createRequestKeyStore, generateRequestKey } from './request-key.mjs';
 import { createEpisodePager } from './episode-pages.mjs';
-import { createSearchPager, createCatalogueReadPacer } from './search-pages.mjs';
+import { createCatalogueReadPacer } from './search-pages.mjs';
 
-import { createAdultSearchVerifier } from './adult-search-visibility.mjs';
+
 
 import { requestFailureMessage, savedRequestMessage } from './request-feedback.mjs';
 import { createResponseEpoch } from './response-epoch.mjs';
@@ -55,10 +57,8 @@ const requestResponses = {
   preparing: createResponseEpoch(),
 };
 const displayCache = new Map();
-let classificationToken = 0;
-const adultSearchVerifier = createAdultSearchVerifier({ readDisplay: (id) =>
-  api(`/api/catalogue/${id}/display`, { cache: 'no-store',
-    signal: AbortSignal.timeout(30_000) }) });
+
+
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -185,7 +185,7 @@ function renderRoute() {
   const librarySearchCleared = route.page === 'library' && route.query.length < 2 &&
     previousRoute?.page === 'library' && previousRoute.query.length >= 2;
   if (renderedHash !== location.hash) {
-    classificationToken++;
+    search.invalidate();
     message('');
     for (const menu of document.querySelectorAll(dropdownSelector)) menu.open = false;
     pendingScrollRestore = { hash: location.hash, y: routePositions.get(location.hash) ?? 0 };
@@ -717,41 +717,8 @@ byId('english-title-toggle').addEventListener('click', () => {
     state.preferEnglish ? 'on' : 'off'); } catch { /* Applies for this session. */ }
   applyTitlePreference();
 });
-async function classifySearchCards(searchToken) {
-  const pass = ++classificationToken;
-  if (state.showAdult || !state.user) return;
-  const userId = state.user.id;
-  const session = sessionResponses.current();
-  const route = location.hash;
-  const current = () => pass === classificationToken && !state.showAdult && state.searchToken === searchToken &&
-    state.user?.id === userId && sessionResponses.isCurrent(session) && location.hash === route;
-  const ids = [...document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')]
-    .filter((node) => node.dataset.adult === 'unknown' &&
-      !hideChineseProduction(state.showChinese, node.dataset.chineseProduction === 'true'))
-    .map((node) => Number(node.dataset.anidbId));
-  await adultSearchVerifier.verify(ids, (id, adult, display) => {
-    if (!current()) return;
-    const item = state.searchItems.get(id);
-    const entry = item && { ...item, ...(!item.title ? display : {}), adult };
-    if (entry) state.searchItems.set(id, entry);
-    for (const node of document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')) {
-      if (Number(node.dataset.anidbId) === id) {
-        if (!item?.title && entry?.title) {
-          node.replaceWith(searchResultCard(entry,
-            Boolean(node.closest('#library-search-results'))));
-          continue;
-        }
-        node.dataset.adult = String(adult);
-        if (adult && !node.querySelector('.adult-label')) {
-          node.querySelector('.result-copy')?.append(
-            element('span', '18+', 'badge partial adult-label'));
-        }
-      }
-    }
-    applyAdultVisibility();
-  }, { current, session,
-    refreshMetadata: ids.some(id => !state.searchItems.get(id)?.title) });
-}
+const search = createSearchController({ api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, element: (...args) => element(...args), message: (...args) => message(...args), restoreRoutePosition: (...args) => restoreRoutePosition(...args), searchResultCard: (...args) => searchResultCard(...args), sessionResponses, state });
+const { classifySearchCards, submitInlineSearch, handleSearchSubmit } = search;
 // Shows a one-time link with a Copy button. The link is only shown here; the
 // server keeps just a digest, so it cannot be displayed again later.
 // `session` is sessionResponses.current() from before the request: a link
@@ -767,43 +734,10 @@ byId('reset-form').addEventListener('submit', auth.handleResetSubmit);
 byId('refresh-invites').addEventListener('click', () => { void loadInvites(); });
 
 byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
-function submitInlineSearch(inputId, destination) {
-  const input = byId(inputId);
-  const query = input.value.trim();
-  if (query.length < 2) {
-    input.focus();
-    return;
-  }
-  byId('query').value = query;
-  if (destination === 'discover' && parseConsumerRoute(location.hash).page === 'airing') {
-    location.hash = searchRoute(query);
-  }
-  byId('search-form').requestSubmit();
-}
 
-function searchResultCard(item, inLibrary) {
-  // ID-only results do not create labels or request posters until verified.
-  if (!item.title) return markAdult(element('div', undefined, 'tracked-title'),
-    { anidbId: item.anidbId }, { hideUnknown: true });
-  const button = element('button', undefined, 'result');
-  button.type = 'button';
-  const tile = element('span', 'N', 'poster-fallback');
-  tile.setAttribute('aria-hidden', 'true');
-  const poster = posterImage(item);
-  poster.addEventListener('load', () => tile.classList.add('has-poster'));
-  tile.append(poster);
-  const copy = element('span', undefined, 'result-copy');
-  copy.append(titleLabel(item), element('small', `AniDB ${item.anidbId}`));
-  const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
-  copy.append(inLibrary && presence?.state !== 'in_library'
-    ? element('span', 'Not found in Negev’s verified library', 'presence unknown')
-    : publicPresenceBadge(presence, item));
-  if (item.adult === true) copy.append(
-    element('span', '18+', 'badge partial adult-label'));
-  button.append(tile, copy);
-  button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
-  return trackedCard(button, item, { hideUnknown: true });
-}
+
+const searchCard = createSearchCard({ element: (...args) => element(...args), markAdult: (...args) => markAdult(...args), posterImage: (...args) => posterImage(...args), publicPresenceBadge: (...args) => publicPresenceBadge(...args), state, titleLabel: (...args) => titleLabel(...args), trackedCard: (...args) => trackedCard(...args) });
+const { searchResultCard } = searchCard;
 for (const [inputId, buttonId, destination] of [
   ['discover-query', 'discover-search-button', 'discover'],
   ['airing-query', 'airing-search-button', 'discover'],
@@ -818,86 +752,7 @@ for (const [inputId, buttonId, destination] of [
   });
 }
 
-byId('search-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const query = byId('query').value.trim();
-  if (query.length < 2) return;
-  const inLibrary = parseConsumerRoute(location.hash).page === 'library';
-  state.lastSearchQuery = `${inLibrary ? 'library' : 'discover'}:${query}`;
-  const route = inLibrary ? librarySearchRoute(query) : searchRoute(query);
-  if (location.hash !== route) location.hash = route;
-  const token = ++state.searchToken;
-  const results = byId(inLibrary ? 'library-search-results' : 'results');
-  const preserveResults = results.dataset.query === query && results.dataset.complete === 'true';
-  results.dataset.query = query;
-  results.dataset.complete = 'false';
-  byId(inLibrary ? 'library-search-section' : 'search-results-section').hidden = false;
-  if (inLibrary) {
-    byId('library-browse').hidden = true;
-    byId('search-all-catalogue').href = searchRoute(query);
-  } else byId('search-verified-library').href = librarySearchRoute(query);
-  if (!preserveResults) results.replaceChildren(element('p', 'Searching…', 'muted'));
-  const appendItems = (items) => {
-    for (const item of items) {
-      const known = state.searchItems.get(item.anidbId);
-      const entry = { ...item, adult: item.title ? item.adult ?? known?.adult : undefined };
-      state.searchItems.set(item.anidbId, entry);
-      results.append(searchResultCard(entry, inLibrary));
-    }
-    void classifySearchCards(token);
-  };
-  try {
-    const data = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}`);
-    if (token !== state.searchToken) return;
-    const pager = createSearchPager(data);
-    results.replaceChildren();
-    if (data.catalogueStale) results.append(element('p',
-      'AniDB title list may be out of date. Check the title details before requesting.', 'muted'));
-    if (data.catalogueCacheWriteFailed) results.append(element('p',
-      'The title list could not be saved. Some titles may be missing after a restart if AniDB is offline.', 'muted'));
-    if (data.items.length === 0) results.append(element('p', pager.nextPage === null
-      ? 'No matching anime titles found. Try another name or browse the catalogue.'
-      : 'The first results are hidden for your account. Show more to keep looking.', 'muted'));
-    appendItems(data.items);
-    results.dataset.complete = 'true';
-    restoreRoutePosition();
-    const addMore = () => {
-      if (pager.nextPage === null) return;
-      const button = element('button', 'Show more results');
-      button.type = 'button';
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try {
-          const page = await api(`/api/catalogue/search?q=${encodeURIComponent(query)}&page=${pager.nextPage}`);
-          if (token !== state.searchToken) return;
-          const appended = pager.append(page);
-          if (appended.state !== 'appended') {
-            button.textContent = 'Results changed. Search again.';
-            return;
-          }
-          button.remove();
-          appendItems(appended.items);
-          restoreRoutePosition();
-          addMore();
-        } catch {
-          if (token === state.searchToken) {
-            button.disabled = false;
-            message('More results are unavailable right now.', true);
-          }
-        }
-      });
-      results.append(button);
-    };
-    addMore();
-    message(`${data.total} catalogue result${data.total === 1 ? '' : 's'}.`);
-  } catch (error) {
-    if (token !== state.searchToken) return;
-    if (preserveResults) results.prepend(element('p',
-      'Could not refresh these saved results. Search again to retry.', 'muted'));
-    else results.replaceChildren(element('p', 'Search is unavailable right now.', 'muted'));
-    message(error.message, true);
-  }
-});
+byId('search-form').addEventListener('submit', search.handleSearchSubmit);
 function pendingTitleAction(item) {
   if (!state.user || item.adult === true &&
       (!state.showAdult || state.user.adultAllowed !== true)) return null;
