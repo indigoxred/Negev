@@ -1,3 +1,4 @@
+import { createViewHelpers } from './view-helpers.mjs';
 import { catalogueAvailability } from './card-availability.mjs';
 import { reviewReasonText } from './review-reason.mjs';
 import { createReleaseDialog, makeReleaseActions } from './release-dialog.mjs';
@@ -112,48 +113,13 @@ document.addEventListener('keydown', (event) => {
   }
 });
 let airingFilters = { year: 0, season: 'ALL', kind: 'all', tag: '', sort: 'popular_desc' };
-function message(text, error = false) {
-  const node = byId('message');
-  node.textContent = text;
-  node.classList.toggle('error', error);
-}
+const viewHelpers = createViewHelpers({ byId, state });
+const { message, element, preferredDisplayTitle, titleLabel, applyTitlePreference, posterImage } = viewHelpers;
 const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState);
-function element(tag, text, className) {
-  const node = document.createElement(tag);
-  if (text !== undefined) node.textContent = text;
-  if (className) node.className = className;
-  return node;
-}
-function preferredDisplayTitle(item) {
-  return state.preferEnglish && item.englishTitle?.trim() || item.title;
-}
-function titleLabel(item, { tag = 'strong', className } = {}) {
-  const english = item.englishTitle?.trim();
-  const label = element(tag, preferredDisplayTitle(item),
-    className);
-  if (english && english !== item.title) {
-    label.dataset.originalTitle = item.title;
-    label.dataset.englishTitle = english;
-    label.title = state.preferEnglish ? `Original: ${item.title}` : `English: ${english}`;
-  }
-  return label;
-}
-function applyTitlePreference() {
-  const toggle = byId('english-title-toggle');
-  toggle.textContent = 'Show English titles';
-  toggle.setAttribute('aria-pressed', String(state.preferEnglish));
-  for (const label of document.querySelectorAll('[data-english-title]')) {
-    label.textContent = state.preferEnglish
-      ? label.dataset.englishTitle : label.dataset.originalTitle;
-    label.title = state.preferEnglish
-      ? `Original: ${label.dataset.originalTitle}`
-      : `English: ${label.dataset.englishTitle}`;
-  }
-  for (const alias of document.querySelectorAll('[data-title-alias]')) {
-    alias.textContent = detailAliasText(state.preferEnglish,
-      alias.dataset.originalTitle, alias.dataset.titleAlias);
-  }
-}
+
+
+
+
 function updateTrackControls() {
   for (const button of document.querySelectorAll('[data-track-id]')) {
     const id = Number(button.dataset.trackId);
@@ -349,18 +315,8 @@ function applyAdultVisibility() {
   chinese.setAttribute('aria-pressed', String(state.showChinese));
   chinese.title = 'Show or hide titles tagged Chinese production';
 }
-const posterUrl = (item) => /^[0-9a-f-]{36}$/i.test(item.posterUid ?? '')
-  ? `/api/catalogue/posters/${item.posterUid}`
-  : `/api/catalogue/posters/anidb/${item.anidbId}`;
-function posterImage(item, className = '') {
-  const poster = document.createElement('img');
-  poster.alt = '';
-  poster.loading = 'lazy';
-  if (className) poster.className = className;
-  attachPosterRecovery(poster);
-  poster.src = posterUrl(item);
-  return poster;
-}
+
+
 function renderRoute() {
   if (!state.user) return;
   const route = parseConsumerRoute(location.hash);
