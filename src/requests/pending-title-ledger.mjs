@@ -43,6 +43,17 @@ export function openPendingTitleLedger(dbPath) {
       AND normal_request_id IS NULL AND reason='already_monitored_elsewhere'`);
     db.exec(`CREATE INDEX IF NOT EXISTS pending_title_active_owner
       ON pending_title_intents(requester_id,anidb_id,state,id)`);
+    // Older workers permanently closed preparations when an account was
+    // disabled. Restore only unsuperseded preparations; the worker still
+    // checks the current account before submitting the original request key.
+    db.exec(`UPDATE pending_title_intents AS stranded
+      SET state='pending',next_due_ms=0,lease_until_ms=NULL,version=version+1
+      WHERE state='complete' AND reason='account_access_changed'
+        AND normal_request_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM pending_title_intents AS other
+          WHERE other.requester_id=stranded.requester_id
+            AND other.anidb_id=stranded.anidb_id AND other.id!=stranded.id
+            AND (other.id>stranded.id OR other.state IN ('pending','resolving')))`);
   } catch (error) { db.close(); throw error; }
 
   const byId = db.prepare('SELECT * FROM pending_title_intents WHERE id=?');
