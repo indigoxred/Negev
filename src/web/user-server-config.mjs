@@ -12,6 +12,21 @@ function baseUrl(value, label) {
 }
 
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
+// An on/off setting: unset or "0" is off, "1" is on, anything else is refused.
+function flag(env, name, message = `${name} must be 0 or 1`) {
+  const value = env[name];
+  if (value != null && value !== '0' && value !== '1') throw new TypeError(message);
+  return value === '1';
+}
+// Private keys always live at <data>/secrets/<fileName>. The matching *_FILE
+// setting is optional; when it is set it must name exactly that file.
+function secretFile(env, name, dataDir, fileName, message) {
+  const expected = path.join(dataDir, 'secrets', fileName);
+  if (env[name] !== undefined && env[name] !== expected) {
+    throw new TypeError(`${message}: put it at ${expected} and leave ${name} unset or equal to that path`);
+  }
+  return expected;
+}
 const mount = (value) => value && typeof value === 'object' &&
   !Array.isArray(value) && Object.keys(value).sort().join(',') ===
     'appRoot,localRoot' &&
@@ -70,28 +85,19 @@ function plexConfig(env, dataDir) {
     'NEGEV_PLEX_SECTIONS', 'NEGEV_SHOKO_MEDIA_MOUNT',
     'NEGEV_PLEX_MEDIA_MOUNTS', 'NEGEV_PLEX_TOKEN',
     'NEGEV_PLEX_GUID_PROBE', 'NEGEV_PLEX_SOURCE_POLICY'];
-  if (env.NEGEV_PLEX_OBSERVER != null &&
-      !['0', '1'].includes(env.NEGEV_PLEX_OBSERVER)) {
-    throw new TypeError('Invalid Plex observer flag');
-  }
-  if (env.NEGEV_PLEX_OBSERVER !== '1') {
+  if (!flag(env, 'NEGEV_PLEX_OBSERVER', 'Invalid Plex observer flag')) {
     if (names.some((name) => Object.hasOwn(env, name))) {
       throw new TypeError('Plex observer is disabled');
     }
     return null;
   }
-  if (env.NEGEV_PLEX_GUID_PROBE != null &&
-      !['0', '1'].includes(env.NEGEV_PLEX_GUID_PROBE)) {
-    throw new TypeError('Invalid Plex GUID probe flag');
-  }
+  const guidProbe = flag(env, 'NEGEV_PLEX_GUID_PROBE', 'Invalid Plex GUID probe flag');
   if (Object.hasOwn(env, 'NEGEV_PLEX_TOKEN')) {
     throw new TypeError('Plex token must use a private file');
   }
   baseUrl(env.NEGEV_PLEX_URL, 'Plex URL');
-  const plexTokenPath = path.join(dataDir, 'secrets', 'plex.token');
-  if (env.NEGEV_PLEX_TOKEN_FILE !== plexTokenPath) {
-    throw new TypeError('Private Plex token file required');
-  }
+  const plexTokenPath = secretFile(env, 'NEGEV_PLEX_TOKEN_FILE', dataDir,
+    'plex.token', 'Private Plex token file required');
   let sections, shokoMount, plexMounts;
   try {
     sections = JSON.parse(env.NEGEV_PLEX_SECTIONS);
@@ -106,8 +112,7 @@ function plexConfig(env, dataDir) {
         new Set(sections[kind]).size === sections[kind].length) ||
       sections.episode.length + sections.movie.length === 0 ||
       sections.episode.length + sections.movie.length > 20 ||
-      (env.NEGEV_PLEX_GUID_PROBE === '1' &&
-        sections.episode.length + sections.movie.length > 4) ||
+      (guidProbe && sections.episode.length + sections.movie.length > 4) ||
       new Set([...sections.episode, ...sections.movie]).size !==
         sections.episode.length + sections.movie.length ||
       !mount(shokoMount) || !Array.isArray(plexMounts) ||
@@ -120,18 +125,14 @@ function plexConfig(env, dataDir) {
   const sourcePolicy = plexSourcePolicy(env.NEGEV_PLEX_SOURCE_POLICY, sections);
   return { plexBaseUrl: env.NEGEV_PLEX_URL, plexTokenPath,
     publicSections: sections, shokoMount, plexMounts,
-    guidProbe: env.NEGEV_PLEX_GUID_PROBE === '1', sourcePolicy };
+    guidProbe, sourcePolicy };
 }
 
 function prowlarrConfig(env, dataDir) {
   const names = ['NEGEV_PROWLARR_URL', 'NEGEV_PROWLARR_KEY_FILE',
     'NEGEV_PROWLARR_INDEXERS', 'NEGEV_PROWLARR_TRUSTED_INDEXERS',
     'NEGEV_PROWLARR_API_KEY'];
-  if (env.NEGEV_PROWLARR_DISCOVERY != null &&
-      !['0', '1'].includes(env.NEGEV_PROWLARR_DISCOVERY)) {
-    throw new TypeError('Invalid Prowlarr discovery flag');
-  }
-  if (env.NEGEV_PROWLARR_DISCOVERY !== '1') {
+  if (!flag(env, 'NEGEV_PROWLARR_DISCOVERY', 'Invalid Prowlarr discovery flag')) {
     if (names.some((name) => Object.hasOwn(env, name))) {
       throw new TypeError('Prowlarr discovery is disabled');
     }
@@ -141,10 +142,8 @@ function prowlarrConfig(env, dataDir) {
     throw new TypeError('Prowlarr key must use a private file');
   }
   baseUrl(env.NEGEV_PROWLARR_URL, 'Prowlarr URL');
-  const keyPath = path.join(dataDir, 'secrets', 'prowlarr.token');
-  if (env.NEGEV_PROWLARR_KEY_FILE !== keyPath) {
-    throw new TypeError('Private Prowlarr key file required');
-  }
+  const keyPath = secretFile(env, 'NEGEV_PROWLARR_KEY_FILE', dataDir,
+    'prowlarr.token', 'Private Prowlarr key file required');
   let indexerIds;
   try { indexerIds = JSON.parse(env.NEGEV_PROWLARR_INDEXERS); }
   catch { throw new TypeError('Invalid Prowlarr indexers'); }
@@ -171,11 +170,7 @@ function prowlarrConfig(env, dataDir) {
 function qbitSidecarConfig(env, dataDir, shokoImportFolderId) {
   const names = ['NEGEV_QBITTORRENT_URL', 'NEGEV_QBITTORRENT_USERNAME',
     'NEGEV_QBITTORRENT_PASSWORD_FILE', 'NEGEV_QBITTORRENT_IMPORT_SAVE_PATH'];
-  if (env.NEGEV_QBITTORRENT_SIDECAR_READ != null &&
-      !['0', '1'].includes(env.NEGEV_QBITTORRENT_SIDECAR_READ)) {
-    throw new TypeError('Invalid qBittorrent sidecar flag');
-  }
-  if (env.NEGEV_QBITTORRENT_SIDECAR_READ !== '1') {
+  if (!flag(env, 'NEGEV_QBITTORRENT_SIDECAR_READ', 'Invalid qBittorrent sidecar flag')) {
     if (names.some((name) => Object.hasOwn(env, name))) {
       throw new TypeError('qBittorrent sidecar observation is disabled');
     }
@@ -186,11 +181,11 @@ function qbitSidecarConfig(env, dataDir, shokoImportFolderId) {
   }
   baseUrl(env.NEGEV_QBITTORRENT_URL, 'qBittorrent URL');
   const username = env.NEGEV_QBITTORRENT_USERNAME;
-  const passwordPath = path.join(dataDir, 'secrets', 'qbittorrent.password');
+  const passwordPath = secretFile(env, 'NEGEV_QBITTORRENT_PASSWORD_FILE', dataDir,
+    'qbittorrent.password', 'Invalid qBittorrent sidecar configuration');
   const importSavePath = env.NEGEV_QBITTORRENT_IMPORT_SAVE_PATH;
   if (typeof username !== 'string' || !username || username.length > 256 ||
       /[\x00-\x1f\x7f]/.test(username) ||
-      env.NEGEV_QBITTORRENT_PASSWORD_FILE !== passwordPath ||
       typeof importSavePath !== 'string' || importSavePath === '/' ||
       !path.posix.isAbsolute(importSavePath) ||
       path.posix.normalize(importSavePath) !== importSavePath ||
@@ -220,11 +215,8 @@ export function parseUserServerConfig(env) {
       Object.hasOwn(env, 'NEGEV_QBITTORRENT_SID')) {
     throw new TypeError('qBittorrent credentials cannot use environment variables');
   }
-  if (env.NEGEV_ACQUISITION_RUNTIME != null &&
-      !['0', '1'].includes(env.NEGEV_ACQUISITION_RUNTIME)) {
-    throw new TypeError('Invalid acquisition runtime flag');
-  }
-  const acquisitionRuntime = env.NEGEV_ACQUISITION_RUNTIME === '1';
+  const acquisitionRuntime = flag(env, 'NEGEV_ACQUISITION_RUNTIME',
+    'Invalid acquisition runtime flag');
   const logLevel = env.NEGEV_LOG_LEVEL ?? 'warn';
   if (!['silent', 'error', 'warn', 'info', 'debug'].includes(logLevel)) {
     throw new TypeError('NEGEV_LOG_LEVEL must be silent, error, warn, info or debug');
@@ -254,17 +246,11 @@ export function parseUserServerConfig(env) {
        !validId(shokoImportFolderId))) {
     throw new TypeError('Invalid Shoko Import folder ID');
   }
-  if ([env.NEGEV_SHOKO_EVENTS, env.NEGEV_SHOKO_INVENTORY,
-      env.NEGEV_SHOKO_INVENTORY_HINTS,
-      env.NEGEV_SHOKO_RECENT,
-      env.NEGEV_AIRING_WATCH, env.NEGEV_PLEX_INDEX,
-      env.NEGEV_FILE_BACKFILL,
-      env.NEGEV_DIRECT_AVAILABILITY,
-      env.NEGEV_TITLE_CHECK,
-      env.NEGEV_SHOKO_HYDRATION,
-      env.NEGEV_ANIDB_TITLE_DUMP].some((flag) =>
-    flag != null && !['0', '1'].includes(flag))) {
-    throw new TypeError('Invalid observer flag');
+  for (const name of ['NEGEV_SHOKO_EVENTS', 'NEGEV_SHOKO_INVENTORY',
+    'NEGEV_SHOKO_INVENTORY_HINTS', 'NEGEV_SHOKO_RECENT', 'NEGEV_AIRING_WATCH',
+    'NEGEV_PLEX_INDEX', 'NEGEV_FILE_BACKFILL', 'NEGEV_DIRECT_AVAILABILITY',
+    'NEGEV_TITLE_CHECK', 'NEGEV_SHOKO_HYDRATION', 'NEGEV_ANIDB_TITLE_DUMP']) {
+    flag(env, name, `Invalid observer flag: ${name} must be 0 or 1`);
   }
   if (env.NEGEV_PLEX_INDEX === '1' && env.NEGEV_PLEX_OBSERVER !== '1') {
     throw new TypeError('Plex index needs observer configuration');
@@ -284,11 +270,7 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Shoko path hints need inventory');
   }
   const fileBackfill = env.NEGEV_FILE_BACKFILL === '1';
-  const fileProofRead = env.NEGEV_FILE_PROOF_READ === '1';
-  if (env.NEGEV_FILE_PROOF_READ != null &&
-      !['0', '1'].includes(env.NEGEV_FILE_PROOF_READ)) {
-    throw new TypeError('Invalid file proof reader flag');
-  }
+  const fileProofRead = flag(env, 'NEGEV_FILE_PROOF_READ', 'Invalid file proof reader flag');
   const rawFileInterval = env.NEGEV_FILE_BACKFILL_INTERVAL_MS;
   const rawProofLifetime = env.NEGEV_FILE_PROOF_LIFETIME_MS;
   const rawFilesPerTick = env.NEGEV_FILE_BACKFILL_FILES_PER_TICK;
@@ -335,11 +317,7 @@ export function parseUserServerConfig(env) {
     throw new TypeError('Title check needs scoped public Plex discovery');
   }
   const airingWatch = env.NEGEV_AIRING_WATCH === '1';
-  if (env.NEGEV_PARENT_WATCH != null &&
-      !['0', '1'].includes(env.NEGEV_PARENT_WATCH)) {
-    throw new TypeError('Invalid parent watch flag');
-  }
-  const parentWatch = env.NEGEV_PARENT_WATCH === '1';
+  const parentWatch = flag(env, 'NEGEV_PARENT_WATCH', 'Invalid parent watch flag');
   if (parentWatch && !airingWatch) {
     throw new TypeError('Parent watch needs Airing watch');
   }
@@ -348,19 +326,15 @@ export function parseUserServerConfig(env) {
   }
   const timeZone = env.NEGEV_TIME_ZONE ?? 'UTC';
   dateInZone(timeZone);
-  const shokoApiKeyPath = path.join(dataDir, 'secrets', 'shoko.token');
-  if (Object.hasOwn(env, 'NEGEV_SHOKO_API_KEY') ||
-      env.NEGEV_SHOKO_API_KEY_FILE !== shokoApiKeyPath) {
-    throw new TypeError('Private Shoko key file required');
+  if (Object.hasOwn(env, 'NEGEV_SHOKO_API_KEY')) {
+    throw new TypeError('Private Shoko key file required: NEGEV_SHOKO_API_KEY is not supported');
   }
+  const shokoApiKeyPath = secretFile(env, 'NEGEV_SHOKO_API_KEY_FILE', dataDir,
+    'shoko.token', 'Private Shoko key file required');
   const publicOrigin = env.NEGEV_PUBLIC_ORIGIN;
   const origin = baseUrl(publicOrigin, 'public origin');
   const host = env.NEGEV_LISTEN_HOST ?? '127.0.0.1';
-  if (env.NEGEV_EXPOSE_USERS !== undefined &&
-      !['0', '1'].includes(env.NEGEV_EXPOSE_USERS)) {
-    throw new TypeError('Invalid user exposure flag');
-  }
-  const exposed = env.NEGEV_EXPOSE_USERS === '1';
+  const exposed = flag(env, 'NEGEV_EXPOSE_USERS', 'Invalid user exposure flag');
   // A tunnel running in the same network namespace can reach loopback. Keep
   // the HTTPS origin and secure cookie without opening a second LAN listener.
   if (host !== '127.0.0.1' && !(host === '0.0.0.0' && exposed)) {
@@ -408,23 +382,19 @@ export function parseUserServerConfig(env) {
   let acquisitionImportParent = null;
   let acquisitionImportFolderId = null;
   if (acquisitionRuntime) {
-    if (env.NEGEV_ANIME_SOLE_OWNER != null &&
-        !['0', '1'].includes(env.NEGEV_ANIME_SOLE_OWNER)) {
-      throw new TypeError('Invalid sole anime owner flag');
-    }
-    animeSoleOwner = env.NEGEV_ANIME_SOLE_OWNER === '1';
+    animeSoleOwner = flag(env, 'NEGEV_ANIME_SOLE_OWNER', 'Invalid sole anime owner flag');
     if (Object.hasOwn(env, 'NEGEV_SONARR_API_KEY')) {
       throw new TypeError('Sonarr credential must be a private file');
     }
     if (env.NEGEV_SONARR_OWNERSHIP_URL !== undefined ||
         env.NEGEV_SONARR_API_KEY_FILE !== undefined) {
-      const keyPath = path.join(dataDir, 'secrets', 'sonarr.token');
+      const keyPath = secretFile(env, 'NEGEV_SONARR_API_KEY_FILE', dataDir,
+        'sonarr.token', 'Invalid private Sonarr ownership configuration');
       let url;
       try { url = baseUrl(env.NEGEV_SONARR_OWNERSHIP_URL,
         'Sonarr ownership URL'); } catch { throw new TypeError('Invalid Sonarr ownership URL'); }
-      if (url.protocol !== 'http:' ||
-          env.NEGEV_SONARR_API_KEY_FILE !== keyPath) {
-        throw new TypeError('Invalid private Sonarr ownership configuration');
+      if (url.protocol !== 'http:') {
+        throw new TypeError('Invalid private Sonarr ownership configuration: the Sonarr URL must use http');
       }
       sonarrOwnership = { baseUrl: url.origin, keyPath };
     }
@@ -435,11 +405,7 @@ export function parseUserServerConfig(env) {
     acquisitionImportFolderId = Number(rawAcquisitionFolderId);
     const shokoSourcePath = env.NEGEV_ACQUISITION_SHOKO_SOURCE_PATH;
     const qbitStagingRoot = env.NEGEV_QBITTORRENT_STAGING_ROOT;
-    const pureMode = env.NEGEV_PURE_MOVE === '1';
-    if (env.NEGEV_PURE_MOVE !== undefined &&
-        !['0', '1'].includes(env.NEGEV_PURE_MOVE)) {
-      throw new TypeError('Invalid pure move flag');
-    }
+    const pureMode = flag(env, 'NEGEV_PURE_MOVE', 'Invalid pure move flag');
     const shokoProviderId = env.NEGEV_SHOKO_RELEASE_PROVIDER_ID;
     const rawAllowedIds = env.NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS;
     let allowedAnidbIds = null;
