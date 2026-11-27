@@ -2077,7 +2077,10 @@ async function classifySearchCards(searchToken) {
 }
 // Shows a one-time link with a Copy button. The link is only shown here; the
 // server keeps just a digest, so it cannot be displayed again later.
-function showShareLink(title, url, note) {
+// `session` is sessionResponses.current() from before the request: a link
+// that arrives after sign-out (or an account switch) is never shown.
+function showShareLink(title, url, note, session) {
+  if (!sessionResponses.isCurrent(session) || !state.user) return false;
   const box = byId('invite-code');
   const field = element('input');
   field.type = 'text';
@@ -2108,13 +2111,15 @@ function showShareLink(title, url, note) {
 }
 const linkFor = (kind, code) => `${location.origin}/#${kind}=${code}`;
 async function createInviteLink() {
+  const session = sessionResponses.current();
   try {
     const result = await api('/api/invitations', { method: 'POST', body: '{}' });
-    showShareLink('Invitation link', linkFor('invite', result.code),
-      'Works once and expires in 7 days. Anyone with the link can create an account.');
+    if (!showShareLink('Invitation link', linkFor('invite', result.code),
+      'Works once and expires in 7 days. Anyone with the link can create an account.',
+      session)) return;
     message('Invitation link ready.');
     if (state.usersLoaded) void loadInvites();
-  } catch (error) { message(error.message, true); }
+  } catch (error) { if (sessionResponses.isCurrent(session)) message(error.message, true); }
 }
 byId('invite').addEventListener('click', () => { void createInviteLink(); });
 byId('admin-create-invite').addEventListener('click', () => { void createInviteLink(); });
@@ -2222,11 +2227,12 @@ async function loadUsers() {
       reset.addEventListener('click', async () => {
         reset.disabled = true;
         try {
+          const session = sessionResponses.current();
           const result = await api(`/api/admin/users/${user.id}/password-reset`,
             { method: 'POST', body: '{}' });
           showShareLink(`Password reset link for ${result.username}`, linkFor('reset', result.code),
             'Works once and expires in 24 hours. Using it signs that account out everywhere.' +
-            (user.disabled ? ' The account stays disabled until you enable it.' : ''));
+            (user.disabled ? ' The account stays disabled until you enable it.' : ''), session);
         } catch (error) { message(error.message, true); }
         finally { reset.disabled = false; }
       });
