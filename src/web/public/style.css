@@ -12,4 +12,6 @@ h1,h2,h3,p{margin-top:0}h1,h2,h3{font-family:"Wix Madefor Display",sans-serif;fo
 dialog{width:min(460px,calc(100vw - 32px));max-height:88dvh;overflow:auto;overscroll-behavior:contain;border:1px solid #ffffff18;border-radius:20px;padding:28px;background:linear-gradient(135deg,#2b3040,#202532);color:var(--text);box-shadow:0 24px 100px #0009}dialog::backdrop{background:#080b10bd;backdrop-filter:blur(4px)}dialog h2{margin:0}dialog p{color:var(--muted);font-size:14px}.dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:22px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;animation:none!important;transition:none!important}}
 /* New-version notice: offered instead of reloading over open work. */
+.title-check-summary { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; margin: 1rem 0; }
+.title-check-summary p { margin: 0; }
 .update-banner{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:1000;display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;max-width:calc(100vw - 24px);padding:10px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface2);color:var(--text);box-shadow:0 8px 24px rgb(0 0 0 / .35);font-size:14px}

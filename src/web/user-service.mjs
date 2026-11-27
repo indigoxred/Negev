@@ -798,7 +798,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           }
           const checkedMs = now();
           return { ...result, items: result.items.map((item) => {
+            // 18+ is known once AniDB display data is cached (a detail view
+            // reads it). Search itself stays free of extra outbound reads.
+            const display = displayReader.peek({ anidbId: item.anidbId });
             return { ...item,
+              ...(typeof display?.restricted === 'boolean' && typeof item.adult !== 'boolean'
+                ? { adult: display.restricted } : {}),
               englishTitle: titleSource?.getEnglishTitle(item.anidbId) ?? null,
               chineseProduction: seasonalCatalogue.isChineseProduction(item.anidbId),
               libraryPresence:
@@ -1173,6 +1178,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       })());
     };
     return { app,
+      // Used by the release dialog's selection service; exposed for tests.
+      discoverCandidates, previewCandidate,
       ensurePublicAvailabilityScope: () => plexObserver ? track(plexObserver.ensureScope()) : Promise.resolve({state:'ready'}),
       cachedReleaseAliases: (anidbId) =>
         titleSource?.releaseQueries(anidbId) ?? [],

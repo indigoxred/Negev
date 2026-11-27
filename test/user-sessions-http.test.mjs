@@ -110,6 +110,63 @@ test('an idle session is rejected after seven days', () =>
     assert.equal(await sessionStatus(app, cookie), 401);
   }));
 
+async function addMember(app, accounts) {
+  const admin = accounts.getActiveUser({ userId: 1 });
+  const { code } = accounts.createInvite({ adminUserId: admin.id, expiresMs: 9_000_000 });
+  const member = await accounts.registerInvite({ code, username: 'Friend',
+    password: 'long-member-passphrase' });
+  const login = await app.inject({ method: 'POST', url: '/api/login',
+    headers: { origin }, payload: { username: 'Friend', password: 'long-member-passphrase' } });
+  assert.equal(login.statusCode, 200, login.body);
+  return { member, cookie: cookieOf(login) };
+}
+
+const setDisabled = (app, admin, userId, disabled) => app.inject({
+  method: 'PATCH', url: `/api/admin/users/${userId}/disabled`,
+  headers: { cookie: admin.cookie, origin, 'x-negev-csrf': admin.csrf },
+  payload: { disabled } });
+
+test('an admin can disable an account, which signs it out and blocks sign-in', () =>
+  withApp(async ({ app, accounts }) => {
+    const admin = await signIn(app);
+    const { member, cookie } = await addMember(app, accounts);
+    assert.equal(await sessionStatus(app, cookie), 200);
+    const disabled = await setDisabled(app, admin, member.id, true);
+    assert.equal(disabled.statusCode, 200, disabled.body);
+    assert.deepEqual(disabled.json(), { state: 'updated', userId: member.id, disabled: true });
+    assert.equal(await sessionStatus(app, cookie), 401);
+    const blocked = await app.inject({ method: 'POST', url: '/api/login', headers: { origin },
+      payload: { username: 'Friend', password: 'long-member-passphrase' } });
+    assert.equal(blocked.statusCode, 401);
+    const users = await app.inject({ method: 'GET', url: '/api/admin/users',
+      headers: { cookie: admin.cookie } });
+    assert.equal(users.json().items.find((user) => user.id === member.id).disabled, true);
+    assert.equal((await setDisabled(app, admin, member.id, false)).statusCode, 200);
+    const back = await app.inject({ method: 'POST', url: '/api/login', headers: { origin },
+      payload: { username: 'Friend', password: 'long-member-passphrase' } });
+    assert.equal(back.statusCode, 200, back.body);
+  }));
+
+test('admins cannot disable themselves and members cannot disable anyone', () =>
+  withApp(async ({ app, accounts }) => {
+    const admin = await signIn(app);
+    const self = await setDisabled(app, admin, 1, true);
+    assert.equal(self.statusCode, 409);
+    assert.equal(self.json().reason, 'cannot_disable_self');
+    assert.equal(await sessionStatus(app, admin.cookie), 200);
+    assert.equal((await setDisabled(app, admin, 999, true)).statusCode, 404);
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/admin/users/1/disabled',
+      headers: { cookie: admin.cookie, origin, 'x-negev-csrf': admin.csrf },
+      payload: { disabled: 'yes' } })).statusCode, 400);
+    const { cookie } = await addMember(app, accounts);
+    const memberSession = await app.inject({ method: 'GET', url: '/api/session',
+      headers: { cookie } });
+    const memberCsrf = memberSession.json().csrfToken;
+    assert.equal((await app.inject({ method: 'PATCH', url: '/api/admin/users/1/disabled',
+      headers: { cookie, origin, 'x-negev-csrf': memberCsrf },
+      payload: { disabled: true } })).statusCode, 403);
+  }));
+
 test('a failing handler is logged with its route and error', async () => {
   const lines = [];
   const stream = new Writable({ write(chunk, _encoding, done) {

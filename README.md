@@ -62,6 +62,13 @@ Use a local browser with the exact configured `http://localhost:3000` origin for
 - A signed-in browser stays signed in while it is used at least once every 7 days, for at most 30 days after sign-in. **Sign out** ends that browser's session only. **Sign out of all devices** in the account menu ends every session for the account.
 - When a new version is deployed, an open page reloads by itself only if nothing is in progress. Otherwise it shows a **Reload now** banner.
 
+### Admin tools
+
+- **Disable account** in the admin account list signs that person out on every device and blocks sign-in until you enable the account again. Their requests and history are kept. You cannot disable your own account.
+- With `NEGEV_TITLE_CHECK=1`, a title's page shows **Check whole title in Plex**. Use it for titles imported outside Negev, for example manually through Shoko; it checks every episode and reports how many are playable.
+- Two admin-only diagnostic endpoints have no UI and never start a download: `POST /api/admin/import-activity` (`{}`) reports whether Shoko is importing, and `POST /api/requests/:id/presence-probe` (`{"episodeIds":[…]}`) re-checks up to 10 of a request's episodes in Plex. Both need a signed-in admin session with its CSRF header.
+- Search hides titles known to be 18+ from accounts without 18+ access. A title counts as known once its details have been opened in the last day; opening a restricted title is always blocked for those accounts.
+
 ## Development
 
 Use Node.js 24 and pnpm 11:

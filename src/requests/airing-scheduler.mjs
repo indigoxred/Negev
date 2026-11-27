@@ -1,3 +1,5 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 // This clock only invokes the durable, bounded Airing page worker. It cannot
 // dispatch a download. The caller must opt in and stop it before closing DBs.
 export function createAiringScheduler({ runPage,
@@ -12,44 +14,27 @@ export function createAiringScheduler({ runPage,
         !Number.isSafeInteger(value) || value < 1 || value > 86_400_000)) {
     throw new TypeError('Invalid Airing scheduler');
   }
-  let timer = null;
-  let running = null;
-  let started = false;
-  let stopped = false;
   let lastResult = null;
-  const schedule = (delay) => {
-    if (stopped) return;
-    timer = setTimeoutImpl(() => {
-      timer = null;
-      running = tick();
-      return running;
-    }, delay);
-  };
-  const tick = async () => {
-    try {
+  const loop = createTimerLoop({ failureDelayMs,
+    setTimer: setTimeoutImpl, clearTimer: clearTimeoutImpl,
+    run: async () => {
       try { lastResult = await runPage(); }
       catch (error) {
         lastResult = { state: 'held', reason: 'poll_failed' };
         try { onError(error); } catch { /* Reporting must not stop the loop. */ }
       }
-      const delay = lastResult?.state === 'page'
+      return lastResult?.state === 'page'
         ? lastResult.afterId === 0 && lastResult.continueSoon !== true ? cycleDelayMs : pageDelayMs
         : failureDelayMs;
-      schedule(delay);
-    } finally { running = null; }
-  };
+    } });
   return {
     start() {
-      if (started || stopped) throw new Error('Airing scheduler already started or stopped');
-      started = true;
-      schedule(initialDelayMs);
+      if (!loop.start(initialDelayMs)) {
+        throw new Error('Airing scheduler already started or stopped');
+      }
     },
-    async stop() {
-      stopped = true;
-      if (timer !== null) clearTimeoutImpl(timer);
-      timer = null;
-      if (running) await running;
-    },
+    stop: () => loop.close(),
+    close: () => loop.close(),
     getLastResult() { return lastResult; },
   };
 }

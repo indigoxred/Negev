@@ -7,3 +7,8 @@ prototypes
 *.log
 *.sqlite*
 outputs
+# Test-only private catalogue server; the image runs src/web/user-server.mjs.
+src/web/app.mjs
+src/web/private-server.mjs
+src/web/private-server-config.mjs
+src/catalogue/catalogue-service.mjs

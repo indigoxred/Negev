@@ -7,7 +7,6 @@ import Fastify from 'fastify';
 import rateLimit, { normalizeIP } from '@fastify/rate-limit';
 import secureSession from '@fastify/secure-session';
 import { invitedAccountValidation, SESSION_IDLE_MS } from '../auth/account-ledger.mjs';
-import { MAX_RELEASE_GUID_LENGTH } from '../acquisition/release-candidate-limits.mjs';
 import { autoTrackSavedAiringRequest } from './auto-track-request.mjs';
 import { publicRelease, correspondenceLevel } from '../acquisition/release-selection.mjs';
 import { validReleaseFilters, DEFAULT_RELEASE_FILTERS } from './public/release-choice-fields.mjs';
@@ -51,7 +50,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
-  discoverCandidates, previewCandidate, probeRequestTargets, releaseSelection, releasePreviews,
+  probeRequestTargets, releaseSelection, releasePreviews,
   readImportActivity,
   listOperationalReview, reviewOperationalItem,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
@@ -292,8 +291,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       .includes(reportedState) ? reportedState : 'unknown';
     return { user: { id, username, role, adultAllowed },
       csrfToken: sessionFor(request).get('csrfToken'),
-      capabilities: { releaseSearch: Boolean(releaseSelection) || role === 'admin' &&
-        typeof discoverCandidates === 'function',
+      capabilities: { releaseSearch: Boolean(releaseSelection),
       detailLoad: typeof hydrateTitle === 'function',
       availabilityChecks: publicAvailabilityConfigured,
       acquisitionState,
@@ -555,6 +553,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state !== 'results' || !titleRegistry.observe(result)) {
       return reply.code(503).send({ error: 'Catalogue unavailable' });
     }
+    // Match Airing and Discover: accounts without 18+ access never receive
+    // titles known to be restricted (unknown ones stay; their detail is gated).
+    if (!request.negevUser.adultAllowed && Array.isArray(result.items)) {
+      return { ...result, items: result.items.filter((item) => item?.adult !== true) };
+    }
     return result;
   });
   app.get('/api/catalogue/posters/:uid', { preHandler: requireUser,
@@ -776,44 +779,6 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       recentAvailableCount: result.recentAvailableCount,
       ...(result.lastVerifiedAvailableCount === undefined ? {} :
         { lastVerifiedAvailableCount: result.lastVerifiedAvailableCount }) };
-  });
-  app.get('/api/catalogue/:id/availability-page', { preHandler: requireUser,
-    config: { rateLimit: { max: 1, timeWindow: '1 minute' } },
-  }, async (request, reply) => {
-    reply.header('Cache-Control', 'no-store');
-    const id = Number(request.params.id);
-    const page = Number(request.query.page);
-    const offset = Number(request.query.offset);
-    if (!Number.isSafeInteger(id) || id < 1 ||
-        Object.keys(request.query).length !== 2 ||
-        !Number.isSafeInteger(page) || page < 1 || page > 1000 ||
-        !Number.isSafeInteger(offset) || offset < 0 || offset >= 100) {
-      return reply.code(400).send({ error: 'Invalid availability page' });
-    }
-    if (!(await confirmKnownTitle({ anidbId: id }))) {
-      return reply.code(404).send({ error: 'Title not found' });
-    }
-    if (typeof loadDetail !== 'function') {
-      return reply.code(503).send({ error: 'Catalogue unavailable' });
-    }
-    const detail = await loadDetail({ anidbId: id, page });
-    if (detail?.state !== 'details' || detail.anidbId !== id ||
-        detail.page !== page || !['series', 'movie'].includes(detail.kind) ||
-        !Array.isArray(detail.episodes) || detail.episodes.length > 100 ||
-        detail.episodes.some((episode) => !Number.isSafeInteger(episode?.id) ||
-          episode.id < 1) || offset >= detail.episodes.length) {
-      return reply.code(503).send({ error: 'Catalogue unavailable' });
-    }
-    const selected = detail.episodes.slice(offset, offset + 5);
-    const items = [];
-    for (const episode of selected) {
-      const status = await publicAvailability({ anidbId: id,
-        episodeId: episode.id, kind: detail.kind });
-      items.push({ episodeId: episode.id, state: status.state });
-    }
-    return { state: 'checked_page', anidbId: id, page, offset,
-      nextOffset: offset + selected.length < detail.episodes.length
-        ? offset + selected.length : null, items };
   });
   app.get('/api/catalogue/:id/episodes/:episodeId/availability', {
     preHandler: requireUser,
@@ -1157,72 +1122,6 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (!result || (request.negevUser.role !== 'admin' &&
         result.requesterId !== request.negevUser.id)) {
       return reply.code(404).send({ error: 'Request not found' });
-    }
-    return result;
-  });
-  app.get('/api/requests/:id/candidates', { preHandler: requireUser,
-    config: { rateLimit: { max: 2, timeWindow: '1 minute' } } }, async (request, reply) => {
-    reply.header('Cache-Control', 'no-store');
-    if (request.negevUser.role !== 'admin') {
-      return reply.code(403).send({ error: 'Admin required' });
-    }
-    const id = Number(request.params.id);
-    if (!Number.isSafeInteger(id) || id < 1 || Object.keys(request.query).length) {
-      return reply.code(400).send({ error: 'Invalid request ID' });
-    }
-    if (!readRequest(id)) return reply.code(404).send({ error: 'Request not found' });
-    if (typeof discoverCandidates !== 'function') {
-      return reply.code(503).send({ error: 'Release search unavailable' });
-    }
-    const result = await discoverCandidates({ requestId: id });
-    if (result?.state !== 'candidates' || result.requestId !== id ||
-        !Array.isArray(result.items) || result.items.length > 50 ||
-        result.items.some((item) =>
-          typeof item?.guid !== 'string' || item.guid.length < 1 ||
-          item.guid.length > MAX_RELEASE_GUID_LENGTH || !Number.isSafeInteger(item.indexerId) ||
-          item.indexerId < 1 || typeof item.title !== 'string' ||
-          item.title.length < 1 || item.title.length > 500 ||
-          !Number.isSafeInteger(item.size) || item.size < 1 ||
-          item.evidence !== 'unverified')) {
-      return reply.code(503).send({ error: 'Release search unavailable' });
-    }
-    return { state: 'candidates', requestId: id,
-      anidbId: result.anidbId, exhaustive: false,
-      items: result.items.map((item) => ({ guid: item.guid,
-        indexerId: item.indexerId, title: item.title, size: item.size,
-        seeders: item.seeders ?? null, evidence: 'unverified' })) };
-  });
-  app.post('/api/requests/:id/preflight', { preHandler: writeGuards,
-    config: { rateLimit: { max: 5, timeWindow: '1 minute' } } }, async (request, reply) => {
-    reply.header('Cache-Control', 'no-store');
-    if (request.negevUser.role !== 'admin') return reply.code(403).send({ error: 'Admin required' });
-    const id = Number(request.params.id);
-    if (!Number.isSafeInteger(id) || id < 1 || Object.keys(request.query).length ||
-        !allowedBody(request.body, ['candidate']) ||
-        !allowedBody(request.body.candidate, ['guid', 'indexerId', 'title', 'size']) ||
-        Object.keys(request.body.candidate).length !== 4) {
-      return reply.code(400).send({ error: 'Invalid preflight' });
-    }
-    const candidate = request.body.candidate;
-    if (typeof candidate.guid !== 'string' || !candidate.guid || candidate.guid.length > MAX_RELEASE_GUID_LENGTH ||
-        !Number.isSafeInteger(candidate.indexerId) || candidate.indexerId < 1 ||
-        typeof candidate.title !== 'string' || !candidate.title.trim() ||
-        candidate.title.length > 500 || !Number.isSafeInteger(candidate.size) ||
-        candidate.size < 1) return reply.code(400).send({ error: 'Invalid preflight' });
-    if (!readRequest(id)) return reply.code(404).send({ error: 'Request not found' });
-    if (typeof previewCandidate !== 'function') {
-      return reply.code(503).send({ error: 'Preflight unavailable' });
-    }
-    const result = await previewCandidate({ requestId: id, candidate });
-    if (result?.state === 'held') return reply.code(409).send(result);
-    if (result?.state !== 'preflight' || result.requestId !== id ||
-        result.registeredInAniDb !== false || result.downloadStarted !== false ||
-        !Array.isArray(result.files) || !Array.isArray(result.episodeIds) ||
-        !Array.isArray(result.subtitles) || !Array.isArray(result.filesToExclude) ||
-        [...result.subtitles, ...result.filesToExclude].some((file) =>
-          typeof file?.name !== 'string' || !file.name ||
-          !Number.isSafeInteger(file.size) || file.size < 1)) {
-      return reply.code(503).send({ error: 'Preflight unavailable' });
     }
     return result;
   });

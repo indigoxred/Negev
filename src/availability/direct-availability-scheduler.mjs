@@ -1,5 +1,7 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 // Explicit opt-in runner. One target per tick, with no overlapping reads.
-// An idle queue backs off; failures retry after five minutes.
+// An idle queue backs off; failures retry after the idle delay.
 export function createDirectAvailabilityScheduler({ runOnce,
   initialDelayMs = 60_000,
   idleDelayMs = 5 * 60_000,
@@ -17,43 +19,18 @@ export function createDirectAvailabilityScheduler({ runOnce,
       activeDelayMs > 5 * 60_000) {
     throw new TypeError('Invalid direct availability scheduler');
   }
-  let timer;
-  let running;
-  let started = false;
-  let stopping = false;
-  const schedule = (delay) => {
-    if (stopping) return;
-    timer = setTimer(() => {
-      timer = undefined;
-      running = tick().finally(() => { running = undefined; });
-      return running;
-    }, delay);
-  };
-  const tick = async () => {
-    let delay = idleDelayMs;
-    try {
+  // Unknown is retried by the durable queue after its lease; only report it.
+  const loop = createTimerLoop({ failureDelayMs: idleDelayMs, onError,
+    setTimer, clearTimer,
+    run: async () => {
       const result = await runOnce();
-      if (['checked', 'page_loaded', 'target_checked'].includes(result?.state) ||
-          ['stale_claim', 'metadata_busy', 'card_changed', 'shoko_changed'].includes(result?.reason)) {
-        delay = activeDelayMs;
-      }
-    } catch (error) {
-      // Unknown is retried by the durable queue after its lease; only report it.
-      try { onError(error); } catch { /* Reporting must not stop the loop. */ }
-    }
-    schedule(delay);
-  };
+      return ['checked', 'page_loaded', 'target_checked'].includes(result?.state) ||
+        ['stale_claim', 'metadata_busy', 'card_changed', 'shoko_changed']
+          .includes(result?.reason) ? activeDelayMs : idleDelayMs;
+    } });
   return {
-    start() {
-      if (started || stopping) return;
-      started = true;
-      schedule(initialDelayMs);
-    },
-    async close() {
-      stopping = true;
-      if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
-      if (running) await running;
-    },
+    start() { loop.start(initialDelayMs); },
+    close: () => loop.close(),
+    stop: () => loop.close(),
   };
 }
