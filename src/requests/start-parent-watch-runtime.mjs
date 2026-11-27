@@ -1,5 +1,6 @@
 import { openParentWatchLedger } from './parent-watch-ledger.mjs';
 import { openRequestLedger } from './request-ledger.mjs';
+import { openAccountLedger } from '../auth/account-ledger.mjs';
 import { createParentWatchWorker } from './parent-watch-worker.mjs';
 import { createVerifiedAniMapReader } from '../acquisition/verified-animap-reader.mjs';
 import { createAiringScheduler } from './airing-scheduler.mjs';
@@ -40,6 +41,7 @@ export function mergeParentRelations(anidbId, local, archive) {
 export function startParentWatchRuntime({ config, shokoApiKey,
   openParents = openParentWatchLedger,
   openRequests = openRequestLedger,
+  openAccounts = openAccountLedger,
   createWorker = createParentWatchWorker,
   createScheduler = createAiringScheduler,
   createMapReader = createVerifiedAniMapReader,
@@ -54,10 +56,15 @@ export function startParentWatchRuntime({ config, shokoApiKey,
   }
   let parents;
   let requests;
+  let accounts;
   let scheduler;
   try {
     parents = openParents(config.dbPath);
     requests = openRequests(config.dbPath);
+    // Read-only use: each new installment watch re-checks the owner's 18+ access.
+    accounts = openAccounts(config.dbPath);
+    const adultAllowed = ({ requesterId }) =>
+      accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true;
     const archive = createArchiveReader({ fetchImpl });
     const readDetail = async ({ anidbId }) => {
       const first = await loadAniDbDetail({
@@ -82,18 +89,18 @@ export function startParentWatchRuntime({ config, shokoApiKey,
     };
     const worker = createWorker({ parents, requests,
       mapReader: createMapReader({ fetchImpl }), loadDetail: readDetail,
-      readRelations,
+      readRelations, adultAllowed,
       today: () => dateInZone(config.timeZone) });
     scheduler = createScheduler({ runPage: worker.runOnce,
       initialDelayMs: 120_000, pageDelayMs: 60_000,
       cycleDelayMs: 86_400_000, failureDelayMs: 300_000 });
     scheduler.start();
   } catch (error) {
-    requests?.close(); parents?.close();
+    accounts?.close(); requests?.close(); parents?.close();
     throw error;
   }
   return { async close() {
     await scheduler.stop();
-    parents.close(); requests.close();
+    parents.close(); requests.close(); accounts.close();
   } };
 }

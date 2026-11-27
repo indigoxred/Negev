@@ -8,7 +8,7 @@ const heldAfter = heldReporter('requests/parent-watch-worker');
 // Global map outages retain the cursor; per-parent holds retry on the next cycle.
 export function createParentWatchWorker({ parents, requests, mapReader,
   loadDetail, readRelations, today, now = Date.now,
-  reconcile = reconcileParentWatch } = {}) {
+  reconcile = reconcileParentWatch, adultAllowed = null } = {}) {
   if (typeof parents?.getCursor !== 'function' ||
       typeof parents?.listActive !== 'function' ||
       typeof parents?.advanceCursor !== 'function' ||
@@ -41,7 +41,8 @@ export function createParentWatchWorker({ parents, requests, mapReader,
       let result;
       try {
         result = await reconcile({ parent, map, parents, requests,
-          loadDetail, readRelations, today: today(), nowMs: now() });
+          loadDetail, readRelations, today: today(), nowMs: now(),
+          ...(adultAllowed ? { adultAllowed } : {}) });
       } catch (error) { result = heldAfter(error, 'parent_reconcile_failed'); }
       result ??= held('parent_reconcile_failed');
       const advanced = parents.advanceCursor({ expectedTvdbId: afterId,

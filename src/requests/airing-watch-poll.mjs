@@ -9,7 +9,8 @@ const validId = (value) => Number.isSafeInteger(value) && value > 0;
 // watches. The request ledger is the only writer. No download is dispatched.
 export async function pollAiringWatches({ ledger, loadDetail, today,
   afterId = 0, limit = 3, intervalMs = 1_000, requestId = null,
-  expectedEpisodeNumbers = [], hydrateMetadata = null, nowMs = Date.now() } = {}) {
+  expectedEpisodeNumbers = [], hydrateMetadata = null, nowMs = Date.now(),
+  adultAllowed = null } = {}) {
   if (typeof ledger?.listActiveAirings !== 'function' ||
       typeof ledger?.advanceAiring !== 'function' ||
       typeof loadDetail !== 'function' ||
@@ -17,6 +18,7 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
       !Array.isArray(expectedEpisodeNumbers) || expectedEpisodeNumbers.length > 32 ||
       expectedEpisodeNumbers.some(n => !validId(n) || n > 9999) ||
       (hydrateMetadata !== null && typeof hydrateMetadata !== 'function') ||
+      (adultAllowed !== null && typeof adultAllowed !== 'function') ||
       !Number.isSafeInteger(afterId) || afterId < 0 ||
       !Number.isSafeInteger(limit) || limit < 1 || limit > 10 ||
       !Number.isSafeInteger(intervalMs) || intervalMs < 0 || intervalMs > 10_000 ||
@@ -70,6 +72,18 @@ export async function pollAiringWatches({ ledger, loadDetail, today,
     if (typeof detail.restricted !== 'boolean') {
       results.push({ ...watch, ...held('restricted_or_unverified') });
       continue;
+    }
+    // A watch keeps adding episodes in the background, so it must re-check the
+    // owner's 18+ access each time, as a new request would. Access can be
+    // turned off, or a title reclassified, after the watch was saved.
+    if (detail.restricted && adultAllowed) {
+      let allowed = false;
+      try { allowed = await adultAllowed({ requesterId: watch.requesterId }) === true; }
+      catch { allowed = false; }
+      if (!allowed) {
+        results.push({ ...watch, ...held('adult_access_disabled') });
+        continue;
+      }
     }
     const release = inferReleaseState({ today, kind: detail.kind,
       airDate: detail.airDate, endDate: detail.endDate,

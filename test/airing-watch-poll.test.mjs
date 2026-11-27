@@ -28,6 +28,33 @@ test('successful far-future observation records a weekly metadata due time', asy
   assert.equal(recorded[0].feedIntervalMs, 86_400_000);
 });
 
+test('an 18+ watch adds no episodes for an owner without 18+ access', async () => {
+  const advanced = [];
+  const result = await pollAiringWatches({ today: '2026-01-20', intervalMs: 0,
+    ledger: { listActiveAirings: () => [
+      { requestId: 1, anidbId: 41, requesterId: 7 }, { requestId: 2, anidbId: 42, requesterId: 8 }],
+      advanceAiring: (value) => { advanced.push(value.requestId); return { state: 'advanced' }; } },
+    loadDetail: async ({ anidbId }) => details(anidbId, { restricted: true }),
+    adultAllowed: ({ requesterId }) => requesterId === 8 });
+  assert.deepEqual(advanced, [2], 'only the owner with 18+ access gets new episodes');
+  assert.deepEqual(result.results.map((item) => item.reason ?? item.state),
+    ['adult_access_disabled', 'advanced']);
+});
+
+test('the real ledger reports who owns each active airing watch', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-airing-owner-'));
+  const requests = openRequestLedger(path.join(dir, 'requests.sqlite'));
+  try {
+    const db = new DatabaseSync(path.join(dir, 'requests.sqlite'));
+    db.prepare(`INSERT INTO requests (requester_id,request_key,anidb_id,kind,episode_key,
+      monitor_future,created_ms,status,reason) VALUES (9,'k',42,'series','all',1,1,'held','saved')`).run();
+    db.close();
+    assert.deepEqual(requests.listActiveAirings({ nowMs: 10 }), [{ requestId: 1, anidbId: 42, requesterId: 9 }]);
+    assert.deepEqual(requests.listActiveAirings({ requestId: 1, nowMs: 10 }),
+      [{ requestId: 1, anidbId: 42, requesterId: 9 }]);
+  } finally { requests.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('one unavailable show holds while the next airing show advances', async () => {
   const calls = [];
   const result = await pollAiringWatches({ today: '2026-01-20',

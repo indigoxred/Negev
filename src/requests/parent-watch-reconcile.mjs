@@ -11,7 +11,7 @@ const validTitle = (value) => typeof value === 'string' &&
 // This creates held request-ledger watches only. The acquisition queue's
 // independent Sonarr guard remains the authority for a torrent start.
 export async function reconcileParentWatch({ parent, map, parents, requests,
-  loadDetail, readRelations, today, nowMs } = {}) {
+  loadDetail, readRelations, today, nowMs, adultAllowed = null } = {}) {
   if (!validId(parent?.tvdbId) || !validId(parent?.requesterId) ||
       !validId(parent?.sourceSeriesId) ||
       typeof parents?.listInstallments !== 'function' ||
@@ -20,6 +20,7 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
       typeof requests?.submit !== 'function' ||
       typeof loadDetail !== 'function' ||
       typeof readRelations !== 'function' ||
+      (adultAllowed !== null && typeof adultAllowed !== 'function') ||
       typeof today !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(today) ||
       !Number.isSafeInteger(nowMs) || nowMs < 0) {
     throw new TypeError('Invalid parent watch reconciliation');
@@ -117,6 +118,14 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
       heldCandidates.push(anidbId); continue;
     }
     if (detail.kind !== 'series') { skipped.push(anidbId); continue; }
+    // This path writes to the request ledger directly, so it repeats the 18+
+    // check a normal request makes. Held, not skipped: access can return.
+    if (detail.restricted && adultAllowed) {
+      let allowed = false;
+      try { allowed = await adultAllowed({ requesterId: parent.requesterId }) === true; }
+      catch { allowed = false; }
+      if (!allowed) { heldCandidates.push(anidbId); continue; }
+    }
     const release = inferReleaseState({ today, kind: detail.kind,
       airDate: detail.airDate, endDate: detail.endDate,
       episodeCount: detail.episodeCount, episodes: detail.episodes });

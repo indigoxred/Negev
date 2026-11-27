@@ -137,12 +137,12 @@ export function openRequestLedger(dbPath) {
   const countTargets = db.prepare('SELECT COUNT(*) AS count FROM targets');
   const watchRow = db.prepare('SELECT anidb_id,kind,monitor_future,watch_closed,cancelled_ms FROM requests WHERE id=?');
   const closeWatch = db.prepare('UPDATE requests SET watch_closed=1 WHERE id=? AND watch_closed=0');
-  const activeAirings = db.prepare(`SELECT r.id,r.anidb_id FROM requests r
+  const activeAirings = db.prepare(`SELECT r.id,r.anidb_id,r.requester_id FROM requests r
     LEFT JOIN rss_watch_timing wt ON wt.request_id=r.id
     WHERE r.id>? AND r.monitor_future=1 AND r.watch_closed=0 AND
       r.cancelled_ms IS NULL AND COALESCE(wt.next_metadata_ms,0)<=?
     ORDER BY r.id LIMIT ?`);
-  const exactActiveAiring = db.prepare(`SELECT id,anidb_id FROM requests
+  const exactActiveAiring = db.prepare(`SELECT id,anidb_id,requester_id FROM requests
     WHERE id=? AND monitor_future=1 AND watch_closed=0 AND cancelled_ms IS NULL`);
   const recordWatchTiming = db.prepare(`INSERT INTO rss_watch_timing
     (request_id,next_metadata_ms,feed_interval_ms) VALUES (?,?,?)
@@ -233,7 +233,7 @@ export function openRequestLedger(dbPath) {
       const rows = requestId === null ? activeAirings.all(afterId, nowMs, limit) :
         exactActiveAiring.all(requestId);
       return rows.map((row) => ({
-        requestId: row.id, anidbId: row.anidb_id }));
+        requestId: row.id, anidbId: row.anidb_id, requesterId: row.requester_id }));
     },
     recordAiringTiming({ requestId, nextMetadataMs, feedIntervalMs,
       nowMs = Date.now() } = {}) {

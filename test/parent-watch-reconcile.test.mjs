@@ -46,6 +46,30 @@ test('creates one durable Airing watch for an exact mapped installment', async (
     assert.equal(requests.countRequests(), 1);
   }));
 
+test('an 18+ installment gets no watch for an owner without 18+ access', async () =>
+  withLedgers(async ({ requests, parents }) => {
+    const asked = [];
+    const result = await reconcileParentWatch({ parent: parents.listActive({ limit: 10 })[0],
+      map, parents, requests,
+      loadDetail: async ({ anidbId }) => detail(anidbId, { restricted: true }),
+      readRelations: noRelations, today: '2026-11-12', nowMs: 2000,
+      adultAllowed: async ({ requesterId }) => { asked.push(requesterId); return false; } });
+    assert.deepEqual(result.created, []);
+    assert.equal(requests.countRequests(), 0, 'no request is created behind the account check');
+    assert.deepEqual(asked, [7]);
+    assert.deepEqual(result.heldCandidates, [11], 'it is retried later, in case access returns');
+  }));
+
+test('an 18+ installment is watched for an owner with 18+ access', async () =>
+  withLedgers(async ({ requests, parents }) => {
+    const result = await reconcileParentWatch({ parent: parents.listActive({ limit: 10 })[0],
+      map, parents, requests,
+      loadDetail: async ({ anidbId }) => detail(anidbId, { restricted: true }),
+      readRelations: noRelations, today: '2026-11-12', nowMs: 2000,
+      adultAllowed: async () => true });
+    assert.deepEqual(result.created, [11]);
+  }));
+
 test('a completed mapped installment is skipped without a download target', async () =>
   withLedgers(async ({ requests, parents }) => {
     const result = await reconcileParentWatch({

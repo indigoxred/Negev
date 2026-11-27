@@ -598,16 +598,21 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         if (page > 1) await sleep(250);
         return loadCurrentDetail({ anidbId, page });
       } });
+    // Background watches re-check 18+ access each time they add episodes.
+    const watchAdultAllowed = ({ requesterId }) =>
+      accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true;
     const wakeRelease = createReleaseWake({
       wakeRequest: (id) => acquisitionRuntime?.wakeRequest(id),
       pollWatch: (requestId, {releaseTitles = []}) => pollAiringWatches({ ledger: requests,
         requestId, expectedEpisodeNumbers:observedReleaseEpisodes(releaseTitles),
         hydrateMetadata:shokoHydration ? hydrateAndWake : null,
+        adultAllowed: watchAdultAllowed,
         today: today(), nowMs: now(), loadDetail: readAiringDetail }),
     });
     const airingWorker = createAiringPageWorker({ ledger: requests,
       pollPage: ({ afterId, limit }) => pollAiringWatches({
         ledger: requests, afterId, limit, today: today(), nowMs: now(),
+        adultAllowed: watchAdultAllowed,
         loadDetail: ({ anidbId }) => collectAniDbDetail({ anidbId,
           loadPage: async ({ page }) => {
             if (page > 1) await new Promise((resolve) => setTimeout(resolve, 250));

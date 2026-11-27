@@ -25,17 +25,21 @@ test('enabled runtime starts a paced worker and closes ledgers after its schedul
   const events = [];
   const parent = { close() { events.push('parent-close'); } };
   const requests = { close() { events.push('request-close'); } };
+  const accounts = { close() { events.push('account-close'); },
+    getActiveUser: ({ userId }) => (userId === 7 ? { adultAllowed: false } : null) };
   const runtime = startParentWatchRuntime({
     config: { parentWatch: true, dbPath: '/private/negev.sqlite',
       shokoBaseUrl: 'http://shoko:8111', timeZone: 'Australia/Sydney' },
     shokoApiKey: 'private',
     openParents: (path) => { assert.equal(path, '/private/negev.sqlite'); return parent; },
     openRequests: () => requests,
+    openAccounts: () => accounts,
     createWorker: (input) => {
       assert.equal(input.parents, parent);
       assert.equal(input.requests, requests);
       assert.equal(typeof input.loadDetail, 'function');
       assert.equal(typeof input.readRelations, 'function');
+      assert.equal(input.adultAllowed({ requesterId: 7 }), false, 'the owner 18+ check is wired');
       return { runOnce: async () => ({ state: 'page', afterId: 0 }) };
     },
     createScheduler: ({ runPage, pageDelayMs, cycleDelayMs }) => {
@@ -48,7 +52,7 @@ test('enabled runtime starts a paced worker and closes ledgers after its schedul
   });
   assert.deepEqual(events, ['start']);
   await runtime.close();
-  assert.deepEqual(events, ['start', 'stop', 'parent-close', 'request-close']);
+  assert.deepEqual(events, ['start', 'stop', 'parent-close', 'request-close', 'account-close']);
 });
 
 test('failed startup closes both opened ledgers', () => {
@@ -59,9 +63,10 @@ test('failed startup closes both opened ledgers', () => {
     shokoApiKey: 'private',
     openParents: () => ({ close() { events.push('parent-close'); } }),
     openRequests: () => ({ close() { events.push('request-close'); } }),
+    openAccounts: () => ({ close() { events.push('account-close'); } }),
     createWorker: () => { throw new Error('worker failed'); },
   }), /worker failed/);
-  assert.deepEqual(events, ['request-close', 'parent-close']);
+  assert.deepEqual(events, ['account-close', 'request-close', 'parent-close']);
 });
 
 import { mkdtemp, rm } from 'node:fs/promises';

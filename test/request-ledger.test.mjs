@@ -300,7 +300,7 @@ test('airing watch adds only aired regular episodes and survives restart', async
   try {
     assert.deepEqual(two.getRequest(saved.requestId).episodeIds, [1001, 1002, 1003]);
     assert.deepEqual(two.listActiveAirings(), [{ requestId: saved.requestId,
-      anidbId: 1234 }]);
+      anidbId: 1234, requesterId: 7 }]);
     assert.deepEqual(two.advanceAiring({ requestId: saved.requestId,
       detail, releaseState: 'airing', today: '2026-01-20' }).addedEpisodeIds, []);
     assert.equal(two.countTargets(), 3);
@@ -323,7 +323,7 @@ test('future-only Airing request waits durably without an acquisition target', a
   try {
     assert.deepEqual(two.getRequest(saved.requestId).episodeIds, []);
     assert.deepEqual(two.listActiveAirings(), [{ requestId: saved.requestId,
-      anidbId: 1234 }]);
+      anidbId: 1234, requesterId: 7 }]);
     const detail = { state: 'details', anidbId: 1234, kind: 'series',
       complete: true, total: 1, episodes: [
         { id: 1001, type: 'Episode', airDate: '2026-11-01' },
@@ -399,7 +399,7 @@ test('a changed catalogue cannot erase known episodes or close an airing watch',
       releaseState: 'completed', today: '2026-02-01' }),
     { state: 'held', reason: 'catalogue_regression' });
     assert.deepEqual(ledger.listActiveAirings(), [{ requestId: saved.requestId,
-      anidbId: 1234 }]);
+      anidbId: 1234, requesterId: 7 }]);
     assert.equal(ledger.countTargets(), 2);
   } finally { ledger.close(); }
 }));
