@@ -38,6 +38,13 @@ const validItem = (item) => {
   return true;
 };
 
+// A file linked to more episodes than the ledger keeps is stored as
+// unverified with no links: it gives no availability evidence, and one such
+// file no longer makes its whole page invalid and stall the pass.
+const MAX_PAIRS = 100;
+const boundPairs = (item) => Array.isArray(item?.pairs) && item.pairs.length > MAX_PAIRS
+  ? { ...item, state: 'unverified', pairs: [] } : item;
+
 // Inventory is positive discovery only. Old rows are never deleted by a
 // partial pass, and they cannot by themselves establish current availability.
 export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
@@ -385,7 +392,8 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
       }
       return findPairs.all(anidbId, episodeId).map((row) => row.file_id);
     },
-    recordFileObservation({ item, observedMs }) {
+    recordFileObservation({ item: observed, observedMs }) {
+      const item = boundPairs(observed);
       if (!validItem(item) || !Number.isSafeInteger(observedMs) || observedMs < 0) {
         return held('invalid_file_observation');
       }
@@ -400,7 +408,9 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
         throw error;
       }
     },
-    recordPage({ expected, result, observedMs }) {
+    recordPage({ expected, result: observed, observedMs }) {
+      const result = Array.isArray(observed?.items)
+        ? { ...observed, items: observed.items.map(boundPairs) } : observed;
       if (!validId(expected?.page) || !validId(expected.pass) ||
           !Number.isSafeInteger(observedMs) || observedMs < 0 ||
           result?.state !== 'page' || result.page !== expected.page ||
