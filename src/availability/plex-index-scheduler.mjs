@@ -1,4 +1,5 @@
 import { heldReporter } from '../runtime/held-diagnostics.mjs';
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
 const heldAfter = heldReporter('availability/plex-index-scheduler');
@@ -27,9 +28,7 @@ export function createPlexIndexScheduler({ sections, tickPage, tickRecent,
     ...sections.episode.map((libraryId) => ({ kind: 'episode', libraryId })),
     ...sections.movie.map((libraryId) => ({ kind: 'movie', libraryId })),
   ];
-  let timer;
   let inFlight;
-  let running = false;
   let closed = false;
   let position = 0;
   const visits = sources.map(() => 0);
@@ -60,24 +59,18 @@ export function createPlexIndexScheduler({ sections, tickPage, tickRecent,
     catch (error) { return heldAfter(error, 'plex_index_unavailable'); }
     finally { inFlight = null; }
   };
-  const schedule = () => {
-    if (closed || !running) return;
-    timer = setTimeout(() => {
-      void runOnce().finally(schedule);
-    }, hasRecentArrival() ? burstIntervalMs : intervalMs);
+  const nextDelay = () => (hasRecentArrival() ? burstIntervalMs : intervalMs);
+  const loop = createTimerLoop({ failureDelayMs: intervalMs,
+    run: async () => { await runOnce(); return nextDelay(); } });
+  const close = async () => {
+    closed = true;
+    await loop.close();
+    if (inFlight) await Promise.allSettled([inFlight]);
   };
   return {
     runOnce,
-    start() {
-      if (closed || running) return;
-      running = true;
-      schedule();
-    },
-    async close() {
-      closed = true;
-      running = false;
-      clearTimeout(timer);
-      if (inFlight) await Promise.allSettled([inFlight]);
-    },
+    start() { if (!closed) loop.start(nextDelay()); },
+    close,
+    stop: close,
   };
 }

@@ -1,3 +1,5 @@
+import { createTimerLoop } from '../runtime/timer-loop.mjs';
+
 // Bounded pacing for the durable recent-file worker. A file-ID scan uses at
 // most five pages and ordinary idle scans normally read the newest page.
 export function createShokoRecentScheduler({ scan, drainOne,
@@ -11,81 +13,60 @@ export function createShokoRecentScheduler({ scan, drainOne,
   const gapDelay = 60_000;
   const drainDelay = 10_000;
   const failureDelay = 5 * 60_000;
-  let timer;
-  let scheduledKind;
-  let scheduledDelay;
-  let running;
-  let started = false;
-  let stopping = false;
+  let nextKind = 'scan';
   let requested = false;
   let drainsSinceScan = 0;
   let scanFailed = false;
   let lastState = 'not_started';
 
-  const schedule = (kind, delay) => {
-    if (stopping) return;
-    scheduledKind = kind;
-    scheduledDelay = delay;
-    timer = setTimer(() => {
-      timer = undefined;
-      scheduledKind = undefined;
-      scheduledDelay = undefined;
-      running = run(kind).finally(() => { running = undefined; });
-      return running;
-    }, delay);
-  };
-  const run = async (kind) => {
+  // Runs one scan or drain and returns the wait before the next step.
+  const run = async () => {
+    const kind = nextKind;
     let result;
     try { result = await (kind === 'scan' ? scan() : drainOne()); }
     catch { result = { state: 'held' }; }
-    if (stopping) return;
+    if (loop.stopped) return undefined;
     if (kind === 'scan' || !scanFailed) lastState = result?.state ?? 'held';
     if (kind === 'scan') {
       drainsSinceScan = 0;
       scanFailed = result?.state !== 'caught_up';
-      schedule('drain', drainDelay);
-      return;
+      nextKind = 'drain';
+      return drainDelay;
     }
     drainsSinceScan++;
     if (requested) {
       requested = false;
-      schedule('scan', gapDelay);
-    } else if (['acknowledged', 'retry_scheduled'].includes(result?.state) &&
-        drainsSinceScan < 30) {
-      schedule('drain', drainDelay);
-    } else {
-      schedule('scan', result?.state === 'idle' ?
-        scanFailed ? failureDelay : scanDelay : gapDelay);
+      nextKind = 'scan';
+      return gapDelay;
     }
+    if (['acknowledged', 'retry_scheduled'].includes(result?.state) && drainsSinceScan < 30) {
+      nextKind = 'drain';
+      return drainDelay;
+    }
+    nextKind = 'scan';
+    return result?.state === 'idle' ? scanFailed ? failureDelay : scanDelay : gapDelay;
+  };
+  const loop = createTimerLoop({ run, failureDelayMs: failureDelay, setTimer, clearTimer });
+  const close = async () => {
+    await loop.close();
+    lastState = 'stopped';
   };
   return {
     start() {
-      if (started || stopping) return;
-      started = true;
-      lastState = 'waiting';
-      schedule('scan', initialDelay);
+      nextKind = 'scan';
+      if (loop.start(initialDelay)) lastState = 'waiting';
     },
     requestSoon() {
-      if (!started || stopping) return;
-      if (running) { requested = true; return; }
-      if (timer === undefined ||
-          scheduledKind === 'scan' && scheduledDelay <= gapDelay) return;
+      if (!loop.started || loop.stopped) return;
+      if (loop.running) { requested = true; return; }
+      if (!loop.scheduled || nextKind === 'scan' && loop.scheduledDelay <= gapDelay) return;
       // Preserve the first durable drain after every scan despite busy hints.
-      if (scheduledKind === 'drain' && drainsSinceScan === 0) {
-        requested = true; return;
-      }
-      clearTimer(timer);
-      timer = undefined;
-      schedule('scan', gapDelay);
+      if (nextKind === 'drain' && drainsSinceScan === 0) { requested = true; return; }
+      nextKind = 'scan';
+      loop.reschedule(gapDelay);
     },
-    getState() { return { state: lastState, active: Boolean(running),
-      scheduled: timer !== undefined }; },
-    async close() {
-      stopping = true;
-      if (timer !== undefined) clearTimer(timer);
-      timer = undefined;
-      if (running) await running;
-      lastState = 'stopped';
-    },
+    getState() { return { state: lastState, active: loop.running, scheduled: loop.scheduled }; },
+    close,
+    stop: close,
   };
 }
