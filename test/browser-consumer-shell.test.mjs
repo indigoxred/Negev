@@ -364,7 +364,14 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     const searchAdult = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const cards = [...document.querySelectorAll('#results [data-anidb-id]')];
         const shown = cards.filter((card) => !card.hidden).map((card) => Number(card.dataset.anidbId));
-        return {shown, adultsHidden: cards.filter((card) =>
+        const safe = cards.find(card => card.dataset.anidbId === '2498');
+        document.querySelector('#chinese-toggle').click();
+        const safeChineseHidden = safe?.hidden;
+        document.querySelector('#chinese-toggle').click();
+        return {shown, safeTitle: safe?.querySelector('strong')?.textContent,
+          safeChineseHidden,
+          safePoster: safe?.querySelector('img')?.getAttribute('src'),
+          adultsHidden: cards.filter((card) =>
           ['14974', '11003'].includes(card.dataset.anidbId)).every((card) => card.hidden)}; })()`,
     });
     const searchTrack = await send('Runtime.evaluate', { returnByValue: true,
@@ -895,9 +902,9 @@ test('signed-in consumer routes render real shell with search, library and reque
           response.setHeader('Content-Type', 'application/json');
           response.end(JSON.stringify({ state: 'results', page: 1, total: 2,
             catalogueSource: 'test', items: [
-              { anidbId: 9589, title: 'The Garden of Words', adult: false,
+              ...(!allowAdult ? [{ anidbId: 9589 }] : [{ anidbId: 9589, title: 'The Garden of Words', adult: false,
                 libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
-                verifiedLibraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } },
+                verifiedLibraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }]),
               { anidbId: 4158, title: 'Pale Cocoon', adult: false,
                 libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
                 verifiedLibraryPresence: { state: 'unknown', verifiedEpisodeCount: 0 } }] }));
@@ -909,7 +916,7 @@ test('signed-in consumer routes render real shell with search, library and reque
             catalogueSource: 'test', items: [
               { anidbId: 14974, title: 'Lovely' },
               { anidbId: 11003, title: 'Lovely x Cation' },
-              { anidbId: 2498, title: 'Lovely Angels' }] }));
+              { anidbId: 2498 }] }));
           return;
         }
         response.setHeader('Content-Type', 'application/json');
@@ -924,7 +931,16 @@ test('signed-in consumer routes render real shell with search, library and reque
         const anidbId = Number(path.split('/')[3]);
         response.setHeader('Content-Type', 'application/json');
         response.end(JSON.stringify({ state: 'display', anidbId,
-          title: 'Verified title', restricted: anidbId !== 2498 }));
+          title: 'Verified title', restricted: anidbId !== 2498,
+          chineseProduction: anidbId === 2498 }));
+        return;
+      }
+      if (path === '/api/catalogue/9589/display') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ state: 'display', anidbId: 9589,
+          title: 'The Garden of Words', restricted: false, chineseProduction: false,
+          libraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 },
+          verifiedLibraryPresence: { state: 'in_library', verifiedEpisodeCount: 1 } }));
         return;
       }
       if (path === '/api/library' && request.headers.referer?.includes('libraryPages=1')) {
@@ -1553,7 +1569,9 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.ok(mobile.menu.right <= 390 && mobile.menu.signoutVisible,
         'Account menu and sign-out remain usable');
       assert.deepEqual(mobile.adultChoice, { before: 'true', after: 'false', saved: 'off' });
-      assert.deepEqual(mobile.searchAdult, { shown: [2498], adultsHidden: true });
+      assert.deepEqual(mobile.searchAdult, { shown: [2498], adultsHidden: true,
+        safeChineseHidden: true,
+        safeTitle: 'Verified title', safePoster: '/api/catalogue/posters/anidb/2498' });
       assert.deepEqual(mobile.searchTrack, { present: false });
       assert.deepEqual(mobile.titleTrack,
         { label: 'Track this title', enabled: true, nextToRequest: true });
@@ -1705,8 +1723,10 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.match(englishLibrary, /<strong[^>]*>Garden of Words<\/strong>/);
       assert.match(library, /<div id="library-list" class="poster-grid"><div class="tracked-title"[^>]*><a class="poster-card"/);
       assert.match(library, /In library · coverage unconfirmed/);
+      allowAdult = false;
       const librarySearch = await dump(`${base}/#/library?q=Garden`,
         join(dir, 'library-search'), 'library');
+      allowAdult = true;
       assert.match(librarySearch, /Search Negev’s Library/);
       assert.match(librarySearch, /The Garden of Words/);
       assert.match(librarySearch, /class="presence unknown">In library · coverage unconfirmed/);

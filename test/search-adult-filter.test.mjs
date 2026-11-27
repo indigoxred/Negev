@@ -7,7 +7,9 @@ const origin = 'http://localhost:3000';
 const items = [
   { anidbId: 1, title: 'Known all-ages', adult: false },
   { anidbId: 2, title: 'Known restricted', adult: true },
-  { anidbId: 3, title: 'Not yet classified' },
+  { anidbId: 3, title: 'Not yet classified', englishTitle: 'Unchecked English',
+    posterUid: 'unchecked-poster', libraryPresence: { state: 'in_library' } },
+  { anidbId: 4, title: 'Null classification', adult: null },
 ];
 
 async function searchAs(adultAllowed) {
@@ -27,16 +29,16 @@ async function searchAs(adultAllowed) {
     const response = await app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=test', headers: { cookie } });
     assert.equal(response.statusCode, 200, response.body);
-    return response.json().items.map((item) => item.anidbId);
+    return response.json().items;
   } finally { await app.close(); }
 }
 
 test('search hides known 18+ titles from accounts without 18+ access', async () => {
-  assert.deepEqual(await searchAs(false), [1, 3]);
+  assert.deepEqual(await searchAs(false), [items[0], { anidbId: 3 }, { anidbId: 4 }]);
 });
 
 test('search keeps 18+ titles for accounts with 18+ access', async () => {
-  assert.deepEqual(await searchAs(true), [1, 2, 3]);
+  assert.deepEqual(await searchAs(true), items);
 });
 
 test('filtered search pages page through to the end in the browser pager', async () => {

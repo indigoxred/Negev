@@ -1412,6 +1412,8 @@ test('request history reflects recent title-check proof and loses it on expiry',
     assert.equal(warmRequest.englishTitle, 'English Example');
     const search = async () => (await service.app.inject({ method: 'GET',
       url: '/api/catalogue/search?q=Example', headers: { cookie } })).json().items[0];
+    const display = async () => (await service.app.inject({ method: 'GET',
+      url: '/api/catalogue/42/display', headers: { cookie } })).json();
     const season = async () => (await service.app.inject({ method: 'GET',
       url: '/api/seasons?year=2026&season=FALL', headers: { cookie } })).json().items[0];
     const airingSeason = async () => (await service.app.inject({ method: 'GET',
@@ -1425,6 +1427,12 @@ test('request history reflects recent title-check proof and loses it on expiry',
     assert.deepEqual((await search()).verifiedLibraryPresence,
       { state: 'unknown', verifiedEpisodeCount: 0 },
       'temporary title proof does not make a verified Library search match');
+    const classified = await display();
+    assert.equal(classified.chineseProduction, false);
+    assert.deepEqual(classified.libraryPresence,
+      { state: 'in_library', verifiedEpisodeCount: 1 });
+    assert.deepEqual(classified.verifiedLibraryPresence,
+      { state: 'unknown', verifiedEpisodeCount: 0 });
     assert.deepEqual((await season()).libraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
     assert.equal((await season()).englishTitle, 'English Example');
@@ -1440,6 +1448,8 @@ test('request history reflects recent title-check proof and loses it on expiry',
         checkedMs: 998 });
     } finally { exact.close(); }
     assert.deepEqual((await search()).verifiedLibraryPresence,
+      { state: 'in_library', verifiedEpisodeCount: 1 });
+    assert.deepEqual((await display()).verifiedLibraryPresence,
       { state: 'in_library', verifiedEpisodeCount: 1 });
     assert.deepEqual((await airingSeason()).map((item) => item.libraryPresence),
       [{ state: 'in_library', verifiedEpisodeCount: 1 }]);

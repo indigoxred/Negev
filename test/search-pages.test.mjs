@@ -4,6 +4,25 @@ import { createSearchPager } from '../src/web/public/search-pages.mjs';
 
 const item = (id) => ({ anidbId: id, title: `Anime ${id}` });
 
+test('pages ID-only search results alongside classified titles', () => {
+  const pager = createSearchPager({ state: 'results', page: 1,
+    total: 3, items: [{ anidbId: 1 }, item(2)] });
+  assert.deepEqual(pager.items, [{ anidbId: 1 }, item(2)]);
+  assert.deepEqual(pager.append({ state: 'results', page: 2,
+    total: 3, items: [{ anidbId: 3 }] }),
+  { state: 'appended', items: [{ anidbId: 3 }] });
+  assert.equal(pager.nextPage, null);
+});
+
+test('ID-only support still rejects invalid IDs and malformed title metadata', () => {
+  for (const invalid of [{ anidbId: 0 }, { anidbId: '1' },
+    { anidbId: 1, title: '' }, { anidbId: 1, title: null },
+    { anidbId: 1, posterUid: 'unclassified' }]) {
+    assert.throws(() => createSearchPager({ state: 'results', page: 1,
+      total: 1, items: [invalid] }), /Invalid first catalogue page/);
+  }
+});
+
 test('pages a stable catalogue search without duplicating titles', () => {
   const pager = createSearchPager({ state: 'results', page: 1,
     total: 3, items: [item(1), item(2)] });

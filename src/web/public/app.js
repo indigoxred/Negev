@@ -61,7 +61,8 @@ const requestResponses = {
 const displayCache = new Map();
 let classificationToken = 0;
 const adultSearchVerifier = createAdultSearchVerifier({ readDisplay: (id) =>
-  api(`/api/catalogue/${id}/display`, { signal: AbortSignal.timeout(30_000) }) });
+  api(`/api/catalogue/${id}/display`, { cache: 'no-store',
+    signal: AbortSignal.timeout(30_000) }) });
 function invalidateRequestResponses() {
   requestResponses.watching.invalidate();
   requestResponses.history.invalidate();
@@ -1545,12 +1546,18 @@ async function classifySearchCards(searchToken) {
     .filter((node) => node.dataset.adult === 'unknown' &&
       !hideChineseProduction(state.showChinese, node.dataset.chineseProduction === 'true'))
     .map((node) => Number(node.dataset.anidbId));
-  await adultSearchVerifier.verify(ids, (id, adult) => {
+  await adultSearchVerifier.verify(ids, (id, adult, display) => {
     if (!current()) return;
     const item = state.searchItems.get(id);
-    if (item) state.searchItems.set(id, { ...item, adult });
+    const entry = item && { ...item, ...(!item.title ? display : {}), adult };
+    if (entry) state.searchItems.set(id, entry);
     for (const node of document.querySelectorAll('#results [data-anidb-id], #library-search-results [data-anidb-id]')) {
       if (Number(node.dataset.anidbId) === id) {
+        if (!item?.title && entry?.title) {
+          node.replaceWith(searchResultCard(entry,
+            Boolean(node.closest('#library-search-results'))));
+          continue;
+        }
         node.dataset.adult = String(adult);
         if (adult && !node.querySelector('.adult-label')) {
           node.querySelector('.result-copy')?.append(
@@ -1559,7 +1566,8 @@ async function classifySearchCards(searchToken) {
       }
     }
     applyAdultVisibility();
-  }, { current });
+  }, { current, session,
+    refreshMetadata: ids.some(id => !state.searchItems.get(id)?.title) });
 }
 // Shows a one-time link with a Copy button. The link is only shown here; the
 // server keeps just a digest, so it cannot be displayed again later.
@@ -1603,6 +1611,29 @@ function submitInlineSearch(inputId, destination) {
   byId('search-form').requestSubmit();
 }
 
+function searchResultCard(item, inLibrary) {
+  // ID-only results do not create labels or request posters until verified.
+  if (!item.title) return markAdult(element('div', undefined, 'tracked-title'),
+    { anidbId: item.anidbId }, { hideUnknown: true });
+  const button = element('button', undefined, 'result');
+  button.type = 'button';
+  const tile = element('span', 'N', 'poster-fallback');
+  tile.setAttribute('aria-hidden', 'true');
+  const poster = posterImage(item);
+  poster.addEventListener('load', () => tile.classList.add('has-poster'));
+  tile.append(poster);
+  const copy = element('span', undefined, 'result-copy');
+  copy.append(titleLabel(item), element('small', `AniDB ${item.anidbId}`));
+  const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
+  copy.append(inLibrary && presence?.state !== 'in_library'
+    ? element('span', 'Not found in Negev’s verified library', 'presence unknown')
+    : publicPresenceBadge(presence, item));
+  if (item.adult === true) copy.append(
+    element('span', '18+', 'badge partial adult-label'));
+  button.append(tile, copy);
+  button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
+  return trackedCard(button, item, { hideUnknown: true });
+}
 for (const [inputId, buttonId, destination] of [
   ['discover-query', 'discover-search-button', 'discover'],
   ['airing-query', 'airing-search-button', 'discover'],
@@ -1639,28 +1670,9 @@ byId('search-form').addEventListener('submit', async (event) => {
   const appendItems = (items) => {
     for (const item of items) {
       const known = state.searchItems.get(item.anidbId);
-      const entry = { ...item, adult: item.adult ?? known?.adult };
+      const entry = { ...item, adult: item.title ? item.adult ?? known?.adult : undefined };
       state.searchItems.set(item.anidbId, entry);
-      const button = markAdult(element('button', undefined, 'result'), entry,
-        { hideUnknown: true });
-      button.type = 'button';
-      const tile = element('span', 'N', 'poster-fallback');
-      tile.setAttribute('aria-hidden', 'true');
-      const poster = posterImage(item);
-      poster.addEventListener('load', () => tile.classList.add('has-poster'));
-      tile.append(poster);
-      const copy = element('span', undefined, 'result-copy');
-      copy.append(titleLabel(item),
-        element('small', `AniDB ${item.anidbId}`));
-      const presence = inLibrary ? item.verifiedLibraryPresence : item.libraryPresence;
-      copy.append(inLibrary && presence?.state !== 'in_library'
-        ? element('span', 'Not found in Negev’s verified library', 'presence unknown')
-        : publicPresenceBadge(presence,item));
-      if (entry.adult === true) copy.append(
-        element('span', '18+', 'badge partial adult-label'));
-      button.append(tile, copy);
-      button.addEventListener('click', () => { location.hash = titleRoute(item.anidbId); });
-      results.append(trackedCard(button, entry, { hideUnknown: true }));
+      results.append(searchResultCard(entry, inLibrary));
     }
     void classifySearchCards(token);
   };

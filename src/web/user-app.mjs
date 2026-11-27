@@ -523,12 +523,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state !== 'results' || !titleRegistry.observe(result)) {
       return reply.code(503).send({ error: 'Catalogue unavailable' });
     }
-    // Match Airing and Discover: accounts without 18+ access never receive
-    // titles known to be restricted (unknown ones stay; their detail is gated).
+    // Unknown titles expose only IDs until the display route verifies access.
     // `hidden` keeps the page count honest: shown plus hidden still adds up
     // to `total`, so the browser pager can finish (search-pages.mjs).
     if (!request.negevUser.adultAllowed && Array.isArray(result.items)) {
-      const items = result.items.filter((item) => item?.adult !== true);
+      const items = result.items.filter((item) => item?.adult !== true)
+        .map((item) => item?.adult === false ? item : { anidbId: item.anidbId });
       return { ...result, items, hidden: result.items.length - items.length };
     }
     return result;
@@ -573,7 +573,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   app.get('/api/catalogue/:id/display', { preHandler: requireUser,
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
   async (request, reply) => {
-    reply.header('Cache-Control', 'private, max-age=600');
+    reply.header('Cache-Control', 'no-store');
     const anidbId = Number(request.params.id);
     if (!Number.isSafeInteger(anidbId) || anidbId < 1 ||
         anidbId > 2_147_483_647 || Object.keys(request.query).length) {

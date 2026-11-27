@@ -893,13 +893,17 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
       readDisplayMetadata: async ({ anidbId }) => {
+        await plexObserver?.ensureScope();
         const [display, facts] = await Promise.all([
           displayReader.read({ anidbId }), mapFacts.read({ anidbId }),
         ]);
         const merged = mergeDisplayFacts(display, facts);
         return merged?.state === 'display' ? { ...merged,
           englishTitle: merged.englishTitle ??
-            titleSource?.getEnglishTitle(anidbId) ?? null } : merged;
+            titleSource?.getEnglishTitle(anidbId) ?? null,
+          chineseProduction: seasonalCatalogue.isChineseProduction(anidbId),
+          libraryPresence: publicPresenceForTitle(anidbId, now()),
+          verifiedLibraryPresence: libraryPresenceForTitle(anidbId) } : merged;
       },
       loadRelatedTitles: async ({ anidbId }) => {
         await plexObserver?.ensureScope();

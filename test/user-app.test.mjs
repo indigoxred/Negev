@@ -1002,6 +1002,8 @@ test('invited users have private request ownership and CSRF guarded sessions', a
     const display = await app.inject({ method: 'GET',
       url: '/api/catalogue/1234/display', headers: { cookie } });
     assert.equal(display.statusCode, 200);
+    assert.equal(display.headers['cache-control'], 'no-store',
+      'authorized display metadata includes mutable library proof');
     assert.equal(display.json().description, 'A story about a test.');
     assert.equal(display.json().season, 'Fall 2026');
     assert.equal(display.json().durationMinutes, 23);

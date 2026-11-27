@@ -1,6 +1,6 @@
 const validItem = (item) => Number.isSafeInteger(item?.anidbId) &&
-  item.anidbId > 0 && typeof item.title === 'string' &&
-  item.title.trim().length > 0;
+  item.anidbId > 0 && (Object.keys(item).length === 1 ||
+    typeof item.title === 'string' && item.title.trim().length > 0);
 
 // Catalogue pages are a browsing aid. A changed result set must be searched
 // again rather than silently mixing different snapshots.

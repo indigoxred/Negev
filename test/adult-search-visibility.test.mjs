@@ -2,6 +2,63 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createAdultSearchVerifier } from '../src/web/public/adult-search-visibility.mjs';
 
+test('verification supplies safe display metadata again for repeated ID-only results', async () => {
+  const display = { state: 'display', anidbId: 2498, title: 'Lovely Angels',
+    englishTitle: 'Dirty Pair', restricted: false };
+  const verifier = createAdultSearchVerifier({ readDisplay: async () => display,
+    pacer: { run: read => read(), defer() {} } });
+  const seen = [];
+  for (let pass = 0; pass < 2; pass++) {
+    await verifier.verify([2498], (id, adult, metadata) => seen.push({ id, adult, metadata }));
+  }
+  assert.deepEqual(seen, [
+    { id: 2498, adult: false, metadata: display },
+    { id: 2498, adult: false, metadata: display },
+  ]);
+});
+
+test('metadata refresh withdraws an old library badge instead of reusing cached proof', async () => {
+  let present = true, reads = 0;
+  const verifier = createAdultSearchVerifier({ readDisplay: async id => {
+    reads++;
+    return { state: 'display', anidbId: id, title: 'Fixture', restricted: false,
+      libraryPresence: { state: present ? 'in_library' : 'unknown' } };
+  }, pacer: { run: read => read(), defer() {} } });
+  const seen = [];
+  await verifier.verify([42], (_id, _adult, display) => seen.push(display.libraryPresence.state),
+    { session: 1, refreshMetadata: true });
+  present = false;
+  await verifier.verify([42], (_id, _adult, display) => seen.push(display.libraryPresence.state),
+    { session: 1, refreshMetadata: true });
+  assert.deepEqual(seen, ['in_library', 'unknown']);
+  assert.equal(reads, 2);
+});
+
+test('a new session never consumes a previous session cached or pending display response', async () => {
+  let resolveOld, resolveNew;
+  let oldCurrent = true, reads = 0;
+  const verifier = createAdultSearchVerifier({ readDisplay: () => {
+    reads++;
+    return new Promise(resolve => { if (reads === 1) resolveOld = resolve; else resolveNew = resolve; });
+  }, pacer: { run: read => read(), defer() {} } });
+  const seen = [];
+  const old = verifier.verify([42], () => assert.fail('old session cannot render'),
+    { session: 1, current: () => oldCurrent });
+  oldCurrent = false;
+  const next = verifier.verify([42], (_id, _adult, display) => seen.push(display.title),
+    { session: 2 });
+  assert.equal(reads, 2, 'sessions do not coalesce their authorized reads');
+  resolveOld({ state: 'display', anidbId: 42, title: 'Old account', restricted: true });
+  resolveNew({ state: 'display', anidbId: 42, title: 'New account', restricted: false });
+  await Promise.all([old, next]);
+  assert.deepEqual(seen, ['New account']);
+  const third = verifier.verify([42], (_id, _adult, display) => seen.push(display.title), { session: 3 });
+  assert.equal(reads, 3, 'sessions do not share confirmed metadata either');
+  resolveNew({ state: 'display', anidbId: 42, title: 'Third account', restricted: false });
+  await third;
+  assert.deepEqual(seen, ['New account', 'Third account']);
+});
+
 test('search reveals only verified nonadult titles while 18+ is off', async () => {
   const seen = [];
   const verifier = createAdultSearchVerifier({ readDisplay: async (id) => {
