@@ -88,11 +88,18 @@ export function openMappedScoreCache({ dbPath, fetchImpl = fetch,
           while(retryAfter.size>1000)retryAfter.delete(retryAfter.keys().next().value);
         } else {
           retryAfter.delete(anidbId);
-          save.run(anidbId, malId, value.state, value.score, value.votes, value.members, now());
+          // Scores are optional display data. A failed write (locked or full
+          // database) is retried later and must never end the service.
+          try {
+            save.run(anidbId, malId, value.state, value.score, value.votes, value.members, now());
+          } catch {
+            retryAfter.set(anidbId, { malId, until: now() + 60 * 60_000 });
+          }
         }
         if (pending.size && minGapMs) await sleep(minGapMs);
       }
-    })().finally(() => { draining = null; if (pending.size && !closed) drain(); });
+    })().catch(() => { /* Background ranking work never rejects. */ })
+      .finally(() => { draining = null; if (pending.size && !closed) drain(); });
   };
   return {
     get(anidbId, malId) {
