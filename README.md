@@ -6,6 +6,18 @@ For this server, make new anime series and anime film requests in Negev. Seerr r
 
 **Status:** Negev is the anime request and acquisition owner on the original server after a measured handover. New completed-series and film downloads have reached Shoko and public Plex; a later Airing episode and a manual Shoko import have also been observed. Anime Sonarr remains an unmonitored archive, while Seerr continues TV and regular movie requests. These results do not guarantee every release will match or import. The Docker example below is deliberately an acquisition-disabled starting point, not a complete installation.
 
+## Quick start
+
+This runs search and requests on one Linux host, with downloads off. Details are in [Safe Docker example](#safe-docker-example) and every option is in [Settings](#settings).
+
+1. Make a private data folder outside this checkout, owned by UID 1000: `mkdir -m 700 /srv/negev /srv/negev/secrets`.
+2. Save a dedicated Shoko API key as `/srv/negev/secrets/shoko.token` with mode `0600`.
+3. Set `NEGEV_HOST_DATA=/srv/negev` and `NEGEV_SHOKO_URL=http://<shoko-host>:8111` in a `.env` file beside [`compose.example.yaml`](compose.example.yaml).
+4. Create the owner account (the command prompts for the password), then start Negev. Both commands are in [Safe Docker example](#safe-docker-example).
+5. Open `http://localhost:3000` and sign in. Invite others from the account menu with **Create invite link**.
+
+Public Plex availability, release search and downloads are separate opt-ins. Add them one at a time using [Settings](#settings), and check each against your own mounts and load.
+
 ## Design
 
 - AniDB identifies anime installments and exact release files. A title match alone cannot authorize an import.
@@ -71,13 +83,102 @@ Use a local browser with the exact configured `http://localhost:3000` origin for
 - Two admin-only diagnostic endpoints have no UI and never start a download: `POST /api/admin/import-activity` (`{}`) reports whether Shoko is importing, and `POST /api/requests/:id/presence-probe` (`{"episodeIds":[…]}`) re-checks up to 10 of a request's episodes in Plex. Both need a signed-in admin session with its CSRF header.
 - Search hides titles known to be 18+ from accounts without 18+ access. A title counts as known once its details have been opened in the last day; opening a restricted title is always blocked for those accounts.
 
+## Settings
+
+All settings are environment variables. On/off settings take `1` or `0`, and unset means off. Negev refuses to start on an invalid or inconsistent setting, and names it in the error. Key files always live in `<data>/secrets/` with mode `0600`. Their `*_FILE` setting is optional, and if set it must point at that exact file. Secrets are never accepted as plain environment variables.
+
+**Required**
+
+| Setting | Value |
+|---|---|
+| `NEGEV_USER_SERVER` | `1` |
+| `NEGEV_DATA_DIR` | Absolute path of the private data folder (database, `session.key`, `secrets/`) |
+| `NEGEV_SHOKO_URL` | Shoko base URL, for example `http://shoko:8111` (no path) |
+| `NEGEV_PUBLIC_ORIGIN` | The exact URL people open, for example `http://localhost:3000` or `https://anime.example.com` |
+| `secrets/shoko.token` | Shoko API key (`NEGEV_SHOKO_API_KEY_FILE` optional) |
+
+**Network, sign-in and logs**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `NEGEV_PORT` | `3000` | Listening port |
+| `NEGEV_LISTEN_HOST` | `127.0.0.1` | `0.0.0.0` opens a LAN listener and needs `NEGEV_EXPOSE_USERS=1` |
+| `NEGEV_EXPOSE_USERS` | off | Serve users over HTTPS. `NEGEV_PUBLIC_ORIGIN` must then be `https://` |
+| `NEGEV_LOCAL_ORIGIN` | unset | Also allow sign-in from this private-LAN `http://` URL, including the port |
+| `NEGEV_LOG_LEVEL` | `warn` | `silent`, `error`, `warn`, `info` or `debug` |
+| `NEGEV_DEBUG_STARTUP` | off | Print the stack trace when startup fails |
+| `NEGEV_IMPORT_FENCE_TRACE` | off | Log each Shoko Import fence observation to stdout |
+
+**Catalogue and airing**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `NEGEV_ANIDB_TITLE_DUMP` | off | Search the AniDB title list, cached in the data folder, instead of only Shoko's cache |
+| `NEGEV_SHOKO_HYDRATION` | off | Let Negev ask Shoko to load details for titles it has not cached |
+| `NEGEV_AIRING_WATCH` | off | Check saved airing requests for new episodes. Needs `NEGEV_TIME_ZONE` |
+| `NEGEV_PARENT_WATCH` | off | Follow a show's later seasons and installments. Needs `NEGEV_AIRING_WATCH` |
+| `NEGEV_TIME_ZONE` | `UTC` | IANA time zone used for air dates, for example `Australia/Sydney` |
+
+**Shoko and Plex availability**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `NEGEV_SHOKO_EVENTS` | off | Follow Shoko's live event feed |
+| `NEGEV_SHOKO_RECENT` | off | Scan Shoko's recently added files |
+| `NEGEV_SHOKO_INVENTORY` | off | Slow full reconciliation of Shoko's files |
+| `NEGEV_SHOKO_INVENTORY_HINTS` | off | Use path hints from the inventory. Needs `NEGEV_SHOKO_INVENTORY` |
+| `NEGEV_SHOKO_IMPORT_ROOT`, `NEGEV_SHOKO_IMPORT_FOLDER_ID` | unset | The Shoko Import folder Negev watches: path and managed-folder ID |
+| `NEGEV_PLEX_OBSERVER` | off | Check public Plex for playable files. Needs the next five settings |
+| `NEGEV_PLEX_URL` | | Plex base URL |
+| `secrets/plex.token` | | Plex token (`NEGEV_PLEX_TOKEN_FILE` optional) |
+| `NEGEV_PLEX_SECTIONS` | | JSON library IDs, for example `{"episode":[102],"movie":[103]}` |
+| `NEGEV_SHOKO_MEDIA_MOUNT` | | JSON `{"appRoot":"/shoko/path","localRoot":"/path/in/negev"}` |
+| `NEGEV_PLEX_MEDIA_MOUNTS` | | JSON list of `{"appRoot","localRoot"}` for Plex's paths |
+| `NEGEV_PLEX_SOURCE_POLICY` | unset | JSON per library: `libraryId`, `type`, `agent`, `scanner`, `roots` |
+| `NEGEV_PLEX_GUID_PROBE` | off | Match Plex items by AniDB GUID (at most 4 libraries) |
+| `NEGEV_PLEX_INDEX` | off | Index public Plex cards in the background |
+| `NEGEV_PLEX_INDEX_INTERVAL_MS` | `60000` | 15,000–300,000. Needs `NEGEV_PLEX_INDEX` |
+| `NEGEV_FILE_BACKFILL` | off | Prove older files playable, one at a time. Needs inventory hints, Plex index and observer |
+| `NEGEV_FILE_BACKFILL_INTERVAL_MS` | | 10,000–300,000. Required with backfill |
+| `NEGEV_FILE_BACKFILL_FILES_PER_TICK` | `1` | 1–10 |
+| `NEGEV_FILE_PROOF_LIFETIME_MS` | | 30 minutes to 7 days. Required with backfill or proof reading |
+| `NEGEV_FILE_PROOF_READ` | off | Use saved file proofs without running the backfill |
+| `NEGEV_DIRECT_AVAILABILITY` | off | Check requested episodes directly. Needs a Shoko observer and the Plex index or GUID probe |
+| `NEGEV_DIRECT_ACTIVE_DELAY_MS` | `60000` | 10,000–300,000 between busy direct checks |
+| `NEGEV_TITLE_CHECK` | off | Show **Check whole title in Plex** on title pages |
+
+**Release search and downloads**
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `NEGEV_PROWLARR_DISCOVERY` | off | Search releases through Prowlarr |
+| `NEGEV_PROWLARR_URL`, `secrets/prowlarr.token` | | Prowlarr base URL and API key |
+| `NEGEV_PROWLARR_INDEXERS` | | JSON list of indexer IDs, for example `[5,7]` |
+| `NEGEV_PROWLARR_TRUSTED_INDEXERS` | `[]` | Subset of the indexers treated as trusted |
+| `NEGEV_QBITTORRENT_SIDECAR_READ` | off | Read qBittorrent state. Needs the Shoko Import folder settings |
+| `NEGEV_QBITTORRENT_URL`, `NEGEV_QBITTORRENT_USERNAME`, `secrets/qbittorrent.password` | | qBittorrent connection |
+| `NEGEV_QBITTORRENT_IMPORT_SAVE_PATH` | | The Import folder as qBittorrent sees it |
+| `NEGEV_ACQUISITION_RUNTIME` | off | Start downloads. Needs Prowlarr, the Plex observer with source policy and GUID probe, qBittorrent, Shoko events, recent scan and direct availability, plus the settings below. The startup error names whichever is missing |
+| `NEGEV_STAGING_HOST_PATH` | | Download staging folder inside Negev |
+| `NEGEV_QBITTORRENT_STAGING_ROOT` | | The same staging folder as qBittorrent sees it |
+| `NEGEV_HOLDING_ROOT` | | Private holding folder, ending in `holding` |
+| `NEGEV_ACQUISITION_IMPORT_PARENT` | | Shoko Source parent, ending in `source`, beside `holding` |
+| `NEGEV_ACQUISITION_IMPORT_FOLDER_ID` | | Shoko managed-folder ID of that Source (not the Import folder) |
+| `NEGEV_ACQUISITION_SHOKO_SOURCE_PATH` | | That Source as Shoko sees it |
+| `NEGEV_SHOKO_RELEASE_PROVIDER_ID` | | Shoko release-provider UUID |
+| `NEGEV_PURE_MOVE` | off | Move prepared files into the Source instead of copying them |
+| Ownership guard | | One of: `NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS` (comma list), `NEGEV_SONARR_OWNERSHIP_URL` with `secrets/sonarr.token`, or `NEGEV_ANIME_SOLE_OWNER=1` |
+
+**Admin commands** (`docker compose run … node <command>`): `src/auth/init-admin.mjs` creates the first owner from `NEGEV_ADMIN_USERNAME` and a password on stdin. `src/admin/worker-diagnostics.mjs` prints a read-only worker snapshot. `src/admin/retire-stalled.mjs` retires one stalled download; see [Design](#design).
+
 ## Development
 
 Use Node.js 24 and pnpm 11:
 
 ```sh
 pnpm install --frozen-lockfile
-node --test
+pnpm test          # everything, browser files one at a time (as CI runs it)
+pnpm test:unit     # everything except the browser fixtures
 ```
 
 The Dockerfile builds a non-root image. Starting the account server requires explicit configuration and private secret files; there are no public example credentials or server-specific paths in this repository. Keep tokens, databases, media, logs, installed configuration, and operational evidence outside Git.
