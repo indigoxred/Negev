@@ -1,16 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
+import { LIVE_ATTEMPTS } from './live-attempts.mjs';
 import { TRANSIENT_START_HOLDS, START_SESSION_RETRY_HOLDS,
   START_METADATA_RETRY_HOLDS, actOnReviewHold, isTransientStartHold,
   reviveTransientHolds, transientRetryDelayMs } from './stage-hold-policy.mjs';
-// A parked start check an admin may act on: still unstarted and not already
-// released, rejected, retired or being retired.
-const REVIEWABLE_START = `AND NOT EXISTS (SELECT 1 FROM acquisition_starts x
-    WHERE x.attempt_id=start_checks.attempt_id)
-  AND NOT EXISTS (SELECT 1 FROM acquisition_releases x WHERE x.attempt_id=start_checks.attempt_id)
-  AND NOT EXISTS (SELECT 1 FROM acquisition_rejections x WHERE x.attempt_id=start_checks.attempt_id)
-  AND NOT EXISTS (SELECT 1 FROM acquisition_retirements x WHERE x.attempt_id=start_checks.attempt_id)
-  AND NOT EXISTS (SELECT 1 FROM acquisition_stall_retirement_intents x
+// A parked start check an admin may act on: its attempt is still live (see
+// live-attempts.mjs) and has not crossed the start boundary.
+const REVIEWABLE_START = `AND attempt_id IN (SELECT id FROM ${LIVE_ATTEMPTS} l)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_starts x
     WHERE x.attempt_id=start_checks.attempt_id)`;
 
 const held = (reason) => ({ state: 'held', reason });
@@ -81,20 +78,13 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       reasons: TRANSIENT_START_HOLDS, extraWhere: REVIEWABLE_START });
   } catch (error) { db.close(); throw error; }
 
-  const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+  const next = db.prepare(`SELECT a.id AS attemptId FROM ${LIVE_ATTEMPTS} a
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
-    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
     LEFT JOIN start_checks c ON c.attempt_id=a.id
     WHERE a.status IN ('dispatch_unknown','torrent_observed') AND
       hold.request_id IS NULL AND
       s.attempt_id IS NULL AND
-      x.attempt_id IS NULL AND j.attempt_id IS NULL AND t.attempt_id IS NULL AND
-      si.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
@@ -111,16 +101,10 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId,
     c.reason,c.checked_ms AS checkedMs FROM start_checks c
-    JOIN acquisition_attempts a ON a.id=c.attempt_id
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+    JOIN ${LIVE_ATTEMPTS} a ON a.id=c.attempt_id
     LEFT JOIN acquisition_starts s ON s.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state='held' AND c.next_due_ms IS NULL
-      AND s.attempt_id IS NULL AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL
+      AND s.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;

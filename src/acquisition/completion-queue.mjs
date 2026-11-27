@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { LIVE_ATTEMPTS } from './live-attempts.mjs';
 import { COMPLETION_SESSION_RETRY_HOLDS,
   COMPLETION_TRANSIENT_PROVIDER_HOLDS as TRANSIENT_PROVIDER_REASONS }
   from './stage-hold-policy.mjs';
@@ -115,19 +116,13 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
   const outsideStagingFilter = pureMode
     ? "AND (c.attempt_id IS NULL OR c.reason!='incomplete_path_outside_staging')"
     : '';
-  const next = db.prepare(`SELECT a.id FROM acquisition_attempts a
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+  const next = db.prepare(`SELECT a.id FROM ${LIVE_ATTEMPTS} a
     JOIN acquisition_starts s ON s.attempt_id=a.id AND s.torrent_hash=a.torrent_hash
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
-    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=r.id
+    LEFT JOIN acquisition_request_suspensions hold ON hold.request_id=a.request_id
     LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
     LEFT JOIN ${checksTable} c ON c.attempt_id=a.id
     WHERE a.id>? AND a.status='torrent_observed' AND
-      hold.request_id IS NULL AND x.attempt_id IS NULL AND
-      j.attempt_id IS NULL AND t.attempt_id IS NULL AND si.attempt_id IS NULL AND
+      hold.request_id IS NULL AND
       h.attempt_id IS NULL AND
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?))
       ${outsideStagingFilter}
@@ -161,16 +156,9 @@ export function openCompletionQueue(dbPath, { pureMode = false } = {}) {
     WHERE attempt_id>? AND state IS NULL ORDER BY attempt_id LIMIT ?`);
   const reviewNeeded = db.prepare(`SELECT c.attempt_id AS attemptId
     FROM ${checksTable} c
-    JOIN acquisition_attempts a ON a.id=c.attempt_id AND a.status='torrent_observed'
-    JOIN requests r ON r.id=a.request_id AND r.status='held' AND r.cancelled_ms IS NULL
+    JOIN ${LIVE_ATTEMPTS} a ON a.id=c.attempt_id AND a.status='torrent_observed'
     LEFT JOIN ${handoffTable} h ON h.attempt_id=a.id
-    LEFT JOIN acquisition_rejections j ON j.attempt_id=a.id
-    LEFT JOIN acquisition_releases x ON x.attempt_id=a.id
-    LEFT JOIN acquisition_retirements t ON t.attempt_id=a.id
-    LEFT JOIN acquisition_stall_retirement_intents si ON si.attempt_id=a.id
     WHERE c.attempt_id>? AND c.state IS NULL AND h.attempt_id IS NULL
-      AND j.attempt_id IS NULL AND x.attempt_id IS NULL AND t.attempt_id IS NULL
-      AND si.attempt_id IS NULL
     ORDER BY c.attempt_id LIMIT ?`);
   const transact = (action) => {
     let begun = false;
