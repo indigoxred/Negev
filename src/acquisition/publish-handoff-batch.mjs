@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { lstat, open, readdir, realpath, rename } from 'node:fs/promises';
+import { chmod, lstat, open, readdir, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { verifyStagedFile } from '../identity/verify-staged-file.mjs';
 import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
@@ -153,7 +153,7 @@ export async function publishPreparedHandoff({
   readPacer, readRateBytesPerSecond = 16 * 1024 ** 2,
   verifyVideo = verifyStagedFile, verifySubtitle = verifyStagedSubtitle,
   renamePrepared = rename, verifyHandoffMounts, ed2kMode, checkExisting,
-  readEpisode,
+  readEpisode, chmodImpl = chmod,
 }) {
   if (!Number.isSafeInteger(attemptId) || attemptId < 1 ||
       !Number.isSafeInteger(nowMs) || nowMs < 0 ||
@@ -312,6 +312,11 @@ export async function publishPreparedHandoff({
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');
   try {
+    // Holding stays private (0700) until the intent is recorded. Shoko runs as
+    // another user, so the published tree must be traversable, as in the
+    // pure-move path. A crash after this point recovers as publish_unknown.
+    for (const name of finalDirs) await chmodImpl(path.join(holdingPath, ...name.split('/')), 0o755);
+    await chmodImpl(holdingPath, 0o755);
     await renamePrepared(holdingPath, destination);
     await syncDirectory(path.dirname(destination));
   } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }

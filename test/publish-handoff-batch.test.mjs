@@ -423,6 +423,10 @@ test('one final exact check exposes a complete directory and records it before r
       '01.mkv'))).mode & 0o777, 0o644);
     assert.equal((await stat(path.join(sample.importRoot, sample.publishName,
       '01.en.srt'))).mode & 0o777, 0o644);
+    // Shoko runs as another user: the published directory must be traversable,
+    // not the private 0700 it had while held.
+    assert.equal((await stat(path.join(sample.importRoot, sample.publishName))).mode & 0o777,
+      0o755, 'published directory is readable by Shoko');
     assert.deepEqual(await readdir(sample.holdingRoot), []);
     assert.equal(sample.getObservations(), 1);
     assert.deepEqual(await processRecordedHandoff({ ...sample,
