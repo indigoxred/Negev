@@ -155,7 +155,7 @@ test('actual sign-out reset prevents an old blocked preference mutation delaying
     detailPollTimer: null, dismissRequestDialogs() {}, displayCache: new Map(),
     trackingPrefsPromise: null, trackingPreferencesRevision: 0, trackingSaving: true,
     trackingMutationTail: Promise.resolve(), genreSelections: { airing: new Set(), season: new Set() },
-    nextReviewAttemptId: null, element: () => ({}),
+    admin: { resetReview() {} }, element: () => ({}),
     byId: id => { if (!nodes.has(id)) nodes.set(id, node()); return nodes.get(id); },
     renderTrackedTitles() { assert.fail('old session must not render'); }, updateTrackControls() {}, loadAiring() { assert.fail('old session must not load'); },
     api: async () => { if (++calls === 1) return oldMutation.promise; sent = true; return { mode: 'library', trackedAnidbIds: [2] }; } });

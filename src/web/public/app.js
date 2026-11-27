@@ -1,3 +1,4 @@
+import { createAdminController } from './admin-controller.mjs';
 import { createViewHelpers } from './view-helpers.mjs';
 import { catalogueAvailability } from './card-availability.mjs';
 import { reviewReasonText } from './review-reason.mjs';
@@ -71,7 +72,7 @@ const libraryResponses = createResponseEpoch();
 const airingResponses = createResponseEpoch();
 const airingSeasonResponses = createResponseEpoch();
 const seasonalResponses = createResponseEpoch();
-let nextReviewAttemptId = null;
+
 let detailPollTimer = null;
 let trackingPrefsPromise = null;
 let trackingSaving = false;
@@ -595,7 +596,7 @@ function showSession(data) {
     genreSelections.season.clear();
     state.seasonalRouteKey = null;
     state.routePage = null;
-    nextReviewAttemptId = null;
+    admin.resetReview();
   }
   state.user = data.user;
   void ensureTrackingPreferences().then(renderTrackedTitles).catch(() => {});
@@ -691,7 +692,7 @@ function clearWorkspace() {
   state.routePage = null;
   state.nextBeforeId = { watching: null, history: null, preparing: null };
   state.requestHistoryExpanded = false;
-  nextReviewAttemptId = null;
+  admin.resetReview();
   state.releaseSearch = false;
   state.detailLoad = false;
   state.titleChecks = false;
@@ -1831,83 +1832,9 @@ byId('more-preparations').addEventListener('click', () => { void loadPreparation
 byId('more-watches').addEventListener('click', () => { void loadRequestView('watching', true); });
 // Buttons offered for a parked review item. Retry re-runs every normal check;
 // release only applies to a download that never started.
-function reviewActionsFor(stage) {
-  if (stage === 'start_hold') return [
-    ['retry', 'Retry now', 'Check this download again now? Every normal safety check runs again.'],
-    ['release', 'Release download', 'Release this download? Negev removes the stopped torrent from qBittorrent (no files are deleted) and frees its episodes so another release can be chosen.'],
-  ];
-  if (stage === 'import_hold') return [
-    ['retry', 'Retry now', 'Check this import again now? Negev may read the files again.'],
-  ];
-  return [];
-}
-async function loadOperationalReview(append = false) {
-  if (state.user?.role !== 'admin') return;
-  const session = sessionResponses.current();
-  const read = reviewResponses.invalidate();
-  const userId = state.user.id;
-  const list = byId('review-list');
-  if (!append) list.replaceChildren(element('p', 'Checking held work…', 'muted'));
-  const suffix = append && nextReviewAttemptId !== null
-    ? `?afterAttemptId=${nextReviewAttemptId}` : '';
-  try {
-    const page = await api(`/api/admin/review${suffix}`);
-    if (!sessionResponses.isCurrent(session) ||
-        !reviewResponses.isCurrent(read) || state.user?.id !== userId) return;
-    if (!append) list.replaceChildren();
-    if (!append && page.items.length === 0) {
-      list.append(element('p', 'Nothing needs review.', 'muted'));
-    }
-    for (const item of page.items) {
-      const row = element('div', undefined, 'request-row');
-      row.classList.add('operational-review-row');
-      const label = item.stage === 'release_rejected'
-        ? 'Downloaded file rejected' : item.stage === 'start_hold'
-          ? 'Download start needs review' :
-          item.stage === 'completion_interrupted'
-            ? 'File check interrupted' : item.stage === 'shoko_rescan_hold'
-              ? 'Shoko import needs review' : 'Import held';
-      const link=element('a',undefined,'text-link');link.href=requestRoute(item.requestId);
-      link.append(titleLabel(item),element('span',` · Request #${item.requestId}`));
-      const openTitle=element('a','View title →','text-link');openTitle.href=titleRoute(item.anidbId);
-      const copy=element('div');
-      const reason = element('small', `${reviewReasonText(item.reason)} · AniDB ${item.anidbId}`);
-      reason.title = `Reason code: ${item.reason}`;
-      copy.append(link, element('strong', label), reason);
-      const actions = element('div', undefined, 'request-actions');
-      actions.append(openTitle);
-      for (const [action, label, prompt] of reviewActionsFor(item.stage)) {
-        const control = element('button', label, action === 'retry' ? 'primary' : 'quiet');
-        control.type = 'button';
-        control.addEventListener('click', async () => {
-          if (!window.confirm(prompt)) return;
-          for (const button of actions.querySelectorAll('button')) button.disabled = true;
-          try {
-            const result = await api(`/api/admin/review/${item.attemptId}`, {
-              method: 'POST', body: JSON.stringify({ stage: item.stage, action }) });
-            message(result.state === 'released'
-              ? 'Download released. Its episodes can be picked up again. No media files were removed.'
-              : 'Retry scheduled. Negev will check this item again shortly.');
-            void loadOperationalReview();
-          } catch (error) {
-            message(error.message, true);
-            for (const button of actions.querySelectorAll('button')) button.disabled = false;
-          }
-        });
-        actions.append(control);
-      }
-      row.append(copy, actions);
-      list.append(row);
-    }
-    nextReviewAttemptId = page.nextAfterAttemptId;
-    byId('more-review').hidden = nextReviewAttemptId === null;
-  } catch (error) {
-    if (sessionResponses.isCurrent(session) &&
-        reviewResponses.isCurrent(read) && state.user?.id === userId) {
-      list.replaceChildren(element('p', error.message, 'muted'));
-    }
-  }
-}
+const admin = createAdminController({ element, message, titleLabel, api: (...args) => api(...args), applyAdultVisibility: (...args) => applyAdultVisibility(...args), byId, readAdultPreference: (...args) => readAdultPreference(...args), reviewResponses, sessionResponses, state });
+const { reviewActionsFor, loadOperationalReview, showShareLink, createInviteLink, loadInvites, loadUsers } = admin;
+
 byId('refresh-review').addEventListener('click', () => { void loadOperationalReview(); });
 byId('more-review').addEventListener('click', () => { void loadOperationalReview(true); });
 function authTab(register) {
@@ -2035,49 +1962,9 @@ async function classifySearchCards(searchToken) {
 // server keeps just a digest, so it cannot be displayed again later.
 // `session` is sessionResponses.current() from before the request: a link
 // that arrives after sign-out (or an account switch) is never shown.
-function showShareLink(title, url, note, session) {
-  if (!sessionResponses.isCurrent(session) || !state.user) return false;
-  const box = byId('invite-code');
-  const field = element('input');
-  field.type = 'text';
-  field.readOnly = true;
-  field.value = url;
-  field.setAttribute('aria-label', title);
-  field.addEventListener('focus', () => field.select());
-  const copy = element('button', 'Copy link', 'primary');
-  copy.type = 'button';
-  copy.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      copy.textContent = 'Copied';
-      message('Link copied. Share it privately.');
-    } catch {
-      field.focus();
-      message('Select the link and copy it.');
-    }
-  });
-  const close = element('button', 'Done', 'quiet');
-  close.type = 'button';
-  close.addEventListener('click', () => { box.hidden = true; box.replaceChildren(); });
-  const row = element('div', undefined, 'share-link-row');
-  row.append(field, copy, close);
-  box.replaceChildren(element('strong', title), row, element('small', note));
-  box.hidden = false;
-  field.focus();
-  return true;
-}
-const linkFor = (kind, code) => `${location.origin}/#${kind}=${code}`;
-async function createInviteLink() {
-  const session = sessionResponses.current();
-  try {
-    const result = await api('/api/invitations', { method: 'POST', body: '{}' });
-    if (!showShareLink('Invitation link', linkFor('invite', result.code),
-      'Works once and expires in 7 days. Anyone with the link can create an account.',
-      session)) return;
-    message('Invitation link ready.');
-    if (state.usersLoaded) void loadInvites();
-  } catch (error) { if (sessionResponses.isCurrent(session)) message(error.message, true); }
-}
+
+
+
 byId('invite').addEventListener('click', () => { void createInviteLink(); });
 byId('admin-create-invite').addEventListener('click', () => { void createInviteLink(); });
 byId('reset-form').addEventListener('submit', async (event) => {
@@ -2094,158 +1981,10 @@ byId('reset-form').addEventListener('submit', async (event) => {
     byId('login-form').elements.password.focus();
   } catch (error) { message(error.message, true); }
 });
-const inviteStatusText = { active: 'Active', used: 'Used', expired: 'Expired', revoked: 'Revoked' };
-async function loadInvites() {
-  if (state.user?.role !== 'admin') return;
-  const list = byId('admin-invites');
-  list.replaceChildren(element('p', 'Loading invitations…', 'muted'));
-  try {
-    const page = await api('/api/admin/invitations');
-    if (state.user?.role !== 'admin') return;
-    if (!page.items.length) {
-      list.replaceChildren(element('p', 'No invitations yet.', 'muted'));
-      return;
-    }
-    list.replaceChildren(...page.items.map((invite) => {
-      const row = element('div', undefined, 'user-setting');
-      const when = (ms) => ms === null ? null : new Date(ms).toLocaleDateString();
-      const detail = invite.status === 'used'
-        ? `used by ${invite.usedBy ?? 'a removed account'} on ${when(invite.usedMs)}`
-        : invite.status === 'active' ? `expires ${when(invite.expiresMs)}`
-          : invite.status === 'revoked' ? `revoked ${when(invite.revokedMs)}`
-            : `expired ${when(invite.expiresMs)}`;
-      const created = invite.createdMs === null ? '' : ` · created ${when(invite.createdMs)}`;
-      row.append(element('span', `${inviteStatusText[invite.status]} · ${detail}${created}` +
-        `${invite.createdBy ? ` by ${invite.createdBy}` : ''}`));
-      if (invite.status === 'active') {
-        const revoke = element('button', 'Revoke', 'quiet');
-        revoke.type = 'button';
-        revoke.setAttribute('aria-label', `Revoke the invitation that ${detail}`);
-        revoke.addEventListener('click', async () => {
-          revoke.disabled = true;
-          try {
-            await api(`/api/admin/invitations/${invite.id}/revoke`, { method: 'POST', body: '{}' });
-            message('Invitation revoked. Its link no longer works.');
-            void loadInvites();
-          } catch (error) { message(error.message, true); revoke.disabled = false; }
-        });
-        row.append(revoke);
-      }
-      return row;
-    }));
-  } catch {
-    list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
-  }
-}
+
+
 byId('refresh-invites').addEventListener('click', () => { void loadInvites(); });
-async function loadUsers() {
-  if (state.user?.role !== 'admin') return;
-  const list = byId('admin-users');
-  list.replaceChildren(element('p', 'Loading accounts…', 'muted'));
-  try {
-    const page = await api('/api/admin/users');
-    if (state.user?.role !== 'admin') return;
-    state.usersLoaded = true;
-    list.replaceChildren();
-    for (const user of page.items) {
-      const row = element('div', undefined, 'user-setting');
-      const label = element('span');
-      const showLabel = () => {
-        label.textContent = `${user.username} · ${user.role}${user.disabled ? ' · disabled' : ''}`;
-      };
-      showLabel();
-      row.append(label);
-      const button = element('button', user.adultAllowed ? '18+ allowed' : '18+ blocked',
-        'quiet');
-      button.type = 'button';
-      button.setAttribute('aria-label', `18+ access for ${user.username}`);
-      button.setAttribute('aria-pressed', String(user.adultAllowed));
-      button.disabled = user.disabled;
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        try {
-          const result = await api(`/api/admin/users/${user.id}/adult`, {
-            method: 'PATCH', body: JSON.stringify({ allowed: !user.adultAllowed }) });
-          user.adultAllowed = result.adultAllowed;
-          button.textContent = user.adultAllowed ? '18+ allowed' : '18+ blocked';
-          button.setAttribute('aria-pressed', String(user.adultAllowed));
-          if (user.id === state.user.id) {
-            state.user.adultAllowed = user.adultAllowed;
-            state.showAdult = user.adultAllowed && readAdultPreference(user.id);
-            applyAdultVisibility();
-          }
-        } catch (error) { message(error.message, true); }
-        finally { button.disabled = user.disabled; }
-      });
-      row.append(button);
-      const reset = element('button', 'Reset password', 'quiet');
-      reset.type = 'button';
-      reset.setAttribute('aria-label', `Create a password reset link for ${user.username}`);
-      reset.addEventListener('click', async () => {
-        reset.disabled = true;
-        try {
-          const session = sessionResponses.current();
-          const result = await api(`/api/admin/users/${user.id}/password-reset`,
-            { method: 'POST', body: '{}' });
-          showShareLink(`Password reset link for ${result.username}`, linkFor('reset', result.code),
-            'Works once and expires in 24 hours. Using it signs that account out everywhere.' +
-            (user.disabled ? ' The account stays disabled until you enable it.' : ''), session);
-        } catch (error) { message(error.message, true); }
-        finally { reset.disabled = false; }
-      });
-      row.append(reset);
-      if (user.id !== state.user.id) {
-        const access = element('button', user.disabled ? 'Enable account' : 'Disable account',
-          'quiet');
-        access.type = 'button';
-        access.setAttribute('aria-label',
-          `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
-        access.addEventListener('click', async () => {
-          if (!user.disabled && !confirm(`Disable ${user.username}? They are signed out ` +
-              'everywhere and cannot sign in, and their requests pause, until you enable ' +
-              'the account again.')) return;
-          access.disabled = true;
-          try {
-            const result = await api(`/api/admin/users/${user.id}/disabled`, {
-              method: 'PATCH', body: JSON.stringify({ disabled: !user.disabled }) });
-            user.disabled = result.disabled;
-            access.textContent = user.disabled ? 'Enable account' : 'Disable account';
-            access.setAttribute('aria-label',
-              `${user.disabled ? 'Enable' : 'Disable'} the account ${user.username}`);
-            button.disabled = user.disabled;
-            showLabel();
-            remove.hidden = !user.disabled;
-          } catch (error) { message(error.message, true); }
-          finally { access.disabled = false; }
-        });
-        // Deleting is only offered once the account is disabled.
-        const remove = element('button', 'Delete account', 'quiet danger');
-        remove.type = 'button';
-        remove.hidden = !user.disabled;
-        remove.setAttribute('aria-label', `Permanently delete the account ${user.username}`);
-        remove.addEventListener('click', async () => {
-          if (!confirm(`Permanently delete ${user.username}? Their account and undispatched requests are ` +
-              'removed. Downloads that started or may have started stay as closed history. ' +
-              'Unsettled downloads must be reconciled first. This cannot be undone.')) return;
-          remove.disabled = true;
-          try {
-            const result = await api(`/api/admin/users/${user.id}/delete`,
-              { method: 'POST', body: '{}' });
-            message(`Deleted ${result.username}: ${result.deletedRequests} request` +
-              `${result.deletedRequests === 1 ? '' : 's'} removed` +
-              (result.keptStartedRequests ? `, ${result.keptStartedRequests} started ` +
-                `download${result.keptStartedRequests === 1 ? '' : 's'} kept as history.` : '.'));
-            void loadUsers();
-          } catch (error) { message(error.message, true); remove.disabled = false; }
-        });
-        row.append(access, remove);
-      }
-      list.append(row);
-    }
-  } catch {
-    list.replaceChildren(element('p', 'Account settings are unavailable right now.', 'muted'));
-  }
-}
+
 byId('refresh-users').addEventListener('click', () => { void loadUsers(); });
 function submitInlineSearch(inputId, destination) {
   const input = byId(inputId);
