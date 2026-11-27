@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
-import { PREFLIGHT_PUBLISH_HOLDS, reviveTransientHolds } from './stage-hold-policy.mjs';
+import { PREFLIGHT_PUBLISH_HOLDS, actOnReviewHold, reviveTransientHolds }
+  from './stage-hold-policy.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -124,6 +125,14 @@ export function openHandoffPublishQueue(dbPath, { pureMode = false } = {}) {
     }
   };
   return {
+    // Admin: give a parked import one more guarded turn now. This may read
+    // or hash its files again, which is why it is never automatic.
+    retryReview({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: pureMode ? 'pure_publish' : 'publish',
+        table: checksTable, attemptId, actorId, nowMs, action: 'retry',
+        extraWhere: `AND attempt_id IN (SELECT attempt_id FROM ${handoffTable}
+          WHERE status IN (${pureMode ? "'moving'," : ''}'prepared','publish_unknown'))` });
+    },
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid publish clock');
       return transact(() => {

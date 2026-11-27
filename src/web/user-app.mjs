@@ -52,7 +52,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   startTitleCheck, getTitleCheck,
   discoverCandidates, previewCandidate, probeRequestTargets, releaseSelection, releasePreviews,
   readImportActivity,
-  listOperationalReview,
+  listOperationalReview, reviewOperationalItem,
   getAcquisitionStatus = () => ({ state: 'disabled' }),
   acquisitionAllowedAnidbIds = null,
   ownershipGate = null,
@@ -576,6 +576,46 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
             !/[\x00-\x1f\x7f]/.test(title) ? title : `Anime ${anidbId}`,
           englishTitle: typeof englishTitle === 'string' && englishTitle.trim() &&
             englishTitle.length <= 500 && !/[\x00-\x1f\x7f]/.test(englishTitle) ? englishTitle : null })) };
+  });
+  // Admin action on one parked review item: retry it now, or release a
+  // never-started download so its episodes can be acquired again.
+  app.post('/api/admin/review/:attemptId', { preHandler: writeGuards,
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    reply.header('Cache-Control', 'no-store');
+    if (request.negevUser.role !== 'admin') {
+      return reply.code(403).send({ error: 'Admin required' });
+    }
+    const raw = request.params.attemptId;
+    const attemptId = Number(raw);
+    const { stage, action } = request.body ?? {};
+    if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(attemptId) ||
+        !allowedBody(request.body, ['stage', 'action']) ||
+        Object.keys(request.body).length !== 2 ||
+        !['start_hold', 'import_hold'].includes(stage) ||
+        !['retry', 'release'].includes(action) ||
+        (action === 'release' && stage !== 'start_hold')) {
+      return reply.code(400).send({ error: 'Invalid review action' });
+    }
+    if (typeof reviewOperationalItem !== 'function') {
+      return reply.code(503).send({ error: 'Review actions unavailable' });
+    }
+    let result;
+    try {
+      result = await reviewOperationalItem({ stage, attemptId, action,
+        actorId: request.negevUser.id });
+    } catch { return reply.code(503).send({ error: 'Review actions unavailable' }); }
+    if (result?.state === 'retry_scheduled') return { state: 'retry_scheduled' };
+    if (result?.state === 'retired_prestart_mismatch') return { state: 'released' };
+    const reason = typeof result?.reason === 'string' &&
+      /^[a-z][a-z0-9_]{0,79}$/.test(result.reason) ? result.reason : 'action_unavailable';
+    if (['release_unavailable', 'service_stopping'].includes(reason)) {
+      return reply.code(503).send({ error: 'Release is unavailable right now', reason });
+    }
+    return reply.code(409).send({ error: reason === 'not_in_review'
+      ? 'This item is no longer waiting for review'
+      : 'The action did not finish. Refresh the review list to see where it stands.',
+    reason });
   });
   app.get('/api/catalogue/search', { preHandler: requireUser,
     config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request, reply) => {

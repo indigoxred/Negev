@@ -118,3 +118,56 @@ export function reviveTransientHolds(db, { stage, table, reasons, extraWhere = '
     throw error;
   }
 }
+
+// Admin actions on review holds. Every action is logged with the claim
+// version it applied to, so a retry can be undone exactly and a release can
+// only authorise the guarded retirement of that exact parked check.
+export function ensureOperatorReviewLog(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS operator_review_actions (
+    id INTEGER PRIMARY KEY,
+    stage TEXT NOT NULL,
+    attempt_id INTEGER NOT NULL CHECK(attempt_id>0),
+    check_version INTEGER NOT NULL CHECK(check_version>0),
+    action TEXT NOT NULL CHECK(action IN ('retry','release')),
+    reason TEXT NOT NULL,
+    checked_ms INTEGER CHECK(checked_ms>=0),
+    actor_id INTEGER NOT NULL CHECK(actor_id>0),
+    acted_ms INTEGER NOT NULL CHECK(acted_ms>=0)
+  ) STRICT`);
+}
+
+// Make one parked review hold due now. Only a held row with no retry time
+// (terminal review) qualifies; anything else is reported, never changed.
+export function actOnReviewHold(db, { stage, table, attemptId, action,
+  actorId, nowMs, extraWhere = '' }) {
+  if (!/^[a-z_]+$/.test(stage) || !/^[a-z_]+$/.test(table) ||
+      !['retry', 'release'].includes(action) ||
+      !Number.isSafeInteger(attemptId) || attemptId < 1 ||
+      !Number.isSafeInteger(actorId) || actorId < 1 ||
+      !Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new TypeError('Invalid review action');
+  }
+  ensureOperatorReviewLog(db);
+  let begun = false;
+  try {
+    db.exec('BEGIN IMMEDIATE'); begun = true;
+    const row = db.prepare(`SELECT version,reason,checked_ms AS checkedMs
+      FROM ${table} WHERE attempt_id=? AND state='held' AND next_due_ms IS NULL
+      ${extraWhere}`).get(attemptId);
+    if (!row) { db.exec('ROLLBACK'); begun = false; return { state: 'held', reason: 'not_in_review' }; }
+    db.prepare(`INSERT INTO operator_review_actions
+      (stage,attempt_id,check_version,action,reason,checked_ms,actor_id,acted_ms)
+      VALUES (?,?,?,?,?,?,?,?)`).run(stage, attemptId, row.version, action,
+      row.reason, row.checkedMs, actorId, nowMs);
+    if (action === 'retry') {
+      db.prepare(`UPDATE ${table} SET next_due_ms=? WHERE attempt_id=? AND version=?`)
+        .run(nowMs, attemptId, row.version);
+    }
+    db.exec('COMMIT'); begun = false;
+    return { state: action === 'retry' ? 'retry_scheduled' : 'release_recorded',
+      version: row.version };
+  } catch (error) {
+    if (begun) db.exec('ROLLBACK');
+    throw error;
+  }
+}

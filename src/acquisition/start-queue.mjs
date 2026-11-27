@@ -1,8 +1,17 @@
 import { DatabaseSync } from 'node:sqlite';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
 import { TRANSIENT_START_HOLDS, START_SESSION_RETRY_HOLDS,
-  START_METADATA_RETRY_HOLDS, isTransientStartHold, reviveTransientHolds,
-  transientRetryDelayMs } from './stage-hold-policy.mjs';
+  START_METADATA_RETRY_HOLDS, actOnReviewHold, isTransientStartHold,
+  reviveTransientHolds, transientRetryDelayMs } from './stage-hold-policy.mjs';
+// A parked start check an admin may act on: still unstarted and not already
+// released, rejected, retired or being retired.
+const REVIEWABLE_START = `AND NOT EXISTS (SELECT 1 FROM acquisition_starts x
+    WHERE x.attempt_id=start_checks.attempt_id)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_releases x WHERE x.attempt_id=start_checks.attempt_id)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_rejections x WHERE x.attempt_id=start_checks.attempt_id)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_retirements x WHERE x.attempt_id=start_checks.attempt_id)
+  AND NOT EXISTS (SELECT 1 FROM acquisition_stall_retirement_intents x
+    WHERE x.attempt_id=start_checks.attempt_id)`;
 
 const held = (reason) => ({ state: 'held', reason });
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
@@ -69,9 +78,7 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
     // any earlier claim of the same attempt. Give those rows one more paced
     // turn; each is logged so the change can be undone exactly.
     reviveTransientHolds(db, { stage: 'start', table: 'start_checks',
-      reasons: TRANSIENT_START_HOLDS,
-      extraWhere: `AND NOT EXISTS (SELECT 1 FROM acquisition_starts s
-        WHERE s.attempt_id=start_checks.attempt_id)` });
+      reasons: TRANSIENT_START_HOLDS, extraWhere: REVIEWABLE_START });
   } catch (error) { db.close(); throw error; }
 
   const next = db.prepare(`SELECT a.id AS attemptId FROM acquisition_attempts a
@@ -133,6 +140,18 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
   };
   return {
     releaseOperation,
+    // Admin: give a parked start check one more guarded turn now.
+    retryReview({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: 'start', table: 'start_checks',
+        attemptId, actorId, nowMs, action: 'retry', extraWhere: REVIEWABLE_START });
+    },
+    // Admin: record that this parked, never-started attempt may be released.
+    // The guarded prestart retirement still removes the stopped torrent and
+    // proves its staging folder empty before any episode claim is freed.
+    recordReleaseRequest({ attemptId, actorId, nowMs = Date.now() } = {}) {
+      return actOnReviewHold(db, { stage: 'start', table: 'start_checks',
+        attemptId, actorId, nowMs, action: 'release', extraWhere: REVIEWABLE_START });
+    },
     claimNext({ nowMs = Date.now() } = {}) {
       if (!validTime(nowMs)) throw new TypeError('Invalid start clock');
       return transact(() => {

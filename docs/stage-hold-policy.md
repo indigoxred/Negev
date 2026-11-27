@@ -34,3 +34,22 @@ UPDATE handoff_publish_checks SET next_due_ms=NULL WHERE state='held' AND EXISTS
 ```
 
 A row that has been claimed again since its revival has a newer version, so this undo leaves it alone. `stage_hold_policy_revivals` is a new table that earlier builds ignore, and it can be dropped once it is no longer needed. No existing column or table is changed or removed.
+
+## Admin actions on the review page
+
+An admin can act on an item in the operational review list (`POST /api/admin/review/:attemptId` with `{ stage, action }`, CSRF protected):
+
+- **Retry now** (`start_hold`, `import_hold`): makes a parked check due immediately. Its normal worker re-runs every gate. For an import, that may read or hash the files again, which is why this never happens automatically for evidence holds.
+- **Release download** (`start_hold` only): for a download that never started. Negev records the release, then uses the existing guarded prestart retirement. That removes the stopped torrent from qBittorrent with `deleteFiles=false`, proves the torrent is gone and its staging folder is empty, then retires the attempt as `policy_reset` and frees its episode claims. A different release can then be chosen, and the same release can still be chosen again later as a fresh attempt. A wrong-installment retirement keeps its `file_wrong_identity` reason.
+
+Every action is logged in `operator_review_actions`, with the claim version it applied to and the admin's user ID. A release only authorises the retirement of the exact parked check it was recorded for. A retry is refused while a release is in progress.
+
+To undo a retry that has not run yet:
+
+```sql
+UPDATE start_checks SET next_due_ms=NULL WHERE state='held' AND EXISTS (
+  SELECT 1 FROM operator_review_actions o WHERE o.stage='start' AND o.action='retry'
+    AND o.attempt_id=start_checks.attempt_id AND o.check_version=start_checks.version);
+```
+
+A completed release cannot be undone in the database, because the torrent has already been removed from qBittorrent. Re-adding the same release from the request page creates a fresh attempt.

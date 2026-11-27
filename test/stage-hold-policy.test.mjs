@@ -212,3 +212,78 @@ test('publish retry caps count holds per reason, not every claim', async () =>
     assert.notEqual(step('handoff_mount_unavailable'), null);
     assert.equal(step('identity_unavailable'), null);
   }));
+
+const parkStart = (ctx, reason = 'file_plan_mismatch') => {
+  const first = ctx.queue.claimNext({ nowMs: 1_000 });
+  ctx.queue.recordResult({ ...first, state: 'held', reason: 'provider_unavailable', checkedMs: 1_001 });
+  const second = ctx.queue.claimNext({ nowMs: 61_001 });
+  ctx.queue.recordResult({ ...second, state: 'held', reason, checkedMs: 61_002 });
+  assert.equal(ctx.queue.getResult(first.attemptId).nextDueMs, null);
+  return first.attemptId;
+};
+
+test('admin retry makes only a parked start check due now and logs it', async () =>
+  startFixture(async (ctx) => {
+    const attemptId = parkStart(ctx);
+    assert.deepEqual(ctx.queue.retryReview({ attemptId: ctx.ids[1].attemptId,
+      actorId: 1, nowMs: 70_000 }), { state: 'held', reason: 'not_in_review' });
+    assert.deepEqual(ctx.queue.retryReview({ attemptId, actorId: 1, nowMs: 70_000 }),
+      { state: 'retry_scheduled', version: 2 });
+    assert.equal(ctx.queue.getResult(attemptId).nextDueMs, 70_000);
+    assert.equal(ctx.queue.claimNext({ nowMs: 70_000 }).attemptId, attemptId);
+    const raw = new DatabaseSync(ctx.dbPath);
+    assert.deepEqual({ ...raw.prepare(`SELECT stage,attempt_id AS attemptId,check_version AS v,
+      action,reason,actor_id AS actor FROM operator_review_actions`).get() },
+    { stage: 'start', attemptId, v: 2, action: 'retry', reason: 'file_plan_mismatch', actor: 1 });
+    raw.close();
+  }));
+
+test('admin release retires a parked never-started attempt as a policy reset and frees its episodes', async () =>
+  startFixture(async (ctx) => {
+    const attemptId = parkStart(ctx);
+    const { hash } = ctx.ids[0];
+    // Without a recorded release the guarded retirement still refuses.
+    assert.deepEqual(ctx.acquisitions.requestPrestartMismatchRetirement({
+      attemptId, hash, nowMs: 70_000 }), { state: 'held', reason: 'mismatch_not_recorded' });
+    assert.equal(ctx.queue.recordReleaseRequest({ attemptId, actorId: 1, nowMs: 70_001 }).state,
+      'release_recorded');
+    assert.equal(ctx.acquisitions.requestPrestartMismatchRetirement({
+      attemptId, hash, nowMs: 70_002 }).state, 'retirement_requested');
+    // A retry cannot race an in-progress release.
+    assert.equal(ctx.queue.retryReview({ attemptId, actorId: 1, nowMs: 70_003 }).reason,
+      'not_in_review');
+    assert.equal(ctx.acquisitions.beginPrestartMismatchDelete({
+      attemptId, hash, nowMs: 70_004 }).state, 'delete_unknown');
+    assert.equal(ctx.acquisitions.retirePrestartMismatch({
+      attemptId, hash, nowMs: 70_005 }).state, 'retired_prestart_mismatch');
+    const raw = new DatabaseSync(ctx.dbPath);
+    assert.equal(raw.prepare('SELECT reason FROM acquisition_retirements WHERE attempt_id=?')
+      .get(attemptId).reason, 'policy_reset');
+    raw.close();
+    const other = ctx.acquisitions.reserve({ requestId: 1,
+      candidate: { indexerId: 7, guid: 'replacement' }, episodeIds: [1001], nowMs: 80_000 });
+    assert.equal(other.state, 'reserved');
+  }));
+
+test('a wrong-installment prestart retirement keeps its wrong-identity reason', async () =>
+  startFixture(async (ctx) => {
+    const attemptId = parkStart(ctx, 'related_installment_mismatch');
+    const { hash } = ctx.ids[0];
+    ctx.acquisitions.requestPrestartMismatchRetirement({ attemptId, hash, nowMs: 70_000 });
+    ctx.acquisitions.beginPrestartMismatchDelete({ attemptId, hash, nowMs: 70_001 });
+    assert.equal(ctx.acquisitions.retirePrestartMismatch({ attemptId, hash, nowMs: 70_002 }).state,
+      'retired_prestart_mismatch');
+    const raw = new DatabaseSync(ctx.dbPath);
+    assert.equal(raw.prepare('SELECT reason FROM acquisition_retirements WHERE attempt_id=?')
+      .get(attemptId).reason, 'file_wrong_identity');
+    raw.close();
+  }));
+
+test('admin retry on a parked import makes it due now', async () =>
+  publishFixture(async (ctx) => {
+    const c = ctx.queue.claimNext({ nowMs: 1_000 });
+    ctx.queue.recordResult({ ...c, state: 'held', reason: 'manifest_tree_mismatch', checkedMs: 1_001 });
+    assert.equal(ctx.queue.retryReview({ attemptId: ctx.attemptId, actorId: 1, nowMs: 5_000 }).state,
+      'retry_scheduled');
+    assert.equal(ctx.queue.claimNext({ nowMs: 5_000 }).attemptId, ctx.attemptId);
+  }));
