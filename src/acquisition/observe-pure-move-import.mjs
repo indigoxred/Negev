@@ -3,7 +3,9 @@ import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { localPath, validMount } from '../availability/known-card-availability.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/observe-pure-move-import');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const sameIds = (left, right) => Array.isArray(left) &&
   left.length === right.length && new Set(left).size === left.length &&
@@ -32,7 +34,7 @@ export async function probePureMovedFile({ filePath, allowedRoot, expectedSize }
         before.mtimeNs !== after.mtimeNs) return held('file_changed');
     return { state: 'candidate', candidateKey:
       `${before.dev}:${before.ino}:${before.size}:${before.mtimeNs}` };
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
 }
 
 // A Shoko episode already in the library may have the same title and size as
@@ -66,7 +68,7 @@ export async function observePureMoveImport({ move, target, shokoMount,
   for (const episodeId of target.episodeIds) {
     let result;
     try { result = await readEpisode({ anidbId: target.anidbId, episodeId }); }
-    catch { return held('shoko_unavailable'); }
+    catch (error) { return heldAfter(error, 'shoko_unavailable'); }
     if (result?.state === 'not_imported') return { state: 'awaiting_shoko', episodeId };
     if (result?.state !== 'ok' || result.complete !== true ||
         !Array.isArray(result.files) || result.files.length > 50) {

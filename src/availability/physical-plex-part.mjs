@@ -1,7 +1,9 @@
 import { open, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/physical-plex-part');
 const inside = (root, candidate) => {
   const relative = path.relative(root, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) &&
@@ -31,7 +33,7 @@ export async function probePhysicalCandidate({ filePath, allowedRoot,
       Promise.all([allowedRoot, ...backingRoots].map((root) => realpath(root))),
       realpath(filePath),
     ]);
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
   if (!roots.some((root) => inside(root, fileReal))) {
     return held('path_outside_roots');
   }
@@ -48,7 +50,7 @@ export async function probePhysicalCandidate({ filePath, allowedRoot,
       return held('file_changed');
     }
     return { state: 'candidate', candidateKey: identity(before) };
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
 }
 
 // All paths are Negev-container paths supplied by explicit read-only mount
@@ -68,7 +70,7 @@ export async function provePhysicalPlexPart({ shokoPath, plexPath, shokoRoot,
     [sourceRoot, partRoot, sourceReal, partReal] = await Promise.all([
       realpath(shokoRoot), realpath(plexRoot), realpath(shokoPath), realpath(plexPath),
     ]);
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
   if (!inside(sourceRoot, sourceReal) ||
       !(inside(partRoot, partReal) || inside(sourceRoot, partReal))) {
     return held('path_outside_roots');
@@ -99,6 +101,6 @@ export async function provePhysicalPlexPart({ shokoPath, plexPath, shokoRoot,
       return held('file_changed');
     }
     return { state: 'same_file', storageKey: identity(sourceBefore) };
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
   finally { await handle?.close(); }
 }

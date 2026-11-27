@@ -1,6 +1,8 @@
 import { createTimerLoop } from '../runtime/timer-loop.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/file-backfill-scheduler');
 
 // Source-only pacing for one file-level tick. The runtime must opt in after
 // the public Plex and Shoko inventory load gates pass.
@@ -22,9 +24,9 @@ export function createFileBackfillScheduler({ tick,
     if (closed) return held('file_backfill_closed');
     if (inFlight) return held('file_backfill_busy');
     try { inFlight = Promise.resolve(tick()); }
-    catch { return held('file_backfill_unavailable'); }
+    catch (error) { return heldAfter(error, 'file_backfill_unavailable'); }
     try { return await inFlight; }
-    catch { return held('file_backfill_unavailable'); }
+    catch (error) { return heldAfter(error, 'file_backfill_unavailable'); }
     finally { inFlight = null; }
   };
   const loop = createTimerLoop({ failureDelayMs, setTimer, clearTimer,

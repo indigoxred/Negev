@@ -5,7 +5,9 @@ import path from 'node:path';
 import { torrentFileKind } from '../acquisition/evaluate-stopped-manifest.mjs';
 import { makeBytePacer } from './read-pacer.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('identity/verify-staged-subtitle');
 
 export async function verifyStagedSubtitle({
   root, relativePath, maxFileBytes = 16 * 1024 ** 2,
@@ -39,7 +41,7 @@ export async function verifyStagedSubtitle({
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) ||
         path.isAbsolute(relative)) return held('path_outside_staging');
     if (before.size > BigInt(maxFileBytes)) return held('file_over_budget');
-  } catch { return held('file_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
 
   let file;
   try {
@@ -68,6 +70,6 @@ export async function verifyStagedSubtitle({
     }
     return { state: 'subtitle_verified', sha256: hash.digest('hex').toUpperCase(),
       size: Number(opened.size) };
-  } catch { return held('file_changed_or_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_changed_or_unavailable'); }
   finally { if (file) await file.close(); }
 }

@@ -13,7 +13,9 @@ import { evaluateOfflinePreview } from '../identity/evaluate-offline-preview.mjs
 import { basename } from 'node:path';
 import { planPackBonuses } from './pack-bonus-plan.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/request-candidate-preflight');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
 // Read-only review of one saved request and one exact Prowlarr candidate.
@@ -45,7 +47,7 @@ export async function previewRequestCandidate({ requestId, candidate,
       candidate.size < 1) return held('invalid_preflight');
   let request;
   try { request = await readRequest(requestId); }
-  catch { return held('request_unavailable'); }
+  catch (error) { return heldAfter(error, 'request_unavailable'); }
   if (request?.id !== requestId || request.status !== 'held' ||
       !validId(request.anidbId) || !['series', 'movie'].includes(request.kind) ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length < 1 ||
@@ -53,7 +55,7 @@ export async function previewRequestCandidate({ requestId, candidate,
   let detail;
   try { detail = await collectAniDbDetail({ anidbId: request.anidbId,
     loadPage: loadDetail }); }
-  catch { return held('detail_unavailable'); }
+  catch (error) { return heldAfter(error, 'detail_unavailable'); }
   if (detail.state !== 'details' || detail.kind !== request.kind ||
       typeof detail.restricted !== 'boolean') {
     return held('detail_unavailable');
@@ -105,13 +107,13 @@ export async function previewRequestCandidate({ requestId, candidate,
   let prepared;
   let searchQuery = sourceQuery;
   try { prepared = await prepare({ query: sourceQuery, candidate }); }
-  catch { return held('torrent_preflight_unavailable'); }
+  catch (error) { return heldAfter(error, 'torrent_preflight_unavailable'); }
   if (prepared?.state === 'held' && prepared.reason === 'candidate_changed') {
     for (const query of queries.filter((value) => value !== sourceQuery)) {
       try { await pause(1_000); }
-      catch { return held('torrent_preflight_unavailable'); }
+      catch (error) { return heldAfter(error, 'torrent_preflight_unavailable'); }
       try { prepared = await prepare({ query, candidate }); }
-      catch { return held('torrent_preflight_unavailable'); }
+      catch (error) { return heldAfter(error, 'torrent_preflight_unavailable'); }
       if (prepared?.state === 'prepared_stopped') {
         searchQuery = query;
         break;
@@ -128,13 +130,13 @@ export async function previewRequestCandidate({ requestId, candidate,
   if (!firstQuery || !verifiedIdentity && !offlineLookup) return held('release_title_mismatch');
   let extensions;
   if (readVideoExtensions) {
-    try { extensions = await readVideoExtensions(); } catch { return held('shoko_settings_unavailable'); }
+    try { extensions = await readVideoExtensions(); } catch (error) { return heldAfter(error, 'shoko_settings_unavailable'); }
     if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
   }
   let related;
   if (readRelatedTitles) {
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
-    catch { return held('related_title_unavailable'); }
+    catch (error) { return heldAfter(error, 'related_title_unavailable'); }
   }
   const bonus = await planPackBonuses({ request, detail, files: prepared.files, related,
     offlineLookup, loadDetail, readOwnership: readBonusOwnership,

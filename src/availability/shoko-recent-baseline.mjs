@@ -1,4 +1,6 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/shoko-recent-baseline');
 // File ID stays positive so existing SQLite cursor tables need no migration.
 // Imported=0 is older than every real Shoko import timestamp.
 const emptyCursor = { fileId: 1, importedNs: '0' };
@@ -47,7 +49,7 @@ export async function bootstrapShokoRecentHead({ ledger, readPage } = {}) {
     first = await readPage({ page: 1, pageSize: 100 });
     if (!validHead(first)) return held('recent_head_unverified');
     second = await readPage({ page: 1, pageSize: 100 });
-  } catch { return held('recent_head_unavailable'); }
+  } catch (error) { return heldAfter(error, 'recent_head_unavailable'); }
   if (!validHead(second)) return held('recent_head_unverified');
   if (first.total !== second.total || first.items.length !== second.items.length ||
       first.items.some((item, index) =>

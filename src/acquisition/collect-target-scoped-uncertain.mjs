@@ -1,8 +1,10 @@
 import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { collectUnimportedTargets } from './collect-unimported-targets.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/collect-target-scoped-uncertain');
 
 // A first acquisition is explicitly uncertain when Plex can confirm source
 // health but cannot enumerate a complete absence. Recheck only this request's
@@ -28,7 +30,7 @@ export async function collectTargetScopedUncertain({ anidbId, episodeIds,
   const inspectPublic = async () => {
     let result;
     try { result = await probePublic({ kind }); }
-    catch { return held('public_probe_unverified'); }
+    catch (error) { return heldAfter(error, 'public_probe_unverified'); }
     if (result?.state !== 'healthy_unconfirmed' ||
         result.probeCoverage !== 'health_only' ||
         result.sourceVerified !== true || result.complete !== false ||

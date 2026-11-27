@@ -6,9 +6,11 @@ import { createHash } from 'node:crypto';
 import { preferredWaitDuration } from './preferred-release.mjs';
 import { changedRequestScopeSql, currentRequestCompletionSql, currentRequestScopeSql, untouchedAutoSql } from '../requests/request-check-scope.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/acquisition-request-queue');
 const RETRY_DELAY_MS = 30 * 60_000;
 const SESSION_RETRY_MS = 60_000;
 const COVERAGE_CONTINUATION_MS = 1_000;
@@ -905,7 +907,7 @@ export function createAcquisitionPageWorker({ queue, processRequest,
               ? queue.getScanStartedMs(next.requestId) : undefined,
             candidateOffset: next.candidateOffset ?? 0,
             candidateFingerprint: next.candidateFingerprint ?? null }); }
-          catch { outcome = held('worker_unavailable'); }
+          catch (error) { outcome = heldAfter(error, 'worker_unavailable'); }
           if ((outcome?.nextCandidateOffset !== undefined &&
               (!Number.isSafeInteger(outcome.nextCandidateOffset) ||
                 outcome.nextCandidateOffset < 0 || outcome.nextCandidateOffset > 50)) ||

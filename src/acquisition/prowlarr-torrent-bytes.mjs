@@ -3,7 +3,9 @@ import { readBoundedJson, readBoundedBytes, cancelResponseBody } from '../http/b
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/prowlarr-torrent-bytes');
 const MAX_TORRENT_BYTES = MAX_TORRENT_METAINFO_BYTES;
 
 export function isTrustedProxy(value, base, apiKey, indexerId) {
@@ -96,5 +98,5 @@ export async function fetchProwlarrTorrentBytes({
     if (bytes.length < 2) return held('invalid_torrent_bytes');
     if (bytes[0] !== 100 || bytes.at(-1) !== 101) return held('invalid_torrent_bytes');
     return { state: 'torrent_bytes', bytes };
-  } catch { return held('provider_unavailable'); }
+  } catch (error) { return heldAfter(error, 'provider_unavailable'); }
 }

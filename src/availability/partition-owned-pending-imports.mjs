@@ -2,7 +2,9 @@ import { MAX_TORRENT_FILES, MAX_ACQUISITION_TARGETS } from '../acquisition/torre
 import { evaluateHandoffEvidence } from
   '../acquisition/handoff-evidence.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/partition-owned-pending-imports');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const ownedPrefix = /^negev-([1-9][0-9]*)-([0-9a-f]{16})$/;
 const relative = (value) => typeof value === 'string' &&
@@ -56,7 +58,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
     if (!validId(attemptId)) return held('pending_handoff_unverified');
     let handoff;
     try { handoff = getHandoff(attemptId); }
-    catch { return held('pending_handoff_unverified'); }
+    catch (error) { return heldAfter(error, 'pending_handoff_unverified'); }
     let expected;
     let videos;
     if (handoff) {
@@ -77,7 +79,7 @@ export function partitionOwnedPendingImports({ diskFiles, shokoPage,
       // alone: only a durable published intent can make it unrelated.
       let move;
       try { move = getPureMove?.(attemptId); }
-      catch { return held('pending_handoff_unverified'); }
+      catch (error) { return heldAfter(error, 'pending_handoff_unverified'); }
       const manifest = move?.manifest;
       if (move?.status !== 'published_observed' ||
           manifest?.attemptId !== attemptId ||

@@ -5,7 +5,9 @@ import { releaseFacts, releaseCoverageHint, matchesReleaseFilters, validReleaseF
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { validPreferredGroup } from './preferred-release.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held=reason=>({state:'held',reason});
+const heldAfter = heldReporter('acquisition/release-selection');
 export function publicRelease(c) {
   const title=c.title;
   const facts=releaseFacts(title);
@@ -123,7 +125,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
           return checked??held('torrent_preflight_unavailable');
         }
         found.preview=checked;
-      } catch {return held('torrent_preflight_unavailable');}
+      } catch (error) { return heldAfter(error, 'torrent_preflight_unavailable'); }
       finally {found.pending=null;}
     }
     if(found.preview?.state==='preflight') {
@@ -149,7 +151,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const registryRead=Promise.resolve().then(()=>readGroupRegistry()).catch(()=>null);
     let result;
     try {result=await discoverCandidates({requestId:id,interactive:true,resultOffset,filters,...(query?{query}:{})});}
-    catch {return held('release_search_unavailable');}
+    catch (error) { return heldAfter(error, 'release_search_unavailable'); }
     if(result?.state!=='candidates') return result??held('release_search_unavailable');
     remember(id,request,result.releaseState);
     const items=result.items.filter(c=>filters===null||matchesReleaseFilters(c,filters)).map(c=>filters===null?c:

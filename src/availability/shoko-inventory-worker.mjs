@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { createFileProofInvalidator } from './file-proof-invalidator.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/shoko-inventory-worker');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validHintPath = (value) => typeof value === 'string' &&
   value.length <= 4096 && path.posix.isAbsolute(value) &&
@@ -330,7 +332,7 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
             return held('change_delivery_failed');
           }
           if (result?.state === 'held') return held('change_delivery_failed');
-        } catch { return held('change_delivery_failed'); }
+        } catch (error) { return heldAfter(error, 'change_delivery_failed'); }
         if (markDelivered.run(change.id).changes !== 1) {
           return held('change_delivery_failed');
         }
@@ -520,7 +522,7 @@ export function createShokoInventoryWorker({ ledger, readPage, now = Date.now,
       const observedMs = now();
       let result;
       try { result = await readPage({ page: expected.page, pageSize: expected.pageSize }); }
-      catch { return held('file_page_unavailable'); }
+      catch (error) { return heldAfter(error, 'file_page_unavailable'); }
       if (result?.state !== 'page') return held('file_page_unavailable');
       const saved = ledger.recordPage({ expected, result, observedMs });
       if (saved.state === 'recorded' && onChangedFile) {

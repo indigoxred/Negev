@@ -1,5 +1,7 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/plex-card-page-worker');
 
 // Explicit single tick: one scoped Plex key page and at most five card reads.
 // The caller owns a durable offset and pacing. A failed card keeps the page
@@ -17,7 +19,7 @@ export async function indexPlexCardPage({ libraryId, kind, offset,
   if (!Number.isSafeInteger(observedMs) || observedMs < 0) return held('invalid_clock');
   let page;
   try { page = await readPage({ libraryId, kind, offset, pageSize }); }
-  catch { return held('key_page_unavailable'); }
+  catch (error) { return heldAfter(error, 'key_page_unavailable'); }
   if (page?.state !== 'page' || page.libraryId !== libraryId ||
       page.kind !== kind || page.offset !== offset ||
       !Array.isArray(page.keys) || page.keys.length > pageSize ||

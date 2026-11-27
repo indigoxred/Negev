@@ -5,7 +5,9 @@ import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 import { stagingSavePath, validStagingSaveRoot } from './staging-save-path.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/delete-stalled-torrent');
 const validHash = (value) => typeof value === 'string' &&
   /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(value);
 
@@ -60,13 +62,13 @@ export async function deleteStalledTorrent({ ledger, attemptId, baseUrl,
   for (let observation = 0; observation < 2; observation++) {
     let root;
     try { root = await verifyStagingRoot(); }
-    catch { return held('staging_root_unverified'); }
+    catch (error) { return heldAfter(error, 'staging_root_unverified'); }
     if (root?.state !== 'verified_staging_root') {
       return held('staging_root_unverified');
     }
     let leaf;
     try { leaf = await lstatImpl(path.posix.join(stagingRoot, hash)); }
-    catch { return held('staging_leaf_unverified'); }
+    catch (error) { return heldAfter(error, 'staging_leaf_unverified'); }
     if (!leaf.isDirectory() || leaf.isSymbolicLink()) {
       return held('staging_leaf_unverified');
     }
@@ -74,7 +76,7 @@ export async function deleteStalledTorrent({ ledger, attemptId, baseUrl,
     try {
       torrents = await read('info', 'hashes');
       properties = await read('properties', 'hash');
-    } catch { return held('provider_unavailable'); }
+    } catch (error) { return heldAfter(error, 'provider_unavailable'); }
     if (!Array.isArray(torrents) || torrents.length !== 1 ||
         torrents[0]?.hash?.toLowerCase() !== hash) {
       return held('torrent_unavailable');

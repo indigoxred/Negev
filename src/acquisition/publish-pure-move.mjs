@@ -3,7 +3,9 @@ import { constants } from 'node:fs';
 import { chmod, lstat, open, readdir, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/publish-pure-move');
 
 function within(parent, candidate) {
   const relative = path.relative(parent, candidate);
@@ -96,13 +98,13 @@ export async function publishPureMove({ attemptId, ledger, holdingRoot,
           `negev-${attemptId}-${manifest.torrentHash.slice(0, 16)}`) {
       return held('unsafe_move_roots');
     }
-  } catch { return held('unsafe_move_roots'); }
+  } catch (error) { return heldAfter(error, 'unsafe_move_roots'); }
   const destination = path.join(roots[1], path.basename(manifest.holdingPath));
   let from, to;
   try {
     [from, to] = await Promise.all([pathStatus(manifest.holdingPath),
       pathStatus(destination)]);
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   if (to && from) return held('destination_exists');
   if (to && row.status === 'publish_unknown') {
     if (!to.isDirectory() || to.isSymbolicLink() ||
@@ -140,5 +142,5 @@ export async function publishPureMove({ attemptId, ledger, holdingRoot,
     return held(error?.code === 'EXDEV' ? 'cross_filesystem_move' : 'publish_outcome_unknown');
   }
   try { return ledger.markPublished({ attemptId, nowMs }); }
-  catch { return held('publish_outcome_unknown'); }
+  catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
 }

@@ -2,7 +2,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { PREFLIGHT_PUBLISH_HOLDS, actOnReviewHold, reviveTransientHolds }
   from './stage-hold-policy.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/handoff-publish-queue');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validReason = (value) => typeof value === 'string' &&
@@ -236,11 +238,11 @@ export function createHandoffPublishWorker({ queue, processAttempt,
       try {
         let receipt;
         try { receipt = queue.claimNext({ nowMs: now() }); }
-        catch { return held('queue_unavailable'); }
+        catch (error) { return heldAfter(error, 'queue_unavailable'); }
         if (receipt.state === 'idle') return receipt;
         let result;
         try { result = await processAttempt({ attemptId: receipt.attemptId }); }
-        catch { result = held('worker_unavailable'); }
+        catch (error) { result = heldAfter(error, 'worker_unavailable'); }
         const state = ['publish_unknown', 'published_observed'].includes(result?.state)
           ? result.state : 'held';
         const reason = state === 'held' && validReason(result?.reason)
@@ -249,7 +251,7 @@ export function createHandoffPublishWorker({ queue, processAttempt,
           const saved = queue.recordResult({ attemptId: receipt.attemptId,
             version: receipt.version, state, reason, checkedMs: now() });
           if (saved.state !== 'recorded') return held('queue_unavailable');
-        } catch { return held('queue_unavailable'); }
+        } catch (error) { return heldAfter(error, 'queue_unavailable'); }
         return { state: 'processed', attemptId: receipt.attemptId,
           result: state === 'held' ? held(reason) : { state } };
       } finally { busy = false; }

@@ -1,5 +1,7 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/probe-first-time-public-sections');
 
 // A fresh one-card page verifies that each configured public Plex section is
 // responsive and still has the expected type. It cannot identify a missing
@@ -33,7 +35,7 @@ export async function probeFirstTimePublicSections({ kind, publicSections,
     try {
       snapshot = await readSources({ libraryIds: sections.map((item) =>
         item.libraryId) });
-    } catch { return held('public_source_unverified'); }
+    } catch (error) { return heldAfter(error, 'public_source_unverified'); }
     if (snapshot?.state !== 'source_snapshot' ||
         !Array.isArray(snapshot.sections) ||
         snapshot.sections.length !== sections.length) {
@@ -66,7 +68,7 @@ export async function probeFirstTimePublicSections({ kind, publicSections,
   for (const section of sections) {
     let result;
     try { result = await readPage({ ...section, offset: 0, pageSize: 1 }); }
-    catch { return held('public_probe_unavailable'); }
+    catch (error) { return heldAfter(error, 'public_probe_unavailable'); }
     if (result?.state !== 'page' || result.libraryId !== section.libraryId ||
         result.kind !== section.kind || result.offset !== 0 ||
         result.complete !== false ||

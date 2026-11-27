@@ -4,7 +4,9 @@ import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/verify-staged-batch');
 
 // Diagnostic orchestration only. A later handoff must revalidate immediately
 // before exposing any file to Shoko; this function never moves media.
@@ -65,7 +67,7 @@ export async function verifyStagedBatch({
 
   let first;
   try { first = await observe({ expected: expectedTorrent, phase: 'before_hash' }); }
-  catch { return held('torrent_unavailable'); }
+  catch (error) { return heldAfter(error, 'torrent_unavailable'); }
   if (first?.state !== 'complete') return held(first?.reason ?? 'torrent_unavailable');
   const selected = first.files;
   const subtitles = first.subtitles ?? [];
@@ -99,7 +101,7 @@ export async function verifyStagedBatch({
       result = await verify({ root, relativePath: file.name,
         expected: { animeId: request.anidbId, episodeIds: plannedByName.get(file.name).episodeIds },
         lookup, offlineLookup, readPacer: pacer, ed2kMode });
-    } catch { return held('file_unavailable'); }
+    } catch (error) { return heldAfter(error, 'file_unavailable'); }
     if (result?.state !== 'identity_verified') {
       return held(result?.reason === 'wrong_identity' ? 'file_wrong_identity' :
         `file_${result?.reason ?? 'unavailable'}`);
@@ -145,7 +147,7 @@ export async function verifyStagedBatch({
     let result;
     try {
       result = await verifySubtitle({ root, relativePath: subtitle.name, readPacer: pacer });
-    } catch { return held('subtitle_unavailable'); }
+    } catch (error) { return heldAfter(error, 'subtitle_unavailable'); }
     if (result?.state !== 'subtitle_verified' || result.size !== subtitle.size ||
         !/^[0-9A-F]{64}$/.test(result.sha256)) return held('subtitle_unavailable');
     verifiedSubtitles.push({ index: subtitle.index, name: subtitle.name,
@@ -154,7 +156,7 @@ export async function verifyStagedBatch({
 
   let final;
   try { final = await observe({ expected: expectedTorrent, phase: 'after_hash' }); }
-  catch { return held('torrent_provider_unavailable_after_hash'); }
+  catch (error) { return heldAfter(error, 'torrent_provider_unavailable_after_hash'); }
   if (final?.state === 'held' &&
       ['provider_unavailable', 'provider_timeout', 'provider_transport',
         'provider_http_403', 'provider_http_error', 'provider_invalid_response',

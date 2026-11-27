@@ -4,7 +4,9 @@ import { startStoppedCandidate } from './start-stopped-candidate.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/process-recorded-start');
 
 // Explicit one-attempt continuation. Identity, hash and file plan come from
 // the durable acquisition journal, never from a caller-supplied title or URL.
@@ -40,7 +42,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     if (intent) return { state: intent.status, sendNow: false };
     const mainPlan=acquisitions.getFilePlan(attemptId);
     plan=mainPlan?[...mainPlan,...(acquisitions.getBonusPlan?.(attemptId)??[])]:null;
-  } catch { return held('attempt_unavailable'); }
+  } catch (error) { return heldAfter(error, 'attempt_unavailable'); }
   if (attempt.status === 'dispatch_unknown' && attempt.expectedHash) {
     // The indexer may no longer list the release after qBittorrent accepted
     // it. Reconcile the saved hash from qBittorrent; never send another add.
@@ -86,7 +88,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
     let recorded;
     try { recorded = acquisitions.recordTorrent({ attemptId,
       hash: attempt.expectedHash, nowMs: now() }); }
-    catch { return held('attempt_unavailable'); }
+    catch (error) { return heldAfter(error, 'attempt_unavailable'); }
     if (recorded.state !== 'torrent_observed') return recorded;
     attempt = acquisitions.getAttempt(attemptId);
   }

@@ -4,7 +4,9 @@ import { COMPLETION_SESSION_RETRY_HOLDS,
   COMPLETION_TRANSIENT_PROVIDER_HOLDS as TRANSIENT_PROVIDER_REASONS }
   from './stage-hold-policy.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/completion-queue');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const reasonPattern = /^[a-z][a-z0-9_]{0,79}$/;
@@ -308,11 +310,11 @@ export function createCompletionWorker({ queue, processAttempt, now = Date.now }
       try {
         let claim;
         try { claim = queue.claimNext({ nowMs: now() }); }
-        catch { return held('queue_unavailable'); }
+        catch (error) { return heldAfter(error, 'queue_unavailable'); }
         if (claim.state === 'pass_complete') return claim;
         let result;
         try { result = await processAttempt({ attemptId: claim.attemptId }); }
-        catch { result = held('worker_unavailable'); }
+        catch (error) { result = heldAfter(error, 'worker_unavailable'); }
         const state = result?.state;
         const reason = state === 'held' && typeof result.reason === 'string' &&
           reasonPattern.test(result.reason) ? result.reason : null;
@@ -328,7 +330,7 @@ export function createCompletionWorker({ queue, processAttempt, now = Date.now }
             transfer: savedState === 'held' && reason === 'incomplete' &&
               validTransfer(result?.transfer) ? result.transfer : null });
           if (saved.state !== 'recorded') return held('queue_unavailable');
-        } catch { return held('queue_unavailable'); }
+        } catch (error) { return heldAfter(error, 'queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,
           result: savedState === 'held' ? held(reason ?? 'worker_unavailable') :
             { state: savedState } };

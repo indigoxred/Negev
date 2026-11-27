@@ -3,7 +3,9 @@ import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 import { observeTorrentCompletion } from './qbittorrent-observation.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/stop-completed-torrent');
 
 // The downloaded torrent remains owned by qBittorrent until this confirms it
 // has stopped. An uncertain stop response never authorizes a move: the next
@@ -34,7 +36,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
     renewedOnce = true;
     let renewed;
     try { renewed = await renewQbittorrent(activeSessionId); }
-    catch { return held('authentication_unavailable'); }
+    catch (error) { return heldAfter(error, 'authentication_unavailable'); }
     if (renewed?.state !== 'authenticated') return held(
       typeof renewed?.reason === 'string' ? renewed.reason : 'authentication_unavailable');
     if (!validQbittorrentSessionId(renewed.sessionId) ||
@@ -45,12 +47,12 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
   };
   let before;
   try { before = await observe(input()); }
-  catch { return held('torrent_unavailable'); }
+  catch (error) { return heldAfter(error, 'torrent_unavailable'); }
   if (before?.reason === 'provider_http_403') {
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     try { before = await observe(input()); }
-    catch { return held('torrent_unavailable'); }
+    catch (error) { return heldAfter(error, 'torrent_unavailable'); }
   }
   if (before?.state !== 'complete') return before ?? held('torrent_unavailable');
   const body = new URLSearchParams({ hashes: expected.hash });
@@ -61,18 +63,18 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
         'Content-Type': 'application/x-www-form-urlencoded' },
       body, redirect: 'manual', signal: AbortSignal.timeout(10_000),
     });
-  } catch { return held('stop_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'stop_outcome_unknown'); }
   await cancelResponseBody(response);
   if (response.status !== 200) return held(response.status === 403
     ? 'provider_http_403' : 'stop_outcome_unknown');
   let after;
   try { after = await observe({ ...input(), requireStopped: true }); }
-  catch { return held('torrent_unavailable_after_stop'); }
+  catch (error) { return heldAfter(error, 'torrent_unavailable_after_stop'); }
   if (after?.reason === 'provider_http_403') {
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     try { after = await observe({ ...input(), requireStopped: true }); }
-    catch { return held('torrent_unavailable_after_stop'); }
+    catch (error) { return heldAfter(error, 'torrent_unavailable_after_stop'); }
   }
   // qBittorrent can acknowledge stop before its state changes to stoppedUP.
   // Re-read the exact hash briefly; never send another stop or relax the manifest check.
@@ -80,7 +82,7 @@ export async function stopCompletedTorrent({ baseUrl, sessionId, expected,
       after.reason === 'torrent_not_stopped'; retry++) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     try { after = await observe({ ...input(), requireStopped: true }); }
-    catch { return held('torrent_unavailable_after_stop'); }
+    catch (error) { return heldAfter(error, 'torrent_unavailable_after_stop'); }
   }
   if (after?.state !== 'complete') return after ?? held('torrent_unavailable_after_stop');
   const fingerprint = (value) => JSON.stringify({ files: value.files,

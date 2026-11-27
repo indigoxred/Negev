@@ -8,7 +8,9 @@ import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/submit-stopped-candidate');
 const validHash = (value) => typeof value === 'string' &&
   /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(value);
 
@@ -71,13 +73,13 @@ async function submitOwnedCandidate({
         const result = await verifyStagingRoot();
         return result?.state === 'verified_staging_root'
           ? { state: 'isolated_mount' } : held('staging_root_unverified');
-      } catch { return held('staging_root_unverified'); }
+      } catch (error) { return heldAfter(error, 'staging_root_unverified'); }
     }
     let mounts, realPath;
     try {
       mounts = await inspectMounts();
       realPath = await realpathImpl(hostPath);
-    } catch { return held('mount_evidence_unavailable'); }
+    } catch (error) { return heldAfter(error, 'mount_evidence_unavailable'); }
     const isolation = evaluateStagingMountIsolation(mounts, { hostPath });
     if (isolation.state !== 'isolated_mount') return isolation;
     return realPath === hostPath ? isolation :
@@ -101,7 +103,7 @@ async function submitOwnedCandidate({
       if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       version = (await readBoundedText(response, 32)).trim();
-    } catch { return held('provider_unavailable'); }
+    } catch (error) { return heldAfter(error, 'provider_unavailable'); }
     // The stopped-add form was reviewed against qBittorrent 5.3.0. Hold
     // other minor versions until their API behavior is checked explicitly.
     if (!/^v?5\.3\.\d+$/.test(version)) {
@@ -116,7 +118,7 @@ async function submitOwnedCandidate({
       if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       existing = await readBoundedJson(response, 100_000);
-    } catch { return held('provider_unavailable'); }
+    } catch (error) { return heldAfter(error, 'provider_unavailable'); }
     if (!Array.isArray(existing)) return held('provider_unavailable');
     if (existing.length !== 0) return held('torrent_hash_in_use');
     const isolation = await checkMounts();

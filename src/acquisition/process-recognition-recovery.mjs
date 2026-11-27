@@ -3,7 +3,9 @@ import { validMount } from '../availability/known-card-availability.mjs';
 import { observeShokoUnrecognized } from './observe-shoko-unrecognized.mjs';
 import { preserveUnrecognizedTree } from './preserve-unrecognized-tree.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/process-recognition-recovery');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
 export async function processRecognitionRecovery({ attemptId, recovery,
@@ -76,7 +78,7 @@ export async function processRecognitionRecovery({ attemptId, recovery,
   }
   let torrent;
   try { torrent = await checkTorrent({ hash: manifest.torrentHash }); }
-  catch { return held('torrent_state_unavailable'); }
+  catch (error) { return heldAfter(error, 'torrent_state_unavailable'); }
   if (torrent?.state !== 'stopped') return held('torrent_not_stopped');
   if (prior?.status !== 'preserved') {
     const begin = recovery.beginPreserve({ attemptId,

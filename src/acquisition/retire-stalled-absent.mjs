@@ -4,7 +4,9 @@ import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mj
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/retire-stalled-absent');
 const hashPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 
 // Reconciliation only. A separate durable, operator-initiated action must
@@ -68,7 +70,7 @@ export async function retireStalledAbsent({ ledger, attemptId, baseUrl,
   for (let observation = 0; observation < 2; observation++) {
     let root;
     try { root = await verifyStagingRoot(); }
-    catch { return held('staging_root_unverified'); }
+    catch (error) { return heldAfter(error, 'staging_root_unverified'); }
     if (root?.state !== 'verified_staging_root') {
       return held('staging_root_unverified');
     }
@@ -79,7 +81,7 @@ export async function retireStalledAbsent({ ledger, attemptId, baseUrl,
       if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       torrents = await readBoundedJson(response, 100_000);
-    } catch { return held('provider_unavailable'); }
+    } catch (error) { return heldAfter(error, 'provider_unavailable'); }
     if (!Array.isArray(torrents) || torrents.length > 1) {
       return held('invalid_torrent_observation');
     }

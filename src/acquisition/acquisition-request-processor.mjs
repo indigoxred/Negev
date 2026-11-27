@@ -12,7 +12,9 @@ import { sameReleaseFiles } from './release-control.mjs';
 import { matchesPreferredGroup } from './preferred-release.mjs';
 import { matchesReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/acquisition-request-processor');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validReason = (value) => typeof value === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(value);
@@ -59,7 +61,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         candidateOffset < 0 || candidateOffset > 50) return held('invalid_request');
     let request;
     try { request = await readRequest(requestId); }
-    catch { return held('request_unavailable'); }
+    catch (error) { return heldAfter(error, 'request_unavailable'); }
     if (request?.id !== requestId || request.status !== 'held' ||
         !validId(request.anidbId) ||
         !['series', 'movie'].includes(request.kind) ||
@@ -73,7 +75,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (control?.mode === 'auto' && control.phase === 'selecting' && selectAutoRelease) {
       let decision;
       try { decision = await selectAutoRelease(requestId, control.revision); }
-      catch { return held('metadata_reader_busy'); }
+      catch (error) { return heldAfter(error, 'metadata_reader_busy'); }
       if (decision?.state !== 'updated') return held('metadata_reader_busy');
       request = await readRequest(requestId);
       if (request?.status !== 'held') return held('request_unavailable');
@@ -97,7 +99,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (readRecoveredTargets) {
       let ids;
       try { ids = await readRecoveredTargets(requestId); }
-      catch { return held('recovery_unavailable'); }
+      catch (error) { return heldAfter(error, 'recovery_unavailable'); }
       if (!Array.isArray(ids) || ids.some((id) => !validId(id))) {
         return held('recovery_unavailable');
       }
@@ -109,7 +111,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (readPublicCoverage) {
       let coverage;
       try { coverage = await readPublicCoverage(request); }
-      catch { return held('availability_unverified'); }
+      catch (error) { return heldAfter(error, 'availability_unverified'); }
       if (!Number.isSafeInteger(coverage?.verifiedTargets) ||
           coverage.verifiedTargets < 0 ||
           coverage.verifiedTargets > request.episodeIds.length ||
@@ -165,7 +167,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       items:[{...pinned.candidate,evidence:'unverified'}]} : await discoverCandidates({ requestId, searchTargetEpisodeId,
       ...(missingIds.length > 1 && missingIds.length <= 10 ?
         { searchTargetEpisodeIds: missingIds } : {}) }); }
-    catch { found=held('release_search_unavailable'); }
+    catch (error) { found = heldAfter(error, 'release_search_unavailable'); }
     if(!pinned&&control?.preference&&getPreferredFallback) {
       expiredFallback=getPreferredFallback(requestId,missingIds,now());
       if(expiredFallback){
@@ -199,7 +201,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (readRelatedTitles) {
       let related;
       try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
-      catch { return held('related_title_unavailable'); }
+      catch (error) { return heldAfter(error, 'related_title_unavailable'); }
       let requestedAliases = [];
       try { requestedAliases = await releaseQueries({ anidbId: request.anidbId }); }
       catch { /* Canonical checks remain conservative if aliases are unavailable. */ }
@@ -430,7 +432,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
         let claim;
         try { claim = await inspectCandidateTargets({ requestId, candidate,
           episodeIds: preview.episodeIds }); }
-        catch { return held('claim_probe_unavailable'); }
+        catch (error) { return heldAfter(error, 'claim_probe_unavailable'); }
         if (claim?.state === 'skip_active') continue;
         if (claim?.state !== 'eligible') return held('claim_probe_unavailable');
       }
@@ -542,7 +544,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
     }
     let detail;
     try { detail = await loadDetail({ anidbId: request.anidbId }); }
-    catch { return held('detail_unavailable'); }
+    catch (error) { return heldAfter(error, 'detail_unavailable'); }
     if (!isCompleteAniDbDetail(detail, request.anidbId) ||
         detail.kind !== request.kind || typeof detail.restricted !== 'boolean') {
       return held('detail_unavailable');
@@ -571,7 +573,7 @@ export function createAcquisitionRequestProcessor({ readRequest,
       expectedHash: selected.preview.torrentHash.toLowerCase(),
       ...(selected.preview.searchQuery === undefined ? {} :
         { searchQuery: selected.preview.searchQuery }) }); }
-    catch { return held('submit_unavailable'); }
+    catch (error) { return heldAfter(error, 'submit_unavailable'); }
     if (outcome?.state === 'stopped_observed' && validId(outcome.attemptId)) {
       if(requireReleasePolicy&&!pinned)qualityInspectionRetry.resolve(request,selected.candidate);
       closePreferredWaits?.(requestId,selected.preview.episodeIds,now());

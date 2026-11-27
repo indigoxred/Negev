@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readBoundedText, readBoundedTexts, cancelResponseBody, fetchResponsesOrCancel } from '../http/bounded-response.mjs';
 import { mapSonarrOwnership } from './sonarr-ownership-map.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const MAP_URL = 'https://github.com/cplieger/animap/releases/latest/download/animap.json';
 const CHECKSUM_URL = `${MAP_URL}.sha256`;
 const MAX_MAP_BYTES = 30_000_000;
@@ -11,6 +12,7 @@ const MAX_MAP_AGE_MS = 14 * 24 * 60 * 60_000;
 const OWNERSHIP_FRESH_MS = 2 * 60_000;
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/sonarr-ownership-guard');
 
 // A temporary, fail-closed cutover guard. No requests or torrent starts may
 // use a stale Sonarr observation. The map is a versioned public release; the
@@ -75,7 +77,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
       }
       let map;
       try { map = await readMap(time); }
-      catch { return held('ownership_map_unavailable'); }
+      catch (error) { return heldAfter(error, 'ownership_map_unavailable'); }
       let series;
       try {
         const response = await fetchImpl(`${base.origin}/api/v3/series`, {
@@ -85,7 +87,7 @@ export function createSonarrOwnershipGuard({ sonarrBaseUrl, sonarrApiKey,
         });
         if (response.status !== 200) { await cancelResponseBody(response); throw new Error('Sonarr unavailable'); }
         series = JSON.parse(await readBoundedText(response, MAX_SONARR_BYTES));
-      } catch { return held('sonarr_ownership_unavailable'); }
+      } catch (error) { return heldAfter(error, 'sonarr_ownership_unavailable'); }
       const mapped = mapSonarrOwnership(map, series);
       if (mapped.state !== 'ready') return mapped;
       observation = { ...mapped, checkedMs: time };

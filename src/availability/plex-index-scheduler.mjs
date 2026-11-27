@@ -1,5 +1,7 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/plex-index-scheduler');
 
 // Opt-in, single-flight scheduler. It starts after one full interval, never
 // reads more than one bounded page per tick, and periodically revisits the
@@ -55,7 +57,7 @@ export function createPlexIndexScheduler({ sections, tickPage, tickRecent,
       }
       return result;
     }
-    catch { return held('plex_index_unavailable'); }
+    catch (error) { return heldAfter(error, 'plex_index_unavailable'); }
     finally { inFlight = null; }
   };
   const schedule = () => {

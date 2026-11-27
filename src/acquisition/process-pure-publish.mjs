@@ -3,7 +3,9 @@ import { preparePureMove } from './pure-move-handoff.mjs';
 import { publishPureMove } from './publish-pure-move.mjs';
 import { observePureMoveImport } from './observe-pure-move-import.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/process-pure-publish');
 
 export async function processPurePublish({ attemptId, nowMs, pureMoves,
   stagingHostPath, holdingRoot, importRoot, target, shokoMount, readEpisode,
@@ -48,7 +50,7 @@ export async function processPurePublish({ attemptId, nowMs, pureMoves,
   let observed;
   try { observed = await observe({ move: row, target, shokoMount,
     readEpisode }); }
-  catch { return held('publish_outcome_unknown'); }
+  catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   if (observed?.state !== 'shoko_files_identified') {
     return observed?.reason === 'ambiguous_shoko_file'
       ? observed : held('publish_outcome_unknown');
@@ -58,5 +60,5 @@ export async function processPurePublish({ attemptId, nowMs, pureMoves,
       files: observed.files, nowMs });
     return saved?.state === 'content_present'
       ? held('content_present_unattributed') : held('publish_outcome_unknown');
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
 }

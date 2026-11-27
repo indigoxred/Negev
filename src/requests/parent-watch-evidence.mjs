@@ -1,5 +1,7 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('requests/parent-watch-evidence');
 
 // A TVDB parent is only a bridge from a former Sonarr monitor. A title's
 // spelling cannot establish that bridge. Ambiguous cross-series entries hold.
@@ -51,7 +53,7 @@ export async function confirmedSequelIds({ sourceId, readRelations, branchOffset
   }
   let source;
   try { source = await readRelations(sourceId); }
-  catch { return held('relation_unavailable'); }
+  catch (error) { return heldAfter(error, 'relation_unavailable'); }
   if (!validRelations(source, sourceId)) return held('relation_unavailable');
   const confirmed = [];
   const heldIds = [];

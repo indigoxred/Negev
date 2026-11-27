@@ -5,7 +5,9 @@ import { trustedReleaseQueries, trustedTargetedQueries, trustedPackQueries, trus
 import { hasTargetEpisodeHint, hasSingleEpisodeHint, compareReleases } from './release-preference.mjs';
 import { matchesReleaseFilters, validReleaseFilters } from '../web/public/release-choice-fields.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/request-candidate-discovery');
 
 // This joins a saved exact request to a current Shoko title before searching.
 // Neither a title nor a Prowlarr hit proves the release's AniDB file identity.
@@ -28,7 +30,7 @@ export function createRequestCandidateDiscovery({ readRequest, loadDetail,
         /[\x00-\x1f\x7f]/.test(query)))) return held('invalid_request');
     if (!Number.isSafeInteger(requestId) || requestId <= 0) return held('invalid_request');
     let request;
-    try { request = readRequest(requestId); } catch { return held('request_unavailable'); }
+    try { request = readRequest(requestId); } catch (error) { return heldAfter(error, 'request_unavailable'); }
     if (!request) return held('request_missing');
     if (request.id !== requestId || request.status !== 'held' ||
         !Number.isSafeInteger(request.anidbId) || request.anidbId <= 0 ||

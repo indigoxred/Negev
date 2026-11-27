@@ -1,6 +1,8 @@
 import { createQbittorrentSessionFetch } from './qbittorrent-session-fetch.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/acquisition-session-runners');
 const validReason = (reason) => typeof reason === 'string' &&
   /^[a-z][a-z0-9_]{0,79}$/.test(reason);
 
@@ -24,7 +26,7 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
   const withSession = (processor, providers = {}, allowRenew = false) => async (input) => {
     let session;
     try { session = await sessionGate.get(); }
-    catch { return held('authentication_unavailable'); }
+    catch (error) { return heldAfter(error, 'authentication_unavailable'); }
     if (session?.state !== 'authenticated') {
       return held(validReason(session?.reason) ? session.reason :
         'authentication_unavailable');
@@ -33,19 +35,19 @@ export function createAcquisitionSessionRunners({ qbBaseUrl, sessionGate,
     try {
       scopedFetch = createQbittorrentSessionFetch({ baseUrl: qbBaseUrl,
         sessionId: session.sessionId, sessionGate, fetchImpl });
-    } catch { return held('authentication_unavailable'); }
+    } catch (error) { return heldAfter(error, 'authentication_unavailable'); }
     const renewQbittorrent = allowRenew && typeof sessionGate.renew === 'function'
       ? async (expectedSessionId) => {
         let renewed;
         try { renewed = await sessionGate.renew(expectedSessionId); }
-        catch { return held('authentication_unavailable'); }
+        catch (error) { return heldAfter(error, 'authentication_unavailable'); }
         if (renewed?.state !== 'authenticated') return held(renewed?.reason ??
           'authentication_unavailable');
         try {
           return { state: 'authenticated', sessionId: renewed.sessionId,
             fetchImpl: createQbittorrentSessionFetch({ baseUrl: qbBaseUrl,
               sessionId: renewed.sessionId, sessionGate, fetchImpl }) };
-        } catch { return held('authentication_unavailable'); }
+        } catch (error) { return heldAfter(error, 'authentication_unavailable'); }
       } : undefined;
     return processor({ ...input, ...providers,
       qbittorrent: { baseUrl: qbBaseUrl, sessionId: session.sessionId },

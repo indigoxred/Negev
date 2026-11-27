@@ -4,6 +4,7 @@ import { LIVE_ATTEMPTS } from './live-attempts.mjs';
 import { TRANSIENT_START_HOLDS, START_SESSION_RETRY_HOLDS,
   START_METADATA_RETRY_HOLDS, actOnReviewHold, isTransientStartHold,
   reviveTransientHolds, transientRetryDelayMs } from './stage-hold-policy.mjs';
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 // A parked start check an admin may act on: its attempt is still live (see
 // live-attempts.mjs) and has not crossed the start boundary.
 const REVIEWABLE_START = `AND attempt_id IN (SELECT id FROM ${LIVE_ATTEMPTS} l)
@@ -11,6 +12,7 @@ const REVIEWABLE_START = `AND attempt_id IN (SELECT id FROM ${LIVE_ATTEMPTS} l)
     WHERE x.attempt_id=start_checks.attempt_id)`;
 
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/start-queue');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
 const validReason = (value) => typeof value === 'string' &&
@@ -243,11 +245,11 @@ export function createStartWorker({ queue, processAttempt, now = Date.now } = {}
       let claim;
       try {
         try { claim = queue.claimNext({ nowMs: now() }); }
-        catch { return held('queue_unavailable'); }
+        catch (error) { return heldAfter(error, 'queue_unavailable'); }
         if (claim.state === 'idle') return claim;
         let result;
         try { result = await processAttempt({ attemptId: claim.attemptId }); }
-        catch { result = held('worker_unavailable'); }
+        catch (error) { result = heldAfter(error, 'worker_unavailable'); }
         const state = result?.state === 'start_unknown' ? 'start_unknown' : 'held';
         const reason = state === 'held' && validReason(result?.reason)
           ? result.reason : state === 'held' ? 'worker_unavailable' : null;
@@ -255,7 +257,7 @@ export function createStartWorker({ queue, processAttempt, now = Date.now } = {}
           const saved = queue.recordResult({ attemptId: claim.attemptId,
             version: claim.version, state, reason, checkedMs: now() });
           if (saved.state !== 'recorded') return held('queue_unavailable');
-        } catch { return held('queue_unavailable'); }
+        } catch (error) { return heldAfter(error, 'queue_unavailable'); }
         return { state: 'processed', attemptId: claim.attemptId,
           result: state === 'held' ? held(reason) : { state } };
       } finally {

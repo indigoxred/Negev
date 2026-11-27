@@ -4,7 +4,9 @@ import { lstat, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { inspectPureMoveTree } from './publish-pure-move.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/preserve-unrecognized-tree');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 
 async function status(filePath) {
@@ -58,7 +60,7 @@ export async function preserveUnrecognizedTree({ manifest, importRoot,
         importStat.dev !== holdingStat.dev) return held('unsafe_move_roots');
     [sourceStat, destStat] = await Promise.all([status(source),
       status(destination)]);
-  } catch { return held('unsafe_move_roots'); }
+  } catch (error) { return heldAfter(error, 'unsafe_move_roots'); }
   if (manifest.files.some(file => file.scope === 'bonus')) {
     return preserveRequestedFiles({manifest,source,destination,fileId,recheck,renameFile:renameTree});
   }
@@ -74,7 +76,7 @@ export async function preserveUnrecognizedTree({ manifest, importRoot,
   }
   let observed;
   try { observed = await recheck(); }
-  catch { return held('shoko_unavailable'); }
+  catch (error) { return heldAfter(error, 'shoko_unavailable'); }
   if (observed?.state !== 'unrecognized_confirmed' ||
       (validId(fileId) && observed.fileId !== fileId)) {
     return held('recognition_state_changed');

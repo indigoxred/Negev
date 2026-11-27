@@ -1,7 +1,9 @@
 import { cancelResponseBody, readBoundedText } from '../http/bounded-response.mjs';
 import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/qbittorrent-login');
 
 // qBittorrent WebUI sessions are deliberately short lived in Negev. A failed
 // login is a hold, never a retry loop that could trigger qBittorrent's IP ban.
@@ -34,7 +36,7 @@ export async function loginQbittorrent({
       return held('authentication_unavailable');
     }
     body = response.status === 204 ? '' : await readBoundedText(response, 64);
-  } catch { return held('authentication_unavailable'); }
+  } catch (error) { return heldAfter(error, 'authentication_unavailable'); }
   if (response.status === 200 && body.trim() !== 'Ok.') {
     return held('authentication_failed');
   }

@@ -1,7 +1,9 @@
 import { scanShokoRecentSince } from './shoko-recent-catchup.mjs';
 import { scanShokoFileIdsSince } from './shoko-fileid-catchup.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('availability/shoko-recent-worker');
 
 // Explicit ticks only. The file-ID queue is durable and later IDs can run
 // while an unavailable file waits for its own retry. The refresh callback must
@@ -62,7 +64,7 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
         if (fileIdSaved.state !== 'recorded') return fileIdSaved;
         if (saved.state !== 'recorded') return saved;
         return { state: 'caught_up', added: saved.added + fileIdSaved.added };
-      } catch { return held('recent_scan_unavailable'); }
+      } catch (error) { return heldAfter(error, 'recent_scan_unavailable'); }
       finally { busy = false; }
     },
     async drainOne() {
@@ -78,7 +80,7 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
           success: result?.state === 'recorded_file' &&
             result.recognition === 'linked', nowMs: now() });
         return { ...saved, fileId: pending.fileId };
-      } catch { return held('recent_work_unavailable'); }
+      } catch (error) { return heldAfter(error, 'recent_work_unavailable'); }
       finally { busy = false; }
     },
   };

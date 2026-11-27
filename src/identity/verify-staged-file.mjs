@@ -5,7 +5,9 @@ import { evaluatePreview } from './evaluate-preview.mjs';
 import { evaluateOfflinePreview } from './evaluate-offline-preview.mjs';
 import { makeBytePacer } from './read-pacer.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('identity/verify-staged-file');
 const VIDEO_EXTENSIONS = new Set(['.mkv', '.mp4', '.m4v', '.avi', '.webm', '.ts']);
 
 // Identity check only. A separate worker must prove qBittorrent completion
@@ -70,9 +72,7 @@ export async function verifyStagedFile({
     if (!realInside || realInside === '..' || realInside.startsWith(`..${path.sep}`) || path.isAbsolute(realInside)) {
       return held('path_outside_staging');
     }
-  } catch {
-    return held('file_unavailable');
-  }
+  } catch (error) { return heldAfter(error, 'file_unavailable'); }
 
   // Shoko's native RHash path and its C# fallback produce different ED2K
   // digests for exact chunk multiples. Without a proven deterministic mode,
@@ -85,17 +85,17 @@ export async function verifyStagedFile({
   let hash;
   try { hash = await ed2kFile(fullPath, { pacer, expectedStat: before,
     mode: ed2kMode ?? 'edonkey' }); }
-  catch { return held('file_changed_or_unavailable'); }
+  catch (error) { return heldAfter(error, 'file_changed_or_unavailable'); }
 
   let preview;
   try { preview = await lookup(hash); }
-  catch { return held('provider_unavailable'); }
+  catch (error) { return heldAfter(error, 'provider_unavailable'); }
   let offlinePreview;
   if (preview?.status === 204 && offlineLookup &&
       expected?.episodeIds?.length === 1) {
     try { offlinePreview = await offlineLookup({ ...hash,
       filename: parts.at(-1) }); }
-    catch { return held('provider_unavailable'); }
+    catch (error) { return heldAfter(error, 'provider_unavailable'); }
   }
 
   try {
@@ -105,7 +105,7 @@ export async function verifyStagedFile({
         after.size !== before.size || after.mtimeNs !== before.mtimeNs ||
         after.ctimeNs !== before.ctimeNs ||
         after.size !== BigInt(hash.size)) return held('file_changed_or_unavailable');
-  } catch { return held('file_changed_or_unavailable'); }
+  } catch (error) { return heldAfter(error, 'file_changed_or_unavailable'); }
 
   const offline = offlinePreview !== undefined;
   const decision = offline

@@ -7,7 +7,9 @@ import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 import { reconcileHandoffContent } from './observe-handoff-import.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/publish-handoff-batch');
 const registeredIdentity = (result) => result?.isCorrupted === false &&
   Number.isSafeInteger(result.fileId) && result.fileId > 0 &&
   result.identitySource === undefined && result.releaseId === undefined;
@@ -103,7 +105,7 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
         path.dirname(await realpath(destination)) !== realImport) {
       return held('publish_outcome_unknown');
     }
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   if (!await exactTree(destination, evidence.manifest)) return held('publish_outcome_unknown');
   const pacer = readPacer ?? makeBytePacer({ bytesPerSecond: readRateBytesPerSecond });
   for (const file of evidence.manifest.videos) {
@@ -111,7 +113,7 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
     try { result = await verifyVideo({ root: destination, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
       lookup, offlineLookup, readPacer: pacer, ed2kMode }); }
-    catch { return held('publish_outcome_unknown'); }
+    catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
     if (result?.state !== 'identity_verified' ||
         result.ed2k !== file.ed2k || result.size !== file.size || !admitted(result, file)) {
       return held('publish_outcome_unknown');
@@ -121,7 +123,7 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
     let result;
     try { result = await verifySubtitle({ root: destination,
       relativePath: file.name, readPacer: pacer }); }
-    catch { return held('publish_outcome_unknown'); }
+    catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
     if (result?.state !== 'subtitle_verified' || result.sha256 !== file.sha256 ||
         result.size !== file.size) return held('publish_outcome_unknown');
   }
@@ -134,11 +136,11 @@ async function reconcileUnknownPublish({ attemptId, row, evidence, holdingRoot,
         path.dirname(await realpath(destination)) !== path.dirname(destination)) {
       return held('publish_outcome_unknown');
     }
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   let result;
   try { result = ledger.markPublishedObserved({ attemptId,
     evidenceDigest: evidence.digest, publishName: row.publishName, nowMs }); }
-  catch { return held('publish_outcome_unknown'); }
+  catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   return result?.state === 'published_observed'
     ? { state: 'published_observed', destination }
     : held('publish_outcome_unknown');
@@ -257,7 +259,7 @@ export async function publishPreparedHandoff({
     holdingPath = realHolding;
     destination = path.join(realImportRoot, row.publishName);
     before = holdingStat;
-  } catch { return held('unsafe_handoff_roots'); }
+  } catch (error) { return heldAfter(error, 'unsafe_handoff_roots'); }
   if (!await destinationAbsent(destination)) return held('destination_exists');
   const initialDirs = await exactTree(holdingPath, evidence.manifest);
   if (!initialDirs) return held('manifest_tree_mismatch');
@@ -267,7 +269,7 @@ export async function publishPreparedHandoff({
     try { result = await verifyVideo({ root: holdingPath, relativePath: file.name,
       expected: { animeId: evidence.manifest.anidbId, episodeIds: file.episodeIds },
       lookup, offlineLookup, readPacer: pacer, ed2kMode }); }
-    catch { return held('identity_unavailable'); }
+    catch (error) { return heldAfter(error, 'identity_unavailable'); }
     if (result?.state === 'held' &&
         ['provider_unavailable', 'lookup_inconclusive',
           'offline_lookup_inconclusive'].includes(result.reason)) {
@@ -283,7 +285,7 @@ export async function publishPreparedHandoff({
     let result;
     try { result = await verifySubtitle({ root: holdingPath,
       relativePath: file.name, readPacer: pacer }); }
-    catch { return held('subtitle_unavailable'); }
+    catch (error) { return heldAfter(error, 'subtitle_unavailable'); }
     if (result?.state !== 'subtitle_verified' || result.sha256 !== file.sha256 ||
         result.size !== file.size) return held('subtitle_changed');
   }
@@ -295,13 +297,13 @@ export async function publishPreparedHandoff({
         after.mtimeNs !== before.mtimeNs) return held('manifest_changed');
     for (const name of finalDirs) await syncDirectory(path.join(holdingPath, ...name.split('/')));
     await syncDirectory(holdingPath);
-  } catch { return held('manifest_changed'); }
+  } catch (error) { return heldAfter(error, 'manifest_changed'); }
   if (!await mountReady()) return held('handoff_mount_unavailable_after_verify');
   if (checkExisting) {
     let existing;
     try { existing = await checkExisting({ state: 'batch_identity_verified',
       anidbId: evidence.manifest.anidbId, files: evidence.manifest.videos }); }
-    catch { return held('shoko_unavailable'); }
+    catch (error) { return heldAfter(error, 'shoko_unavailable'); }
     if (existing?.state !== 'no_matching_import') {
       return existing?.state === 'held' ? existing : held('shoko_unavailable');
     }
@@ -312,7 +314,7 @@ export async function publishPreparedHandoff({
   try {
     await renamePrepared(holdingPath, destination);
     await syncDirectory(path.dirname(destination));
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
   // The exact tree and file identities were checked immediately before the
   // same-filesystem rename. Once it succeeds, watched-folder exposure is a
   // known outcome in this process even if Shoko moves the directory before
@@ -324,5 +326,5 @@ export async function publishPreparedHandoff({
     return observed?.state === 'published_observed'
       ? { state: 'published_observed', destination }
       : held('publish_outcome_unknown');
-  } catch { return held('publish_outcome_unknown'); }
+  } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }
 }

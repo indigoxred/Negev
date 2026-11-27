@@ -3,7 +3,9 @@ import path from 'node:path';
 import { verifyRecordedBatch } from './verify-recorded-batch.mjs';
 import { prepareHandoffBatch } from './prepare-handoff-batch.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/prepare-recorded-handoff');
 
 // This stops at private holding. Publishing to watched Shoko Import is a
 // separate, durable operation and must be explicitly reconciled afterward.
@@ -40,12 +42,12 @@ export async function prepareRecordedHandoff({
       if (result !== true && result?.state !== 'verified_staging_root') {
         return held('staging_root_unverified');
       }
-    } catch { return held('staging_root_unverified'); }
+    } catch (error) { return heldAfter(error, 'staging_root_unverified'); }
   }
   if (checkExisting) {
     let existing;
     try { existing = await checkExisting(verified); }
-    catch { return held('shoko_unavailable'); }
+    catch (error) { return heldAfter(error, 'shoko_unavailable'); }
     if (existing?.state !== 'no_matching_import') {
       return existing?.state === 'held' ? existing : held('shoko_unavailable');
     }

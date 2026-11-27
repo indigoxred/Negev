@@ -1,7 +1,9 @@
 import { loginQbittorrent } from './qbittorrent-login.mjs';
 import { validQbittorrentSessionId } from './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/qbittorrent-session-gate');
 const validSid = validQbittorrentSessionId;
 // Refresh before the short effective lifetime observed through the installed
 // WebUI, even when its advertised timeout is longer.
@@ -43,7 +45,7 @@ export function createQbittorrentSessionGate({ baseUrl, username, password,
     pending = (async () => {
       let result;
       try { result = await login({ baseUrl, username, password }); }
-      catch { result = held('authentication_unavailable'); }
+      catch (error) { result = heldAfter(error, 'authentication_unavailable'); }
       if (result?.state === 'authenticated' && validSid(result.sessionId)) {
         sessionId = result.sessionId;
         authenticatedAtMs = currentMs;

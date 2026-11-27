@@ -3,7 +3,9 @@ import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { hasStatedRegularEpisodes } from '../catalogue/stated-episode-count.mjs';
 import { planRequest } from './plan-request.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('requests/submit-held-request');
 
 // The title page and request submission must agree on whether a complete
 // current installment can still be watched for future episodes.
@@ -61,7 +63,7 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
     let policy;
     try { policy = await authorizeRequester({ requesterId, anidbId,
       restricted: detail.restricted }); }
-    catch { return held('authorization_unavailable'); }
+    catch (error) { return heldAfter(error, 'authorization_unavailable'); }
     if (policy?.active === false) return held('account_access_changed');
     if (policy?.active !== true) return held('authorization_unavailable');
     if (detail.restricted && policy.adultAllowed !== true) {

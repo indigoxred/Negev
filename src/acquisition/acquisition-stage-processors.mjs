@@ -27,8 +27,10 @@ import { processShokoRescan } from './process-shoko-rescan.mjs';
 import { requestShokoFileRescan } from './request-shoko-file-rescan.mjs';
 import { readShokoImportActivity } from '../availability/shoko-import-activity.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/acquisition-stage-processors');
 
 // Bind the real guarded stages to one service's journals and providers. This
 // does not create a timer or perform I/O. The caller must still prove installed
@@ -101,7 +103,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         held(status === 'owned' ? 'sonarr_title_owned' :
           status === 'unmapped' ? 'sonarr_identity_unmapped' :
             'sonarr_ownership_unavailable');
-    } catch { return held('sonarr_ownership_unavailable'); }
+    } catch (error) { return heldAfter(error, 'sonarr_ownership_unavailable'); }
   };
   const publicLibraryIds = (kind) => kind === 'movie'
     ? [...episode, ...movie] : [...episode];
@@ -226,7 +228,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       if (ownershipGate) {
         let request;
         try { request = requests.getRequest(claim.requestId); }
-        catch { return held('request_unavailable'); }
+        catch (error) { return heldAfter(error, 'request_unavailable'); }
         const ownership = await checkOwnership(request?.anidbId);
         if (ownership) return ownership;
       }
@@ -282,7 +284,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         attempt = acquisitions.getAttempt(attemptId);
         if (!attempt) return held('attempt_missing');
         request = requests.getRequest(attempt.requestId);
-      } catch { return held('attempt_unavailable'); }
+      } catch (error) { return heldAfter(error, 'attempt_unavailable'); }
       if (!['series', 'movie'].includes(request?.kind)) {
         return held('request_unavailable');
       }
@@ -307,7 +309,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         nowMs: now() });
       let planned;
       try { planned = acquisitions.getFilePlan?.(attemptId); }
-      catch { return held('file_plan_unavailable'); }
+      catch (error) { return heldAfter(error, 'file_plan_unavailable'); }
       const ed2kMode = await selectedEd2kMode(planned);
       if (ed2kMode === null) return held('ed2k_boundary_mode_unverified');
       return processCompletedAttempt({ attemptId, requests, acquisitions,
@@ -339,7 +341,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       }
       let handoff;
       try { handoff = handoffs.getHandoff(attemptId); }
-      catch { return held('handoff_unavailable'); }
+      catch (error) { return heldAfter(error, 'handoff_unavailable'); }
       if (handoff?.status === 'published_observed') {
         return processRecordedHandoff({ attemptId, ledger: handoffs,
           holdingRoot, importRoot, lookup, offlineLookup,

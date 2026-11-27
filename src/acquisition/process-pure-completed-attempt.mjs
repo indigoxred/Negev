@@ -6,7 +6,9 @@ import { stopCompletedTorrent } from './stop-completed-torrent.mjs';
 import { preparePureMove } from './pure-move-handoff.mjs';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/process-pure-completed-attempt');
 
 // A completed torrent is stopped before anything touches its files. The
 // exact selected qBittorrent manifest must equal the saved episode plan; the
@@ -40,7 +42,7 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
     request = requests.getRequest(attempt?.requestId);
     start = acquisitions.getStart(attemptId);
     plan = acquisitions.getFilePlan(attemptId);
-  } catch { return held('attempt_unavailable'); }
+  } catch (error) { return heldAfter(error, 'attempt_unavailable'); }
   if (attempt?.status !== 'torrent_observed' ||
       !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(attempt.torrentHash) ||
       start?.torrentHash !== attempt.torrentHash ||
@@ -75,7 +77,7 @@ export async function processPureCompletedAttempt({ requests, acquisitions,
   try {
     [staging, mount] = await Promise.all([verifyStagingRoot(),
       verifyHandoffMounts({ holdingRoot, importRoot })]);
-  } catch { return held('handoff_mount_unavailable'); }
+  } catch (error) { return heldAfter(error, 'handoff_mount_unavailable'); }
   if (staging?.state !== 'verified_staging_root' ||
       mount?.state !== 'mounted_handoff_roots') return held('handoff_mount_unavailable');
   const expected = { hash: attempt.torrentHash, category: 'negev',

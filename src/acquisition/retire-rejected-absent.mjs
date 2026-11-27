@@ -2,7 +2,9 @@ import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mj
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/retire-rejected-absent');
 
 // Read-only reconciliation after an operator or separate reviewed action has
 // removed a wrong-identity torrent without deleting its staged files. Never
@@ -42,7 +44,7 @@ export async function retireRejectedAbsent({ ledger, attemptId, baseUrl, session
       if (response.status !== 200) await cancelResponseBody(response);
       if (response.status !== 200) return held('provider_unavailable');
       torrents = await readBoundedJson(response, 100_000);
-    } catch { return held('provider_unavailable'); }
+    } catch (error) { return heldAfter(error, 'provider_unavailable'); }
     if (!Array.isArray(torrents) || torrents.length > 1) {
       return held('invalid_torrent_observation');
     }

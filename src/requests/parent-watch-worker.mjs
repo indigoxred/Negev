@@ -1,6 +1,8 @@
 import { reconcileParentWatch } from './parent-watch-reconcile.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('requests/parent-watch-worker');
 
 // One TVDB parent per tick; both provider reads and ledger writes are bounded.
 // Global map outages retain the cursor; per-parent holds retry on the next cycle.
@@ -35,12 +37,12 @@ export function createParentWatchWorker({ parents, requests, mapReader,
       }
       let map;
       try { map = await mapReader.read(); }
-      catch { return held('parent_map_unavailable'); }
+      catch (error) { return heldAfter(error, 'parent_map_unavailable'); }
       let result;
       try {
         result = await reconcile({ parent, map, parents, requests,
           loadDetail, readRelations, today: today(), nowMs: now() });
-      } catch { result = held('parent_reconcile_failed'); }
+      } catch (error) { result = heldAfter(error, 'parent_reconcile_failed'); }
       result ??= held('parent_reconcile_failed');
       const advanced = parents.advanceCursor({ expectedTvdbId: afterId,
         nextTvdbId: parent.tvdbId });

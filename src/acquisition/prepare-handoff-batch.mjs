@@ -6,7 +6,9 @@ import { verifyStagedSubtitle } from '../identity/verify-staged-subtitle.mjs';
 import { makeBytePacer } from '../identity/read-pacer.mjs';
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/prepare-handoff-batch');
 const DEFAULT_BUDGET = 64 * 1024 ** 3;
 const DEFAULT_FREE_RESERVE = 2 * 1024 ** 3;
 
@@ -126,7 +128,7 @@ export async function prepareHandoffBatch({
   // unprivileged available blocks before creating a private duplicate.
   let space;
   try { space = await statfsImpl(roots[1], { bigint: true }); }
-  catch { return held('handoff_space_unavailable'); }
+  catch (error) { return heldAfter(error, 'handoff_space_unavailable'); }
   if (typeof space?.bavail !== 'bigint' || space.bavail < 0n ||
       typeof space.bsize !== 'bigint' || space.bsize < 1n) {
     return held('handoff_space_unavailable');
@@ -139,7 +141,7 @@ export async function prepareHandoffBatch({
   if (verifyHandoffMounts) {
     let mount;
     try { mount = await verifyHandoffMounts({ holdingRoot, importRoot }); }
-    catch { return held('handoff_mount_unavailable'); }
+    catch (error) { return heldAfter(error, 'handoff_mount_unavailable'); }
     if (mount?.state !== 'mounted_handoff_roots') {
       return held('handoff_mount_unavailable');
     }

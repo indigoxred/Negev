@@ -1,4 +1,6 @@
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/existing-shoko-batch');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const sameIds = (left, right) => Array.isArray(left) &&
   left.length === right.length && left.every((id) => right.includes(id));
@@ -30,7 +32,7 @@ export async function checkExistingShokoBatch({ verified, readEpisode } = {}) {
       if (!episodes.has(episodeId)) {
         let result;
         try { result = await readEpisode({ anidbId: verified.anidbId, episodeId }); }
-        catch { return held('shoko_unavailable'); }
+        catch (error) { return heldAfter(error, 'shoko_unavailable'); }
         if (result?.state !== 'not_imported' &&
             (result?.state !== 'ok' || result.complete !== true ||
               !Array.isArray(result.files) || result.files.length > 50)) {

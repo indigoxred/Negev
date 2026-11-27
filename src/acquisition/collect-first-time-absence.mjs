@@ -1,8 +1,10 @@
 import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { collectUnimportedTargets } from './collect-unimported-targets.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const validId = (id) => Number.isSafeInteger(id) && id > 0;
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/collect-first-time-absence');
 const scopedFence = (item, anidbId, episodeIds) =>
   item?.state === 'settled' && item.anidbId === anidbId &&
   Array.isArray(item.episodeIds) &&
@@ -34,7 +36,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
   const scope = { anidbId, episodeIds: [...episodeIds] };
   let before;
   try { before = await readImport(scope); }
-  catch { return held('import_activity_unverified'); }
+  catch (error) { return heldAfter(error, 'import_activity_unverified'); }
   if (!scopedFence(before, anidbId, episodeIds)) {
     return held('import_activity_unverified');
   }
@@ -43,7 +45,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
   let plex;
   try { plex = await readPublic({ ...scope,
     libraryIds: [...publicLibraryIds] }); }
-  catch { return held('public_absence_unverified'); }
+  catch (error) { return heldAfter(error, 'public_absence_unverified'); }
   if (plex?.state !== 'ok' || plex.complete !== true ||
       plex.sourceVerified !== true ||
       !Array.isArray(plex.libraryIds) ||
@@ -55,7 +57,7 @@ export async function collectFirstTimeAbsence({ anidbId, episodeIds,
   }
   let after;
   try { after = await readImport(scope); }
-  catch { return held('import_activity_unverified'); }
+  catch (error) { return heldAfter(error, 'import_activity_unverified'); }
   const observedAtMs = now();
   if (!scopedFence(after, anidbId, episodeIds) ||
       before.fingerprint !== after.fingerprint ||

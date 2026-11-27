@@ -1,7 +1,9 @@
 import { evaluateHandoffEvidence } from './handoff-evidence.mjs';
 import path from 'node:path';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/observe-handoff-import');
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const sameIds = (left, right) => Array.isArray(left) &&
   left.length === right.length && new Set(left).size === left.length &&
@@ -35,7 +37,7 @@ async function inspectExactShokoFiles({ handoff, readEpisode, libraryRoot }) {
   for (const episodeId of episodeIds) {
     let result;
     try { result = await readEpisode({ anidbId: manifest.anidbId, episodeId }); }
-    catch { return held('shoko_unavailable'); }
+    catch (error) { return heldAfter(error, 'shoko_unavailable'); }
     if (result?.state === 'not_imported' ||
         result?.state === 'ok' && result.complete === true &&
           Array.isArray(result.files) && result.files.length === 0) {
@@ -125,5 +127,5 @@ export async function reconcileHandoffContent({ attemptId, ledger, readEpisode, 
     return ledger.recordContentPresent({ attemptId,
       evidenceDigest: handoff.evidenceDigest, publishName: handoff.publishName,
       fileIds: observed.fileIds, nowMs });
-  } catch { return held('content_record_unavailable'); }
+  } catch (error) { return heldAfter(error, 'content_record_unavailable'); }
 }

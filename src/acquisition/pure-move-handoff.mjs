@@ -4,7 +4,9 @@ import { lstat, mkdir, open, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/pure-move-handoff');
 const HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
 
 function within(parent, candidate) {
@@ -80,7 +82,7 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
     roots = await Promise.all(input.map((root) => realpath(root)));
     if (roots.some((root, i) => roots.some((other, j) => i !== j &&
       (within(root, other) || within(other, root))))) return held('unsafe_move_roots');
-  } catch { return held('unsafe_move_roots'); }
+  } catch (error) { return heldAfter(error, 'unsafe_move_roots'); }
   const holdingPath = path.join(roots[1], `negev-${attemptId}-${torrentHash.slice(0, 16).toLowerCase()}`);
   const manifest = [];
   for (const file of files) {
@@ -111,12 +113,12 @@ export async function preparePureMove({ attemptId, torrentHash, stagingRoot,
           ? { episodeIds: [...file.episodeIds] } : {}),
         dev: String(found.dev), ino: String(found.ino),
         mtimeNs: String(found.mtimeNs) });
-    } catch { return held('source_unavailable'); }
+    } catch (error) { return heldAfter(error, 'source_unavailable'); }
   }
   let recorded;
   try { recorded = await recordIntent({ attemptId, torrentHash: torrentHash.toLowerCase(),
     stagingRoot: roots[0], holdingPath, files: manifest }); }
-  catch { return held('intent_unavailable'); }
+  catch (error) { return heldAfter(error, 'intent_unavailable'); }
   if (recorded?.state !== 'recorded') return held('intent_unavailable');
   try {
     try { await mkdir(holdingPath, { mode: 0o700 }); }

@@ -12,7 +12,9 @@ import { acceptsShokoVideo } from './shoko-video-extensions.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
+import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
+const heldAfter = heldReporter('acquisition/start-stopped-candidate');
 
 // A one-send start boundary. Completion and AniDB identity are separate later
 // gates; a successful HTTP response alone is never evidence of either.
@@ -56,7 +58,7 @@ export async function startStoppedCandidate(options) {
   }
   let request;
   try { request = await readRequest(attempt.requestId); }
-  catch { return held('request_unavailable'); }
+  catch (error) { return heldAfter(error, 'request_unavailable'); }
   if (request?.id !== attempt.requestId ||
       request.anidbId !== attempt.anidbId || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) ||
@@ -80,7 +82,7 @@ export async function startStoppedCandidate(options) {
   let extensions;
   if (readVideoExtensions) {
     try { extensions = await readVideoExtensions(); }
-    catch { return held('shoko_settings_unavailable'); }
+    catch (error) { return heldAfter(error, 'shoko_settings_unavailable'); }
     if (extensions?.state !== 'extensions') return held('shoko_settings_unavailable');
     if (plannedFiles.some((file) => !acceptsShokoVideo(file.name, extensions))) {
       return held('shoko_video_format_unsupported');
@@ -89,21 +91,21 @@ export async function startStoppedCandidate(options) {
   if (readRelatedTitles) {
     let related;
     try { related = await readRelatedTitles({ anidbId: request.anidbId }); }
-    catch { return held('related_title_unavailable'); }
+    catch (error) { return heldAfter(error, 'related_title_unavailable'); }
     // Refresh the same-ID authority used at preflight; saved UI titles and
     // torrent filenames cannot manufacture trusted aliases at the start boundary.
     let requestedTitle=request.title,requestedAliases=[];
     if(loadDetail){
       let detail;
       try{detail=await loadDetail({anidbId:request.anidbId});}
-      catch{return held('detail_unavailable');}
+      catch (error) { return heldAfter(error, 'detail_unavailable'); }
       if(detail?.state!=='details'||detail.anidbId!==request.anidbId||
         detail.kind!==request.kind||typeof detail.title!=='string'||!detail.title.trim())return held('detail_unavailable');
       requestedTitle=detail.title;
     }
     if(releaseQueries){
       try{requestedAliases=await releaseQueries({anidbId:request.anidbId});}
-      catch{return held('related_title_unavailable');}
+      catch (error) { return heldAfter(error, 'related_title_unavailable'); }
       if(!Array.isArray(requestedAliases)||requestedAliases.some(title=>typeof title!=='string'))return held('related_title_unavailable');
     }
     const checked = checkRelatedInstallment({ anidbId: request.anidbId,
@@ -131,7 +133,7 @@ export async function startStoppedCandidate(options) {
     if (!renewQbittorrent) return held('provider_http_403');
     let renewed;
     try { renewed = await renewQbittorrent(activeSessionId); }
-    catch { return held('authentication_unavailable'); }
+    catch (error) { return heldAfter(error, 'authentication_unavailable'); }
     if (renewed?.state !== 'authenticated') {
       return held(typeof renewed?.reason === 'string' ? renewed.reason :
         'authentication_unavailable');
@@ -162,7 +164,7 @@ export async function startStoppedCandidate(options) {
   if (manifest.state !== 'manifest_safe') return manifest;
   let manifestAtMs;
   try { manifestAtMs = now(); }
-  catch { return held('availability_evidence_stale'); }
+  catch (error) { return heldAfter(error, 'availability_evidence_stale'); }
   if (!Number.isSafeInteger(manifestAtMs) || manifestAtMs < 0) {
     return held('availability_evidence_stale');
   }
@@ -181,7 +183,7 @@ export async function startStoppedCandidate(options) {
       redirect: 'manual', signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) { await cancelResponseBody(response); return held(response.status===403?'provider_http_403':'provider_unavailable'); }
     paths = await readBoundedJson(response, 100_000);
-  } catch { return held('provider_unavailable'); }
+  } catch (error) { return heldAfter(error, 'provider_unavailable'); }
   if (paths?.save_path !== expected.savePath ||
       typeof paths.download_path !== 'string') return held('storage_path_unverified');
   if (paths.download_path !== '' && paths.download_path !== expected.savePath) {
@@ -197,7 +199,7 @@ export async function startStoppedCandidate(options) {
   }
   let currentRequest;
   try { currentRequest = await readRequest(attempt.requestId); }
-  catch { return held('request_unavailable'); }
+  catch (error) { return heldAfter(error, 'request_unavailable'); }
   if (currentRequest?.id !== request.id ||
       currentRequest.anidbId !== request.anidbId ||
       currentRequest.status !== 'held' ||
@@ -236,20 +238,20 @@ export async function startStoppedCandidate(options) {
       if ((await verifyStagingRoot())?.state !== 'verified_staging_root') {
         return held('staging_root_unverified');
       }
-    } catch { return held('staging_root_unverified'); }
+    } catch (error) { return heldAfter(error, 'staging_root_unverified'); }
   } else {
     let mounts, realPath;
     try {
       mounts = await inspectMounts();
       realPath = await realpathImpl(hostPath);
-    } catch { return held('mount_evidence_unavailable'); }
+    } catch (error) { return heldAfter(error, 'mount_evidence_unavailable'); }
     const finalIsolation = evaluateStagingMountIsolation(mounts, { hostPath });
     if (finalIsolation.state !== 'isolated_mount') return finalIsolation;
     if (realPath !== hostPath) return held('staging_path_not_canonical');
   }
   let startMs;
   try { startMs = now(); }
-  catch { return held('availability_evidence_stale'); }
+  catch (error) { return heldAfter(error, 'availability_evidence_stale'); }
   if (!Number.isSafeInteger(startMs) || startMs < checked.checkedAtMs ||
       !Number.isSafeInteger(checked.observedAtMs) ||
       startMs - checked.observedAtMs > 30_000) {

@@ -32,6 +32,7 @@ import { openReleaseFeedLedger } from '../acquisition/release-feed-ledger.mjs';
 import { readProwlarrRss } from '../acquisition/prowlarr-rss.mjs';
 import { createReleaseFeedScheduler } from '../acquisition/release-feed-scheduler.mjs';
 import { startParentWatchRuntime } from '../requests/start-parent-watch-runtime.mjs';
+import { setHeldDiagnostics } from '../runtime/held-diagnostics.mjs';
 
 let service;
 let shokoFeedSupervisor;
@@ -78,6 +79,13 @@ async function closeAll() {
 }
 try {
   const config = parseUserServerConfig(process.env);
+  // Errors that workers turn into a held-and-retry reason are logged (rate
+  // limited) unless the log level is error or silent.
+  if (!['silent', 'error'].includes(config.logLevel)) {
+    setHeldDiagnostics(({ scope, reason, error }) => process.stderr.write(
+      `${JSON.stringify({ level: 'warn', time: Date.now(), msg: 'Negev work held',
+        scope, reason, error: redactStartupMessage(error) })}\n`));
+  }
   const store = await openUserStore({ dataDir: config.dataDir });
   const sessionKey = store.sessionKey;
   store.accounts.close();
