@@ -3,8 +3,10 @@
 export function createAiringScheduler({ runPage,
   initialDelayMs = 60_000, pageDelayMs = 10_000,
   cycleDelayMs = 3_600_000, failureDelayMs = 300_000,
+  onError = (error) => process.stderr.write(
+    `Negev Airing poll failed: ${error?.stack ?? error}\n`),
   setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout } = {}) {
-  if (typeof runPage !== 'function' ||
+  if (typeof runPage !== 'function' || typeof onError !== 'function' ||
       typeof setTimeoutImpl !== 'function' || typeof clearTimeoutImpl !== 'function' ||
       [initialDelayMs, pageDelayMs, cycleDelayMs, failureDelayMs].some((value) =>
         !Number.isSafeInteger(value) || value < 1 || value > 86_400_000)) {
@@ -26,7 +28,10 @@ export function createAiringScheduler({ runPage,
   const tick = async () => {
     try {
       try { lastResult = await runPage(); }
-      catch { lastResult = { state: 'held', reason: 'poll_failed' }; }
+      catch (error) {
+        lastResult = { state: 'held', reason: 'poll_failed' };
+        try { onError(error); } catch { /* Reporting must not stop the loop. */ }
+      }
       const delay = lastResult?.state === 'page'
         ? lastResult.afterId === 0 && lastResult.continueSoon !== true ? cycleDelayMs : pageDelayMs
         : failureDelayMs;

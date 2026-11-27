@@ -20,7 +20,10 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     }
     let observation;
     try { observation = await readImportActivity(); }
-    catch { observation = { state: 'unavailable' }; }
+    catch (error) {
+      request.log.warn({ err: error }, 'Negev import activity read failed');
+      observation = { state: 'unavailable' };
+    }
     const activity = ['quiet_observed', 'busy',
       'scheduled_unverified'].includes(observation?.state)
       ? observation.state : 'unavailable';
@@ -55,7 +58,7 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     }
     let result;
     try { result = await listOperationalReview({ afterAttemptId, limit }); }
-    catch { return reply.code(503).send({ error: 'Review unavailable' }); }
+    catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Review unavailable' }); }
     if (result?.state !== 'review' || !Array.isArray(result.items) ||
         result.items.length > limit ||
         (result.nextAfterAttemptId !== null &&
@@ -109,7 +112,7 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     try {
       result = await reviewOperationalItem({ stage, attemptId, action,
         actorId: request.negevUser.id });
-    } catch { return reply.code(503).send({ error: 'Review actions unavailable' }); }
+    } catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Review actions unavailable' }); }
     if (result?.state === 'retry_scheduled') return { state: 'retry_scheduled' };
     if (result?.state === 'retired_prestart_mismatch') return { state: 'released' };
     const reason = typeof result?.reason === 'string' &&

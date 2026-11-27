@@ -46,30 +46,60 @@ let directAvailabilityScheduler;
 let pendingTitleScheduler;
 let releaseFeedLedger;
 let releaseFeedScheduler;
+// Secrets read during startup. A startup error message is printed to the
+// operator, so any of these values (and token-like URL parameters) are
+// redacted from it first.
+const loadedSecrets = [];
+const remember = (value) => {
+  if (typeof value === 'string' && value.length >= 4) loadedSecrets.push(value);
+  return value;
+};
+function redactStartupMessage(text, secrets = loadedSecrets) {
+  let result = String(text ?? '');
+  for (const secret of secrets) result = result.split(secret).join('[redacted]');
+  return result.replace(/([?&](?:x-plex-token|apikey|api_key|token|password)=)[^&\s]+/gi,
+    '$1[redacted]');
+}
+async function closeAll() {
+  try {
+    await airingScheduler?.stop();
+    await releaseFeedScheduler?.stop();
+    releaseFeedLedger?.close();
+    await parentWatchRuntime?.close();
+    await plexScheduler?.close();
+    await fileBackfillScheduler?.close();
+    await directAvailabilityScheduler?.close();
+    await pendingTitleScheduler?.close();
+    await shokoInventory?.close();
+    await shokoProvisional?.close();
+    await shokoRecent?.close();
+    await shokoFeedSupervisor?.close();
+  } finally { if (service) await service.close(); }
+}
 try {
   const config = parseUserServerConfig(process.env);
   const store = await openUserStore({ dataDir: config.dataDir });
   const sessionKey = store.sessionKey;
   store.accounts.close();
-  const shokoApiKey = await readPrivateShokoKey({ dataDir: config.dataDir,
-    keyPath: config.shokoApiKeyPath });
+  const shokoApiKey = remember(await readPrivateShokoKey({ dataDir: config.dataDir,
+    keyPath: config.shokoApiKeyPath }));
   const acquisitionOwnershipGate = config.sonarrOwnership ?
     createSonarrOwnershipGuard({
       sonarrBaseUrl: config.sonarrOwnership.baseUrl,
-      sonarrApiKey: await readPrivateSonarrKey({ dataDir: config.dataDir,
-        keyPath: config.sonarrOwnership.keyPath }) }) : null;
+      sonarrApiKey: remember(await readPrivateSonarrKey({ dataDir: config.dataDir,
+        keyPath: config.sonarrOwnership.keyPath })) }) : null;
   const plex = config.plex ? { ...config.plex,
-    plexToken: await readPrivatePlexToken({ dataDir: config.dataDir,
-      keyPath: config.plex.plexTokenPath }) } : null;
+    plexToken: remember(await readPrivatePlexToken({ dataDir: config.dataDir,
+      keyPath: config.plex.plexTokenPath })) } : null;
   const prowlarr = config.prowlarr ? { ...config.prowlarr,
-    apiKey: await readPrivateProwlarrKey({ dataDir: config.dataDir,
-      keyPath: config.prowlarr.keyPath }) } : null;
+    apiKey: remember(await readPrivateProwlarrKey({ dataDir: config.dataDir,
+      keyPath: config.prowlarr.keyPath })) } : null;
   const qbitSessionGate = config.qbitSidecar ?
     createQbittorrentSessionGate({ baseUrl: config.qbitSidecar.baseUrl,
       username: config.qbitSidecar.username,
-      password: await readPrivateQbittorrentPassword({
+      password: remember(await readPrivateQbittorrentPassword({
         dataDir: config.dataDir,
-        keyPath: config.qbitSidecar.passwordPath }) }) : null;
+        keyPath: config.qbitSidecar.passwordPath })) }) : null;
   const qbitSidecarObserver = qbitSessionGate ? {
     importSavePath: config.qbitSidecar.importSavePath,
     ...createQbittorrentSidecarObserver({
@@ -78,6 +108,10 @@ try {
     }),
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
+    logger: config.logLevel === 'silent' ? false : { level: config.logLevel,
+      // Never write cookies, CSRF tokens or credentials to the log.
+      redact: ['req.headers.cookie', 'req.headers["x-negev-csrf"]',
+        'req.headers.authorization', 'res.headers["set-cookie"]'] },
     acquisitionOwnershipGate,
     acquisitionAllowedAnidbIds: config.acquisition?.allowedAnidbIds ?? null,
     shokoApiKey, sessionKey, qbitSidecarObserver,
@@ -138,7 +172,7 @@ try {
     shokoInventory = createShokoInventoryScheduler({ tick: service.tickShokoInventory });
     shokoInventory.start();
     shokoProvisional = createDirectAvailabilityScheduler({
-      runOnce: service.tickShokoProvisional,
+      runOnce: service.tickShokoProvisional, name: 'Shoko provisional',
       initialDelayMs: 30_000, activeDelayMs: 2 * 60_000,
       idleDelayMs: 2 * 60_000 });
     shokoProvisional.start();
@@ -179,7 +213,7 @@ try {
       runTitle: config.titleCheck ? service.tickTitleCheck : null,
     });
     directAvailabilityScheduler = createDirectAvailabilityScheduler({
-      runOnce: cycle.runOnce,
+      runOnce: cycle.runOnce, name: 'availability cycle',
       activeDelayMs: config.directActiveDelayMs,
       idleDelayMs: config.titleCheck ? 60_000 : 5 * 60_000 });
     directAvailabilityScheduler.start();
@@ -190,6 +224,7 @@ try {
       return ['resolved', 'complete'].includes(result?.state)
         ? { state: 'checked' } : result;
     },
+    name: 'pending title',
     initialDelayMs: 10_000,
     activeDelayMs: 10_000,
     idleDelayMs: 60_000,
@@ -200,40 +235,21 @@ try {
   const stop = async () => {
     if (stopping) return;
     stopping = true;
-    try {
-      await airingScheduler?.stop();
-      await releaseFeedScheduler?.stop();
-      releaseFeedLedger?.close();
-      await parentWatchRuntime?.close();
-      await plexScheduler?.close();
-      await fileBackfillScheduler?.close();
-      await directAvailabilityScheduler?.close();
-      await pendingTitleScheduler?.close();
-      await shokoInventory?.close();
-      await shokoProvisional?.close();
-      await shokoRecent?.close();
-      await shokoFeedSupervisor?.close();
-    }
-    finally { await service.close(); }
+    await closeAll();
   };
   process.on('SIGINT', () => { void stop(); });
   process.on('SIGTERM', () => { void stop(); });
 } catch (error) {
-  try {
-    await airingScheduler?.stop();
-    await releaseFeedScheduler?.stop();
-    releaseFeedLedger?.close();
-    await parentWatchRuntime?.close();
-    await plexScheduler?.close();
-    await fileBackfillScheduler?.close();
-    await directAvailabilityScheduler?.close();
-    await pendingTitleScheduler?.close();
-    await shokoInventory?.close();
-    await shokoProvisional?.close();
-    await shokoRecent?.close();
-    await shokoFeedSupervisor?.close();
+  try { await closeAll(); }
+  catch (closeError) {
+    process.stderr.write(`Negev shutdown after a failed start also failed: ${
+      redactStartupMessage(closeError?.message)}\n`);
   }
-  finally { if (service) await service.close(); }
-  process.stderr.write(`Negev user API failed to start (${error?.name ?? 'Error'}).\n`);
+  const detail = redactStartupMessage(error?.message).trim();
+  process.stderr.write(`Negev user API failed to start (${error?.name ?? 'Error'})${
+    detail ? `: ${detail}` : ''}.\n`);
+  if (process.env.NEGEV_DEBUG_STARTUP === '1' && error?.stack) {
+    process.stderr.write(`${redactStartupMessage(error.stack)}\n`);
+  }
   process.exitCode = 1;
 }

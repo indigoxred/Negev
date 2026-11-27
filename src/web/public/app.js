@@ -1936,18 +1936,22 @@ byId('register-form').addEventListener('submit', async (event) => {
     if (['code','username','password'].includes(error.field)) form.elements.namedItem(error.field)?.focus();
   }
 });
-byId('signout').addEventListener('click', async () => {
+byId('signout').addEventListener('click', () => { void signOut(false); });
+byId('signout-everywhere').addEventListener('click', () => { void signOut(true); });
+async function signOut(everywhere) {
   const session = sessionResponses.current();
-  try { await api('/api/logout', { method: 'POST', body: '{}' }); }
-  catch (error) {
+  try {
+    await api('/api/logout', { method: 'POST',
+      body: everywhere ? JSON.stringify({ everywhere: true }) : '{}' });
+  } catch (error) {
     if (error.status === 401) { if (!state.user) message('Signed out.'); return; }
     if (sessionResponses.isCurrent(session)) message(error.message, true);
     return;
   }
   if (!sessionResponses.isCurrent(session)) return;
   clearWorkspace();
-  message('Signed out.');
-});
+  message(everywhere ? 'Signed out on all devices.' : 'Signed out.');
+}
 byId('adult-toggle').addEventListener('click', () => {
   if (!state.user || state.user.adultAllowed === false) return;
   state.showAdult = !state.showAdult;
@@ -3793,6 +3797,14 @@ void refreshSession();
 const loadedClientRevision = document.querySelector(
   'meta[name="negev-client-revision"]')?.content;
 let checkingClientRevision = false;
+// A deploy must not discard an open dialog or typed text, so a new version
+// is offered rather than loaded. "Later" hides the banner for that version.
+let dismissedClientRevision = null;
+byId('update-reload').addEventListener('click', () => { location.reload(); });
+byId('update-dismiss').addEventListener('click', () => {
+  dismissedClientRevision = byId('update-banner').dataset.revision ?? null;
+  byId('update-banner').hidden = true;
+});
 async function refreshClientRevision() {
   if (!loadedClientRevision || checkingClientRevision || document.hidden) return;
   checkingClientRevision = true;
@@ -3800,7 +3812,17 @@ async function refreshClientRevision() {
     const response = await fetch('/api/client-revision', { cache: 'no-store' });
     if (!response.ok) return;
     const { revision } = await response.json();
-    if (revision && revision !== loadedClientRevision) location.reload();
+    if (!revision || revision === loadedClientRevision ||
+        revision === dismissedClientRevision) return;
+    // Nothing is open on the page: reloading now loses nothing.
+    if (!state.user || (!document.querySelector('dialog[open]') &&
+        !document.activeElement?.matches?.('input, textarea, select'))) {
+      location.reload();
+      return;
+    }
+    const banner = byId('update-banner');
+    banner.dataset.revision = revision;
+    banner.hidden = false;
   } catch { /* A connection failure is not a reason to disrupt this page. */ }
   finally { checkingClientRevision = false; }
 }

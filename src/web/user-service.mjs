@@ -127,7 +127,7 @@ const withinRoot = (root, candidate) => {
 // Account-backed catalogue and held requests. No acquisition dispatch or
 // public Plex availability is connected until their installed gates pass.
 export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
-  dataDir = null,
+  dataDir = null, logger = false,
   shokoImportRoot = null, shokoImportFolderId = null,
   acquisitionImportParent = null, acquisitionImportFolderId = null,
   acquisition = null,
@@ -679,7 +679,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       }),
     });
     const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
-      localOrigin, secureCookies,
+      localOrigin, secureCookies, logger,
       readImportActivity,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
         { state: 'disabled' },

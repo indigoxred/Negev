@@ -35,9 +35,15 @@
         <a id="admin-link" class="text-link" href="#/admin" hidden>Administration</a>
         <button id="invite" class="quiet" hidden>Create invite</button>
         <button id="signout" class="quiet">Sign out</button>
+        <button id="signout-everywhere" class="quiet" title="Also signs out your other browsers and devices">Sign out of all devices</button>
       </div>
     </details>
   </header>
+  <div id="update-banner" class="update-banner" role="status" hidden>
+    <span>A new version of Negev is available.</span>
+    <button id="update-reload" class="primary" type="button">Reload now</button>
+    <button id="update-dismiss" class="quiet" type="button">Later</button>
+  </div>
   <p id="message" class="message" role="status" aria-live="polite"></p>
   <p id="invite-code" class="invite-code" hidden></p>
   <main id="main-content" tabindex="-1">

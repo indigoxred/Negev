@@ -55,6 +55,13 @@ For a redacted read-only worker snapshot, run `node src/admin/worker-diagnostics
 
 Use a local browser with the exact configured `http://localhost:3000` origin for this loopback preview. It rejects a different host or HTTPS origin. For a public HTTPS tunnel that reaches Negev in the same network namespace, keep `NEGEV_LISTEN_HOST=127.0.0.1`, set `NEGEV_EXPOSE_USERS=1`, and set `NEGEV_PUBLIC_ORIGIN` to the exact HTTPS browser origin. Negev then uses Secure cookies while retaining its loopback-only listener. A separate HTTPS reverse proxy can instead use `NEGEV_LISTEN_HOST=0.0.0.0` with the same exposure flag and exact origin; that configuration opens a LAN listener. To sign in through both the HTTPS hostname and the direct private LAN address on that listener, also set `NEGEV_LOCAL_ORIGIN` to its exact HTTP URL, including the listener port. The LAN cookie is separate from the Secure HTTPS cookie; the LAN URL must use a private IPv4 address and cannot be enabled for a public HTTP hostname. Verify TLS, origin, and proxy routing before inviting users. The preview does not expose a LAN port, mount `/var/run/docker.sock`, or start a download. Public Plex availability and acquisition require additional, explicitly configured mounts, providers and validation; this example does not claim a complete installation. Pin a versioned image and verify its rollback before enabling acquisition in an installed system.
 
+### Logs and sign-in sessions
+
+- If Negev cannot start, stderr names the setting at fault, for example `Acquisition runtime is unavailable: NEGEV_SHOKO_EVENTS=1 is required`. Loaded secrets and token-like URL parameters are redacted. Set `NEGEV_DEBUG_STARTUP=1` to also print the stack trace.
+- `NEGEV_LOG_LEVEL` (`silent`, `error`, `warn`, `info` or `debug`; default `warn`) controls the JSON request log on stdout. Every 5xx response is logged with its route and, when one was caught, the underlying error. Cookies, CSRF tokens and authorization headers are never logged.
+- A signed-in browser stays signed in while it is used at least once every 7 days, for at most 30 days after sign-in. **Sign out** ends that browser's session only. **Sign out of all devices** in the account menu ends every session for the account.
+- When a new version is deployed, an open page reloads by itself only if nothing is in progress. Otherwise it shows a **Reload now** banner.
+
 ## Development
 
 Use Node.js 24 and pnpm 11:
