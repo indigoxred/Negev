@@ -645,22 +645,21 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
         button.click();
         const select = action.querySelector('.film-request-choice select');
         select.value = '1001'; select.dispatchEvent(new Event('change'));
-        button.click();
-        select.value = '1002'; select.dispatchEvent(new Event('change'));
-        return { reviewHidden: action.querySelector('.request-review').hidden,
-          button: button.textContent,
-          summary: action.querySelector('.request-review p').textContent }; })()`,
+        return { dialogOpen: action.querySelector('dialog').open,
+          selected: select.value, button: [...action.querySelectorAll('dialog .primary')]
+            .find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
-    await send('Runtime.evaluate', { expression:
-      `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     const filmChoiceConfirm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return { reviewHidden: action.querySelector('.request-review').hidden,
-          summary: action.querySelector('.request-review p').textContent,
-          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length).textContent }; })()`,
+        const select = action.querySelector('.film-request-choice select');
+        select.value = '1002'; select.dispatchEvent(new Event('change'));
+        return { dialogOpen: action.querySelector('dialog').open,
+          selected: select.value, selectedLabel: select.selectedOptions[0].textContent,
+          button: [...action.querySelectorAll('dialog .primary')]
+            .find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
     await send('Runtime.evaluate', { expression:
-      `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
+      `[...document.querySelectorAll('.request-action dialog .primary')].find(button=>button.getClientRects().length).click()` });
     await wait(250);
     const filmChoiceSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
@@ -1653,13 +1652,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.unlistedFilmSaved.button, 'Requested');
       assert.equal(mobile.unlistedFilmSaved.reviewHidden, true);
       assert.match(mobile.unlistedFilmSaved.feedback, /saved|waiting/i);
-      assert.deepEqual(mobile.filmChoiceReview, {
-        reviewHidden: true, button: 'Request selected film',
-        summary: 'Two-part film · main film entry 1 · Part One' });
-      assert.deepEqual(mobile.filmChoiceConfirm, {
-        reviewHidden: false,
-        summary: 'Two-part film · main film entry 2 · Part Two',
-        button: 'Confirm request' });
+      assert.deepEqual(mobile.filmChoiceReview, { dialogOpen: true,
+        selected: '1001', button: 'Save automatic request' });
+      assert.deepEqual(mobile.filmChoiceConfirm, { dialogOpen: true,
+        selected: '1002', selectedLabel: 'Episode 2 · Part Two',
+        button: 'Save automatic request' });
       assert.equal(mobile.filmChoiceSaved.reviewHidden, true);
       assert.match(mobile.filmChoiceSaved.feedback, /Request #7 saved/);
       assert.equal(mobile.filmChoiceSaved.view, 'View in My Requests →');
@@ -1669,6 +1666,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         body.scope === 'installment'), 'partial season requests its missing episodes');
       assert.ok(!submittedRequests.some((body) => body.anidbId === 44),
         'already available season cannot be submitted');
+      assert.equal(submittedRequests.filter(body => body.anidbId === 10).length, 1,
+        'changing film selection never submits or duplicates a request');
       assert.ok(submittedRequests.some((body) => body.anidbId === 10 &&
         body.scope === 'episodes' && body.episodeIds?.length === 1 &&
         body.episodeIds[0] === 1002), 'reviewed film entry reaches the request API');
