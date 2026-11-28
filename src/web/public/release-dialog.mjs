@@ -177,6 +177,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
       () => {
         if (active === dialog) active = null;
         dialog.remove();
+        if(previewId&&!requestId)void api('/api/release-previews/'+previewId+'/close',{method:'POST',body:'{}'}).catch(()=>{});
       },
       { once: true },
     );

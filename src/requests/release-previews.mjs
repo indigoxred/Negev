@@ -9,6 +9,9 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
   now = Date.now, wake = () => {}, onCommitted = () => {} }) {
   const sessions = new Map();
   const drafts = new Map();
+  const discardAbandoned=(token,session)=>{
+    if(session.abandoned&&!session.pending&&!session.inspections&&!session.committed){sessions.delete(token);drafts.delete(session.id);}
+  };
   // Positive IDs are required by the existing discovery/preflight contracts.
   // These IDs are private to this resolver and never written into the ledger.
   let sequence = Number.MAX_SAFE_INTEGER;
@@ -29,7 +32,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
   const access = (token, userId) => {
     prune();
     const session = sessions.get(token);
-    return session?.input.requesterId === userId && session.expiresMs > now() ? session.id : null;
+    return session?.input.requesterId === userId && (!session.abandoned || session.committed) && session.expiresMs > now() ? session.id : null;
   };
   const atCapacity = userId => {
     const active = [...sessions.values()].filter(s => !s.committed);
@@ -112,7 +115,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       try {
         const result = await selection.inspect(id, body.token);
         return session.expiresMs <= now() ? held('release_preview_expired') : result;
-      } finally { session.inspections--; }
+      } finally { session.inspections--; discardAbandoned(token,session); }
     }
     const commandKey = JSON.stringify([body.action, body.revision, body.token,
       body.mode, body.group, body.audio, body.preferFutureGroup ?? false]);
@@ -213,7 +216,13 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     session.pending = run();
     try { return await session.pending; }
     catch (error) { if (!session.committed) session.control = before; throw error; }
-    finally { session.pending = null; session.pendingKey = null; }
+    finally { session.pending = null; session.pendingKey = null; discardAbandoned(token,session); }
   };
-  return { open, access, command, selection, readRequest: adapter.getRequest };
+  const close=(token,userId)=>{
+    prune();const session=sessions.get(token);
+    if(!session||session.input.requesterId!==userId)return held('release_preview_missing');
+    if(!session.committed){session.abandoned=true;discardAbandoned(token,session);}
+    return {state:'closed'};
+  };
+  return { open, access, command, close, selection, readRequest: adapter.getRequest };
 }

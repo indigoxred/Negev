@@ -2,7 +2,7 @@ import { trackingAction } from './airing-tracking-controls.mjs';
 import { titleRoute } from './consumer-route.mjs';
 
 // Owns tracking preference serialization, controls and tracked title rendering. Construction does not register event handlers.
-export function createTrackingController({ api, applyAdultVisibility, byId, element, loadAiring, markAdult, message, sessionResponses, state, document = globalThis.document }) {
+export function createTrackingController({ api, applyAdultVisibility, byId, element, loadAiring, markAdult, message, sessionResponses, state, titleLabel = (item,options)=>element(options.tag,item.title,options.className), document = globalThis.document }) {
   let trackingPrefsPromise = null;
 
   let trackingSaving = false;
@@ -127,27 +127,26 @@ export function createTrackingController({ api, applyAdultVisibility, byId, elem
     let shown = 0;
     const appendPage = () => {
       const end = Math.min(shown + 20, ids.length);
-      const userId = state.user?.id;
+      const userId = state.user?.id, session=sessionResponses.current();
       for (const id of ids.slice(shown, end)) {
         const known = state.searchItems.get(id);
         const title = known?.title && !/^Anime \d+$/.test(known.title)
           ? known.title : `AniDB ${id}`;
-        const item = { anidbId: id, title, adult: known?.adult,
-          chineseProduction: known?.chineseProduction };
+        const item = { ...known, anidbId: id, title };
         const row = markAdult(element('div', undefined, 'tracked-list-row'), item);
-        const link = element('a', title, 'text-link');
+        let link = titleLabel(item,{tag:'a',className:'text-link'});
         link.href = titleRoute(id);
         row.append(link, makeTrackButton(item));
         list.append(row);
         if (title === `AniDB ${id}` && panel.open) {
           void api(`/api/catalogue/${id}/display`).then((display) => {
-            if (state.user?.id !== userId || !row.isConnected ||
+            if (!sessionResponses.isCurrent(session) || state.user?.id !== userId || !row.isConnected ||
                 display?.state !== 'display') return;
-            link.textContent = display.title;
+            const hydrated={...state.searchItems.get(id),...display,anidbId:id,adult:display.restricted};
+            const label=titleLabel(hydrated,{tag:'a',className:'text-link'});label.href=titleRoute(id);link.replaceWith(label);link=label;
             row.querySelector('[data-track-id]').dataset.trackTitle = display.title;
-            state.searchItems.set(id, { anidbId: id, title: display.title,
-              adult: display.restricted });
-            row.dataset.adult = String(display.restricted);
+            state.searchItems.set(id, hydrated);
+            markAdult(row,hydrated);
             applyAdultVisibility();
             updateTrackControls();
           }).catch(() => {});

@@ -43,6 +43,7 @@ export function createDetailController({
   const detailResponses = createResponseEpoch();
 
   let detailPollTimer = null;
+  let requestCapabilities = null;
 
   function pendingTitleAction(item) {
     if (!state.user || item.adult === true &&
@@ -194,6 +195,7 @@ export function createDetailController({
       : null;
     if (detailPollTimer !== null) clearTimeout(detailPollTimer);
     detailPollTimer = null;
+    requestCapabilities = null;
     const detailRequest = detailResponses.invalidate();
     const isCurrentDetail = () => detailResponses.isCurrent(detailRequest) &&
       state.selected === item.anidbId;
@@ -502,7 +504,7 @@ export function createDetailController({
         return;
       }
       if (data.kind === 'series') {
-        createSeriesRequestController({
+        requestCapabilities = createSeriesRequestController({
           data, pager, item, notReleased, panel, detailActionRow, relatedHeading, loadRelated, family, relatedDetails, isCurrentDetail, element, document, state, makeReleaseActions, titleLabel, preferredDisplayTitle, requestKeys, sessionResponses, api, refreshTrackingAfterRequest, loadRequests, openPreviewReleaseRequests, openSavedReleaseRequests,
           get openSeasonDialog() { return related.openSeasonDialog; }, set openSeasonDialog(value) { related.openSeasonDialog = value; },
           get syncSeasonLookup() { return related.syncSeasonLookup; }, set syncSeasonLookup(value) { related.syncSeasonLookup = value; },
@@ -516,7 +518,7 @@ export function createDetailController({
         });
         return;
       }
-      createInstallmentRequestControls({
+      requestCapabilities = createInstallmentRequestControls({
         api, currentAcquisitionNotice, data, detailActionRow, earlyRequest, element, family, isCurrentDetail, item, loadRequests, message, notReleased, openPreviewReleaseRequests, openSavedReleaseRequests, pager, panel, refreshTrackingAfterRequest, related, relatedHeading, requestKeys, state, syncInstallmentChoice,
         get filmChoiceSelect() { return filmChoiceSelect; }, set filmChoiceSelect(value) { filmChoiceSelect = value; },
         get refreshRequestAction() { return refreshRequestAction; }, set refreshRequestAction(value) { refreshRequestAction = value; },
@@ -539,5 +541,5 @@ export function createDetailController({
       void displayRead.then((display) => renderDisplay(display, item.title));
     }
   }
-  return { showDetail, invalidate() { detailResponses.invalidate(); if (detailPollTimer !== null) clearTimeout(detailPollTimer); detailPollTimer = null; } };
+  return { showDetail, refreshCapabilities(){requestCapabilities?.refreshCapabilities?.();}, invalidate() { requestCapabilities=null; detailResponses.invalidate(); if (detailPollTimer !== null) clearTimeout(detailPollTimer); detailPollTimer = null; } };
 }

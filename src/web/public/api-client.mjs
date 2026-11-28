@@ -36,7 +36,7 @@ export function createApiClient({ clearWorkspace, requestKeys, sessionResponses,
           for (const selection of selections) requestKeys.rejected({ userId,
             anidbId: body.anidbId, selection }, data, body.requestKey);
         }
-        if (response.status === 401 && !['/api/login', '/api/register'].includes(url) &&
+        if (response.status === 401 && !['/api/login', '/api/register', '/api/session'].includes(url) &&
             sessionResponses.isCurrent(session)) clearWorkspace();
         const error = new Error(data.error || data.reason || 'Request failed ('+response.status+')');
         error.status = response.status; error.reason = data.reason; error.field = data.field;

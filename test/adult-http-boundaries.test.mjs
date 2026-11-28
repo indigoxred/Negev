@@ -18,7 +18,7 @@ async function fixture(run) {
  readPoster:async()=>({state:'image',type:'image/jpeg',bytes:Buffer.from('SECRET-image')}),readPosterTitle:async()=>2,
  getTitleCheck:async()=>({state:'done',generation:1,totalCount:1,checkedCount:1,recentAvailableCount:1}),observePublicTarget:async()=>({state:'available'}),releaseSelection:selection};
  const app=await buildUserApp(options);
- try {const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Viewer',password:'long-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];const session=await app.inject({url:'/api/session',headers:{cookie}});await run({app,headers:{cookie,origin,'x-negev-csrf':session.json().csrfToken},classes,selection,options,gate,submissions,allow:value=>{allowed=value},revoke:()=>{valid=false}});}finally{await app.close();}
+ try {const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Viewer',password:'long-passphrase'}});const cookie=login.headers['set-cookie'].split(';')[0];const session=await app.inject({url:'/api/session',headers:{cookie}});await run({app,headers:{cookie,origin,'x-negev-csrf':session.json().csrfToken},classes,selection,options,gate,submissions,items,allow:value=>{allowed=value},revoke:()=>{valid=false}});}finally{await app.close();}
 }
 test('related titles verify each current classification and keep only safe metadata',()=>fixture(async({app,headers})=>{
  const response=await app.inject({url:'/api/catalogue/1/related',headers});assert.equal(response.statusCode,200);assert.deepEqual(response.json().items.map(x=>x.anidbId),[1]);
@@ -114,4 +114,14 @@ test('revocation during the final target authorization cannot return a previousl
  allow(true);let reads=0;const original=options.accounts.getSessionUser;
  options.accounts.getSessionUser=input=>{const value=original(input);if(++reads===4)allow(false);return value;};
  const response=await app.inject({url:'/api/catalogue/2',headers});assert.equal(response.statusCode,403);assert.equal(response.body.includes('SECRET-2'),false);
+}));
+
+test('the same completed request keeps safe lifecycle history while its title is redacted',()=>fixture(async({app,headers,items,allow,classes})=>{
+ items[1].progress.oneTimeAcquisitionComplete=true;
+ for(const visible of [true,false,true]){
+  allow(visible);classes.set(2,visible?false:null);
+  const result=await app.inject({url:'/api/requests/2',headers});assert.equal(result.statusCode,200);
+  const item=result.json();assert.equal(item.progress.oneTimeAcquisitionComplete,true);
+  assert.equal(item.metadataHidden===true,!visible);if(!visible)assert.equal(result.body.includes('SECRET-2'),false);
+ }
 }));

@@ -172,3 +172,15 @@ test('reset codes are stored only as digests and older databases gain the new co
     openAccountLedger(dbPath, { now: () => 2_000 }).close();
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test('an older active invitation remains reachable and revocable after fifty newer revocations',()=>withApp(async({app,accounts,owner,clock})=>{
+ const first=accounts.createInvite({adminUserId:owner.id,expiresMs:clock.time+7*DAY});
+ for(let i=0;i<50;i++){const invite=accounts.createInvite({adminUserId:owner.id,expiresMs:clock.time+DAY});accounts.revokeInvite({adminUserId:owner.id,inviteId:invite.id})}
+ const who=await signIn(app,'Owner',ownerPassword),headers={cookie:who.cookie};
+ const page=(await app.inject({url:'/api/admin/invitations',headers})).json();assert.equal(page.items.length,50);assert.ok(page.nextBeforeId);
+ const older=await app.inject({url:'/api/admin/invitations?beforeId='+page.nextBeforeId,headers});assert.equal(older.statusCode,200);
+ assert.equal(older.json().items[0].id,first.id);assert.equal(older.json().items[0].status,'active');assert.equal(older.json().nextBeforeId,null);assert.equal(older.body.includes(first.code),false);
+ assert.equal((await post(app,who,'/api/admin/invitations/'+first.id+'/revoke')).statusCode,200);
+ assert.equal((await app.inject({url:'/api/admin/invitations?beforeId=0',headers})).statusCode,400);
+ assert.equal((await app.inject({url:'/api/admin/invitations?extra=1',headers})).statusCode,400);
+}));

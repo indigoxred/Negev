@@ -61,6 +61,11 @@ test('HTTP commits release draft quota while retaining receipt replay and expiry
  const session=await app.inject({url:'/api/session',headers:{cookie}});const headers={cookie,origin,'x-negev-csrf':session.json().csrfToken};
  const open=async id=>app.inject({method:'POST',url:'/api/release-previews',headers,payload:{anidbId:id,scope:'installment',requestKey:'key'+id}});
  const command=(id,payload)=>app.inject({method:'POST',url:`/api/release-previews/${id}/release-choice`,headers,payload});
+ const abandoned=await open(999),draft=abandoned.json().previewId,closeUrl='/api/release-previews/'+draft+'/close';
+ assert.equal((await app.inject({method:'POST',url:closeUrl,headers:{cookie,origin},payload:{}})).statusCode,403);
+ assert.equal((await app.inject({method:'POST',url:closeUrl,headers,payload:{unexpected:true}})).statusCode,400);
+ assert.equal((await app.inject({method:'POST',url:closeUrl,headers,payload:{}})).statusCode,200);
+ assert.equal(releasePreviews.access(draft,7),null);assert.equal(requests.countRequests(),0);
  let first,last;
  for(let id=1;id<=11;id++){
   const opened=await open(id);assert.equal(opened.statusCode,200,opened.body);const previewId=opened.json().previewId;assert.ok(previewId);

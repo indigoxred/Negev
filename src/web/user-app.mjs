@@ -360,7 +360,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       metadataHidden: true,
       ...(item.progress ? { progress: { state: item.progress.state,
         targetCount: item.episodeIds?.length ?? 0,
-        publicAvailability: 'unverified' } } : {}) };
+        publicAvailability: 'unverified',
+        oneTimeAcquisitionComplete:item.progress.oneTimeAcquisitionComplete===true } } : {}) };
     };
     if (route === '/api/requests/:id' && request.method === 'GET') {
       const denied = await titleAccess(request, data.anidbId);
@@ -1303,6 +1304,13 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           : 'Preparation cannot be cancelled',
           reason: result.reason });
     });
+  app.post('/api/release-previews/:previewId/close',{preHandler:writeGuards},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');
+    if(!allowedBody(request.body??{},[])||Object.keys(request.body??{}).length||Object.keys(request.query).length)return reply.code(400).send({error:'Invalid preview close'});
+    if(typeof releasePreviews?.close!=='function')return reply.code(503).send({error:'Release preview unavailable'});
+    const result=releasePreviews.close(request.params.previewId,request.negevUser.id);
+    return reply.code(result.state==='closed'?200:404).send(result);
+  });
   app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const requestId = Number(request.params.id);
@@ -1393,7 +1401,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const token=request.query.token;
     if(typeof token!=='string'||token.length<1||token.length>64||Object.keys(request.query).some(k=>k!=='token'))return reply.code(400).send({error:'Invalid release inspection'});
     try {
-      const result=await request.releaseSelector.inspect(id,token);
+      const result=request.params.previewId
+        ? await releasePreviews.command(request.params.previewId,request.negevUser.id,{action:'inspect',token})
+        : await request.releaseSelector.inspect(id,token);
       if(result?.state==='held')return reply.code(409).send(result);
       if(request.params.previewId&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
       return result;

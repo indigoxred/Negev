@@ -107,6 +107,8 @@ const tracking = createTrackingController({
   element: (...args) => element(...args),
   loadAiring: (...args) => loadAiring(...args),
   markAdult: (...args) => markAdult(...args),
+  titleLabel: (...args) => titleLabel(...args),
+  preferredDisplayTitle: (...args) => preferredDisplayTitle(...args),
   message: (...args) => message(...args),
   sessionResponses,
   state
@@ -596,8 +598,8 @@ async function refreshClientRevision() {
     if (!revision || revision === loadedClientRevision ||
         revision === dismissedClientRevision) return;
     // Nothing is open on the page: reloading now loses nothing.
-    if (!state.user || (!document.querySelector('dialog[open]') &&
-        !document.activeElement?.matches?.('input, textarea, select'))) {
+    if (state.user && !document.querySelector('dialog[open]') &&
+        !document.activeElement?.matches?.('input, textarea, select')) {
       location.reload();
       return;
     }

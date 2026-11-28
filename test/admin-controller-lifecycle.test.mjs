@@ -5,12 +5,13 @@ import { createApiClient } from '../src/web/public/api-client.mjs';
 import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
 import { createSessionController } from '../src/web/public/session-controller.mjs';
 
-function node(tag, text = '') {
-  return { tag, textContent: text, dataset: {}, children: [], hidden: false,
+function node(tag, text = '', className='') {
+  return { tag, className, textContent: text, dataset: {}, children: [], hidden: false,
     listeners: {}, classList: { add() {} }, setAttribute() {}, focus() {}, select() {}, reset() {},
     addEventListener(event, listener) { this.listeners[event] = listener; },
+    querySelector(selector){return this.querySelectorAll(selector)[0]??null},
     querySelectorAll(selector) { return this.children.flatMap(child =>
-      [...(selector === child.tag ? [child] : []), ...child.querySelectorAll(selector)]); },
+      [...((selector === child.tag || selector.startsWith('.')&&child.className.split(' ').includes(selector.slice(1))) ? [child] : []), ...child.querySelectorAll(selector)]); },
     append(...children) { this.children.push(...children); },
     replaceChildren(...children) { this.children = children; } };
 }
@@ -22,7 +23,7 @@ function fixture() {
   const state = { user: { id: 1, username: 'First', role: 'admin', adultAllowed: true },
     csrf: 'first-csrf', searchItems: new Map(), detailHydrationQueued: new Set(), searchToken: 0 };
   const byId = id => { if (!nodes.has(id)) nodes.set(id, node('div')); return nodes.get(id); };
-  let session;
+  let session,capabilityRefreshes=0;
   const { api } = createApiClient({ state, sessionResponses: epoch,
     clearWorkspace: () => session.clearWorkspace(),
     fetch: (url, options) => new Promise(resolve => pending.push({ url, options,
@@ -34,7 +35,7 @@ function fixture() {
   const noop = () => {};
   const sessionArgs = { api, state, byId, element: node, sessionResponses: epoch,
     admin: controller, auth: {}, tracking: { resetTracking: noop }, browse: { setAiringFilters: noop },
-    detail: { invalidate: noop }, displayCache: new Map(),
+    detail: { invalidate: noop,refreshCapabilities:()=>capabilityRefreshes++ }, displayCache: new Map(),
     genreSelections: { airing: new Set(), season: new Set() },
     ensureTrackingPreferences: async () => {}, readAdultPreference: () => true,
     readChinesePreference: () => true, readEnglishTitlePreference: () => false,
@@ -49,7 +50,7 @@ function fixture() {
     session.showSession({ user: { id: 2, username: 'Second', role: 'admin', adultAllowed: true }, csrfToken: 'second-csrf' });
     messages.length = 0;
   };
-  return { controller, byId, state, pending, messages, switchSession, epoch };
+  return { controller, byId, state, pending, messages, switchSession, epoch,session,get capabilityRefreshes(){return capabilityRefreshes} };
 }
 const users = name => ({ items: [{ id: 3, username: name, role: 'member', disabled: false, adultAllowed: true }] });
 const invites = name => ({ items: [{ id: 7, status: 'used', usedBy: name, usedMs: 1, createdMs: 1 }] });
@@ -156,4 +157,10 @@ test('current admin account mutations update their controls', async () => {
   assert.equal(access.textContent, 'Enable account');
   assert.equal(adult.disabled, true);
   assert.equal(button(f.byId('admin-users'), 'Delete account').hidden, false);
+});
+
+test('background capabilities refresh updates the existing detail controls in place',async()=>{
+ const f=fixture(),pending=f.session.refreshSession({background:true});
+ f.pending[0].finish({user:{...f.state.user},csrfToken:'new',capabilities:{releaseSearch:true}});await pending;
+ assert.equal(f.state.releaseSearch,true);assert.equal(f.capabilityRefreshes,1);
 });

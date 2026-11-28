@@ -147,21 +147,24 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
 
   const inviteStatusText = { active: 'Active', used: 'Used', expired: 'Expired', revoked: 'Revoked' };
 
-  async function loadInvites() {
+  async function loadInvites(append=false,beforeId=null) {
     if (state.user?.role !== 'admin') return;
     const sessionCurrent = currentAdminSession();
     const read = ++invitesRead;
     const isCurrent = () => sessionCurrent() && read === invitesRead;
     const list = byId('admin-invites');
-    list.replaceChildren(element('p', 'Loading invitations…', 'muted'));
+    if(!append)list.replaceChildren(element('p', 'Loading invitations…', 'muted'));
     try {
-      const page = await api('/api/admin/invitations');
+      const page = await api('/api/admin/invitations'+(append?'?beforeId='+beforeId:''));
       if (!isCurrent()) return;
       if (!page.items.length) {
-        list.replaceChildren(element('p', 'No invitations yet.', 'muted'));
+        list.querySelector('.older-invitations')?.remove();
+        if(!append)list.replaceChildren(element('p', 'No invitations yet.', 'muted'));
         return;
       }
-      list.replaceChildren(...page.items.map((invite) => {
+      list.querySelector('.older-invitations')?.remove();
+      if(!append)list.replaceChildren();
+      list.append(...page.items.map((invite) => {
         const row = element('div', undefined, 'user-setting');
         const when = (ms) => ms === null ? null : new Date(ms).toLocaleDateString();
         const detail = invite.status === 'used'
@@ -190,9 +193,15 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
         }
         return row;
       }));
+      if(Number.isSafeInteger(page.nextBeforeId)){
+        const more=element('button','Show older invitations','quiet older-invitations');more.type='button';
+        more.addEventListener('click',async()=>{if(!sessionCurrent()||!more.isConnected)return;more.disabled=true;await loadInvites(true,page.nextBeforeId);if(more.isConnected)more.disabled=false;});
+        list.append(more);
+      }
     } catch {
       if (!isCurrent()) return;
-      list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
+      if(!append)list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
+      else list.append(element('p','Older invitations are unavailable. Try again.','muted'));
     }
   }
 

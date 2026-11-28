@@ -4,6 +4,7 @@ export function element(tag='div',text='',className='') {
   append(...children){for(const child of children){child.parentNode=this;this.children.push(child)}},
   replaceChildren(...children){this.children=[];this.append(...children)},
   insertBefore(child,before){const index=this.children.indexOf(before);child.parentNode=this;this.children.splice(index<0?this.children.length:index,0,child)},
+  replaceWith(node){if(this.parentNode){const parent=this.parentNode;parent.children[parent.children.indexOf(this)]=node;node.parentNode=parent;}},
   remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(n=>n!==this);this.isConnected=false},
   addEventListener(event,listener){(this.listeners[event]??=[]).push(listener)},
   async emit(event){for(const listener of this.listeners[event]??[])await listener({currentTarget:this,preventDefault(){}})},

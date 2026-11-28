@@ -12,7 +12,7 @@ const browser = findTestBrowser();
 const staticRoot = new URL('../src/web/public/', import.meta.url);
 // Serve public/ the way the server does: every page, script, stylesheet and font.
 const assets = new Map([
-  ['/negev.png', ['negev.png', 'image/png']],
+  ...readdirSync(staticRoot).filter(name=>name.endsWith('.png')).map(name=>['/'+name,[name,'image/png']]),
   ...readdirSync(staticRoot).filter((name) => /\.(?:html|m?js|css)$/.test(name)).map((name) =>
     [name === 'index.html' ? '/' : `/${name}`, [name, name.endsWith('.html') ? 'text/html'
       : name.endsWith('.css') ? 'text/css' : 'text/javascript']]),
@@ -494,13 +494,13 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     })()` });
     const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {route: location.hash, button: action.querySelector('.primary')?.textContent,
+        return {route: location.hash, button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
           chosen: [...action.querySelectorAll('.season-request-row input:checked')]
             .map(input => Number(input.closest('.season-request-row').dataset.anidbId))}; })()`,
     });
     const requestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action?.querySelector('.primary'); button?.click();
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length); button?.click();
         return {button: button?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
@@ -509,22 +509,22 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
       expression: `(() => { const action = document.querySelector('.request-action');
         action.querySelector('.request-review button').click();
         return {reviewHidden: action.querySelector('.request-review').hidden,
-          button: action.querySelector('.primary').textContent,
+          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length).textContent,
           status: action.querySelector('.request-feedback').textContent}; })()`,
     });
     const requestSelectionReady = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {button: action.querySelector('.primary')?.textContent,
-          disabled: action.querySelector('.primary')?.disabled}; })()`,
+        return {button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
+          disabled: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.disabled}; })()`,
     });
-    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    await send('Runtime.evaluate', { expression: `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     const reviewAfterSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         return {reviewVisible: !action.querySelector('.request-review')?.hidden,
-          button: action.querySelector('.primary')?.textContent,
+          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
           status: action.querySelector('.request-feedback')?.textContent}; })()`,
     });
-    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    await send('Runtime.evaluate', { expression: `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     await wait(250);
     const requestSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
@@ -594,7 +594,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(4_200);
     const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action?.querySelector('.primary'); button?.click();
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length); button?.click();
         return {button: button?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
@@ -603,7 +603,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        action?.querySelector('.primary')?.click();
+        [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.click();
         [...document.querySelectorAll('#detail button')]
           .find((button) => button.textContent === 'Retry loading details')?.click();
         return true; })()`,
@@ -611,7 +611,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     const reviewAfterRetry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {button: action?.querySelector('.primary')?.textContent,
+        return {button: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/20291') });
@@ -619,7 +619,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     const unlistedFilm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
         const message = document.querySelector('#detail')?.textContent;
-        const button = action?.querySelector('.primary');
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length);
         const label = button?.textContent;
         button?.click();
         return { message, action: label,
@@ -627,13 +627,13 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     });
     const unlistedFilmConfirm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
-        action?.querySelector('.primary')?.click();
-        return { saving: action?.querySelector('.primary')?.textContent }; })()`,
+        [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.click();
+        return { saving: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
     await wait(300); await settled();
     const unlistedFilmSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
-        return { button: action?.querySelector('.primary')?.textContent,
+        return { button: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent,
           feedback: action?.querySelector('.request-feedback')?.textContent,
           reviewHidden: action?.querySelector('.request-review')?.hidden }; })()`,
     });
@@ -641,26 +641,25 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     const filmChoiceReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action.querySelector('.primary');
+        const button = [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length);
         button.click();
         const select = action.querySelector('.film-request-choice select');
         select.value = '1001'; select.dispatchEvent(new Event('change'));
-        button.click();
-        select.value = '1002'; select.dispatchEvent(new Event('change'));
-        return { reviewHidden: action.querySelector('.request-review').hidden,
-          button: button.textContent,
-          summary: action.querySelector('.request-review p').textContent }; })()`,
+        return { dialogOpen: action.querySelector('dialog').open,
+          selected: select.value, button: [...action.querySelectorAll('dialog .primary')]
+            .find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
-    await send('Runtime.evaluate', { expression:
-      `document.querySelector('.request-action .primary').click()` });
     const filmChoiceConfirm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return { reviewHidden: action.querySelector('.request-review').hidden,
-          summary: action.querySelector('.request-review p').textContent,
-          button: action.querySelector('.primary').textContent }; })()`,
+        const select = action.querySelector('.film-request-choice select');
+        select.value = '1002'; select.dispatchEvent(new Event('change'));
+        return { dialogOpen: action.querySelector('dialog').open,
+          selected: select.value, selectedLabel: select.selectedOptions[0].textContent,
+          button: [...action.querySelectorAll('dialog .primary')]
+            .find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
     await send('Runtime.evaluate', { expression:
-      `document.querySelector('.request-action .primary').click()` });
+      `[...document.querySelectorAll('.request-action dialog .primary')].find(button=>button.getClientRects().length).click()` });
     await wait(250);
     const filmChoiceSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
@@ -1653,13 +1652,11 @@ test('signed-in consumer routes render real shell with search, library and reque
       assert.equal(mobile.unlistedFilmSaved.button, 'Requested');
       assert.equal(mobile.unlistedFilmSaved.reviewHidden, true);
       assert.match(mobile.unlistedFilmSaved.feedback, /saved|waiting/i);
-      assert.deepEqual(mobile.filmChoiceReview, {
-        reviewHidden: true, button: 'Request selected film',
-        summary: 'Two-part film · main film entry 1 · Part One' });
-      assert.deepEqual(mobile.filmChoiceConfirm, {
-        reviewHidden: false,
-        summary: 'Two-part film · main film entry 2 · Part Two',
-        button: 'Confirm request' });
+      assert.deepEqual(mobile.filmChoiceReview, { dialogOpen: true,
+        selected: '1001', button: 'Save automatic request' });
+      assert.deepEqual(mobile.filmChoiceConfirm, { dialogOpen: true,
+        selected: '1002', selectedLabel: 'Episode 2 · Part Two',
+        button: 'Save automatic request' });
       assert.equal(mobile.filmChoiceSaved.reviewHidden, true);
       assert.match(mobile.filmChoiceSaved.feedback, /Request #7 saved/);
       assert.equal(mobile.filmChoiceSaved.view, 'View in My Requests →');
@@ -1669,6 +1666,8 @@ test('signed-in consumer routes render real shell with search, library and reque
         body.scope === 'installment'), 'partial season requests its missing episodes');
       assert.ok(!submittedRequests.some((body) => body.anidbId === 44),
         'already available season cannot be submitted');
+      assert.equal(submittedRequests.filter(body => body.anidbId === 10).length, 1,
+        'changing film selection never submits or duplicates a request');
       assert.ok(submittedRequests.some((body) => body.anidbId === 10 &&
         body.scope === 'episodes' && body.episodeIds?.length === 1 &&
         body.episodeIds[0] === 1002), 'reviewed film entry reaches the request API');

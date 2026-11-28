@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {element,descendants} from './helpers/controller-dom.mjs';
 import {createResponseEpoch} from '../src/web/public/response-epoch.mjs';
 import {createRequestController} from '../src/web/public/request-controller.mjs';
+import {makeReleaseActions} from '../src/web/public/release-dialog.mjs';
 import {createSeriesRequestController} from '../src/web/public/series-request-controller.mjs';
 
 test('paused preparation renders an administrator resolution instead of an episode-list wait',async()=>{
@@ -15,7 +16,7 @@ test('paused preparation renders an administrator resolution instead of an episo
 
 test('multi-season paused response remains an actionable message rather than a raw reason',async()=>{
  const panel=element(),heading=element('h2'),data={state:'details',kind:'series',anidbId:42,regularSeason:{total:1,verified:0},episodes:[],nextPage:null};panel.append(heading);
- const view={data,pager:{episodes:[],nextPage:null},item:{anidbId:42,title:'Title'},panel,relatedHeading:heading,element,document:{createElement:element},state:{user:{id:7},releaseSearch:false},
+ const view={makeReleaseActions,data,pager:{episodes:[],nextPage:null},item:{anidbId:42,title:'Title'},panel,relatedHeading:heading,element,document:{createElement:element},state:{user:{id:7},releaseSearch:false},
   detailActionRow:(...nodes)=>{const row=element();row.append(...nodes);return row},family:{items:()=>[{anidbId:42,title:'Title'}],next:()=>null},relatedDetails:{peek:()=>null},
   isCurrentDetail:()=>true,preferredDisplayTitle:item=>item.title,titleLabel:item=>element('span',item.title),requestKeys:{pending:()=> 'key',rejected(){},saved(){}},sessionResponses:createResponseEpoch(),
   api:async()=>({items:[{anidbId:42,status:409,result:{state:'held',reason:'watch_paused_elsewhere'}}]})};

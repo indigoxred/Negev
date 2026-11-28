@@ -86,3 +86,24 @@ test('a request saved during the final coverage read wins over newly positive ow
  const opened=await sessions.open(x.input),id=sessions.access(opened.previewId,7),found=await sessions.selection.search(id);
  const result=await sessions.command(opened.previewId,7,{action:'choose',revision:1,token:found.items[0].token});assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(result.requestId,committed.requestId);assert.equal(result.created,false);assert.deepEqual(x.wakes,[]);assert.equal(x.requests.listRequests({requesterId:7}).items.length,1);
 });
+
+test('closing abandoned previews reclaims quota without saving requests or affecting another owner',async t=>{
+ const x=await fixture(t);
+ for(let i=0;i<15;i++){
+  const {opened}=await x.open({...x.input,requestKey:'abandoned-'+i});
+  assert.equal(x.sessions.close(opened.previewId,8).reason,'release_preview_missing');assert.ok(x.sessions.access(opened.previewId,7));
+  assert.equal(x.sessions.close(opened.previewId,7).state,'closed');assert.equal(x.sessions.access(opened.previewId,7),null);
+ }
+ assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);
+});
+
+test('a newly created preview is closed when its initiating route has changed',async t=>{
+ const {createReleaseController}=await import('../src/web/public/release-controller.mjs'),{createResponseEpoch}=await import('../src/web/public/response-epoch.mjs');
+ const x=await fixture(t),location={hash:'#/title/42'},state={user:{id:7},releaseSearch:true};let shown=0;
+ const controller=createReleaseController({state,location,sessionResponses:createResponseEpoch(),dialog:{open(){shown++},close(){}},preferredDisplayTitle:item=>item.title,message(){},api:async(url,options)=>{
+  if(url==='/api/release-previews'){const result=await x.sessions.open(JSON.parse(options.body));location.hash='#/requests';return result;}
+  if(url.endsWith('/close'))return x.sessions.close(url.split('/')[3],7);throw Error('unexpected '+url);
+ }});
+ for(let i=0;i<15;i++){location.hash='#/title/42';await controller.openPreviewReleaseRequests([{title:'Title',body:{...x.input,requestKey:'navigated-'+i},saved(){}}]);}
+ assert.equal(shown,0);assert.equal((await x.sessions.open({...x.input,requestKey:'new-dialog'})).state,'preview');assert.equal(x.requests.countRequests(),0);
+});
