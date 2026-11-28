@@ -81,8 +81,6 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
         excludedFileNames: selection.excludedFileNames, expectedFiles: selection.files });
     }
     if (observed.state === 'manifest_needs_exclusions') {
-      const access = await checkAcquisitionAccess(authorizeRequest, { attemptId, requestId: attempt.requestId });
-      if (access.state === 'held') return access;
       try {
         if (typeof verifyStagingRoot === 'function') {
           if ((await verifyStagingRoot())?.state !== 'verified_staging_root') return held('staging_root_unverified');
@@ -93,6 +91,8 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
           if (await realpathImpl(stagingHostPath)!==stagingHostPath) return held('staging_path_not_canonical');
         }
       } catch { return held('staging_root_unverified'); }
+      const access = await checkAcquisitionAccess(authorizeRequest, { attemptId, requestId: attempt.requestId });
+      if (access.state === 'held') return access;
       const body = new URLSearchParams({ hash: pending.hash,
         id: observed.passive.map((file) => String(file.index)).join('|'),
         priority: '0' });

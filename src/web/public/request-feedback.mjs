@@ -31,3 +31,16 @@ export function savedRequestMessage(saved) {
   }
   return `${receipt} ${hasId ? 'View its progress' : 'Follow it'} under My Requests.`;
 }
+
+export function preparationPresentation(item) {
+  if(item.reason==='watch_paused_elsewhere')return {heading:'Watching is paused',body:requestFailureMessage(item)};
+  if(item.state==='complete'){
+    if(item.reason==='already_available')return {heading:'Already available',body:'Already available in Negev’s Library.'};
+    if(item.reason==='already_monitored_elsewhere')return {heading:'Already monitored',body:requestFailureMessage(item)};
+    if(item.reason==='ambiguous_movie_scope')return {heading:'Choose a film part',body:'Choose a film part on the title page to request it.'};
+    return {heading:'Preparation finished',body:'This title could not be requested automatically.'};
+  }
+  if(item.state==='resolving')return {heading:'Finishing the request',body:'Finishing the request. Cancellation is unavailable during this step.'};
+  if(item.reason==='release_state_unknown')return {heading:'Checking catalogue release dates',body:'Negev cannot confirm this title’s release timing yet. No download has started.'};
+  return {heading:'Preparing episode details',body:'Waiting for a verified episode list before any download.'};
+}

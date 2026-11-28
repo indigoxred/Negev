@@ -1,10 +1,14 @@
 import { requestPresentation, requestNeedsReleaseChoice, requestHasPendingAcquisition, requestCanEditReleasePreference } from './request-progress-text.mjs';
-import { requestFailureMessage } from './request-feedback.mjs';
+import { requestFailureMessage, preparationPresentation } from './request-feedback.mjs';
 import { watchingNextAirLabel } from './episode-schedule.mjs';
 import { titleRoute, requestRoute } from './consumer-route.mjs';
 
 // Owns request lists, preparation history and request status rendering. Construction does not register event handlers.
 export function createRequestController({ api, byId, element, message, posterImage, preferredDisplayTitle, releaseDialog, requestResponses, restoreRoutePosition, sessionResponses, state, titleLabel, document = globalThis.document, window = globalThis.window }) {
+  function requestArtwork(item){
+    const frame=element('span',undefined,'request-art poster-frame');
+    frame.append(posterImage(item));return frame;
+  }
   function expandedRequestDetails(list) {
     return new Map([...list.querySelectorAll('.request-row[data-request-id]')]
       .map(row => [row.dataset.requestId,
@@ -56,7 +60,7 @@ export function createRequestController({ api, byId, element, message, posterIma
         const row = element('div', undefined, 'request-row request-entry');
         row.dataset.requestId=String(item.id);
         row.dataset.recentPage = String(!append);
-        row.append(posterImage(item));
+        row.append(requestArtwork(item));
         const heading = element('div',undefined,'request-heading');
         const targetCount = item.episodeIds.length;
         const requestedScope = item.kind === 'movie'
@@ -114,6 +118,7 @@ export function createRequestController({ api, byId, element, message, posterIma
           const cancel = element('button', 'Cancel request', 'quiet');
           cancel.type = 'button';
           cancel.addEventListener('click', async () => {
+            if(!window.confirm('Cancel this request? Existing files stay in place.'))return;
             cancel.disabled = true;
             try {
               await api(`/api/requests/${item.id}/cancel`, {
@@ -368,12 +373,10 @@ export function createRequestController({ api, byId, element, message, posterIma
       for (const item of page.items) {
         if (item.state === 'cancelled') continue;
         const row = element('div', undefined, 'request-row');
-        row.append(posterImage(item));
+        row.append(requestArtwork(item));
         const heading = element('div');
-        heading.append(titleLabel(item),
-          element('small', item.reason === 'watch_paused_elsewhere' || item.state === 'complete' && item.reason === 'already_monitored_elsewhere'
-            ? requestFailureMessage(item) : item.reason === 'release_state_unknown'
-            ? 'Checking catalogue release dates' : 'Preparing episode details'),
+        const presentation=preparationPresentation(item);
+        heading.append(titleLabel(item),element('small',presentation.heading),
           element('small', `Requested by ${item.requesterName || 'your account'}`));
         const open = element('a', 'View title →', 'text-link');
         open.href = titleRoute(item.anidbId);
@@ -382,6 +385,7 @@ export function createRequestController({ api, byId, element, message, posterIma
           const cancel = element('button', 'Cancel request', 'quiet');
           cancel.type = 'button';
           cancel.addEventListener('click', async () => {
+            if(!window.confirm('Cancel this request? No download has started.'))return;
             cancel.disabled = true;
             try {
               await api(`/api/request-preparations/${item.id}/cancel`, {
@@ -392,18 +396,7 @@ export function createRequestController({ api, byId, element, message, posterIma
           });
           heading.append(cancel);
         }
-        row.append(heading, element('p', item.reason === 'watch_paused_elsewhere' ? requestFailureMessage(item) : item.state === 'complete'
-          ? item.reason === 'already_available'
-            ? 'Already available in Negev’s Library.'
-            : item.reason === 'ambiguous_movie_scope'
-              ? 'Choose a film part on the title page to request it.'
-              : 'This title could not be requested automatically.'
-          : item.state === 'resolving'
-            ? 'Finishing the request. Cancellation is unavailable during this step.'
-            : item.reason === 'release_state_unknown'
-              ? 'Negev cannot confirm this title’s release timing yet. No download has started.'
-              : 'Waiting for a verified episode list before any download.',
-        'muted'));
+        row.append(heading,element('p',presentation.body,'muted'));
         rows.append(row);
       }
       state.nextBeforeId.preparing = page.nextBeforeId;

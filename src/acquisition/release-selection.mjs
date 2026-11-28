@@ -16,8 +16,7 @@ export function publicRelease(c) {
     hint.kind==='advertised_pack'?'Season pack advertised; inspect file coverage':'Coverage unknown; inspect files';
   return {guid:c.guid,indexerId:c.indexerId,title,size:c.size,seeders:c.seeders??null,
     evidence:'unverified',group:facts.group??'Not advertised',
-    source:/\b(?:BD(?:rip|remux)?|Blu[ ._-]?ray)\b/i.test(title)?'Blu-ray':
-      /\bDVD(?:rip)?\b/i.test(title)?'DVD':/\bWEB(?:[ ._-]?DL|rip)?\b/i.test(title)?'WEB':'Not advertised',
+    source:facts.source==='BD'?'Blu-ray':facts.source??'Not advertised',
     resolution:facts.resolution,coverage,coverageKind:hint.kind,audio:facts.audio,audioLabel:facts.audioLabel,
     qualityLabel:[facts.source,facts.resolution?`${facts.resolution}p`:null].filter(Boolean).join(' ')||'Not specified',
     indexer:typeof c.indexer==='string'?c.indexer.slice(0,120):`Indexer ${c.indexerId}`,

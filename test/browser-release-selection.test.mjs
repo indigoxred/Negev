@@ -21,7 +21,7 @@ const element=(tag,text,cls)=>{const e=document.createElement(tag);if(text!==und
 const candidate={guid:'one',indexerId:1,title:'[Group] Example WEB 1080p',group:'Group',source:'WEB',resolution:1080,size:1000,seeders:20,indexer:'Test Nyaa',coverage:'Inspect coverage',languageHints:'Languages not advertised',eligible:true,token:'receipt'};
 const preview={torrentHash:'a'.repeat(40),episodeIds:[1],files:[{name:'Example 01.mkv',size:1000,episodeIds:[1]}],correspondence:{files:[{name:'Example 01.mkv',size:1000,state:'unknown'}]}};
 const selection={candidate,preview,registration:'unknown'};
-let holdInspection=false,releaseInspection;let inspectionFailure="torrent_preflight_unavailable",inspectionCalls=0;let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[],lastPreferenceAudio=null;
+let holdInspection=false,releaseInspection;let inspectionFailure="torrent_preflight_unavailable",inspectionCalls=0;let holdExistingRead=false,releaseExistingRead;let previewWrites=0,previewCommands=[],previewSaved=null,completedMode=false,delegatedMode=false,alternativeRegistration='likely';let searchUrls=[],lastPreferenceAudio=null;
 let control={mode:'manual',phase:'selecting',revision:1},autoCalls=0,chooseCalls=0,decision=null,failedMore=false,preferredFlag=false;
 const api=async(url,options={})=>{
  if(url.split('?')[0].endsWith('/release-choice')&&!options.method&&holdExistingRead)return new Promise((resolve,reject)=>{releaseExistingRead={resolve,reject};});
@@ -31,7 +31,7 @@ const api=async(url,options={})=>{
  if(url.includes('/releases'))return url.includes('offset=50')
    ?{state:'candidates',items:[{...candidate,guid:'two',title:'[Another] Example WEB 1080p',token:'second'}],nextOffset:null,confirmedAiring:!completedMode,completedSeries:completedMode}
    :{state:'candidates',items:[candidate],nextOffset:50,confirmedAiring:!completedMode,completedSeries:completedMode};
- const body=JSON.parse(options.body);if(url.includes('/release-previews/'))previewWrites++;
+ const body=JSON.parse(options.body);if(url.includes('/release-previews/')){previewWrites++;previewCommands.push({url,action:body.action??'close'});}
  if(body.action==='inspect'){inspectionCalls++;if(holdInspection)return new Promise((resolve,reject)=>{releaseInspection={resolve,reject};});if(inspectionFailure){const reason=inspectionFailure;inspectionFailure=false;throw Object.assign(Error('Transient inspection failed'),{reason});}}
  if(body.action==='inspect')return {state:'preflight',requestId:Number.MAX_SAFE_INTEGER,...preview};
  if(body.action==='preference'){lastPreferenceAudio=body.audio;control={...control,preference:body.group?{group:body.group,audio:body.audio}:null,revision:control.revision+1};}
@@ -107,10 +107,13 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  document.querySelector('dialog .release-preference-editor').open=true;click('Clear preference');await tick();
  const draftPreferenceUnsubmitted=previewSaved===null;
  click('Close');await tick();
- const abandonedPreview=previewWrites===1&&previewSaved===null;
+ const abandonedPreviewActions=previewCommands.map(c=>({...c}));
+ const abandonedPreview=previewSaved===null&&abandonedPreviewActions.length===2&&abandonedPreviewActions[0].action==='preference'&&abandonedPreviewActions[1].action==='close'&&abandonedPreviewActions[1].url==='/api/release-previews/preview-token/close';
  await draftDialog.open({previewId:'preview-token',title:'Preview',mode:'manual'});
  click('Pick');await tick();
  const committedPreview=previewSaved?.requestId===42&&previewSaved?.previewId==='preview-token'&&Boolean(document.querySelector('dialog a[href="#/requests?requestId=42"]'));
+ // Factory close finishes cleanup before the next read-only search;
+ // a later native close event must not introduce a duplicate write.
  draftDialog.close();
  const beforePack=previewWrites;completedMode=true;control={mode:'manual',phase:'selecting',revision:1};searchUrls=[];
  await draftDialog.open({previewId:'pack-preview',title:'Completed Example',mode:'manual'});
@@ -145,7 +148,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
   await tick();holdInspection=false;
   lateInspectionGuard&&=document.querySelector('dialog').textContent.includes('Grab better release')&&document.querySelector('[role=status]').textContent.includes('better release')&&!document.querySelector('[role=status]').textContent.includes('Late inspection failure');dialog.close();
  }
- document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,futurePreferences,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback,preferenceLoadingSafe,preferenceOnly,preferenceAudioPreserved,preferenceNoAcquisition});
+ document.querySelector('#result').textContent=JSON.stringify({requestModes,manualHasNoPrompt,recoveredPage,paged,survived,unknownGrey,noInspectionLoop,sameResultRetry,expiredInspectionNoRetry,lateInspectionGuard,coverage,compact,defaults,saved,savedLink,autoFeedback,futurePreferences,prompt,confirmedPrompt,unknownPrompt,existingSuccess:Boolean(existingSuccess),existingLoadingSafe,existingReadRecovery,decision,autoCalls,closed,abandonedPreview,abandonedPreviewActions,draftPreferenceUnsubmitted,committedPreview,preferredFlag,airingPackHidden,packDefault,filterReset,packPage,packReadOnly,groupFeedback,preferenceLoadingSafe,preferenceOnly,preferenceAudioPreserved,preferenceNoAcquisition});
 })().catch(e=>{document.querySelector('#result').textContent='ERROR '+e.stack;});
 </script>`;
       const file=join(dir,'test.html');writeFileSync(file,html);
@@ -155,7 +158,7 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
       const match=dom.match(/<pre id="result">([^<]+)<\/pre>/);assert.ok(match,dom.slice(-600));
       assert.ok(!match[1].startsWith('ERROR'),match[1]);
       const result=JSON.parse(match[1].replaceAll('&quot;','"'));
-      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,futurePreferences:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true,preferenceLoadingSafe:true,preferenceOnly:true,preferenceAudioPreserved:true,preferenceNoAcquisition:true});
+      assert.deepEqual(result,{requestModes:true,manualHasNoPrompt:true,recoveredPage:true,paged:true,survived:true,unknownGrey:true,noInspectionLoop:true,sameResultRetry:true,expiredInspectionNoRetry:true,lateInspectionGuard:true,coverage:true,compact:true,defaults:true,saved:true,savedLink:true,autoFeedback:true,futurePreferences:true,prompt:true,confirmedPrompt:true,unknownPrompt:true,existingSuccess:true,existingLoadingSafe:true,existingReadRecovery:true,decision:'registered',autoCalls:5,closed:true,abandonedPreview:true,abandonedPreviewActions:[{url:'/api/release-previews/preview-token/release-choice',action:'preference'},{url:'/api/release-previews/preview-token/close',action:'close'}],draftPreferenceUnsubmitted:true,committedPreview:true,preferredFlag:true,airingPackHidden:true,packDefault:true,filterReset:true,packPage:true,packReadOnly:true,groupFeedback:true,preferenceLoadingSafe:true,preferenceOnly:true,preferenceAudioPreserved:true,preferenceNoAcquisition:true});
     }finally{rmSync(dir,{recursive:true,force:true});}
 });
 

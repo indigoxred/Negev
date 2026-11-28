@@ -1,4 +1,4 @@
-import { catalogueRetryAt, withCatalogueRetry } from './catalogue-retry.mjs';
+import { catalogueRetryAt } from './catalogue-retry.mjs';
 import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 
 const normalize = value => typeof value === 'string' ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase() : '';

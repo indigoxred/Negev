@@ -1145,7 +1145,7 @@ details.request-group:not([open])>.request-group-rows {
   min-width:0
 }
 
-.request-row>img {
+.request-row>.request-art {
   width:52px;
   height:78px;
   object-fit:cover;
@@ -1854,7 +1854,7 @@ details.request-group:not([open])>.request-group-rows {
     padding:13px;
     gap:8px 12px
   }
-  .request-row>img {
+  .request-row>.request-art {
     width:48px;
     height:72px;
     grid-row:1/span 3
@@ -2930,7 +2930,7 @@ main {
   .request-row strong {
     font-size:15px
   }
-  .request-row>img {
+  .request-row>.request-art {
     grid-row:1/span 3
   }
   .request-status {
@@ -3585,7 +3585,7 @@ main {
     gap:12px;
     padding:16px
   }
-  .request-row>img {
+  .request-row>.request-art {
     grid-column:1;
     grid-row:1;
     align-self:start;
@@ -3843,3 +3843,5 @@ main {
 .menu-switch:disabled::after {
   opacity:.4
 }
+
+.request-art:has(img.missing-art)::after { font-size:9px;line-height:1.2;padding:3px }

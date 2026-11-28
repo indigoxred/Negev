@@ -1,3 +1,4 @@
+import {normalizeManagedRelativePath} from './shoko-folder-path.mjs';
 import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mjs';
 import { normalizeShokoFile } from './shoko-file-page.mjs';
 
@@ -28,7 +29,7 @@ export async function readShokoOneFile({ baseUrl, apiKey, fileId,
     const item = normalizeShokoFile(raw);
     const observedPaths=includePaths&&Array.isArray(raw?.Locations)&&raw.Locations.length<=20
       ? raw.Locations.filter(l=>l?.FileID===fileId&&l.IsAccessible===true&&Number.isSafeInteger(l.ManagedFolderID)&&l.ManagedFolderID>0&&typeof l.RelativePath==='string')
-        .map(l=>({ManagedFolderID:l.ManagedFolderID,RelativePath:l.RelativePath.replace(/^\//,'')})) : [];
+        .map(l=>({ManagedFolderID:l.ManagedFolderID,RelativePath:normalizeManagedRelativePath(l.RelativePath)})).filter(l=>l.RelativePath!==null) : [];
     return item?.fileId === fileId ? { state: 'file', item, ...(includePaths?{observedPaths}:{}) } : { state: 'unavailable' };
   } catch { return { state: 'unavailable' }; }
 }

@@ -9,3 +9,18 @@ for(const committed of [false,true])test('closing a release dialog releases only
   assert.equal(calls.filter(call=>call.url==='/api/release-previews/draft-token/close').length,committed?0:1);
  }finally{globalThis.document=original}
 });
+
+test('programmatic preview close completes cleanup before a delayed native close event',async()=>{
+ const original=globalThis.document,calls=[],dialogs=[];
+ const make=(...args)=>{const node=element(...args);if(args[0]==='dialog'){node.close=()=>{node.open=false;};dialogs.push(node);}return node;};
+ globalThis.document={body:element('body'),createElement:make};
+ try{
+  const picker=createReleaseDialog({element:make,api:async(url,options)=>{calls.push({url,options});throw Error('synthetic unavailable');}});
+  await picker.open({previewId:'old-draft',title:'Old'});picker.close();
+  assert.equal(calls.filter(c=>c.url==='/api/release-previews/old-draft/close').length,1,'cleanup cannot depend on a later rendering/native-close event');
+  await picker.open({previewId:'new-draft',title:'New'});await dialogs[0].emit('close');
+  assert.equal(calls.filter(c=>c.url==='/api/release-previews/old-draft/close').length,1,'late event cannot close twice');
+  assert.equal(calls.filter(c=>c.url==='/api/release-previews/new-draft/close').length,0,'late old event cannot abandon current draft');
+  picker.close();assert.equal(calls.filter(c=>c.url==='/api/release-previews/new-draft/close').length,1);
+ }finally{globalThis.document=original;}
+});

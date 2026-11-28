@@ -28,6 +28,9 @@ const run = (args) => spawnSync(process.execPath, ['--test', ...args],
 let failed = false;
 if (mode !== 'browser') failed = run(files.filter((file) => !isBrowser(file))) !== 0;
 if (mode !== 'unit') {
-  for (const file of files.filter(isBrowser)) failed = run([file]) !== 0 || failed;
+  // Give the short release-dialog regressions feedback before the long shell fixture.
+  const priority=file=>file==='test/browser-release-selection.test.mjs'?0:1;
+  const browserFiles=files.filter(isBrowser).sort((a,b)=>priority(a)-priority(b));
+  for (const file of browserFiles) failed = run([file]) !== 0 || failed;
 }
 process.exitCode = failed ? 1 : 0;

@@ -18,16 +18,17 @@ class Node {
   addEventListener(name, listener) { this.listeners[name] = listener; }
 }
 function fixture() {
-  const panel = new Node('section'), reads = new Map(), nodes = [];
+  const panel = new Node('section'), reads = new Map(), nodes = [],document={createElement:tag=>new Node(tag),title:'Negev · Title'};
   const state = { user: null, showAdult: true, searchItems: new Map(), detailHydrationQueued: new Set() };
   const controller = createDetailController({ state, byId: () => panel, displayCache: new Map(),
     element: (...args) => { const node = new Node(...args); nodes.push(node); return node; }, posterImage: () => new Node('img'),
-    titleLabel: item => new Node('h1', item.title), makeTrackButton: () => new Node('button'),
+    titleLabel: (item,{className}={}) => new Node('h1', state.preferEnglish&&item.englishTitle||item.title,className),
+    preferredDisplayTitle:item=>state.preferEnglish&&item.englishTitle||item.title, makeTrackButton: () => new Node('button'),
     pendingTitleAction: () => null, updateTrackControls() {}, requestAnimationFrame() {},
-    document: { createElement: tag => new Node(tag) },
+    document,
     setTimeout, clearTimeout, applyAdultVisibility() {},
     api: url => { const read = deferred(); reads.set(url, read); return read.promise; } });
-  return { controller, panel, reads, state, nodes };
+  return { controller, panel, reads, state, nodes,document };
 }
 test('invalidating detail work prevents both metadata and episode replies from replacing the page', async () => {
   const x = fixture(), pending = x.controller.showDetail({ anidbId: 1, title: 'Old' });
@@ -84,4 +85,27 @@ test('a previous title failure cannot replace the newer title or add its retry b
   x.reads.get('/api/catalogue/2').resolve({});
   await current;
   assert.deepEqual(x.panel.children, snapshot);
+});
+
+test('a current title read names the browser tab and a late old read cannot replace it',async()=>{
+ const x=fixture(),old=x.controller.showDetail({anidbId:1,title:'Anime 1'}),current=x.controller.showDetail({anidbId:2,title:'Anime 2'});
+ x.reads.get('/api/catalogue/2/display').resolve(null);x.reads.get('/api/catalogue/2').resolve({state:'detail_pending',anidbId:2,title:'Current anime',restricted:false});await current;
+ assert.equal(x.document.title,'Negev · Current anime');x.reads.get('/api/catalogue/1/display').resolve(null);x.reads.get('/api/catalogue/1').resolve({state:'detail_pending',anidbId:1,title:'Old anime',restricted:false});await old;
+ assert.equal(x.document.title,'Negev · Current anime');x.controller.invalidate();
+});
+
+
+test('detail tab resets before unverified reads and follows late allowed English metadata',async()=>{
+ const x=fixture();x.state.user={id:1,adultAllowed:true};x.state.preferEnglish=true;x.document.title='Negev · Previous private title';
+ const pending=x.controller.showDetail({anidbId:1,title:'Anime 1'});assert.equal(x.document.title,'Negev · Title');
+ x.reads.get('/api/catalogue/1').resolve({state:'detail_pending',anidbId:1,title:'Private original',restricted:true,requestsOpen:false});await pending;
+ x.reads.get('/api/catalogue/1/display').resolve({state:'display',restricted:true,englishTitle:'Private English'});await new Promise(r=>setImmediate(r));
+ assert.equal(x.document.title,'Negev · Private English');
+ x.state.showAdult=false;const hidden=x.controller.showDetail({anidbId:1,title:'Private original'});assert.equal(x.document.title,'Negev · Title');
+ x.reads.get('/api/catalogue/1').resolve({state:'detail_pending',anidbId:1,title:'Private original',restricted:true});await hidden;assert.equal(x.document.title,'Negev · Title');x.controller.invalidate();
+});
+
+test('title preference cannot copy an unvalidated loading title into the tab',async()=>{
+ const {createViewHelpers}=await import('../src/web/public/view-helpers.mjs');const document={title:'Negev · Title',querySelectorAll:()=>[],querySelector:()=>({textContent:'Unvalidated sensitive title'})};
+ createViewHelpers({document,state:{routePage:'title',showAdult:false,preferEnglish:true},byId:()=>({setAttribute(){}})}).applyTitlePreference();assert.equal(document.title,'Negev · Title');
 });

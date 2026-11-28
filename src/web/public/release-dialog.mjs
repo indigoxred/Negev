@@ -16,14 +16,12 @@ export function makeReleaseActions(element, { onAuto, onManual }) {
 }
 export function createReleaseDialog({ api, element, onSaved = () => {} }) {
   let active = null;
-  const closeActive = () => {
-    const previous = active;
-    if (previous) {
-      previous.close();
-      previous.remove();
-      if (active === previous) active = null;
-    }
+  const cleanups=new WeakMap();
+  const closeDialog=dialog=>{
+    dialog.close();
+    cleanups.get(dialog)?.();
   };
+  const closeActive = () => { if(active)closeDialog(active); };
   const errorText = (e) =>
     ({
       torrent_preflight_unavailable:
@@ -73,7 +71,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
     );
     const header = element('div', undefined, 'season-request-popup-heading');
     const close = element('button', 'Close', 'quiet');
-    close.addEventListener('click', () => dialog.close());
+    close.addEventListener('click', () => closeDialog(dialog));
     header.append(element('h2', title), close);
     const status = element(
       'p',
@@ -161,7 +159,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
     if (next) {
       const nextButton = element('button', 'Next selected installment', 'quiet');
       nextButton.addEventListener('click', () => {
-        dialog.close();
+        closeDialog(dialog);
         next();
       });
       dialog.append(nextButton);
@@ -172,15 +170,17 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
     }
     document.body.append(dialog);
     dialog.showModal();
-    dialog.addEventListener(
-      'close',
-      () => {
-        if (active === dialog) active = null;
-        dialog.remove();
-        if(previewId&&!requestId)void api('/api/release-previews/'+previewId+'/close',{method:'POST',body:'{}'}).catch(()=>{});
-      },
-      { once: true },
-    );
+    let cleaned=false;
+    const cleanup=()=>{
+      if(cleaned)return;
+      cleaned=true;cleanups.delete(dialog);
+      evidenceQueue.clear();clearTimeout(expiryTimer);
+      if(active===dialog)active=null;
+      dialog.remove();
+      if(previewId&&!requestId)void api('/api/release-previews/'+previewId+'/close',{method:'POST',body:'{}'}).catch(()=>{});
+    };
+    cleanups.set(dialog,cleanup);
+    dialog.addEventListener('close',cleanup,{once:true});
     let control,
       busy = false,
       version = 0,
@@ -191,13 +191,11 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
       searchStatus = '',
       statusOwner = null;
     const evidenceQueue = createVisibleReleaseInspectionQueue({ root: dialog });
-    dialog.addEventListener('close', () => evidenceQueue.clear(), { once: true });
     const shown = new Set();
     let confirmedAiring = false,
       completedSeries = false,
       preferredWait = null,
       preferenceInitialized = false;
-    dialog.addEventListener('close', () => clearTimeout(expiryTimer), { once: true });
     const current = () => dialog.isConnected && active === dialog;
     const basePath = () =>
       requestId ? `/api/requests/${requestId}` : `/api/release-previews/${previewId}`;
@@ -360,7 +358,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
         );
         const view = element('a', 'View request', 'button primary');
         view.href = '#/requests?requestId=' + requestId;
-        view.addEventListener('click', () => dialog.close());
+        view.addEventListener('click', () => closeDialog(dialog));
         results.append(view);
         expiryTimer = setTimeout(async () => {
           if (!current()) return;
@@ -390,7 +388,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
         );
         const view = element('a', 'View request', 'button primary');
         view.href = '#/requests?requestId=' + requestId;
-        view.addEventListener('click', () => dialog.close());
+        view.addEventListener('click', () => closeDialog(dialog));
         results.append(view);
         if (control?.selection) {
           const details = element('details', undefined, 'receipt-details');
@@ -495,7 +493,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
         );
         const view = element('a', 'View request', 'button primary');
         view.href = `#/requests?requestId=${requestId}`;
-        view.addEventListener('click', () => dialog.close());
+        view.addEventListener('click', () => closeDialog(dialog));
         results.append(view);
         const details = element('details', undefined, 'receipt-details');
         details.append(
@@ -534,7 +532,7 @@ export function createReleaseDialog({ api, element, onSaved = () => {} }) {
         status.className = 'release-confirmation';
         const view = element('a', 'View request', 'button primary');
         view.href = `#/requests?requestId=${requestId}`;
-        view.addEventListener('click', () => dialog.close());
+        view.addEventListener('click', () => closeDialog(dialog));
         results.append(view);
       }
       if (submitted) receiptPreferences();

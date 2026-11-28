@@ -38,11 +38,13 @@
 ## Remaining batches — Execute in the approved order
 
 2. [x] Recovery: uncertain operator removals; renamed publications, alternate locations, first-read proof invalidation and multipart proof attribution; supported legacy publish replay. Reproduce each condition first.
-3. [ ] Operations: generic exception responses, ordered shutdown after failures, recent scanner initialization/status and orphan retirement, pure-move retirement CLI.
-4. [ ] Artwork and guidance: small icon assets, cold-request compression cost, accurate legacy/pure-move mount examples.
-5. [ ] Account/request lifecycle: paused-watch sponsorship with one effective owner, settled refusals on deletion, cancelled preparation replay and legacy promotion receipts.
-6. [ ] Member workflows: chooser continuation/capabilities, preview lifecycle, mixed Auto reviews, signed-out update preservation, invitation pagination, safe history and tracked-title display facts.
-7. [ ] Performance: actual invalidation indexes and optional metadata outside history's access-decision critical path.
-8. [ ] Cleanup/polish: subtitle sidecars, single folder normalization, preparation/source labels, title tabs, cancellation interaction, missing artwork, measured asset loading and proven-unused code/dependency cleanup. Keep compatibility evidence and all safety checks.
+3. [x] Operations: generic exception responses, ordered shutdown after failures, recent scanner initialization/status and orphan retirement, pure-move retirement CLI.
+4. [x] Artwork and guidance: small icon assets, cold-request compression cost, accurate legacy/pure-move mount examples.
+5. [x] Account/request lifecycle: paused-watch sponsorship with one effective owner, settled refusals on deletion, cancelled preparation replay and legacy promotion receipts.
+6. [x] Member workflows: chooser continuation/capabilities, preview lifecycle, mixed Auto reviews, signed-out update preservation, invitation pagination, safe history and tracked-title display facts.
+7. [x] Performance: actual invalidation indexes and optional metadata outside history's access-decision critical path.
+8. [x] Cleanup/polish: subtitle sidecars, single folder normalization, preparation/source labels, title tabs, cancellation interaction, missing artwork, measured asset loading and proven-unused code/dependency cleanup. Keep compatibility evidence and all safety checks.
 
 Each remaining batch gets concrete file/interface/test details in the execution ledger after its failures are reproduced. Do not implement speculative cleanup solely from a static count.
+
+All component work and important review fixes are complete. Each merge still requires passing exact-tip CI. Installed rescan qualification, the unavailable external acceptance archive and the separately deferred hardlink case remain open. Font/preload changes and broad consolidation remain conditional on further measurement and behavior checks.

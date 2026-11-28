@@ -100,6 +100,7 @@ async function submitOwnedCandidate({
     const saved = ledger.recordTorrentSelection({ attemptId, hash: expected.hash,
       files: metainfo.files, excludedFileNames, nowMs });
     if (saved.state !== 'selection_recorded') return saved;
+    if(saved.excludedFileNames)excludedFileNames=saved.excludedFileNames;
   } else if (excludedFileNames?.length) return held('selection_journal_unavailable');
 
   const headers = { Cookie: qbittorrentSessionCookie(sessionId) };
@@ -179,10 +180,10 @@ async function submitOwnedCandidate({
       plannedFileNames, excludedFileNames, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state === 'manifest_needs_exclusions') {
-    const access = await checkAcquisitionAccess(authorizeRequest, { attemptId });
-    if (access.state === 'held') return access;
     const isolation = await checkMounts();
     if (isolation.state !== 'isolated_mount') return isolation;
+    const access = await checkAcquisitionAccess(authorizeRequest, { attemptId });
+    if (access.state === 'held') return access;
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),
       priority: '0' });

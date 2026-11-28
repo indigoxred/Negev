@@ -60,8 +60,9 @@ test('settled watch ownership preparation explains completion without exposing a
    api:async()=>({items:[{state:'complete',reason:'already_monitored_elsewhere',title:'Example',anidbId:1}],nextBeforeId:null})
  });
  await controller.loadPreparations();
- const heading=nodes.find(el=>el.children[1]?.textContent==='Future episodes are already monitored. No second request is needed.');
+ const heading=nodes.find(el=>el.children[1]?.textContent==='Already monitored');
  assert.ok(heading);assert.equal(heading.children.some(x=>x.textContent?.includes('Preparing episode details')),false);
+ assert.ok(nodes.some(el=>el.textContent==='Future episodes are already monitored. No second request is needed.'));
 });
 
 test('cancelled episode and film-entry submissions rotate only the matching command key',async()=>{
