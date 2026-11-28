@@ -249,6 +249,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       if (!safe) return 403;
     }
     request.negevUser = user;
+    request.negevAccessOwnerAllowed = owner()?.adultAllowed === true;
     return null;
   };
   const deniedPayload = (reply, status, error = null) => {
@@ -290,6 +291,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (!/^\/api\/(?:catalogue|library|airing|seasons|requests|request-preparations|release-previews|admin\/review)/.test(route)) return payload;
     reply.header('Cache-Control', 'no-store');
     const releaseRoute = /\/(?:releases|release-choice|release-inspection)$/.test(route);
+    let requiresAdultAccess = user.adultAllowed === true;
     let target = null, ownerId = null;
     if (releaseRoute) {
       target = request.adultReleaseRequest?.anidbId;
@@ -310,13 +312,25 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (target !== null || releaseRoute) {
       const denied = await titleAccess(request, target, ownerId);
       if (denied) return deniedPayload(reply, denied);
+      requiresAdultAccess = request.negevUser.adultAllowed === true;
     }
+    const finalAccessError = () => {
+      if (user.adultAllowed !== true && requiresAdultAccess) return deniedPayload(reply, 403);
+      if (releaseRoute && ownerId !== null && ownerId !== user.id && typeof accounts.getActiveUser === 'function') {
+        const currentOwner = accounts.getActiveUser({ userId: ownerId });
+        if (!currentOwner || request.negevAccessOwnerAllowed && currentOwner.adultAllowed !== true)
+          return deniedPayload(reply, 403);
+      }
+      return null;
+    };
     let data;
     try { data = JSON.parse(payload); } catch {
       user = currentUser(request);
       if (!user) return deniedPayload(reply, 401);
       const scopeError = deniedScope();
       if (scopeError) return scopeError;
+      const accessError = finalAccessError();
+      if (accessError) return accessError;
       reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
       return payload;
     }
@@ -337,6 +351,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       const denied = await titleAccess(request, data.anidbId);
       if (denied === 401) return deniedPayload(reply, 401);
       if (denied) data = safeHistory(data);
+      requiresAdultAccess = !denied && request.negevUser.adultAllowed === true;
     }
     const history = route === '/api/requests' || route === '/api/request-preparations' ||
       route === '/api/admin/review';
@@ -353,6 +368,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       if (currentUser(request)?.adultAllowed !== true) {
         data = { ...data, items: classified.flatMap(({ item, safe }) =>
           safe ? [item] : history ? [safeHistory(item)] : []) };
+        requiresAdultAccess = false;
+      } else {
+        requiresAdultAccess = true;
       }
     }
     if (route === '/api/catalogue/search' && Array.isArray(data?.items)) {
@@ -362,12 +380,17 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         const items = data.items.filter(item => item.adult !== true)
           .map(item => item.adult === false ? item : { anidbId: item.anidbId });
         data = { ...data, items, hidden: (data.hidden ?? 0) + data.items.length - items.length };
+        requiresAdultAccess = false;
+      } else {
+        requiresAdultAccess = true;
       }
     }
     user = currentUser(request);
     if (!user) return deniedPayload(reply, 401);
     const scopeError = deniedScope();
     if (scopeError) return scopeError;
+    const accessError = finalAccessError();
+    if (accessError) return accessError;
     reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
     return JSON.stringify(data);
   });

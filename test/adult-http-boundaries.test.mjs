@@ -109,3 +109,9 @@ for (const [url,status] of [['/api/admin/review',403],['/api/requests?scope=all'
  classes.get=id=>{options.accounts.getSessionUser=input=>({...readUser(input),role:'member'});return readClass(id);};
  const response=await app.inject({url,headers});assert.equal(response.statusCode,status);assert.equal(response.body.includes('SECRET'),false);
 }));
+
+test('revocation during the final target authorization cannot return a previously captured detail payload',()=>fixture(async({app,headers,allow,options})=>{
+ allow(true);let reads=0;const original=options.accounts.getSessionUser;
+ options.accounts.getSessionUser=input=>{const value=original(input);if(++reads===4)allow(false);return value;};
+ const response=await app.inject({url:'/api/catalogue/2',headers});assert.equal(response.statusCode,403);assert.equal(response.body.includes('SECRET-2'),false);
+}));
