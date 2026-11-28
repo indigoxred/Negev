@@ -21,3 +21,14 @@ test('reads only the exact path suffix through supported Shoko API', async () =>
     '/pure/Import/Negev/01.mkv', ['AbsolutePaths', 'XRefs'],
     '100', 'Bearer private']]);
 });
+
+test('exact-ID nomination uses the same bounded raw file reader and rejects another ID', async () => {
+  const {readShokoFileById}=await import('../src/acquisition/shoko-path-file.mjs');
+  let reads=0;
+  const input={baseUrl:'http://shoko:8111',apiKey:'synthetic',fileId:81,
+    fetchImpl:async(url,init)=>{reads++;assert.equal(new URL(url).pathname,'/api/v3/File/81');assert.equal(init.method,'GET');return Response.json({ID:81,Size:5,Locations:[],SeriesIDs:[]});}};
+  assert.equal((await readShokoFileById(input)).items[0].ID,81);
+  assert.equal((await readShokoFileById({...input,fetchImpl:async()=>Response.json({ID:82})})).state,'unavailable');
+  await assert.rejects(()=>readShokoFileById({...input,sourcePath:'/pure/a.mkv'}),TypeError);
+  assert.equal(reads,1);
+});

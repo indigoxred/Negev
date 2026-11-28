@@ -177,3 +177,27 @@ for(const publishedPublic of [true,false]) test('recovery proves its journalled 
  if(!publishedPublic){assert.equal((await processShokoRescan({...options,ledger,nowMs:1060000})).state,'awaiting_plex');}
  }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
 });
+
+for (const prior of [false,true]) for (const wrongInode of [false,true]) test(`renamed publication uses exact episode nomination and physical identity (prior=${prior}, wrongInode=${wrongInode})`,async()=>{
+ const x=await fixture();let ledger=x.rescan;
+ try{
+  const video=x.files[0],dest=path.join(x.root,'Anime','A newly renamed title.mkv');
+  await mkdir(path.dirname(dest));
+  if(wrongInode)await writeFile(dest,Buffer.alloc(video.size,2));
+  else await rename(path.join(x.root,'original.mkv'),dest);
+  if(prior)ledger.observeFile({attemptId:x.attemptId,fileName:video.name,fileId:81,nowMs:300209});
+  ledger.close();ledger=openShokoRescanLedger(x.dbPath);
+  const item=ledger.listDue({nowMs:1000000})[0];item.manifest.files=[item.manifest.files[0]];
+  const raw={ID:81,Size:video.size,Locations:[{AbsolutePath:'/pure/Anime/A newly renamed title.mkv',IsAccessible:true}],
+    SeriesIDs:[{SeriesID:{ID:4,AniDB:42},EpisodeIDs:[{AniDB:1001}]}]};
+  let scans=0,nominations=0;
+  const result=await processShokoRescan({item,ledger,importRoot:path.join(x.root,'Import'),shokoMount:{localRoot:x.root,appRoot:'/pure'},nowMs:1000000,
+    readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async()=>[],
+    readFileById:async({fileId})=>{assert.equal(fileId,81);nominations++;return raw;},
+    findFileIds:async({anidbId,episodeId})=>{assert.equal(anidbId,42);assert.equal(episodeId,1001);return [81];},
+    rescan:async()=>{scans++;return{state:'accepted'}},verifyPlex:async()=>({state:'available',fileId:81})});
+  assert.equal(result.state,wrongInode?'awaiting_shoko':'linked',JSON.stringify(result));
+  if(!wrongInode){assert.equal(ledger.getAttemptStatus(x.attemptId),'done');assert.equal(ledger.getFile(x.attemptId,video.name).fileId,81);}
+  assert.ok(nominations>0);assert.equal(scans,0);assert.equal((await stat(dest)).size,video.size);
+ }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
+});
