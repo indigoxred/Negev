@@ -494,13 +494,13 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     })()` });
     const requestSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {route: location.hash, button: action.querySelector('.primary')?.textContent,
+        return {route: location.hash, button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
           chosen: [...action.querySelectorAll('.season-request-row input:checked')]
             .map(input => Number(input.closest('.season-request-row').dataset.anidbId))}; })()`,
     });
     const requestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action?.querySelector('.primary'); button?.click();
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length); button?.click();
         return {button: button?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
@@ -509,22 +509,22 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
       expression: `(() => { const action = document.querySelector('.request-action');
         action.querySelector('.request-review button').click();
         return {reviewHidden: action.querySelector('.request-review').hidden,
-          button: action.querySelector('.primary').textContent,
+          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length).textContent,
           status: action.querySelector('.request-feedback').textContent}; })()`,
     });
     const requestSelectionReady = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {button: action.querySelector('.primary')?.textContent,
-          disabled: action.querySelector('.primary')?.disabled}; })()`,
+        return {button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
+          disabled: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.disabled}; })()`,
     });
-    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    await send('Runtime.evaluate', { expression: `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     const reviewAfterSelection = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         return {reviewVisible: !action.querySelector('.request-review')?.hidden,
-          button: action.querySelector('.primary')?.textContent,
+          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length)?.textContent,
           status: action.querySelector('.request-feedback')?.textContent}; })()`,
     });
-    await send('Runtime.evaluate', { expression: `document.querySelector('.request-action .primary').click()` });
+    await send('Runtime.evaluate', { expression: `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     await wait(250);
     const requestSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
@@ -594,7 +594,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(4_200);
     const coldRequestReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action?.querySelector('.primary'); button?.click();
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length); button?.click();
         return {button: button?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden,
           summary: action?.querySelector('.request-review p')?.textContent}; })()`,
@@ -603,7 +603,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        action?.querySelector('.primary')?.click();
+        [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.click();
         [...document.querySelectorAll('#detail button')]
           .find((button) => button.textContent === 'Retry loading details')?.click();
         return true; })()`,
@@ -611,7 +611,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     const reviewAfterRetry = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        return {button: action?.querySelector('.primary')?.textContent,
+        return {button: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent,
           reviewVisible: !action?.querySelector('.request-review')?.hidden}; })()`,
     });
     await send('Page.navigate', { url: url.replace('#/discover', '#/title/20291') });
@@ -619,7 +619,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     const unlistedFilm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
         const message = document.querySelector('#detail')?.textContent;
-        const button = action?.querySelector('.primary');
+        const button = [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length);
         const label = button?.textContent;
         button?.click();
         return { message, action: label,
@@ -627,13 +627,13 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     });
     const unlistedFilmConfirm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
-        action?.querySelector('.primary')?.click();
-        return { saving: action?.querySelector('.primary')?.textContent }; })()`,
+        [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.click();
+        return { saving: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent }; })()`,
     });
     await wait(300); await settled();
     const unlistedFilmSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('#detail .request-action');
-        return { button: action?.querySelector('.primary')?.textContent,
+        return { button: [...(action?.querySelectorAll('.primary')??[])].find(button=>button.getClientRects().length)?.textContent,
           feedback: action?.querySelector('.request-feedback')?.textContent,
           reviewHidden: action?.querySelector('.request-review')?.hidden }; })()`,
     });
@@ -641,7 +641,7 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
     await wait(700);
     const filmChoiceReview = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
-        const button = action.querySelector('.primary');
+        const button = [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length);
         button.click();
         const select = action.querySelector('.film-request-choice select');
         select.value = '1001'; select.dispatchEvent(new Event('change'));
@@ -652,15 +652,15 @@ async function inspectMobile(url, profile, width = 390, posterOnly = false) {
           summary: action.querySelector('.request-review p').textContent }; })()`,
     });
     await send('Runtime.evaluate', { expression:
-      `document.querySelector('.request-action .primary').click()` });
+      `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     const filmChoiceConfirm = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
         return { reviewHidden: action.querySelector('.request-review').hidden,
           summary: action.querySelector('.request-review p').textContent,
-          button: action.querySelector('.primary').textContent }; })()`,
+          button: [...action.querySelectorAll('.primary')].find(button=>button.getClientRects().length).textContent }; })()`,
     });
     await send('Runtime.evaluate', { expression:
-      `document.querySelector('.request-action .primary').click()` });
+      `[...document.querySelectorAll('.request-action .primary')].find(button=>button.getClientRects().length).click()` });
     await wait(250);
     const filmChoiceSaved = await send('Runtime.evaluate', { returnByValue: true,
       expression: `(() => { const action = document.querySelector('.request-action');
