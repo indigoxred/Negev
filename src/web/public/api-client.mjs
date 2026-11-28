@@ -1,7 +1,7 @@
 import { createCatalogueReadPacer } from './search-pages.mjs';
 
 // Owns authenticated API requests and catalogue pacing. Construction does not register event handlers.
-export function createApiClient({ clearWorkspace, requestKeys, sessionResponses, state, fetch = globalThis.fetch }) {
+export function createApiClient({ clearWorkspace, requestKeys, sessionResponses, state, refreshSession, fetch = globalThis.fetch }) {
   const cataloguePacers = { seasons: createCatalogueReadPacer(), library: createCatalogueReadPacer() };
 
   async function api(url, options = {}) {
@@ -17,6 +17,14 @@ export function createApiClient({ clearWorkspace, requestKeys, sessionResponses,
       const signal = fetchOptions.signal ?? (pacer ? AbortSignal.timeout(30_000) : undefined);
       const response = await fetch(url, { credentials: 'same-origin', ...fetchOptions, headers, signal });
       const data = await response.json().catch(() => ({}));
+      const adultAllowed = response.headers?.get('x-negev-adult-allowed');
+      if (url !== '/api/session' && typeof refreshSession === 'function' &&
+          sessionResponses.isCurrent(session) && state.user?.id === userId &&
+          ((['true', 'false'].includes(adultAllowed) &&
+            (adultAllowed === 'true') !== state.user.adultAllowed) ||
+            data.reason === 'adult_access_disabled' && state.user.adultAllowed !== false)) {
+        await refreshSession({ background: true });
+      }
       if (pacer && [429, 503].includes(response.status)) pacer.defer(response.headers.get('Retry-After'), response.status === 429 ? 60_000 : 5000);
       if (pacer && data.state === 'unavailable') pacer.defer(null, 30_000);
       if (!response.ok) {

@@ -298,7 +298,8 @@ for (const button of document.querySelectorAll('[data-request-scope]')) {
   });
 }
 
-const client = createApiClient({ clearWorkspace: (...args) => clearWorkspace(...args), requestKeys, sessionResponses, state });
+const client = createApiClient({ clearWorkspace: (...args) => clearWorkspace(...args),
+  refreshSession: (...args) => refreshSession(...args), requestKeys, sessionResponses, state });
 const { api } = client;
 
 const releases = createReleaseController({
@@ -572,6 +573,8 @@ const session = createSessionController({
 });
 const { showSession, clearWorkspace, refreshSession } = session;
 void refreshSession();
+setInterval(() => session.refreshVisibleSession(), 60_000);
+document.addEventListener('visibilitychange', () => session.refreshVisibleSession());
 const loadedClientRevision = document.querySelector(
   'meta[name="negev-client-revision"]')?.content;
 let checkingClientRevision = false;

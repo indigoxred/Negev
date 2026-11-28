@@ -36,10 +36,16 @@ export function createSessionController({
   stopLibraryPageObserver,
   tracking,
   updateRequestScopeButtons,
-  history = globalThis.history
+  history = globalThis.history,
+  document = globalThis.document,
+  now = Date.now
 }) {
+  let refreshing = null;
+  let lastSessionCheckMs = -Infinity;
   function showSession(data) {
-    if (state.user?.id !== data.user.id) {
+    if (state.user?.id !== data.user.id ||
+        state.user?.adultAllowed !== data.user.adultAllowed ||
+        state.user?.role !== data.user.role) {
       dismissRequestDialogs();
       sessionResponses.invalidate();
       invalidateRequestResponses();
@@ -53,8 +59,16 @@ export function createSessionController({
       airingSeasonResponses.invalidate();
       seasonalResponses.invalidate();
       state.selected = null;
+      state.searchToken++;
+      state.searchItems.clear();
+      state.lastSearchQuery = '';
       state.detailHydrationQueued.clear();
       displayCache.clear();
+      byId('results').replaceChildren();
+      byId('library-search-results').replaceChildren();
+      for (const id of ['library-list', 'season-list', 'airing-list', 'airing-season-list']) {
+        byId(id).replaceChildren();
+      }
       byId('request-list').replaceChildren();
       byId('preparing-list').replaceChildren();
       byId('more-preparations').hidden = true;
@@ -198,11 +212,18 @@ export function createSessionController({
     byId('auth').hidden = false;
   }
 
-  async function refreshSession() {
+  async function readSession({ background = false } = {}) {
     const started = sessionResponses.current();
     try {
       const data = await api('/api/session');
       if (!sessionResponses.isCurrent(started)) return;
+      lastSessionCheckMs = now();
+      if (background && state.user?.id === data.user.id &&
+          state.user.adultAllowed === data.user.adultAllowed &&
+          state.user.role === data.user.role) {
+        state.csrf = data.csrfToken;
+        return true;
+      }
       showSession(data);
       loadRequests();
       if (data.user.role === 'admin') void loadOperationalReview();
@@ -212,7 +233,7 @@ export function createSessionController({
       if ([401, 403].includes(error?.status)) {
         clearWorkspace();
         applyPendingLinkCode();
-      } else {
+      } else if (!background) {
         byId('session-loading-text').textContent =
           'Could not check your session.';
         byId('session-retry').hidden = false;
@@ -222,5 +243,22 @@ export function createSessionController({
       return false;
     }
   }
-  return { showSession, clearWorkspace, refreshSession };
+  function refreshSession(options) {
+    const generation = sessionResponses.current();
+    if (refreshing?.generation === generation) return refreshing.promise;
+    const active = { generation };
+    active.promise = readSession(options).finally(() => {
+      if (refreshing === active) refreshing = null;
+    });
+    refreshing = active;
+    return active.promise;
+  }
+  function refreshVisibleSession() {
+    if (!state.user || document?.hidden || now() - lastSessionCheckMs < 60_000) return;
+    // Failed checks also wait for the next interval rather than retrying on
+    // every focus event while the server is unavailable.
+    lastSessionCheckMs = now();
+    return refreshSession({ background: true });
+  }
+  return { showSession, clearWorkspace, refreshSession, refreshVisibleSession };
 }
