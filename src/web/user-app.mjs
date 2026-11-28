@@ -420,7 +420,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   app.get('/health/live', async () => ({ status: 'ok' }));
   app.get('/api/client-revision', async (_request, reply) =>
     reply.header('Cache-Control', 'no-store').send({ revision: clientRevision }));
-  registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
+  registerAdminRoutes(app, { requireUser, currentUser, writeGuards, allowedBody,
     safeImportReasons, accounts, readImportActivity, listOperationalReview,
     reviewOperationalItem, reviewHeldRequest, deleteAccount, now });
   // Public: sets a new password from an admin's one-time reset link.

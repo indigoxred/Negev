@@ -63,3 +63,27 @@ for(const warm of [false,true])test(`final coverage revalidates earlier concurre
  assert.deepEqual(result.availableEpisodeIds,[1002]);
  assert.deepEqual(result.uncertainEpisodeIds,[1001]);
 });
+
+for(const mode of ['stable_after_index','withdrawn','keeps_changing'])test(`first exact public read can refresh its witness without trusting a stale receipt: ${mode}`,async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'negev-first-proof-')),file=path.join(root,'state.sqlite');
+ const requests=openRequestLedger(file),acquisitions=openAcquisitionLedger(file),direct=openDirectAvailabilityQueue(file),cards=openPlexCardIndex(file);
+ const target={anidbId:42,episodeId:1001},proof={fileId:9,libraryId:102,ratingKey:500,partId:600};
+ let clock=1000,reads=0;
+ const card=()=>({libraryId:102,ratingKey:500,kind:'episode',observedMs:clock++,parts:[{libraryId:102,partId:600,size:1000,plexPath:`/public/version-${clock}.mkv`}]});
+ try{
+  cards.recordCard(card());
+  const result=await verifyCachedPositiveCoverage({request:{id:1,...target,kind:'series',episodeIds:[1001]},
+   cached:{targetCount:1,verifiedTargets:0,availableEpisodeIds:[]},ownedEpisodeIds:[1001],cache:new Map(),now:()=>clock,
+   readWitnessVersion:()=>direct.getWitnessVersion(),isWitnessCurrent:input=>direct.isWitnessCurrent(input),
+   readShoko:async()=>({state:'ok',complete:true,files:[{fileId:9}]}),
+   readPublic:async()=>{
+    reads++;
+    if(reads===1 || mode==='keeps_changing')cards.recordCard(card());
+    if(mode==='withdrawn') {cards.forgetCard({libraryId:102,ratingKey:500,observedMs:clock++});if(reads>1)return{state:'unknown'};}
+    return {state:'available',proof};
+   }});
+  assert.equal(result.verifiedTargets,mode==='stable_after_index'?1:0);
+  assert.equal(reads,2,'a witness-changing first read gets one fresh bounded observation');
+  assert.deepEqual(result.uncertainEpisodeIds??[],mode==='stable_after_index'?[]:[1001]);
+ }finally{cards.close();direct.close();acquisitions.close();requests.close();await rm(root,{recursive:true,force:true});}
+});

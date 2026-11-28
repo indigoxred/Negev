@@ -1,3 +1,4 @@
+import { withRescanPublicProof } from './helpers/rescan-public-proof.mjs';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,10 +8,10 @@ import { processShokoRescan as runShokoRescan } from
 
 // Control-flow tests inject filesystem evidence; real journal/filesystem tests
 // live in shoko-rescan-physical-attribution.test.mjs.
-const processShokoRescan = options => runShokoRescan({...options,
+const processShokoRescan = options => runShokoRescan(withRescanPublicProof({...options,
   item:{...options.item,manifest:{...options.item.manifest,files:options.item.manifest.files.map(file=>
     ({dev:'1',ino:'2',mtimeNs:'3',...file}))}},
-  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})});
+  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})}));
 
 const manifest = {
   attemptId: 71, torrentHash: 'a'.repeat(40), files: [

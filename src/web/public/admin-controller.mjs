@@ -15,6 +15,9 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
   }
 
   function reviewActionsFor(stage) {
+    if (stage === 'removal_hold') return [
+      ['retry','Check removal','Check whether the recorded removal finished? This only reads the downloader and staging folder; it does not delete anything.'],
+    ];
     if (stage === 'start_hold') return [
       ['retry', 'Retry now', 'Check this download again now? Every normal safety check runs again.'],
       ['release', 'Release download', 'Release this download? Negev removes the stopped torrent from qBittorrent (no files are deleted) and frees its episodes so another release can be chosen.'],
@@ -46,7 +49,7 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
         const row = element('div', undefined, 'request-row');
         row.classList.add('operational-review-row');
         const label = item.stage === 'release_rejected'
-          ? 'Downloaded file rejected' : item.stage === 'start_hold'
+          ? 'Downloaded file rejected' : item.stage === 'removal_hold' ? 'Download removal needs confirmation' : item.stage === 'start_hold'
             ? 'Download start needs review' :
             item.stage === 'completion_interrupted'
               ? 'File check interrupted' : item.stage === 'shoko_rescan_hold'
@@ -71,7 +74,7 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
               const result = await api(`/api/admin/review/${item.attemptId}`, {
                 method: 'POST', body: JSON.stringify({ stage: item.stage, action }) });
               if (!isCurrent()) return;
-              message(result.state === 'released'
+              message(result.state === 'removal_confirmed' ? 'Removal confirmed. Its episodes can be picked up again.' : result.state === 'released'
                 ? 'Download released. Its episodes can be picked up again. No media files were removed.'
                 : 'Retry scheduled. Negev will check this item again shortly.');
               void loadOperationalReview();

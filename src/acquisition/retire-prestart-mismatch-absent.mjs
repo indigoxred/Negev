@@ -13,7 +13,7 @@ const hashPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // Both the provider record and the owned staging leaf must be absent/empty;
 // the ledger then verifies its recorded mismatch and missing start intent.
 export async function retirePrestartMismatchAbsent({ ledger, attemptId,
-  baseUrl, sessionId, stagingRoot, verifyStagingRoot, nowMs,
+  baseUrl, sessionId, stagingRoot, verifyStagingRoot, nowMs, authorizeRetirement,
   fetchImpl = fetch, timeoutMs = 10_000,
   lstatImpl = lstat, readdirImpl = readdir } = {}) {
   let base;
@@ -85,6 +85,10 @@ export async function retirePrestartMismatchAbsent({ ledger, attemptId,
     }
     if (torrents.length !== 0) return held('torrent_still_present');
     if (!await emptyLeaf()) return held('staging_not_empty');
+  }
+  if(authorizeRetirement!==undefined){
+    try{if(authorizeRetirement()!==true)return held('account_access_changed');}
+    catch{return held('account_access_changed');}
   }
   return ledger.retirePrestartMismatch({ attemptId, hash, nowMs });
 }

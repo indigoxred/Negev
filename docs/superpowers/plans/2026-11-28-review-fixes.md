@@ -33,7 +33,7 @@
 2. [x] C02: test full absolute pack versus selected-subset replay and a usable alternative. Revalidate using the complete independently checked file context in `acquisition-request-processor.mjs`; keep the final metainfo/ancestry boundary in `submit-missing-candidate.mjs`. Do not trust a preview offset alone. Preserve cached previews and explicit manual selections.
 3. [x] C03: test accepted stopped add with unapplied exclusions, lost acknowledgement after applied exclusions, foreign/changed manifests, reopen and one add/start. Persist the exact checked selection before dispatch in the acquisition ledger; restore exclusions only after exact owned, pristine stopped-torrent and complete metainfo verification. Files: acquisition ledger, stopped submit, recorded start, manifest observer, new regression tests.
 4. [x] C01: test ownership gained before add and after add/before start, with the remaining episodes acquired. Shrink only a positively verified remaining physical-file selection; retain full request scope and journal the change before priority writes. Never split combined files; retain current missing-target and final start checks. Test ordinary season sizes/ownership patterns and Airing controls.
-5. [ ] Run targeted safety suites, complete unit suite, Linux browser/CI checks, and fresh whole-branch review. Fix important findings and repeat affected checks before merging.
+5. [x] Run targeted safety suites, complete unit suite, Linux browser/CI checks, and fresh whole-branch review. Fix important findings and repeat affected checks before merging.
 
 ## Remaining batches — Execute in the approved order
 

@@ -15,7 +15,7 @@ const UNCERTAIN_RETRY_MS = 5 * 60_000;
 // A held batch can contain many large videos. Never rehash changed evidence
 // indefinitely; preflight mount checks alone may keep retrying without reads.
 const RETRYABLE_HOLDS = new Set([
-  'identity_unavailable', 'subtitle_unavailable', 'worker_unavailable',
+  'identity_unavailable', 'subtitle_unavailable', 'worker_unavailable', 'publish_permissions_unavailable',
   'interrupted_before_publish',
 ]);
 

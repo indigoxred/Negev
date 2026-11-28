@@ -1,3 +1,4 @@
+import { includesProvenFile } from '../availability/multipart-availability.mjs';
 import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { probePureMovedFile } from './observe-pure-move-import.mjs';
@@ -20,7 +21,7 @@ const exactLink = (item, anidbId, episodeIds,
 };
 
 export async function processShokoRescan({ item, ledger, importRoot,
-  shokoMount, shokoSourcePath = null, readQueue, readFile, rescan,
+  shokoMount, shokoSourcePath = null, readQueue, readFile, readFileById, findFileIds, rescan,
   verifyPlex, probeImpl = probePureMovedFile, hydrateMetadata = null, readUnrecognized = null, readMetadata = null, nowMs, now = () => nowMs } = {}) {
   const { attemptId, requestId, anidbId, publishedMs, manifest } = item ?? {};
   const videos = manifest?.files?.filter((file) =>
@@ -158,13 +159,13 @@ export async function processShokoRescan({ item, ledger, importRoot,
       if (!Array.isArray(moved) || moved.length > 100) { deferFile('held','shoko_provider_unavailable'); continue files; }
       if (Array.isArray(moved) && moved.length <= 100) {
         const confirmed = [];
-        for (const file of moved) {
-          const inMount = file?.Locations?.some((location) => {
+        const consider = async (file, allowRename = false) => {
+          const inMount = Array.isArray(file?.Locations) && file.Locations.length<=20 && file.Locations.some((location) => {
             const absolute = location?.AbsolutePath;
             if (typeof absolute !== 'string' ||
                 path.posix.normalize(absolute) !== absolute ||
                 location.IsAccessible !== true || absolute === sourcePath ||
-                path.posix.basename(absolute) !== path.posix.basename(video.name)) {
+                !allowRename && path.posix.basename(absolute) !== path.posix.basename(video.name)) {
               return false;
             }
             const relative = path.posix.relative(shokoMount.appRoot, absolute);
@@ -172,8 +173,25 @@ export async function processShokoRescan({ item, ledger, importRoot,
               !path.posix.isAbsolute(relative);
           });
           if (!validId(file?.ID) || file.Size !== video.size || !inMount ||
-              !exactLink(file, anidbId, video.episodeIds, true)) continue;
+              !exactLink(file, anidbId, video.episodeIds, true)) return;
           if (await physicallyMatches(file)) confirmed.push(file);
+        };
+        for (const file of moved) await consider(file);
+        if (confirmed.length===0 && typeof readFileById==='function' &&
+            (prior || typeof findFileIds==='function')) {
+          let ids;
+          try { ids=prior ? [prior.fileId] : await findFileIds({anidbId,episodeId:video.episodeIds[0]}); }
+          catch { deferFile('held','shoko_provider_unavailable'); continue files; }
+          if (!Array.isArray(ids) || ids.length>10 || new Set(ids).size!==ids.length || ids.some(id=>!validId(id))) {
+            deferFile('held','shoko_provider_unavailable'); continue files;
+          }
+          for (const fileId of ids) {
+            let file;
+            try { file=await readFileById({fileId}); }
+            catch { deferFile('held','shoko_provider_unavailable'); continue files; }
+            if(file?.ID!==fileId){deferFile('held','shoko_provider_unavailable');continue files;}
+            await consider(file,true);
+          }
         }
         if (confirmed.length > 1) {
           reviewHold('shoko_identity_ambiguous'); review = true; continue;
@@ -189,7 +207,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
             fileName: video.name, fileId, nowMs });
           if (linked.state !== 'linked') return linked;
           recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
-            ({ episodeId, fileId })));
+            ({ episodeId, fileId, storageKey:`${video.dev}:${video.ino}:${video.size}` })));
           continue;
         }
       }
@@ -213,7 +231,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
       if (prior?.status !== 'linked') ledger.markLinked({ attemptId,
         fileName: video.name, fileId: file.ID, nowMs });
       recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
-        ({ episodeId, fileId: file.ID })));
+        ({ episodeId, fileId: file.ID, storageKey:`${video.dev}:${video.ino}:${video.size}` })));
       continue;
     }
     if (file.SeriesIDs.length > 0 &&
@@ -287,12 +305,11 @@ export async function processShokoRescan({ item, ledger, importRoot,
     dispatched++;
     notePending(result?.state === 'accepted' ? 'rescan_requested' : 'rescan_unconfirmed');
   }
-  for (const { episodeId, fileId } of recoveredEpisodes) {
+  for (const { episodeId, fileId, storageKey } of recoveredEpisodes) {
     let publicResult;
     try { publicResult = await verifyPlex({ requestId, anidbId, episodeId, fileId }); }
     catch { publicResult = null; }
-    if (publicResult?.state !== 'available' ||
-        publicResult.fileId !== fileId) {
+    if (!includesProvenFile(publicResult,fileId,storageKey)) {
       return delay('awaiting_plex','plex_publication_pending');
     }
   }

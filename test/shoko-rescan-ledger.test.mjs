@@ -1,3 +1,4 @@
+import { withRescanPublicProof } from './helpers/rescan-public-proof.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -12,10 +13,10 @@ import { openShokoRescanLedger } from '../src/acquisition/shoko-rescan-ledger.mj
 
 // Control-flow tests inject filesystem evidence; real journal/filesystem tests
 // live in shoko-rescan-physical-attribution.test.mjs.
-const processShokoRescan = options => runShokoRescan({...options,
+const processShokoRescan = options => runShokoRescan(withRescanPublicProof({...options,
   item:{...options.item,manifest:{...options.item.manifest,files:options.item.manifest.files.map(file=>
     ({...file,dev:'1',ino:'2',mtimeNs:'3'}))}},
-  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})});
+  probeImpl:async ({expectedSize})=>({state:'candidate',candidateKey:`1:2:${expectedSize}:3`})}));
 
 async function fixture({ policyBeforeAttempt = true } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-rescan-'));

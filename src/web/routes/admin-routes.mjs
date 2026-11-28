@@ -1,7 +1,7 @@
 // Admin-only routes: import diagnostics, operational review and its
 // actions, account settings and suspended-request review. Moved out of
 // user-app.mjs unchanged; every route still checks the admin role itself.
-export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
+export function registerAdminRoutes(app, { requireUser, currentUser, writeGuards, allowedBody,
   safeImportReasons, accounts, readImportActivity, listOperationalReview,
   reviewOperationalItem, reviewHeldRequest, deleteAccount, now = Date.now }) {
   // Read-only operator diagnostic. A quiet observation is never a download
@@ -69,7 +69,7 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
           item.attemptId <= (index === 0 ? afterAttemptId : result.items[index - 1].attemptId) ||
           !Number.isSafeInteger(item.requestId) || item.requestId < 1 ||
           !Number.isSafeInteger(item.anidbId) || item.anidbId < 1 ||
-          !['release_rejected', 'import_hold', 'start_hold',
+          !['release_rejected', 'import_hold', 'start_hold', 'removal_hold',
             'completion_interrupted', 'shoko_rescan_hold'].includes(item.stage) ||
           typeof item.reason !== 'string' ||
           !/^[a-z][a-z0-9_]{0,79}$/.test(item.reason) ||
@@ -100,7 +100,7 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(attemptId) ||
         !allowedBody(request.body, ['stage', 'action']) ||
         Object.keys(request.body).length !== 2 ||
-        !['start_hold', 'import_hold'].includes(stage) ||
+        !['start_hold', 'import_hold', 'removal_hold'].includes(stage) ||
         !['retry', 'release'].includes(action) ||
         (action === 'release' && stage !== 'start_hold')) {
       return reply.code(400).send({ error: 'Invalid review action' });
@@ -110,10 +110,15 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     }
     let result;
     try {
-      result = await reviewOperationalItem({ stage, attemptId, action,
-        actorId: request.negevUser.id });
+      const actorId=request.negevUser.id;
+      result = await reviewOperationalItem({ stage, attemptId, action, actorId,
+        ...(stage==='removal_hold'?{authorizeAction:()=>{
+          const user=currentUser(request);
+          return user?.id===actorId && user.role==='admin';
+        }}:{}) });
     } catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Review actions unavailable' }); }
     if (result?.state === 'retry_scheduled') return { state: 'retry_scheduled' };
+    if (stage === 'removal_hold' && ['retired_prestart_mismatch','retired_stalled'].includes(result?.state)) return {state:'removal_confirmed'};
     if (result?.state === 'retired_prestart_mismatch') return { state: 'released' };
     const reason = typeof result?.reason === 'string' &&
       /^[a-z][a-z0-9_]{0,79}$/.test(result.reason) ? result.reason : 'action_unavailable';

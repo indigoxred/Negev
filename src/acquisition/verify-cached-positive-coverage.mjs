@@ -78,11 +78,11 @@ export async function verifyCachedPositiveCoverage({ request, cached,
   let next = 0;
   const worker = async () => {
     while (next < selected.length) {
-      const { id, target, revision } = selected[next++];
+      let { id, target, revision } = selected[next++];
       const controller = new AbortController();
       let proof, witnessVersion;
       let timer;
-      const observe = async () => {
+      const observe = async (mayRefresh = true) => {
         if (readWitnessVersion) witnessVersion = readWitnessVersion();
         const shoko = await readShoko({ ...target, signal: controller.signal });
         if (controller.signal.aborted) return 'uncertain';
@@ -91,6 +91,15 @@ export async function verifyCachedPositiveCoverage({ request, cached,
         if (shoko?.state !== 'ok' || typeof shoko.complete !== 'boolean' ||
             !Array.isArray(shoko.files) || !shoko.files.length) return 'uncertain';
         const result = await readPublic(target, shoko);
+        // A cold exact read may index its card and invalidate the older
+        // witness. Re-observe once from a new fence; never re-stamp that receipt.
+        const changed = result?.reason === 'card_changed_during_observation' ||
+          result?.state === 'available' && isWitnessCurrent &&
+          !isWitnessCurrent({proof:result.proof,version:witnessVersion});
+        if (changed && mayRefresh && !controller.signal.aborted) {
+          revision=readRevision(target);
+          return observe(false);
+        }
         if (result?.state === 'available' && isWitnessCurrent) {
           proof = result.proof;
           if (!isWitnessCurrent({proof,version:witnessVersion})) return 'uncertain';

@@ -25,6 +25,7 @@ import { openShokoRescanLedger } from
 import { openHandoffPublishQueue } from '../acquisition/handoff-publish-queue.mjs';
 import { openStartQueue } from '../acquisition/start-queue.mjs';
 import { openCompletionQueue } from '../acquisition/completion-queue.mjs';
+import { reconcilePendingRemoval } from '../acquisition/reconcile-pending-removal.mjs';
 import { listOperationalReview } from '../acquisition/operational-review.mjs';
 import { deleteAccount as deleteAccountData } from '../auth/delete-account.mjs';
 import { createHeldRequestSubmitter, requestReleaseState } from '../requests/submit-held-request.mjs';
@@ -1004,9 +1005,16 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       // through the guarded prestart path (torrent removed without its
       // files, staging proven empty) so its episodes can be acquired again.
       deleteAccount: ({ adminUserId, userId }) => deleteAccountData(dbPath, { adminUserId, userId }),
-      reviewOperationalItem: async ({ stage, attemptId, action, actorId }) => {
+      reviewOperationalItem: async ({ stage, attemptId, action, actorId, authorizeAction }) => {
         if (stopping) return { state: 'held', reason: 'service_stopping' };
         const nowMs = now();
+        if (stage === 'removal_hold' && action === 'retry') {
+          if (!releaseProviders) return {state:'held',reason:'release_unavailable'};
+          const p=releaseProviders;
+          return track(reconcilePendingRemoval({ledger:acquisitions,attemptId,authorizeAction,
+            baseUrl:p.qbBaseUrl,stagingRoot:p.stagingHostPath,
+            verifyStagingRoot:p.verifyStagingRoot,sessionGate:p.sessionGate,now}));
+        }
         if (action === 'retry') {
           if (stage === 'start_hold') {
             return startReview.retryReview({ attemptId, actorId, nowMs });

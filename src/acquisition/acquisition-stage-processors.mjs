@@ -19,7 +19,7 @@ import { ED2K_CHUNK_SIZE } from '../identity/ed2k.mjs';
 import { readShokoEd2kMode } from '../identity/shoko-ed2k-mode.mjs';
 import { readAniDbRelatedTitles } from '../catalogue/shoko-related-titles.mjs';
 import { readShokoVideoExtensions } from './shoko-video-extensions.mjs';
-import { readShokoPathFile } from './shoko-path-file.mjs';
+import { readShokoPathFile, readShokoFileById } from './shoko-path-file.mjs';
 import { readShokoUnrecognizedFile } from './shoko-unrecognized-file.mjs';
 import { readStoppedRecoveryTorrent } from './read-stopped-recovery-torrent.mjs';
 import { processRecognitionRecovery } from './process-recognition-recovery.mjs';
@@ -177,6 +177,17 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
             apiKey: shoko.apiKey, sourcePath, fetchImpl: providerFetchImpl });
           if (result.state !== 'files') throw new Error('Shoko file unavailable');
           return result.items;
+        },
+        readFileById: async ({fileId}) => {
+          const result=await readShokoFileById({baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,fileId,fetchImpl:providerFetchImpl});
+          if(result.state!=='files')throw Error('Shoko file unavailable');
+          return result.items[0];
+        },
+        findFileIds: async ({anidbId,episodeId}) => {
+          const result=await readShokoEpisodeFiles({baseUrl:shoko.baseUrl,apiKey:shoko.apiKey,
+            anidbId,episodeId,purpose:'availability',fetchImpl:providerFetchImpl});
+          if(result.state!=='ok' || result.complete!==true)throw Error('Shoko episode unavailable');
+          return [...new Set(result.files.map(file=>file.fileId))];
         },
         rescan: ({ fileId }) => requestShokoFileRescan({
           baseUrl: shoko.baseUrl, apiKey: shoko.apiKey, fileId,

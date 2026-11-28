@@ -73,7 +73,7 @@ for (const linked of [false,true]) test('live rescan stage '+(linked?'verifies t
     },
     observePublicTarget: async (target) => {
       assert.deepEqual(target,{anidbId:42,episodeId:1001,fileId:81,kind:'movie'});
-      return {state:'available',fileId:81};
+      return {state:'available',fileId:81,proof:{fileId:81,storageKey:`${physical.dev}:${physical.ino}:1000`}};
     },
     now: () => 360_209,
     providerFetchImpl: async (url, request) => {

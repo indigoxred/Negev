@@ -13,7 +13,7 @@ const hashPattern = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 // remove the exact Negev-owned torrent and its staged bytes. No delete occurs
 // here, and one empty API reply is never enough to release another grab.
 export async function retireStalledAbsent({ ledger, attemptId, baseUrl,
-  sessionId, stagingRoot, verifyStagingRoot, nowMs,
+  sessionId, stagingRoot, verifyStagingRoot, nowMs, authorizeRetirement,
   fetchImpl = fetch, timeoutMs = 10_000,
   lstatImpl = lstat, readdirImpl = readdir } = {}) {
   let base;
@@ -87,6 +87,10 @@ export async function retireStalledAbsent({ ledger, attemptId, baseUrl,
     }
     if (torrents.length !== 0) return held('torrent_still_present');
     if (!await emptyLeaf()) return held('staging_not_empty');
+  }
+  if(authorizeRetirement!==undefined){
+    try{if(authorizeRetirement()!==true)return held('account_access_changed');}
+    catch{return held('account_access_changed');}
   }
   return ledger.retireStalled({ attemptId, hash, nowMs });
 }
