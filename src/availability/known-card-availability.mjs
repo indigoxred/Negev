@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { combinedMultipartProof } from './multipart-availability.mjs';
+import { combinedMultipartProof, includesProvenFile } from './multipart-availability.mjs';
 import { evaluateExactAvailability } from './exact-availability.mjs';
 import { provePhysicalPlexPart } from './physical-plex-part.mjs';
 
@@ -197,7 +197,7 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   // One known card cannot establish a complete negative observation.
   if (result.state === 'absent') return unknown('observer_incomplete');
   if (result.state === 'available') {
-    if (target.fileId !== undefined && result.fileId !== target.fileId) return unknown('requested_file_unverified');
+    if (target.fileId !== undefined && !includesProvenFile(result,target.fileId)) return unknown('requested_file_unverified');
     if (result.multipart) return result;
     const proof = provenParts.find((part) => part.fileId === result.fileId &&
       Number.isSafeInteger(part.ratingKey) && part.ratingKey > 0 &&

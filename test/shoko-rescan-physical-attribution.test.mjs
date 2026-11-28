@@ -201,3 +201,25 @@ for (const prior of [false,true]) for (const wrongInode of [false,true]) test(`r
   assert.ok(nominations>0);assert.equal(scans,0);assert.equal((await stat(dest)).size,video.size);
  }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
 });
+
+for(const control of ['complete','reversed','gap','other_copy'])test(`rescan recovery recognizes its non-first multipart physical witness: ${control}`,async()=>{
+ const x=await fixture();let ledger=x.rescan;
+ try{
+  const video=x.files[0],dest=path.join(x.root,'Anime',path.basename(video.name)),first=path.join(x.root,'Anime','part-one.mkv'),other=path.join(x.root,'Anime','other-copy.mkv');
+  await mkdir(path.dirname(dest));await rename(path.join(x.root,'original.mkv'),dest);await writeFile(first,Buffer.alloc(500,1));await writeFile(other,Buffer.alloc(video.size,2));
+  ledger.close();ledger=openShokoRescanLedger(x.dbPath);const item=ledger.listDue({nowMs:1000000})[0];item.manifest.files=[item.manifest.files[0]];
+  const source='/pure/Anime/'+path.basename(video.name);
+  const {observeKnownCardAvailability}=await import('../src/availability/known-card-availability.mjs');
+  const files=[{fileId:82,sourcePaths:['/pure/Anime/part-one.mkv'],size:500,range:[0,control==='gap'?49:50]},
+   {fileId:81,sourcePaths:[source],size:video.size,range:[50,100]}].map(f=>({...f,anidbId:42,anidbFileId:f.fileId,episodeIds:[1001],coverage:[{episodeId:1001,start:f.range[0],end:f.range[1]}]}));
+  const parts=files.map((f,i)=>({cardType:'episode',itemGuid:'tv.plex.agents.custom.shoko://episode/e555',showGuid:'tv.plex.agents.custom.shoko://show/99',libraryId:102,ratingKey:500,partId:90+i,mediaId:700,partIndex:control==='reversed'?1-i:i,partCount:2,size:f.size,plexPath:f.fileId===82?'/plex/Anime/part-one.mkv':'/plex/Anime/'+(control==='other_copy'?'other-copy.mkv':path.basename(video.name))}));
+  let scans=0;
+  const result=await processShokoRescan({item,ledger,importRoot:path.join(x.root,'Import'),shokoMount:{appRoot:'/pure',localRoot:x.root},nowMs:1000000,
+   readQueue:async()=>({state:'queue_idle_unverified'}),
+   readFile:async({sourcePath})=>sourcePath==='/'+path.basename(video.name)?[{ID:81,Size:video.size,Locations:[{AbsolutePath:source,IsAccessible:true}],SeriesIDs:[{SeriesID:{ID:4,AniDB:42},EpisodeIDs:[{AniDB:1001}]}]}]:[],
+   rescan:async()=>{scans++;throw Error('no rescan of a linked file');},
+   verifyPlex:async target=>observeKnownCardAvailability({target:{...target,kind:'series'},shoko:{state:'ok',complete:true,shokoEpisodeId:555,shokoSeriesId:99,files},plex:{state:'ok',complete:true,parts},publicLibraryIds:[102],shokoMount:{appRoot:'/pure',localRoot:x.root},plexMount:{appRoot:'/plex',localRoot:x.root}})});
+  assert.equal(result.state,control==='complete'?'linked':'awaiting_plex',JSON.stringify(result));assert.equal(scans,0);
+  assert.equal(ledger.getAttemptStatus(x.attemptId),control==='complete'?'done':'pending');
+ }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
+});

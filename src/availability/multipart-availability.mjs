@@ -23,3 +23,19 @@ export function combinedMultipartProof({ target, files, provenParts }) {
   }
   return null;
 }
+
+// Membership is meaningful only after the full observer proved availability.
+// Retain the composite's ordering and exact physical witness for attribution.
+export function includesProvenFile(result, fileId, storageKey) {
+  if(result?.state!=='available')return false;
+  if(result.multipart!==true)return result.fileId===fileId;
+  const parts=result.proof?.parts;
+  if(!Array.isArray(parts)||parts.length<2||parts.length>8)return false;
+  const first=parts[0];
+  if(parts.some((part,i)=>part.partIndex!==i||part.partCount!==parts.length||
+      part.libraryId!==first.libraryId||part.ratingKey!==first.ratingKey||part.mediaId!==first.mediaId||
+      !Number.isSafeInteger(part.fileId)||part.fileId<1||!Number.isSafeInteger(part.partId)||part.partId<1||
+      typeof part.storageKey!=='string'||!part.storageKey))return false;
+  if(['fileId','partId','storageKey'].some(key=>new Set(parts.map(part=>part[key])).size!==parts.length))return false;
+  return parts.some(part=>part.fileId===fileId&&(storageKey===undefined||part.storageKey===storageKey));
+}

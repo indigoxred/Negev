@@ -1,3 +1,4 @@
+import { includesProvenFile } from '../availability/multipart-availability.mjs';
 import { MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { probePureMovedFile } from './observe-pure-move-import.mjs';
@@ -206,7 +207,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
             fileName: video.name, fileId, nowMs });
           if (linked.state !== 'linked') return linked;
           recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
-            ({ episodeId, fileId })));
+            ({ episodeId, fileId, storageKey:`${video.dev}:${video.ino}:${video.size}` })));
           continue;
         }
       }
@@ -230,7 +231,7 @@ export async function processShokoRescan({ item, ledger, importRoot,
       if (prior?.status !== 'linked') ledger.markLinked({ attemptId,
         fileName: video.name, fileId: file.ID, nowMs });
       recoveredEpisodes.push(...video.episodeIds.map((episodeId) =>
-        ({ episodeId, fileId: file.ID })));
+        ({ episodeId, fileId: file.ID, storageKey:`${video.dev}:${video.ino}:${video.size}` })));
       continue;
     }
     if (file.SeriesIDs.length > 0 &&
@@ -304,12 +305,11 @@ export async function processShokoRescan({ item, ledger, importRoot,
     dispatched++;
     notePending(result?.state === 'accepted' ? 'rescan_requested' : 'rescan_unconfirmed');
   }
-  for (const { episodeId, fileId } of recoveredEpisodes) {
+  for (const { episodeId, fileId, storageKey } of recoveredEpisodes) {
     let publicResult;
     try { publicResult = await verifyPlex({ requestId, anidbId, episodeId, fileId }); }
     catch { publicResult = null; }
-    if (publicResult?.state !== 'available' ||
-        publicResult.fileId !== fileId) {
+    if (!includesProvenFile(publicResult,fileId,storageKey)) {
       return delay('awaiting_plex','plex_publication_pending');
     }
   }
