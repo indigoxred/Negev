@@ -36,7 +36,7 @@ export async function observeIndexedTarget({ target, publicLibraryIds, cardIndex
       for (const remote of file.sourcePaths) {
         if (++checks > 64) return unknown('card_discovery_incomplete');
         const filePath = localPath(remote, shokoMount);
-        if (!filePath) return unknown('card_discovery_incomplete');
+        if (!filePath) continue;
         let candidate;
         try { candidate = await probeImpl({ filePath,
           allowedRoot: shokoMount.localRoot, expectedSize: file.size }); }

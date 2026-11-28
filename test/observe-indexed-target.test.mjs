@@ -257,3 +257,10 @@ test('a transient Plex card error does not remove an indexed candidate', async (
   });
   assert.deepEqual(forgotten, []);
 });
+
+test('an unmappable extra Shoko location cannot hide a mapped exact physical copy', async () => {
+ const result=await observeIndexedTarget({...base,readShoko:async()=>({...shoko,files:[{...shoko.files[0],sourcePaths:['/unmounted/a.mkv','/pure/a.mkv']}]}),
+  probeImpl:async()=>({state:'candidate',candidateKey:'1:2:5'}),
+  cardIndex:{lookupCards:()=>({state:'candidates',cards:[]}),lookupCardsByCandidateKey:()=>({state:'candidates',cards:[{libraryId:102,ratingKey:500}]})}});
+ assert.equal(result.state,'available',JSON.stringify(result));assert.equal(result.fileId,51);
+});
