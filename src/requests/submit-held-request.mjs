@@ -51,6 +51,7 @@ export function createHeldRequestSubmitter({ titleRegistry, confirmKnownTitle =
       const activeWatchRequestId = ledger.findActiveWatch?.({ requesterId, anidbId });
       if (activeWatchRequestId) return { state: 'held', reason: 'already_monitored',
         requestId: activeWatchRequestId, created: false };
+      if (ledger.findOtherPausedWatch?.({requesterId,anidbId})) return held('watch_paused_elsewhere');
       if (ledger.findOtherActiveWatch?.({ requesterId, anidbId })) {
         return held('already_monitored_elsewhere');
       }

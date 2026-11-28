@@ -754,6 +754,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       readRequest: (id) => requests.getRequest(id),
       findActiveWatch: (input) => requests.findActiveWatch(input),
+      findOtherPausedWatch: input=>requests.findOtherPausedWatch(input),
       findOtherActiveWatch: (input) => requests.findOtherActiveWatch(input),
       listRequests: async (input) => {
         await plexObserver?.ensureScope();

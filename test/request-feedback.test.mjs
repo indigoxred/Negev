@@ -33,3 +33,7 @@ test('saved request feedback explains uncertain catalogue dates without assuming
     reason: 'already_monitored' }),
   'Future episodes are already monitored by your request #13. View it under My Requests.');
 });
+
+test('paused watch message explains the administrator resolution without naming its owner',()=>{
+ assert.match(requestFailureMessage({reason:'watch_paused_elsewhere'}),/paused.*administrator/i);
+});

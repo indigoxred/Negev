@@ -45,6 +45,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   cancelRequest, reviewHeldRequest, readRequest, listRequests,
   findActiveWatch = () => null,
   findOtherActiveWatch = () => false,
+  findOtherPausedWatch = () => false,
   listPendingTitles, readPendingTitle, readPendingTitleByKey,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
@@ -155,7 +156,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       ? `account:${userId}` : `peer:${peerRateKey(request)}`;
   };
   // A tunnel presents one peer IP for many users. Signed-in accounts get
-  // separate route budgets; login and registration retain peer throttling.
+  // separate route budgets. Login also uses account and bounded peer budgets.
   await app.register(rateLimit, { global: false, keyGenerator: accountRateKey });
   // Every page, script and stylesheet in public/ is served; a new module needs
   // no registration here. index.html is read first so it anchors the revision.
@@ -489,8 +490,19 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       : { field: 'code', error: 'This invitation is invalid, expired or already used. Ask the owner for a new invitation.' });
     return reply.code(201).send({ user: { id: user.id, username: user.username, role: user.role } });
   });
-  app.post('/api/login', { preHandler: requireOrigin,
-    config: { rateLimit: authRate } }, async (request, reply) => {
+  // Use the supplied username only as an abuse bucket, never as identity.
+  // The socket peer remains bounded; forwarded headers are not trusted.
+  const loginAccountLimit = app.createRateLimit({max:5,timeWindow:'1 minute',
+    keyGenerator: request => {
+      const name=request.body?.username;
+      return 'login:'+createHash('sha256').update(typeof name==='string' && /^[A-Za-z][A-Za-z0-9_]{2,31}$/.test(name) ? name.toLowerCase() : 'invalid').digest('hex');
+    }});
+  const limitLoginAccount = async (request,reply) => {
+    const limit=await loginAccountLimit(request);
+    if(limit.isExceeded)return reply.header('Cache-Control','no-store').header('Retry-After',String(limit.ttlInSeconds)).code(429).send({error:'Too many login attempts. Try again shortly.'});
+  };
+  app.post('/api/login', { preHandler: [requireOrigin,limitLoginAccount],
+    config: { rateLimit: {...authRate,max:100} } }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const body = request.body;
     if (!allowedBody(body, ['username', 'password']) ||
@@ -853,18 +865,19 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       ownershipGate.status(id) === 'eligible';
     const activeWatchRequestId = findActiveWatch({
       requesterId: request.negevUser.id, anidbId: id });
+    const futureEpisodesPaused = activeWatchRequestId === null && findOtherPausedWatch({requesterId:request.negevUser.id,anidbId:id});
     const futureEpisodesMonitored = activeWatchRequestId !== null ||
       findOtherActiveWatch({ requesterId: request.negevUser.id, anidbId: id });
     if (result.state === 'detail_pending') return { state: 'detail_pending',
       anidbId: id, requestable: false,
-      activeWatchRequestId, futureEpisodesMonitored,
+      activeWatchRequestId, futureEpisodesMonitored, futureEpisodesPaused,
       requestsOpen: requestsOpen && ownershipOpen };
     if (result.state !== 'details') return reply.code(503).send({ error: 'Catalogue unavailable' });
     if (!request.negevUser.adultAllowed && result.restricted !== false) {
       return reply.code(403).send({ error: '18+ access is disabled for this account' });
     }
     return { ...result, requestable: false, activeWatchRequestId,
-      futureEpisodesMonitored,
+      futureEpisodesMonitored, futureEpisodesPaused,
       requestsOpen: requestsOpen && ownershipOpen };
   });
   app.get('/api/catalogue/:id/related', { preHandler: requireUser,
@@ -1069,17 +1082,14 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           return reply.code(409).send({ state: 'held',
             reason: 'idempotency_key_conflict' });
         }
+        if (pending.state === 'cancelled') return reply.code(409).send({state:'held',reason:'request_cancelled'});
         if (pending.state === 'resolved') {
-          if (preview) {
-            const saved = Number.isSafeInteger(pending.normalRequestId) ? readRequest?.(pending.normalRequestId) : null;
-            if (!saved || saved.requesterId !== requester.id || saved.anidbId !== body.anidbId) {
-              return reply.code(409).send({state:'held',reason:'request_missing'});
-            }
-            if (saved.status === 'cancelled') return reply.code(409).send({state:'held',reason:'request_cancelled'});
-            return reply.code(202).send({state:'existing',requestId:saved.id,created:false});
+          const saved = Number.isSafeInteger(pending.normalRequestId) ? readRequest?.(pending.normalRequestId) : null;
+          if (!saved || saved.requesterId !== requester.id || saved.anidbId !== body.anidbId) {
+            return reply.code(409).send({state:'held',reason:'request_missing'});
           }
-          return reply.code(202).send({ state: 'held',
-            requestId: pending.normalRequestId });
+          if (saved.status === 'cancelled') return reply.code(409).send({state:'held',reason:'request_cancelled'});
+          return reply.code(202).send(preview ? {state:'existing',requestId:saved.id,created:false} : {state:'held',requestId:saved.id});
         }
         if (['pending', 'resolving'].includes(pending.state)) {
           return reply.code(202).send({ state: 'pending',

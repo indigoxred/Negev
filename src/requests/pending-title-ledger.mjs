@@ -36,6 +36,19 @@ export function openPendingTitleLedger(dbPath) {
     if(!db.prepare('PRAGMA table_info(pending_title_intents)').all().some(c=>c.name==='release_mode')) {
       db.exec("ALTER TABLE pending_title_intents ADD COLUMN release_mode TEXT NOT NULL DEFAULT 'auto'");
     }
+    // An interrupted promotion may already have committed its exact command.
+    // Reconcile that receipt before closing legacy duplicate-watch outcomes.
+    const requestColumns = db.prepare('PRAGMA table_info(requests)').all();
+    if (['id','requester_id','request_key','anidb_id','command_key'].every(name=>requestColumns.some(c=>c.name===name))) {
+      db.exec(`UPDATE pending_title_intents AS p SET state='resolved',lease_until_ms=NULL,
+        version=version+1,reason=NULL,normal_request_id=(SELECT r.id FROM requests r
+          WHERE r.requester_id=p.requester_id AND r.request_key=p.request_key
+            AND r.anidb_id=p.anidb_id AND r.command_key=json_array(p.anidb_id,'installment',NULL))
+        WHERE state IN ('pending','resolving') AND normal_request_id IS NULL
+          AND EXISTS (SELECT 1 FROM requests r WHERE r.requester_id=p.requester_id
+            AND r.request_key=p.request_key AND r.anidb_id=p.anidb_id
+            AND r.command_key=json_array(p.anidb_id,'installment',NULL))`);
+    }
     // Older workers retried this settled outcome forever. Preserve its history
     // without exposing the other account's request or creating another watch.
     db.exec(`UPDATE pending_title_intents SET state='complete',lease_until_ms=NULL,

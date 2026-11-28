@@ -12,7 +12,7 @@ export function createSeriesRequestController(detailView) {
   availableButton.hidden = true;
   const trigger = element('button', 'Request series', 'primary season-request-trigger');
   trigger.type = 'button';
-  const monitoredButton = element('button', 'Future episodes already monitored',
+  const monitoredButton = element('button', data.futureEpisodesPaused ? 'Future episode watch paused' : 'Future episodes already monitored',
     'primary season-already-monitored');
   monitoredButton.type = 'button';
   monitoredButton.disabled = true;
@@ -24,6 +24,7 @@ export function createSeriesRequestController(detailView) {
   if (data.requestsOpen === false) panel.append(element('p',
     'Anime requests for this title are temporarily unavailable in Negev. Please try again later.',
     'muted request-preview-gate'));
+  if(data.futureEpisodesPaused)panel.append(element('p',requestFailureMessage({reason:'watch_paused_elsewhere'}),'muted'));
   const action = element('dialog', undefined,
     'request-action season-request-action season-request-dialog');
   detailView.openSeasonDialog = action;
@@ -163,11 +164,12 @@ export function createSeriesRequestController(detailView) {
     row.activeWatchRequestId = detail?.activeWatchRequestId ?? null;
     row.futureEpisodesMonitored = detail?.futureEpisodesMonitored === true ||
       row.activeWatchRequestId > 0;
+    const watchText = detail?.futureEpisodesPaused ? requestFailureMessage({reason:'watch_paused_elsewhere'}) : 'Future episodes already monitored';
     row.status = row.futureEpisodesMonitored
-      ? { state: 'watching', text: 'Future episodes already monitored',
+      ? { state: 'watching', text: watchText,
         selectable: false } : status;
     row.statusText.textContent = row.futureEpisodesMonitored
-      ? 'Future episodes already monitored' : row.requested ? 'Requested' : status.text;
+      ? watchText : row.requested ? 'Requested' : status.text;
     row.count.textContent = Number.isSafeInteger(detail?.regularSeason?.total) &&
       detail.regularSeason.total > 0
       ? `${detail.regularSeason.total} episodes` : '';

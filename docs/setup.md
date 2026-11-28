@@ -168,3 +168,5 @@ Until initialization succeeds, the site reports that acquisition needs setup and
 | `src/admin/worker-diagnostics.mjs` | Read the worker snapshot |
 | `src/admin/retire-stalled.mjs` | Retire one stalled download |
 | `src/admin/retire-prestart-mismatch.mjs` | Release one stopped download after review |
+
+Sign-in allows five attempts per username per minute and up to 100 per socket peer. Members behind one tunnel have separate username budgets. Forwarded headers do not establish client identity. Invitation and reset routes retain their tighter limits.

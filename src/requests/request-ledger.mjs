@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
+import { activeRequestOwnerSql } from '../acquisition/request-owner.mjs';
 import { allocateDurableId } from '../runtime/durable-id.mjs';
 import { initializeReleaseControl, readReleaseControl, updateReleaseControl, updateReleasePreference } from '../acquisition/release-control.mjs';
 import { checkPreferredRelease, getPreferredFallback, closePreferredWaits, getPreferredWait } from '../acquisition/preferred-release.mjs';
@@ -111,6 +112,10 @@ export function openRequestLedger(dbPath) {
   const otherActiveWatch = db.prepare(`SELECT 1 FROM requests
     WHERE anidb_id=? AND requester_id<>? AND kind='series' AND monitor_future=1
       AND watch_closed=0 AND cancelled_ms IS NULL LIMIT 1`);
+  const otherWatchPaused = (requesterId,anidbId) => Boolean(otherActiveWatch.get(anidbId,requesterId)) &&
+    !db.prepare(`SELECT 1 FROM requests r WHERE r.anidb_id=? AND r.requester_id<>?
+      AND r.kind='series' AND r.monitor_future=1 AND r.watch_closed=0 AND r.cancelled_ms IS NULL
+      AND ${activeRequestOwnerSql(db,'r.id')} LIMIT 1`).get(anidbId,requesterId);
   const insertRequest = db.prepare(`INSERT INTO requests
     (id,requester_id,request_key,command_key,title,anidb_id,kind,episode_key,monitor_future,created_ms,status,reason)
     VALUES (?,?,?,?,?,?,?,?,?,?,'held',?)`);
@@ -308,6 +313,10 @@ export function openRequestLedger(dbPath) {
       }
       return activeWatch.get(requesterId, anidbId)?.id ?? null;
     },
+    findOtherPausedWatch({requesterId,anidbId}) {
+      if (![requesterId,anidbId].every(id=>Number.isSafeInteger(id)&&id>0)) throw new TypeError('Invalid watch lookup');
+      return otherWatchPaused(requesterId,anidbId);
+    },
     findOtherActiveWatch({ requesterId, anidbId }) {
       if (![requesterId, anidbId].every((id) => Number.isSafeInteger(id) && id > 0)) {
         throw new TypeError('Invalid active watch lookup');
@@ -342,7 +351,7 @@ export function openRequestLedger(dbPath) {
             requestId: watch.id,
             targetIds: findLinks.all(watch.id).map((row) => row.id), created: false };
           if (otherActiveWatch.get(item.anidbId, requesterId)) {
-            return held('already_monitored_elsewhere');
+            return held(otherWatchPaused(requesterId,item.anidbId)?'watch_paused_elsewhere':'already_monitored_elsewhere');
           }
         }
         const requestId = Number(insertRequest.run(allocateDurableId(db, 'requests'), requesterId, requestKey, commandKey, item.title, item.anidbId,

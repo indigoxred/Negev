@@ -49,7 +49,7 @@ test('signed-in users sharing one proxy each get their own search budget', async
   } finally { await app.close(); }
 });
 
-test('login attempts still share the proxy budget after one account signs in', async () => {
+test('login attempts keep the account budget after sign-in or forwarded-header changes', async () => {
   const origin = 'http://localhost:3000';
   const user = { id: 1, username: 'Owner', role: 'admin', sessionVersion: 1 };
   const app = await buildUserApp({
@@ -133,4 +133,19 @@ test('related title browsing can expand several franchises per minute', async ()
       assert.equal(result.statusCode, 200, `related ${id}: ${result.body}`);
     }
   } finally { await app.close(); }
+});
+
+test('different members can sign in behind one proxy while account and peer abuse stay bounded',async()=>{
+ const origin='http://localhost:3000';let authenticated=0;
+ const app=await buildUserApp({accounts:{authenticate:async({username})=>{authenticated++;return username==='Friend'?{id:2,username,role:'member',sessionVersion:1}:null},getSessionUser:()=>null,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false},sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,submitRequest:async()=>null,readRequest:()=>null});
+ const attempt=(username,remoteAddress='127.0.0.1',forwarded='203.0.113.1')=>app.inject({method:'POST',url:'/api/login',remoteAddress,headers:{origin,'x-forwarded-for':forwarded},payload:{username,password:'test-passphrase'}});
+ try{
+  for(let i=0;i<5;i++)assert.equal((await attempt('Owner')).statusCode,401);
+  assert.equal((await attempt('Friend')).statusCode,200,'another account must not inherit five failures');
+  assert.equal((await attempt('OWNER','192.0.2.2')).statusCode,429,'case/IP changes must not evade an account limit');
+  assert.equal(authenticated,6,'blocked account cannot reach password hashing');
+  for(let i=0;i<94;i++)assert.equal((await attempt('Unknown'+i,'127.0.0.1','198.51.100.'+(i+1))).statusCode,401);
+  const blocked=await attempt('OneMore');assert.equal(blocked.statusCode,429,'forged forwarding cannot evade the peer cap');
+  assert.ok(Number(blocked.headers['retry-after'])>0);
+ }finally{await app.close()}
 });

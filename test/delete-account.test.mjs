@@ -143,3 +143,38 @@ test('the admin route deletes a disabled account', () =>
       assert.deepEqual(users.json().items.map((user) => user.username), ['Owner']);
     } finally { await app.close(); }
   }));
+
+for(const target of ['plain','started'])test('settled dispatch refusal permits account deletion with '+target+' history',()=>withData(async({dbPath,accounts,owner,member,ids})=>{
+ let ledger=openAcquisitionLedger(dbPath);
+ try{
+  // Use an existing target on either request; the earlier started attempt has
+  // an inactive claim after a definitive refusal on this independent candidate.
+  const db=new DatabaseSync(dbPath);try{db.prepare('INSERT OR IGNORE INTO request_targets(request_id,target_id) SELECT ?,id FROM targets WHERE episode_id=1').run(ids[target]);db.prepare('UPDATE acquisition_target_claims SET active=0').run();}finally{db.close()}
+  const candidate={indexerId:7,guid:'refused-'+target},hash='c'.repeat(40);
+  const reserved=ledger.reserve({requestId:ids[target],candidate,episodeIds:[1],nowMs:2000});assert.ok(reserved.attemptId,JSON.stringify(reserved));
+  ledger.bindPreparedTorrent({attemptId:reserved.attemptId,candidate,hash,nowMs:2001});ledger.beginDispatch({attemptId:reserved.attemptId,nowMs:2002});
+  assert.equal(ledger.rejectDispatch({attemptId:reserved.attemptId,candidate,hash,nowMs:2003,httpStatus:403}).state,'dispatch_rejected');
+  ledger.close();ledger=openAcquisitionLedger(dbPath);
+  accounts.setDisabled({adminUserId:owner.id,userId:member.id,disabled:true});
+  const result=deleteAccount(dbPath,{adminUserId:owner.id,userId:member.id});assert.equal(result.state,'deleted',JSON.stringify(result));
+  if(target==='started')assert.equal(count(dbPath,'SELECT count(*) AS n FROM acquisition_dispatch_refusals'),1);
+ }finally{ledger.close()}
+}));
+
+for(const fault of ['uncertain','wrong_hash','no_release','active_claim'])test('account deletion retains '+fault+' dispatch guard',()=>withData(async({dbPath,accounts,owner,member,ids})=>{
+ const ledger=openAcquisitionLedger(dbPath);try{
+  const db=new DatabaseSync(dbPath);try{db.prepare('UPDATE acquisition_target_claims SET active=0').run();}finally{db.close()}
+  const candidate={indexerId:7,guid:'guard-'+fault},hash='d'.repeat(40);
+  const id=ledger.reserve({requestId:ids.withChildren,candidate,episodeIds:[1],nowMs:2000}).attemptId;
+  ledger.bindPreparedTorrent({attemptId:id,candidate,hash,nowMs:2001});ledger.beginDispatch({attemptId:id,nowMs:2002});
+  if(fault!=='uncertain')ledger.rejectDispatch({attemptId:id,candidate,hash,nowMs:2003,httpStatus:403});
+  const alter=new DatabaseSync(dbPath);try{
+   if(fault==='wrong_hash')alter.prepare('UPDATE acquisition_dispatch_refusals SET torrent_hash=? WHERE attempt_id=?').run('e'.repeat(40),id);
+   if(fault==='no_release')alter.prepare('DELETE FROM acquisition_releases WHERE attempt_id=?').run(id);
+   if(fault==='active_claim')alter.prepare('UPDATE acquisition_target_claims SET active=1 WHERE attempt_id=?').run(id);
+  }finally{alter.close()}
+  accounts.setDisabled({adminUserId:owner.id,userId:member.id,disabled:true});
+  assert.equal(deleteAccount(dbPath,{adminUserId:owner.id,userId:member.id}).reason,'acquisition_unsettled');
+  assert.equal(count(dbPath,'SELECT count(*) n FROM users WHERE id=?',member.id),1);
+ }finally{ledger.close()}
+}));

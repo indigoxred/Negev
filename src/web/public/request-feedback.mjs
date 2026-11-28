@@ -1,4 +1,5 @@
 const messages = {
+  watch_paused_elsewhere: 'Watching is paused. Ask an administrator to re-enable the existing watch owner, then try again.',
   release_state_unknown: 'Negev could not confirm this title’s release timing from catalogue dates. Please try again shortly.',
   invalid_episode_selection: 'The episode selection changed. Refresh this title and choose again.',
   episode_not_aired: 'That episode has not aired yet. Request the series to watch for future episodes.',

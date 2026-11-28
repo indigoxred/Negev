@@ -173,3 +173,10 @@ test('an Airing request can watch future episodes without reacquiring verified c
   assert.deepEqual(saved.intent.episodeIds, []);
   assert.equal(saved.intent.monitorFuture, true);
 });
+
+test('submitter distinguishes a paused other-owner watch before reporting monitoring',async()=>{
+ const submit=createHeldRequestSubmitter({authorizeRequester:authorized,confirmKnownTitle:async()=>true,
+  loadDetail:async()=>{throw Error('no catalogue read needed')},now:()=>1000,today:()=> '2026-11-28',
+  ledger:{findSubmission:()=>null,findOtherActiveWatch:()=>true,findOtherPausedWatch:()=>true,submit:()=>{throw Error('no competing watch')}}});
+ assert.equal((await submit({requesterId:8,anidbId:42,scope:'installment',requestKey:'member'})).reason,'watch_paused_elsewhere');
+});
