@@ -1,4 +1,4 @@
-import { closeInOrder } from '../runtime/close-in-order.mjs';
+import { closeInOrder, closeSyncInOrder } from '../runtime/close-in-order.mjs';
 import { openQualityInspectionRetry } from './quality-inspection-retry.mjs';
 import { createAcquisitionStageProcessors } from
   './acquisition-stage-processors.mjs';
@@ -23,34 +23,42 @@ export function openAcquisitionRuntime(options = {}) {
     sessionGate, allowedAnidbIds,
     ownershipGate = null, readinessGate = null,
     fetchImpl = fetch, now = Date.now, ...providers } = options;
-  const qualityInspectionRetry = openQualityInspectionRetry(dbPath);
-  const stages = createAcquisitionStageProcessors({ qualityInspectionRetry,
-    ...providers, acquisitions, recognitionRecoveries, shokoRescans,
-    ownershipGate,
-    providerFetchImpl: fetchImpl, now });
-  const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
-    recognitionRecoveries, shokoRescans,
-    holdingRoot: providers.holdingRoot,
-    qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate, readinessGate,
-    fetchImpl, now, pureMode: providers.pureMode === true,
-    // Give completed imports a turn between each potentially two-minute
-    // first-time request check. The four stages remain strictly serial.
-    requestPageLimit: 1, ...stages });
-  const scheduler = createPipelineScheduler({ pipeline, now });
-  let stopPromise;
-  return { start: () => scheduler.start(),
-    stop: () => stopPromise ??= closeInOrder([['pipeline scheduler',()=>scheduler.stop()],['quality inspection ledger',()=>qualityInspectionRetry.close()]]),
-    wakeRequest: (requestId) => {
-      const request = providers.requests?.getRequest(requestId);
-      if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);
-      pipeline.wakeRequest({ requestId, nowMs: now() });
-      scheduler.wakeRequest(requestId);
-    },
-    wakeHydratedTitle: (anidbId) => {
-      const ids = pipeline.wakeHydratedTitle({ anidbId, nowMs: now() });
-      for (const id of ids) scheduler.wakeRequest(id);
-      return ids;
-    },
-    getStatus: () => scheduler.getStatus() };
+  let qualityInspectionRetry, pipeline;
+  try {
+    qualityInspectionRetry = openQualityInspectionRetry(dbPath);
+    const stages = createAcquisitionStageProcessors({ qualityInspectionRetry,
+      ...providers, acquisitions, recognitionRecoveries, shokoRescans,
+      ownershipGate,
+      providerFetchImpl: fetchImpl, now });
+    pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
+      recognitionRecoveries, shokoRescans,
+      holdingRoot: providers.holdingRoot,
+      qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate, readinessGate,
+      fetchImpl, now, pureMode: providers.pureMode === true,
+      // Give completed imports a turn between each potentially two-minute
+      // first-time request check. The four stages remain strictly serial.
+      requestPageLimit: 1, ...stages });
+    const scheduler = createPipelineScheduler({ pipeline, now });
+    let stopPromise;
+    return { start: () => scheduler.start(),
+      stop: () => stopPromise ??= closeInOrder([['pipeline scheduler',()=>scheduler.stop()],['quality inspection ledger',()=>qualityInspectionRetry.close()]]),
+      wakeRequest: (requestId) => {
+        const request = providers.requests?.getRequest(requestId);
+        if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);
+        pipeline.wakeRequest({ requestId, nowMs: now() });
+        scheduler.wakeRequest(requestId);
+      },
+      wakeHydratedTitle: (anidbId) => {
+        const ids = pipeline.wakeHydratedTitle({ anidbId, nowMs: now() });
+        for (const id of ids) scheduler.wakeRequest(id);
+        return ids;
+      },
+      getStatus: () => scheduler.getStatus() };
+  } catch (error) {
+    closeSyncInOrder([
+      ['unstarted acquisition pipeline',()=>pipeline?.closeUnstarted()],
+      ['quality inspection ledger',()=>qualityInspectionRetry?.close()],
+    ],error);
+  }
 }
 

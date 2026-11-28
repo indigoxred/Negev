@@ -1080,7 +1080,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       void task.then(() => observations.delete(task), () => observations.delete(task));
       return task;
     };
-    const refreshShokoFile = (fileId, {includeMissing=false} = {}) => {
+    const refreshShokoFile = (fileId, {includeMissing=false,includeObservation=false} = {}) => {
       if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
       if (!Number.isSafeInteger(fileId) || fileId < 1) {
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
@@ -1088,13 +1088,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return track((async () => {
         const pathTokens=eventConsumer?.snapshotPendingPathResolutions()??[];
         const startingRevision = inventory.getFile(fileId)?.observedMs;
-        const startingGeneration = startingRevision === undefined ?
-          eventConsumer?.getState().generation : null;
+        const startingGeneration = eventConsumer?.getState().generation;
         const result = await metadata.run(() => readShokoOneFile({
           baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includeMissing, includePaths:pathTokens.length>0,
         }));
         if (inventory.getFile(fileId)?.observedMs !== startingRevision ||
-            (startingRevision === undefined &&
+            ((includeMissing || startingRevision === undefined) &&
               eventConsumer?.getState().generation !== startingGeneration)) {
           return { state: 'held', reason: 'file_event_during_read' };
         }
@@ -1103,6 +1102,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const observedMs = Math.max(now(), (startingRevision ?? -1) + 1);
         const saved = inventory.recordFileObservation({ item: result.item, observedMs });
         if (saved.state !== 'recorded_file') return saved;
+        // Capture the persisted normalization before yielding to any event.
+        const observed = inventory.getFile(fileId);
+        const receipt = { ...saved, fileId, recognition: observed?.state,
+          observedRevision: observed?.observedMs ?? null, generation: startingGeneration };
         const delivery = inventory.deliverPendingChanges({
           handle: (change) => enqueueChangedFile({ ...change, priority: 'event' }),
         });
@@ -1110,15 +1113,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         for(const token of pathTokens)for(const path of result.observedPaths??[]) {
           eventConsumer.acknowledgeLinkedPathObservation({token,fileId,path,result:{...saved,recognition:inventory.getFile(fileId)?.state}});
         }
-        return saved;
+        return includeObservation ? receipt : saved;
       })());
     };
     const refreshRecognizedShokoFile = async (fileId, options) => {
       const token = eventConsumer?.snapshotPendingResolution(fileId);
-      const result = await refreshShokoFile(fileId,options);
-      const file=inventory.getFile(fileId);
-      const recognized = result?.state === 'recorded_file' ? { ...result,
-        recognition:file?.state, observedRevision:file?.observedMs??null } : result;
+      const recognized = await refreshShokoFile(fileId,{...options,includeObservation:true});
       if (token) eventConsumer.acknowledgeLinkedObservation({
         fileId, token, result: recognized });
       return recognized;
@@ -1126,7 +1126,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
       isRetirementCurrent:result=>{
         const revision=inventory.getFile(result.fileId)?.observedMs??null;
-        return revision===result.observedRevision && (revision!==null || eventConsumer.getState().generation===result.generation);
+        return !stopping && revision===result.observedRevision && eventConsumer.getState().generation===result.generation;
       },
       readPage: (input) => metadata.run(() => readShokoRecentPage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,

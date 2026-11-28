@@ -23,3 +23,17 @@ export function createShutdownListener(stop, report) {
     try { await report(error); } catch { /* Reporting cannot interrupt cleanup. */ }
   });
 }
+
+// Constructor unwinding cannot leave an asynchronous close running behind a
+// thrown construction error. These resources have synchronous close methods.
+export function closeSyncInOrder(steps, originalError) {
+  const errors = originalError ? [originalError] : [];
+  for (const [name, close] of steps) {
+    try { close(); }
+    catch (cause) { errors.push(new Error(name + ' did not close', { cause })); }
+  }
+  if (errors.length > (originalError ? 1 : 0)) {
+    throw new AggregateError(errors, 'Resource construction cleanup failed', { cause: originalError });
+  }
+  if (originalError) throw originalError;
+}

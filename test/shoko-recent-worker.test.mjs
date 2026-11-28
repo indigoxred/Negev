@@ -236,10 +236,17 @@ for(const condition of ['removed','unsupported','provisional','outage','revived'
    if(condition==='outage'&&reads>1)return{state:'unavailable'};
    if(condition==='revived_linked'&&reads>1)return{state:'recorded_file',fileId,recognition:'linked'};
    if(condition==='revived'&&reads>1)return{state:'recorded_file',recognition:'provisional'};
-   return{state:'missing_file',fileId};
+   return{state:'missing_file',fileId,observedRevision:null,generation:0};
   }});
  const result=await worker.drainOne();
  assert.equal(result.state,['removed','unsupported'].includes(condition)?'retired':condition==='revived_linked'?'acknowledged':'retry_scheduled',JSON.stringify(result));
  assert.equal(ledger.getCapacity().pending,['removed','unsupported','revived_linked'].includes(condition)?0:1);
  if(condition==='removed')assert.equal(reads,2,'one missing read cannot retire a queued file');
+}));
+
+test('two missing reads from different generations cannot retire the pending file',async()=>withLedger(async ledger=>{
+ ledger.bootstrap(cursor(10),[10]);let reads=0;
+ const worker=createShokoRecentWorker({ledger,now:()=>100,readPage:async()=>{},isRetirementCurrent:()=>true,
+  refreshFile:async fileId=>({state:'missing_file',fileId,observedRevision:5,generation:reads++})});
+ assert.equal((await worker.drainOne()).state,'retry_scheduled');assert.equal(ledger.getCapacity().pending,1);
 }));

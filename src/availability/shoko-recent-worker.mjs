@@ -81,7 +81,11 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
           let confirmed;
           try{confirmed=await refreshFile(pending.fileId);}catch{confirmed=null;}
           if(confirmed?.state==='recorded_file')result=confirmed;
-          if(confirmed?.state==='missing_file' && confirmed.fileId===pending.fileId && isRetirementCurrent(confirmed)===true)retirement='removed';
+          if(confirmed?.state==='missing_file' && confirmed.fileId===pending.fileId &&
+              Number.isSafeInteger(result.generation) && result.generation>=0 &&
+              (result.observedRevision===null || Number.isSafeInteger(result.observedRevision)) &&
+              confirmed.generation===result.generation && confirmed.observedRevision===result.observedRevision &&
+              isRetirementCurrent(confirmed)===true)retirement='removed';
         }
         if(result?.state==='recorded_file' && result.recognition==='unverified' && result.fileId===pending.fileId && isRetirementCurrent(result)===true) retirement='unsupported_links';
         if(retirement && typeof ledger.retirePending==='function')return {...ledger.retirePending({fileId:pending.fileId,reason:retirement,nowMs:now()}),fileId:pending.fileId};

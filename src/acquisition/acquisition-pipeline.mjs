@@ -1,4 +1,4 @@
-import { closeInOrder } from '../runtime/close-in-order.mjs';
+import { closeInOrder, closeSyncInOrder } from '../runtime/close-in-order.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from './acquisition-request-queue.mjs';
 import { openStartQueue, createStartWorker } from './start-queue.mjs';
@@ -52,8 +52,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     queues.push(openCompletionQueue(dbPath, { pureMode }));
     queues.push(openHandoffPublishQueue(dbPath, { pureMode }));
   } catch (error) {
-    for (const queue of queues.reverse()) queue.close();
-    throw error;
+    closeSyncInOrder([...queues].reverse().map((queue,index)=>[`acquisition queue ${index}`,()=>queue.close()]),error);
   }
   const [requestQueue, startQueue, completionQueue, publishQueue] = queues;
   const requestWorker = createAcquisitionPageWorker({ queue: requestQueue,
@@ -264,6 +263,15 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     } }),
     tickPublish: () => run({ runOnce: () => runMediaBatch(publishWorker) }),
     beginShutdown() { closed = true; },
+    closeUnstarted() {
+      if (initialization || recovery || active.size || Object.values(running).some(Boolean)) {
+        throw new Error('Cannot synchronously close a started pipeline');
+      }
+      if (closing) return;
+      closed = true;
+      closing = Promise.resolve();
+      closeSyncInOrder([...queues].reverse().map((queue,index)=>['acquisition queue '+index,()=>queue.close()]));
+    },
     close() {
       if (!closing) {
         closed = true;
