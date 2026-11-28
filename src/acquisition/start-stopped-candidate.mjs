@@ -68,6 +68,8 @@ export async function startStoppedCandidate(options) {
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
+  const selection = ledger.getTorrentSelection?.(attemptId);
+  if (selection && selection.torrentHash !== expected.hash.toLowerCase()) return held('torrent_conflict');
   if (plannedFiles.length > 50 || attempt.episodeIds.length > 50) {
     if (typeof loadDetail !== 'function') return held('detail_unavailable');
     const detail = await collectAniDbDetail({ anidbId: request.anidbId, loadPage: loadDetail });
@@ -149,18 +151,23 @@ export async function startStoppedCandidate(options) {
   };
   let manifest = await observeStoppedManifest({ baseUrl,
     sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-    timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true });
+    timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true,
+    excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files });
   if (manifest.reason === 'provider_http_403') {
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     manifest = await observeStoppedManifest({ baseUrl,
       sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-      timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true });
+      timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true,
+      excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files });
   }
   if(manifest.state==='manifest_needs_exclusions'){
+    const access = await checkAcquisitionAccess(authorizeRequest, { requestId: request.id, attemptId });
+    if (access.state === 'held') return access;
     const body=new URLSearchParams({hash:expected.hash,id:manifest.passive.map(file=>String(file.index)).join('|'),priority:'0'});
     try{const receipt=await activeFetch(new URL('/api/v2/torrents/filePrio',base),{method:'POST',headers:{Cookie:qbittorrentSessionCookie(activeSessionId)},body,redirect:'manual',signal:AbortSignal.timeout(timeoutMs)});await cancelResponseBody(receipt);}catch{/* Exact re-observation decides whether exclusion succeeded. */}
-    manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames});
+    manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames,
+      excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files});
   }
   if (manifest.state !== 'manifest_safe') return manifest;
   let manifestAtMs;
@@ -221,14 +228,16 @@ export async function startStoppedCandidate(options) {
   }
   let finalManifest = await observeStoppedManifest({ baseUrl,
     sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-    timeoutMs, saveRoot });
+    timeoutMs, saveRoot, plannedFileNames, excludedFileNames: selection?.excludedFileNames,
+    expectedFiles: selection?.files });
   if (finalManifest.reason === 'provider_http_403') {
     if (refreshedForFinal) return finalManifest;
     const renewed = await renewSession();
     if (renewed.state !== 'authenticated') return renewed;
     finalManifest = await observeStoppedManifest({ baseUrl,
       sessionId: activeSessionId, expected, fetchImpl: activeFetch,
-      timeoutMs, saveRoot });
+      timeoutMs, saveRoot, plannedFileNames, excludedFileNames: selection?.excludedFileNames,
+      expectedFiles: selection?.files });
   }
   if (finalManifest.reason === 'provider_http_403' ||
       finalManifest.reason === 'provider_unavailable') return finalManifest;

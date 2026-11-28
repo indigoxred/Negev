@@ -2,6 +2,7 @@ import { pendingRecognitionSql } from './recognition-release-sql.mjs';
 import { canonicalReleaseGuid } from './durable-release-candidate.mjs';
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { createBonusPackLedger } from './bonus-pack-ledger.mjs';
+import { createTorrentSelectionLedger } from './torrent-selection-ledger.mjs';
 import { createHash } from 'node:crypto';
 import { releaseReservationGate } from './release-control.mjs';
 import { DatabaseSync } from 'node:sqlite';
@@ -210,8 +211,11 @@ export function openAcquisitionLedger(dbPath) {
     ) STRICT`);
   } catch (error) { db.close(); throw error; }
 
-  let bonuses;
-  try { bonuses=createBonusPackLedger(db); } catch(error) { db.close();throw error; }
+  let bonuses, selections;
+  try {
+    bonuses = createBonusPackLedger(db);
+    selections = createTorrentSelectionLedger(db, transact);
+  } catch(error) { db.close();throw error; }
   const requestRow = db.prepare('SELECT id,anidb_id,status FROM requests WHERE id=?');
   const attemptForRequest = db.prepare(`SELECT 1 AS present
     FROM acquisition_attempts attempt
@@ -387,6 +391,7 @@ export function openAcquisitionLedger(dbPath) {
 
   return {
     ...bonuses,
+    ...selections,
     // A read-only preflight shortcut. An active claim blocks another release
     // for the same episode, but an unfinished claim for this exact candidate
     // must still reach the normal replay/reconciliation path.

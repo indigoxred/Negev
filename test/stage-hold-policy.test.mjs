@@ -143,6 +143,27 @@ test('legacy ambiguous first-time holds get one logged recheck, not endless revi
     } finally { raw.close(); }
   }));
 
+test('an old parked selection mismatch gets one guarded recovery turn', async () =>
+  startFixture(async ctx => {
+    const claim = ctx.queue.claimNext({ nowMs: 1000 });
+    ctx.queue.recordResult({ ...claim, state: 'held', reason: 'file_plan_mismatch', checkedMs: 1001 });
+    const raw = new DatabaseSync(ctx.dbPath);
+    try {
+      raw.prepare('UPDATE start_checks SET version=2,next_due_ms=NULL WHERE attempt_id=?').run(claim.attemptId);
+      if (raw.prepare('PRAGMA table_info(start_checks)').all().some(c => c.name === 'selection_policy_revision')) {
+        raw.exec('UPDATE start_checks SET selection_policy_revision=0');
+      }
+      ctx.reopen();
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61001);
+      const retry = ctx.queue.claimNext({ nowMs: 61001 });
+      assert.equal(retry.attemptId, claim.attemptId);
+      ctx.queue.recordResult({ ...retry, state: 'held', reason: 'file_plan_mismatch', checkedMs: 61002 });
+      ctx.reopen();
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, null,
+        'a current real mismatch remains held for review');
+    } finally { raw.close(); }
+  }));
+
 test('legacy parked transient start holds are revived once, logged and exactly reversible', async () =>
   startFixture(async (ctx) => {
     const [a, b] = ctx.ids.map((row) => row.attemptId);

@@ -64,6 +64,13 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       reasons: ['public_probe_unverified', 'target_not_proven_unimported'],
       extraWhere: `${REVIEWABLE_START} AND first_time_policy_revision=0` });
     db.exec('UPDATE start_checks SET first_time_policy_revision=1 WHERE first_time_policy_revision=0');
+    if (!db.prepare('PRAGMA table_info(start_checks)').all().some(c => c.name === 'selection_policy_revision')) {
+      db.exec('ALTER TABLE start_checks ADD COLUMN selection_policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(selection_policy_revision>=0)');
+    }
+    reviveTransientHolds(db, { stage: 'start', table: 'start_checks',
+      reasons: ['file_plan_mismatch', 'unexpected_selected_file'],
+      extraWhere: `${REVIEWABLE_START} AND selection_policy_revision=0` });
+    db.exec('UPDATE start_checks SET selection_policy_revision=1 WHERE selection_policy_revision=0');
     // Old properties-read failures were indistinguishable from actual storage
     // mismatches. Authorise one fresh observation, never a start or guard bypass.
     db.exec(`UPDATE start_checks SET next_due_ms=MIN(COALESCE(next_due_ms,checked_ms+60000),checked_ms+60000)
@@ -101,9 +108,9 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       (c.attempt_id IS NULL OR (c.state='held' AND c.next_due_ms<=?)) AND a.id>?
     ORDER BY a.id LIMIT 1`);
   const claim = db.prepare(`INSERT INTO start_checks
-    (attempt_id,version,state,reason,checked_ms,next_due_ms,title_policy_revision,storage_policy_revision,first_time_policy_revision)
-    VALUES (?,1,NULL,NULL,NULL,NULL,2,1,1) ON CONFLICT(attempt_id) DO UPDATE SET
-    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,title_policy_revision=2,storage_policy_revision=1,first_time_policy_revision=1`);
+    (attempt_id,version,state,reason,checked_ms,next_due_ms,title_policy_revision,storage_policy_revision,first_time_policy_revision,selection_policy_revision)
+    VALUES (?,1,NULL,NULL,NULL,NULL,2,1,1,1) ON CONFLICT(attempt_id) DO UPDATE SET
+    version=version+1,state=NULL,reason=NULL,checked_ms=NULL,next_due_ms=NULL,title_policy_revision=2,storage_policy_revision=1,first_time_policy_revision=1,selection_policy_revision=1`);
   const check = db.prepare(`SELECT attempt_id AS attemptId,version,state,reason,
     checked_ms AS checkedMs,next_due_ms AS nextDueMs
     FROM start_checks WHERE attempt_id=?`);

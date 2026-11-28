@@ -3,6 +3,8 @@ import { stagingSavePath } from './staging-save-path.mjs';
 import { startStoppedCandidate } from './start-stopped-candidate.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { qbittorrentSessionCookie } from './qbittorrent-session-cookie.mjs';
+import { checkAcquisitionAccess } from './acquisition-access.mjs';
+import { recoverTorrentSelection } from './recover-torrent-selection.mjs';
 
 import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
@@ -34,7 +36,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
       typeof start !== 'function') {
     throw new TypeError('Invalid recorded start');
   }
-  let attempt, plan, intent;
+  let attempt, plan, intent, selection;
   try {
     attempt = acquisitions.getAttempt(attemptId);
     if (!attempt) return held('attempt_missing');
@@ -42,8 +44,10 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
     if (intent) return { state: intent.status, sendNow: false };
     const mainPlan=acquisitions.getFilePlan(attemptId);
     plan=mainPlan?[...mainPlan,...(acquisitions.getBonusPlan?.(attemptId)??[])]:null;
+    selection = acquisitions.getTorrentSelection?.(attemptId);
+    if (selection && selection.torrentHash !== attempt.expectedHash) return held('torrent_conflict');
   } catch (error) { return heldAfter(error, 'attempt_unavailable'); }
-  if (attempt.status === 'dispatch_unknown' && attempt.expectedHash) {
+  if ((attempt.status === 'dispatch_unknown' || attempt.status === 'torrent_observed' && !selection) && attempt.expectedHash) {
     // The indexer may no longer list the release after qBittorrent accepted
     // it. Reconcile the saved hash from qBittorrent; never send another add.
     const pending = { hash: attempt.expectedHash, category: 'negev',
@@ -54,8 +58,33 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
       expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
       allowSelectedPassive: true,
       plannedFileNames: plan?.map((file) => file.name),
+      excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files,
     });
+    const signature = files => JSON.stringify(files.map(file =>
+      [file.name, file.size]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+    if (!selection && observed.state === 'manifest_safe' && plan &&
+        signature(observed.videos) !== signature(plan) &&
+        typeof acquisitions.recordTorrentSelection === 'function') {
+      const recovered = await recoverTorrentSelection({ acquisitions, attemptId,
+        expected: pending, plan, qbittorrent, fetchImpl });
+      if (recovered.state !== 'selection_recovered') return recovered;
+      const saved = acquisitions.recordTorrentSelection({ attemptId, hash: pending.hash,
+        files: recovered.files, excludedFileNames: recovered.excludedFileNames, nowMs: now() });
+      if (saved.state !== 'selection_recorded') return saved;
+      selection = acquisitions.getTorrentSelection(attemptId);
+      observed = await observeStoppedManifest({ baseUrl: qbittorrent.baseUrl,
+        sessionId: qbittorrent.sessionId, expected: pending, fetchImpl,
+        saveRoot: qbitStagingRoot, allowSelectedPassive: true,
+        plannedFileNames: plan.map(file => file.name),
+        excludedFileNames: selection.excludedFileNames, expectedFiles: selection.files });
+    }
     if (observed.state === 'manifest_needs_exclusions') {
+      if (typeof verifyStagingRoot === 'function' &&
+          (await verifyStagingRoot())?.state !== 'verified_staging_root') {
+        return held('staging_root_unverified');
+      }
+      const access = await checkAcquisitionAccess(authorizeRequest, { attemptId, requestId: attempt.requestId });
+      if (access.state === 'held') return access;
       const body = new URLSearchParams({ hash: pending.hash,
         id: observed.passive.map((file) => String(file.index)).join('|'),
         priority: '0' });
@@ -71,6 +100,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
         baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
         expected: pending, fetchImpl, saveRoot: qbitStagingRoot,
         plannedFileNames: plan?.map((file) => file.name),
+        excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files,
       });
       if (observed.reason === 'unexpected_selected_file') {
         return held('passive_exclusion_unconfirmed');
@@ -80,8 +110,6 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
       return held('passive_exclusion_unconfirmed');
     }
     if (observed.state !== 'manifest_safe') return observed;
-    const signature = (files) => JSON.stringify(files.map((file) =>
-      [file.name, file.size]).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
     if (!plan || signature(observed.videos) !== signature(plan)) {
       return held('file_plan_mismatch');
     }
