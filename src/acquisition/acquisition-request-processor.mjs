@@ -1,5 +1,5 @@
 import { openQualityInspectionRetry, transientInspectionFailure } from './quality-inspection-retry.mjs';
-import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
+import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS, MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
@@ -415,7 +415,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
           preview.episodeIds.some((id) => !request.episodeIds.includes(id)) ||
           !Array.isArray(preview.files) || preview.files.length < 1 ||
-          preview.files.length > MAX_ACQUISITION_VIDEOS) {
+          preview.files.length > MAX_ACQUISITION_VIDEOS ||
+          (preview.mappingFiles !== undefined && (!Array.isArray(preview.mappingFiles) ||
+            preview.mappingFiles.length < 1 || preview.mappingFiles.length > MAX_TORRENT_FILES))) {
         if(requireReleasePolicy&&!pinned&&preview?.state==='preflight'){qualityInspectionRetry.fail(request,candidate,now());transientFailure=true;}
         continue;
       }
@@ -554,7 +556,11 @@ export function createAcquisitionRequestProcessor({ readRequest,
       return held('target_missing');
     }
     const freshPlan = planTorrentTargets({ request, detail,
-      prepared: { state: 'prepared_stopped', files: selected.preview.files },
+      // Excluded files still establish a complete absolute-numbered pack.
+      // Revalidating only the selected suffix loses its independently checked
+      // numbering context. Final submission re-reads the actual metainfo.
+      prepared: { state: 'prepared_stopped',
+        files: selected.preview.mappingFiles ?? selected.preview.files },
       releaseTitle: selected.candidate.title,
       trustedTitle: selected.preview.identityTitle ?? detail.title,
       allowTitleMetadataVariation: selected.preview.shokoPreview === 'exact' });
@@ -563,7 +569,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
           JSON.stringify(selected.preview.episodeIds) ||
         JSON.stringify(freshPlan.plannedFiles) !==
           JSON.stringify(selected.preview.files)) {
-      return held('preflight_mapping_changed');
+      return { ...held('preflight_mapping_changed'), ...(!pinned ? {
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor,
+      } : {}) };
     }
     let outcome;
     try { outcome = await submitCandidate({ request,

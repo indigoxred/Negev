@@ -10,6 +10,37 @@ import { openCandidateCheckCache } from '../src/acquisition/candidate-check-cach
 const request = { id: 1, anidbId: 42, kind: 'series', episodeIds: [1001] };
 const candidate = { indexerId: 7, guid: 'private-candidate-guid', title: 'Example - 01', size: 1000 };
 
+test('absolute mapping context survives cache replay', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-mapping-context-'));
+  const cache = openCandidateCheckCache(path.join(dir, 'state.sqlite'), { now: () => 100 });
+  try {
+    const mappingFiles = [{ name: 'Example - 25.mkv', size: 100 }, { name: 'Example - 26.mkv', size: 100 }];
+    cache.put({ request, candidate, result: { state: 'preflight', episodeIds: [1001],
+      mappingFiles, filesToExclude: [mappingFiles[1]] } });
+    assert.deepEqual(cache.get({ request, candidate }).mappingFiles, mappingFiles);
+  } finally { cache.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('legacy subset previews are refreshed without discarding unrelated cached evidence', async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'negev-old-context-'));
+  const file = path.join(dir, 'state.sqlite');
+  const cache = openCandidateCheckCache(file, { now: () => 100 });
+  const raw = new DatabaseSync(file);
+  try {
+    const other = { ...candidate, guid: 'unrelated' };
+    cache.put({ request, candidate, result: { state: 'preflight', episodeIds: [1001],
+      filesToExclude: [{ name: 'Example - 25.mkv', size: 100 }] } });
+    cache.put({ request, candidate: other, result: { state: 'held', reason: 'invalid_metainfo' } });
+    for (const row of raw.prepare('SELECT cache_key,result_json FROM acquisition_candidate_checks').all()) {
+      const result = JSON.parse(row.result_json);
+      delete result._mappingContextRevision;
+      raw.prepare('UPDATE acquisition_candidate_checks SET result_json=? WHERE cache_key=?').run(JSON.stringify(result), row.cache_key);
+    }
+    assert.equal(cache.get({ request, candidate }), null);
+    assert.equal(cache.get({ request, candidate: other }).reason, 'invalid_metainfo');
+  } finally { raw.close(); cache.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
 test('old subset-pack rejection is reconsidered without flushing unrelated evidence', async () => {
  const dir=await mkdtemp(path.join(tmpdir(),'negev-subset-pack-cache-')),dbPath=path.join(dir,'db.sqlite');
  let cache=openCandidateCheckCache(dbPath,{now:()=>100});

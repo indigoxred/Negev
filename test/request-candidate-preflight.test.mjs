@@ -288,6 +288,8 @@ test('a normalized absolute season pack retains exact Shoko identity checks and 
   const result = await run(false);
   assert.equal(result.state, 'preflight');
   assert.deepEqual(result.files.map((file) => file.episodeIds), [[1001], [1002]]);
+  assert.deepEqual(result.mappingFiles, files,
+    'absolute numbering keeps the complete checked main-file context');
   assert.equal(result.shokoPreview, 'exact');
   assert.equal(result.registeredInAniDb, false);
   assert.equal(result.downloadStarted, false);
