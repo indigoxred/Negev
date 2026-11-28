@@ -76,12 +76,13 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     return { state: 'updated', requestId: request.id, created: false,
       control: requests.getReleaseControl(request.id, now()) };
   };
-  const open = async input => {
+  const open = async (input, authorize) => {
     prune();
     const prepared = await prepare(input);
     const existing = existingSubmission(prepared, input);
     if (existing) return { state: 'existing', requestId: existing.requestId, created: false };
     if (prepared.state !== 'prepared') return prepared;
+    if (authorize) { const denied = await authorize(); if (denied) return denied; }
     prune();
     if (atCapacity(input.requesterId)) return held('release_preview_limit');
     const id = sequence--;
@@ -94,7 +95,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     drafts.set(id, session);
     return { state: 'preview', previewId, expiresMs: session.expiresMs };
   };
-  const command = async (token, userId, body) => {
+  const command = async (token, userId, body, authorize) => {
     const id = access(token, userId);
     if (!id) return held('release_preview_expired');
     const session = drafts.get(id);
@@ -118,6 +119,10 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
     if (session.pending) return session.pendingKey === commandKey ? session.pending : held('release_search_in_progress');
     const before = session.control;
     const reject = result => { session.control = before; return result; };
+    const authorizeMutation = async () => {
+      const denied = authorize ? await authorize() : null;
+      return denied ?? (session.expiresMs <= now() ? held('release_preview_expired') : null);
+    };
     const run = async () => {
       const { action, revision } = body;
       const commits = ['choose', 'auto', 'better', 'registered'].includes(action);
@@ -134,6 +139,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
       }
       if (action === 'auto') {
         if (before.revision !== revision || before.mode !== 'auto' || before.phase !== 'selecting') return reject(held('stale_release_selection'));
+        const denied = await authorizeMutation(); if (denied) return reject(denied);
         // Explicit Auto saves scope; the existing durable request worker owns
         // comparison and proposals before ordinary guarded acquisition.
         const saved = requests.submit({ ...autoPrepared.submission, initialReleaseControl: { ...before } });
@@ -146,10 +152,13 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
         }
         return session.committed;
       }
+      if (commits && !['choose', 'auto'].includes(action)) {
+        const denied = await authorizeMutation(); if (denied) return reject(denied);
+      }
       const result = action === 'begin' ? selection.begin(id, body.mode, revision) :
-        action === 'choose' ? await selection.choose(id, body.token, revision, body.preferFutureGroup ?? false) :
-        action === 'auto' ? await selection.auto(id, revision) :
-        action === 'preference' ? await selection.setPreference(id, body.group, revision, body.audio) :
+        action === 'choose' ? await selection.choose(id, body.token, revision, body.preferFutureGroup ?? false, authorizeMutation) :
+        action === 'auto' ? await selection.auto(id, revision, authorizeMutation) :
+        action === 'preference' ? await selection.setPreference(id, body.group, revision, body.audio, authorizeMutation) :
         selection.decide(id, action, revision);
       if (!commits || result?.state !== 'updated') return result;
       if (session.expiresMs <= now()) return reject(held('release_preview_expired'));
@@ -187,6 +196,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
         ...(coverage.uncertainEpisodeIds ?? [])]);
       if (required.some(id => blocked.has(id))) return reject(held('target_already_owned'));
       if (session.expiresMs <= now()) return reject(held('release_preview_expired'));
+      const denied = await authorizeMutation(); if (denied) return reject(denied);
       const saved = requests.submit({ ...prepared.submission, initialReleaseControl: control });
       if (!saved.requestId) return reject(saved);
       // An existing request is never overwritten with an abandoned draft's choice.

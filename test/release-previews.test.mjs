@@ -61,3 +61,17 @@ test('receipt cache is bounded separately from active draft capacity',async t=>{
  assert.ok(x.sessions.access(last,7));
  assert.ok((await x.sessions.command(last,7,{action:'auto',revision:2})).requestId);
 });
+test('preview creation applies per-call authorization after preparation',async t=>{
+ const x=await setup(t);const result=await x.sessions.open(x.input,async()=>({state:'held',reason:'account_access_changed'}));
+ assert.equal(result.reason,'account_access_changed');assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);assert.deepEqual(x.wakes,[]);
+});
+test('preview Auto commit authorizes immediately before creating a durable request',async t=>{
+ const x=await setup(t);const opened=await x.sessions.open(x.input);const begun=await x.sessions.command(opened.previewId,7,{action:'begin',mode:'auto',revision:1});
+ const result=await x.sessions.command(opened.previewId,7,{action:'auto',revision:begun.control.revision},async()=>({state:'held',reason:'account_access_changed'}));
+ assert.equal(result.reason,'account_access_changed');assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);assert.deepEqual(x.wakes,[]);
+});
+test('preview Grab reauthorizes after final coverage and rolls back its draft when access changes',async t=>{
+ const x=await setup(t);const opened=await x.sessions.open(x.input);const id=x.sessions.access(opened.previewId,7);const found=await x.sessions.selection.search(id);let authorizations=0;
+ const result=await x.sessions.command(opened.previewId,7,{action:'choose',token:found.items[0].token,revision:1},async()=>++authorizations===1?null:{state:'held',reason:'account_access_changed'});
+ assert.equal(result.reason,'account_access_changed');assert.equal(authorizations,2);assert.equal(x.sessions.selection.snapshot(id).phase,'selecting');assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);assert.deepEqual(x.wakes,[]);
+});

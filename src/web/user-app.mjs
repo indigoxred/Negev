@@ -48,7 +48,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
-  readPoster, readCataloguePoster, readDisplayMetadata, titleRegistry,
+  readPoster, readPosterTitle, readCataloguePoster, readDisplayMetadata, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
@@ -206,6 +206,171 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const { sessionTouched: _touched, ...negevUser } = user;
     request.negevUser = negevUser;
   };
+  // The UID route carries no title ID. Bind it only to identities observed in
+  // server search results; the bound prevents unbounded process memory growth.
+  const posterTitles = new Map();
+  const currentUser = (request) => {
+    const session = sessionFor(request);
+    const sessionId = session.get('sid');
+    return accounts.getSessionUser({ userId: session.get('userId'),
+      version: session.get('version'),
+      ...(sessionId === undefined ? {} : { sessionId }) });
+  };
+  const classifiedSafe = async (anidbId) => {
+    if (!Number.isSafeInteger(anidbId) || anidbId < 1) return false;
+    try {
+      let value = typeof readDisplayMetadata === 'function'
+        ? await readDisplayMetadata({ anidbId })
+        : await loadDetail?.({ anidbId, page: 1 });
+      if (typeof value?.restricted !== 'boolean' && typeof readDisplayMetadata === 'function') {
+        value = await loadDetail?.({ anidbId, page: 1 });
+      }
+      return value?.restricted === false;
+    } catch { return false; }
+  };
+  const titleAccess = async (request, anidbId, ownerId = null) => {
+    let user = currentUser(request);
+    if (!user) return 401;
+    const owner = () => ownerId === null || ownerId === user.id ? user
+      : accounts.getActiveUser?.({ userId: ownerId });
+    const inactiveOwner = () => ownerId !== null && ownerId !== user.id &&
+      typeof accounts.getActiveUser === 'function' && !owner();
+    if (inactiveOwner()) return 403;
+    let safe = null;
+    if (user.adultAllowed !== true || owner()?.adultAllowed !== true) {
+      safe = await classifiedSafe(anidbId);
+    }
+    user = currentUser(request);
+    if (!user) return 401;
+    if (inactiveOwner()) return 403;
+    if (user.adultAllowed !== true || owner()?.adultAllowed !== true) {
+      if (safe === null) safe = await classifiedSafe(anidbId);
+      if (!currentUser(request)) return 401;
+      if (!safe) return 403;
+    }
+    request.negevUser = user;
+    return null;
+  };
+  const deniedPayload = (reply, status, error = null) => {
+    const user = currentUser(reply.request);
+    if (user) reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
+    else reply.removeHeader('X-Negev-Adult-Allowed');
+    reply.code(status).header('Cache-Control', 'no-store')
+      .type('application/json; charset=utf-8');
+    return JSON.stringify({ error: error ?? (status === 401 ? 'Sign in required'
+      : '18+ access is disabled or unverified') });
+  };
+  // Authorize again after provider awaits. History keeps cancellation identity
+  // and pagination even when a title's metadata becomes inaccessible.
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (!request.negevUser || request.routeOptions.url === '/api/logout') return payload;
+    let user = currentUser(request);
+    if (!user) return reply.statusCode < 400 ? deniedPayload(reply, 401) : payload;
+    reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
+    if (reply.statusCode >= 400 || !request.url.startsWith('/api/')) return payload;
+    const route = request.routeOptions.url;
+    if (route === '/api/session') {
+      const data = JSON.parse(payload);
+      return JSON.stringify({ ...data, user: { id: user.id, username: user.username,
+        role: user.role, adultAllowed: user.adultAllowed } });
+    }
+    const deniedScope = () => {
+      if (user.role !== 'admin' && (route.startsWith('/api/admin/') ||
+          route === '/api/requests' && request.query.scope === 'all')) {
+        return deniedPayload(reply, 403, 'Admin required');
+      }
+      if (route.startsWith('/api/requests/:id') && user.role !== 'admin') {
+        const saved = readRequest(Number(request.params.id));
+        if (!saved || saved.requesterId !== user.id) return deniedPayload(reply, 404, 'Request not found');
+      }
+      return null;
+    };
+    const initialScopeError = deniedScope();
+    if (initialScopeError) return initialScopeError;
+    if (!/^\/api\/(?:catalogue|library|airing|seasons|requests|request-preparations|release-previews|admin\/review)/.test(route)) return payload;
+    reply.header('Cache-Control', 'no-store');
+    const releaseRoute = /\/(?:releases|release-choice|release-inspection)$/.test(route);
+    let target = null, ownerId = null;
+    if (releaseRoute) {
+      target = request.adultReleaseRequest?.anidbId;
+      ownerId = request.adultReleaseRequest?.requesterId;
+    } else if (route.startsWith('/api/catalogue/posters/anidb/')) {
+      target = Number(request.params.id);
+    } else if (route === '/api/catalogue/posters/:uid') {
+      let resolved;
+      try { resolved = typeof readPosterTitle === 'function'
+        ? await readPosterTitle({ uid: request.params.uid })
+        : posterTitles.get(request.params.uid.toLowerCase()); } catch { /* Withhold unverified image. */ }
+      target = typeof resolved === 'number' ? resolved : resolved?.anidbId;
+    } else if (route.startsWith('/api/catalogue/:id')) {
+      target = Number(request.params.id);
+    } else if (/^\/api\/requests\/:id\/episodes\/.*$/.test(route)) {
+      target = readRequest(Number(request.params.id))?.anidbId;
+    }
+    if (target !== null || releaseRoute) {
+      const denied = await titleAccess(request, target, ownerId);
+      if (denied) return deniedPayload(reply, denied);
+    }
+    let data;
+    try { data = JSON.parse(payload); } catch {
+      user = currentUser(request);
+      if (!user) return deniedPayload(reply, 401);
+      const scopeError = deniedScope();
+      if (scopeError) return scopeError;
+      reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
+      return payload;
+    }
+    const safeHistory = (item) => {
+      const keys = ['id', 'anidbId', 'requesterId', 'requesterName', 'state',
+        'status', 'canCancel', 'monitorFuture', 'watchClosed', 'kind',
+        'episodeIds', 'reason', 'createdMs', 'nowMs', 'updatedMs', 'scope',
+        'attemptId', 'requestId', 'stage', 'observedMs'];
+      return { ...Object.fromEntries(keys.filter(key => key in item)
+        .map(key => [key, item[key]])),
+      title: 'Title hidden by account permissions', englishTitle: null,
+      metadataHidden: true,
+      ...(item.progress ? { progress: { state: item.progress.state,
+        targetCount: item.episodeIds?.length ?? 0,
+        publicAvailability: 'unverified' } } : {}) };
+    };
+    if (route === '/api/requests/:id' && request.method === 'GET') {
+      const denied = await titleAccess(request, data.anidbId);
+      if (denied === 401) return deniedPayload(reply, 401);
+      if (denied) data = safeHistory(data);
+    }
+    const history = route === '/api/requests' || route === '/api/request-preparations' ||
+      route === '/api/admin/review';
+    const listing = history || route === '/api/library' || route === '/api/airing' ||
+      route === '/api/seasons' || route === '/api/catalogue/:id/related';
+    if (listing && Array.isArray(data?.items) && currentUser(request)?.adultAllowed !== true) {
+      const classified = [];
+      for (const item of data.items) {
+        // Complete the restricted projection even if permission briefly changes
+        // between rows; a later revocation must not expose an earlier row.
+        classified.push({ item, safe: await classifiedSafe(item.anidbId) });
+        if (!currentUser(request)) return deniedPayload(reply, 401);
+      }
+      if (currentUser(request)?.adultAllowed !== true) {
+        data = { ...data, items: classified.flatMap(({ item, safe }) =>
+          safe ? [item] : history ? [safeHistory(item)] : []) };
+      }
+    }
+    if (route === '/api/catalogue/search' && Array.isArray(data?.items)) {
+      user = currentUser(request);
+      if (!user) return deniedPayload(reply, 401);
+      if (user.adultAllowed !== true) {
+        const items = data.items.filter(item => item.adult !== true)
+          .map(item => item.adult === false ? item : { anidbId: item.anidbId });
+        data = { ...data, items, hidden: (data.hidden ?? 0) + data.items.length - items.length };
+      }
+    }
+    user = currentUser(request);
+    if (!user) return deniedPayload(reply, 401);
+    const scopeError = deniedScope();
+    if (scopeError) return scopeError;
+    reply.header('X-Negev-Adult-Allowed', String(user.adultAllowed === true));
+    return JSON.stringify(data);
+  });
   const requireCsrf = async (request, reply) => {
     if (!constantEqual(request.headers['x-negev-csrf'],
       sessionFor(request).get('csrfToken'))) {
@@ -523,6 +688,16 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     if (result.state !== 'results' || !titleRegistry.observe(result)) {
       return reply.code(503).send({ error: 'Catalogue unavailable' });
     }
+    for (const item of result.items ?? []) {
+      if (!Number.isSafeInteger(item.anidbId) || item.anidbId < 1 ||
+          typeof item.posterUid !== 'string' ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(item.posterUid)) continue;
+      const uid = item.posterUid.toLowerCase();
+      // A reused UID with contradictory title evidence is no longer proof.
+      if (posterTitles.has(uid) && posterTitles.get(uid) !== item.anidbId) posterTitles.set(uid, null);
+      else posterTitles.set(uid, item.anidbId);
+      if (posterTitles.size > 10_000) posterTitles.delete(posterTitles.keys().next().value);
+    }
     // Unknown titles expose only IDs until the display route verifies access.
     // `hidden` keeps the page count honest: shown plus hidden still adds up
     // to `total`, so the browser pager can finish (search-pages.mjs).
@@ -826,12 +1001,17 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     return result.state === 'created' ? reply.code(201).send(result) :
       reply.code(403).send({ error: 'Admin required' });
   });
-  const processRequest = async (body, requester, reply, preview = false) => {
+  const processRequest = async (body, requester, reply, preview = false, httpRequest = reply.request) => {
     if (!allowedBody(body, ['anidbId', 'scope', 'episodeIds', 'requestKey','releaseMode']) ||
         (body.releaseMode!==undefined && (!releaseSelection || !['auto','manual','auto_review'].includes(body.releaseMode)))) {
       return reply.code(400).send({ error: 'Invalid request' });
     }
-    if (!requester.adultAllowed) {
+    if (httpRequest) {
+      const denied = await titleAccess(httpRequest, body.anidbId);
+      if (denied) return reply.code(denied).send({ error: denied === 401
+        ? 'Sign in required' : '18+ requests are disabled or unverified' });
+      requester = httpRequest.negevUser;
+    } else if (!requester.adultAllowed) {
       if (!Number.isSafeInteger(body.anidbId) || body.anidbId <= 0) {
         return reply.code(400).send({ error: 'Invalid request' });
       }
@@ -910,9 +1090,21 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         state: 'held', reason: 'sonarr_identity_unmapped',
         error: 'This title cannot be safely checked against Anime Sonarr yet' });
     }
+    if (httpRequest) {
+      const denied = await titleAccess(httpRequest, body.anidbId);
+      if (denied) return reply.code(denied).send({ error: denied === 401
+        ? 'Sign in required' : '18+ requests are disabled or unverified' });
+      requester = httpRequest.negevUser;
+    }
     if(preview) {
       if(!releasePreviews)return reply.code(503).send({error:'Release preview unavailable'});
-      const opened=await releasePreviews.open({...body,requesterId:requester.id});
+      let deniedStatus = null;
+      const authorize = httpRequest ? async () => {
+        deniedStatus = await titleAccess(httpRequest, body.anidbId);
+        return deniedStatus ? { state: 'held', reason: 'account_access_changed' } : null;
+      } : undefined;
+      const opened=await releasePreviews.open({...body,requesterId:requester.id},authorize);
+      if (deniedStatus) return reply.code(deniedStatus).send({ state: 'held', reason: 'account_access_changed', error: deniedStatus === 401 ? 'Sign in required' : '18+ access is disabled or unverified' });
       return ['preview','existing'].includes(opened.state)?opened:reply.code(409).send(opened);
     }
     const result = await submitRequest({ ...body, requesterId: requester.id });
@@ -973,7 +1165,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
         send(payload) { return payload; } };
       try {
         const result = await processRequest({ ...entry, scope: 'installment' },
-          request.negevUser, rowReply);
+          request.negevUser, rowReply, false, request);
         items.push({ anidbId: entry.anidbId, status, result });
       } catch (error) {
         request.log.warn({ err: error, anidbId: entry.anidbId },
@@ -1111,9 +1303,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       reply.code(404).send({error:'Request not found'});return null;
     }
     if(!releaseSelection) {reply.code(503).send({error:'Release search unavailable'});return null;}
-    if(!request.negevUser.adultAllowed) {
-      const detail=await loadDetail?.({anidbId:saved.anidbId,page:1});
-      if(detail?.restricted!==false) {reply.code(403).send({error:'18+ access is disabled or unverified'});return null;}
+    request.adultReleaseRequest = saved;
+    const denied = await titleAccess(request, saved.anidbId, saved.requesterId);
+    if (denied) { reply.code(denied).send({ error: denied === 401 ? 'Sign in required' : '18+ access is disabled or unverified' }); return null; }
+    if (saved.requesterId !== request.negevUser.id && request.negevUser.role !== 'admin') {
+      reply.code(404).send({ error: 'Request not found' }); return null;
     }
     return id;
   };
@@ -1177,12 +1371,20 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       return reply.code(400).send({error:'Invalid release selection'});
     }
     try {
-      const result=request.params.previewId?await releasePreviews.command(request.params.previewId,request.negevUser.id,b):b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
+      let deniedStatus = null;
+      const authorize = async () => {
+        const saved = request.adultReleaseRequest;
+        deniedStatus = await titleAccess(request, saved.anidbId, saved.requesterId);
+        if (!deniedStatus && saved.requesterId !== request.negevUser.id && request.negevUser.role !== 'admin') deniedStatus = 404;
+        return deniedStatus ? { state: 'held', reason: 'account_access_changed' } : null;
+      };
+      const result=request.params.previewId?await releasePreviews.command(request.params.previewId,request.negevUser.id,b,authorize):b.action==='begin'?releaseSelection.begin(id,b.mode,b.revision):
         b.action==='inspect'?await releaseSelection.inspect(id,b.token):
-        b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision,b.preferFutureGroup??false):
-        b.action==='preference'?await releaseSelection.setPreference(id,b.group,b.revision,b.audio):
+        b.action==='choose'?await releaseSelection.choose(id,b.token,b.revision,b.preferFutureGroup??false,authorize):
+        b.action==='preference'?await releaseSelection.setPreference(id,b.group,b.revision,b.audio,authorize):
         b.action==='auto'?releaseSelection.queueAuto(id,b.revision):
         releaseSelection.decide(id,b.action,b.revision);
+      if (deniedStatus) return reply.code(deniedStatus).send({ state: 'held', reason: 'account_access_changed', error: deniedStatus === 401 ? 'Sign in required' : deniedStatus === 404 ? 'Request not found' : '18+ access is disabled or unverified' });
       if(result?.state==='held') return reply.code(409).send(result);
       if(result?.queued===true&&result.state==='updated')return reply.code(202).send({...result,control:publicControl(result.control)});
       if(request.params.previewId&&result?.state!=='updated'&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}

@@ -170,7 +170,9 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     if(updated.state==='updated') wake(id);
     return updated;
   };
-  const choose=async(id,token,revision,preferFutureGroup=false)=>{
+  // Interactive callers may supply a fresh access check returning a held
+  // result or null. Run it after evidence awaits, immediately before saving.
+  const choose=async(id,token,revision,preferFutureGroup=false,authorize)=>{
     const found=receipt(id,token);if(!found) return held('release_search_expired');
     if(!assessRelease(found.candidate).eligible) return held('release_not_eligible');
     const preview=await inspect(id,token);
@@ -185,12 +187,13 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       const facts=releaseFacts(found.candidate.title);preference=makePreference(id,facts.group,facts.audio);
       if(!preference)return held('release_group_unavailable');
     }else if(ctx.confirmedAiring)preference=null;
+    if(authorize){const denied=await authorize();if(denied)return denied;}
     const updated=save(id,revision,{mode:'manual',phase:'chosen',
       ...(preference===undefined?{}:{preference}),selection:{candidate:found.candidate,preview}});
     if(updated.state==='updated') wake(id);
     return updated;
   };
-  const auto=async(id,revision)=>{
+  const auto=async(id,revision,authorize)=>{
     if(inFlight.has(id)) return held('release_search_in_progress');
     inFlight.set(id,true);
     try {
@@ -200,6 +203,7 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
       if(current.preference&&request.kind==='series'&&request.monitorFuture&&!request.watchClosed){
         // The ordinary worker owns the persisted per-episode group deadline.
         // Pinning an interactive alternative here would bypass that policy.
+        if(authorize){const denied=await authorize();if(denied)return denied;}
         const updated=save(id,revision,{mode:'auto',phase:'consumed'});
         if(updated.state==='updated')wake(id);
         return updated;
@@ -226,11 +230,13 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
           (publicRelease(proposed.candidate).resolution??0)<1080) {
         // No interactive decision is useful; normal bounded acquisition can
         // continue through later candidate pages without waiting on this tab.
+        if(authorize){const denied=await authorize();if(denied)return denied;}
         const updated=save(id,revision,{mode:'auto',phase:'consumed'});if(updated.state==='updated') wake(id);return updated;
       }
       const next=proposal.state==='proposal'?{mode:'auto',phase:'proposal',expiresMs:now()+300_000,
         proposal:{registered:proposal.registered,better:proposal.better,benefit:proposal.benefit}}:
         {mode:'auto',phase:'chosen',selection:proposal.selection};
+      if(authorize){const denied=await authorize();if(denied)return denied;}
       const updated=save(id,revision,next);if(updated.state==='updated') wake(id);
       return updated;
     } finally {inFlight.delete(id);}
@@ -246,12 +252,13 @@ export function createReleaseSelection({requests,discoverCandidates,previewCandi
     const updated=save(id,revision,{mode:'auto',phase:'chosen',selection:current.proposal[action]});
     if(updated.state==='updated') wake(id);return updated;
   };
-  const setPreference=async(id,group,revision,audio)=>{
+  const setPreference=async(id,group,revision,audio,authorize)=>{
     if(group!==null&&!(await context(id)).confirmedAiring)return held('title_not_airing');
     const current=snapshot(id);
     if(current.revision!==revision)return held('stale_release_selection');
     const preference=group===null?null:makePreference(id,group,audio??current.preference?.audio??'japanese');
     if(group!==null&&!preference)return held('release_group_unavailable');
+    if(authorize){const denied=await authorize();if(denied)return denied;}
     const updated=requests.updateReleasePreference(id,revision,preference,now());
     if(updated.state==='updated')wake(id);return updated;
   };

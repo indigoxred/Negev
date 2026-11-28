@@ -50,7 +50,7 @@ test('release filters and future preferences validate input and retain ownership
   assert.equal((await post(1,{...payload,audio:'invalid'})).statusCode,400);
   assert.equal((await post(1,{action:'choose',token:'receipt',revision:1,preferFutureGroup:'yes'})).statusCode,400);
   assert.equal(calls.length,0);
-  assert.equal((await post(1)).statusCode,200);assert.deepEqual(calls,[[1,'SubsPlease',1,'japanese']]);
+  assert.equal((await post(1)).statusCode,200);assert.deepEqual(calls.map(args=>args.slice(0,4)),[[1,'SubsPlease',1,'japanese']]);
 }));
 
 test('the public release route validates and forwards the optional pack checkbox',()=>fixture(async({app,headers,selection})=>{
