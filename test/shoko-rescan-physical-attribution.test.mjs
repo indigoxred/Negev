@@ -1,3 +1,4 @@
+import { withRescanPublicProof } from './helpers/rescan-public-proof.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, mkdir, writeFile, stat, rename, utimes } from 'node:fs/promises';
@@ -7,8 +8,10 @@ import test from 'node:test';
 import { openRequestLedger } from '../src/requests/request-ledger.mjs';
 import { openAcquisitionLedger } from '../src/acquisition/acquisition-ledger.mjs';
 import { openPureMoveLedger } from '../src/acquisition/pure-move-ledger.mjs';
-import { processShokoRescan } from '../src/acquisition/process-shoko-rescan.mjs';
+import { processShokoRescan as runShokoRescan } from '../src/acquisition/process-shoko-rescan.mjs';
 import { openShokoRescanLedger } from '../src/acquisition/shoko-rescan-ledger.mjs';
+
+const processShokoRescan = options => runShokoRescan(withRescanPublicProof(options));
 
 async function fixture({ policyBeforeAttempt = true, publishedMs = 209 } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-rescan-'));
@@ -221,5 +224,20 @@ for(const control of ['complete','reversed','gap','other_copy'])test(`rescan rec
    verifyPlex:async target=>observeKnownCardAvailability({target:{...target,kind:'series'},shoko:{state:'ok',complete:true,shokoEpisodeId:555,shokoSeriesId:99,files},plex:{state:'ok',complete:true,parts},publicLibraryIds:[102],shokoMount:{appRoot:'/pure',localRoot:x.root},plexMount:{appRoot:'/plex',localRoot:x.root}})});
   assert.equal(result.state,control==='complete'?'linked':'awaiting_plex',JSON.stringify(result));assert.equal(scans,0);
   assert.equal(ledger.getAttemptStatus(x.attemptId),control==='complete'?'done':'pending');
+ }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
+});
+
+test('same Shoko ID does not attribute another public inode to the published copy',async()=>{
+ const x=await fixture();let ledger=x.rescan;
+ try{
+  const video=x.files[0],dest=path.join(x.root,'Anime',path.basename(video.name)),other=path.join(x.root,'Anime','old-copy.mkv');
+  await mkdir(path.dirname(dest));await rename(path.join(x.root,'original.mkv'),dest);await writeFile(other,Buffer.alloc(video.size,2));
+  ledger.close();ledger=openShokoRescanLedger(x.dbPath);const item=ledger.listDue({nowMs:1000000})[0];item.manifest.files=[item.manifest.files[0]];
+  const source='/pure/Anime/'+path.basename(video.name),paths=[source,'/pure/Anime/old-copy.mkv'];
+  const {observeKnownCardAvailability}=await import('../src/availability/known-card-availability.mjs');
+  const result=await processShokoRescan({item,ledger,importRoot:path.join(x.root,'Import'),shokoMount:{appRoot:'/pure',localRoot:x.root},nowMs:1000000,
+   readQueue:async()=>({state:'queue_idle_unverified'}),readFile:async({sourcePath})=>sourcePath==='/'+path.basename(video.name)?[{ID:81,Size:video.size,Locations:paths.map(AbsolutePath=>({AbsolutePath,IsAccessible:true})),SeriesIDs:[{SeriesID:{ID:4,AniDB:42},EpisodeIDs:[{AniDB:1001}]}]}]:[],rescan:async()=>{throw Error('no rescan')},
+   verifyPlex:async target=>observeKnownCardAvailability({target:{...target,kind:'series'},shoko:{state:'ok',complete:true,shokoEpisodeId:555,shokoSeriesId:99,files:[{fileId:81,anidbId:42,anidbFileId:81,episodeIds:[1001],coverage:[{episodeId:1001,start:0,end:100}],size:video.size,sourcePaths:paths}]},plex:{state:'ok',complete:true,parts:[{cardType:'episode',itemGuid:'tv.plex.agents.custom.shoko://episode/e555',showGuid:'tv.plex.agents.custom.shoko://show/99',libraryId:102,ratingKey:500,partId:90,size:video.size,plexPath:'/plex/Anime/old-copy.mkv'}]},publicLibraryIds:[102],shokoMount:{appRoot:'/pure',localRoot:x.root},plexMount:{appRoot:'/plex',localRoot:x.root}})});
+  assert.equal(result.state,'awaiting_plex',JSON.stringify(result));assert.equal(ledger.getAttemptStatus(x.attemptId),'pending');
  }finally{ledger.close();x.moves.close();x.acquisition.close();await rm(x.root,{recursive:true,force:true});}
 });

@@ -1,7 +1,7 @@
 // Admin-only routes: import diagnostics, operational review and its
 // actions, account settings and suspended-request review. Moved out of
 // user-app.mjs unchanged; every route still checks the admin role itself.
-export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody,
+export function registerAdminRoutes(app, { requireUser, currentUser, writeGuards, allowedBody,
   safeImportReasons, accounts, readImportActivity, listOperationalReview,
   reviewOperationalItem, reviewHeldRequest, deleteAccount, now = Date.now }) {
   // Read-only operator diagnostic. A quiet observation is never a download
@@ -110,8 +110,12 @@ export function registerAdminRoutes(app, { requireUser, writeGuards, allowedBody
     }
     let result;
     try {
-      result = await reviewOperationalItem({ stage, attemptId, action,
-        actorId: request.negevUser.id });
+      const actorId=request.negevUser.id;
+      result = await reviewOperationalItem({ stage, attemptId, action, actorId,
+        ...(stage==='removal_hold'?{authorizeAction:()=>{
+          const user=currentUser(request);
+          return user?.id===actorId && user.role==='admin';
+        }}:{}) });
     } catch (error) { request.negevError = error; return reply.code(503).send({ error: 'Review actions unavailable' }); }
     if (result?.state === 'retry_scheduled') return { state: 'retry_scheduled' };
     if (stage === 'removal_hold' && ['retired_prestart_mismatch','retired_stalled'].includes(result?.state)) return {state:'removal_confirmed'};

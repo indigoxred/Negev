@@ -23,7 +23,7 @@ for (const obstruction of ['none', 'provider', 'mount', 'bytes', 'torrent']) tes
     return x.fetchImpl(url, init);
   };
   const lstatImpl = async () => { throw Object.assign(Error('absent'), { code: 'ENOENT' }); };
-  const config = { ledger: x.ledger, attemptId: x.attemptId, hash: x.hash, baseUrl: 'http://qbit.invalid/',
+  const config = { authorizeAction:()=>true, ledger: x.ledger, attemptId: x.attemptId, hash: x.hash, baseUrl: 'http://qbit.invalid/',
     stagingRoot: '/staging', saveRoot: x.saveRoot, verifyStagingRoot: x.verifyStagingRoot,
     sessionGate: { get: async () => ({ state: 'authenticated', sessionId: 'syntheticSID' }) }, now: () => x.state.clock };
   const first = await runPrestartMismatchRetirement({ ...config,
@@ -57,11 +57,23 @@ test('an uncertain started removal rechecks without repeating the delete', async
   x.state.added=false; x.reopen();
   const { reconcilePendingRemoval } = await import('../src/acquisition/reconcile-pending-removal.mjs');
   let writes=0;
-  const result=await reconcilePendingRemoval({ledger:x.ledger,attemptId:x.attemptId,baseUrl:'http://qbit.invalid/',
+  const result=await reconcilePendingRemoval({authorizeAction:()=>true,ledger:x.ledger,attemptId:x.attemptId,baseUrl:'http://qbit.invalid/',
     stagingRoot:'/staging',verifyStagingRoot:x.verifyStagingRoot,now:()=>x.state.clock,
     sessionGate:{get:async()=>({state:'authenticated',sessionId:'syntheticSID'})},
     fetchImpl:async(url,init)=>{if(init.method!=='GET')writes++;return x.fetchImpl(url,init);},
     lstatImpl:async()=>{throw Object.assign(Error('absent'),{code:'ENOENT'});} });
   assert.equal(result.state,'retired_stalled',JSON.stringify(result)); assert.equal(writes,0);
   assert.deepEqual(x.ledger.listPendingRemovalReview(),[]);
+});
+
+for(const started of [false,true])test(`removal confirmation refuses an admin revoked during its final read (started=${started})`,async t=>{
+ const x=await stoppedPack(t,{selected:[1,2],priorityFailure:'none'});await x.submit();
+ if(started){await x.start();x.ledger.requestStalledRetirement({attemptId:x.attemptId,hash:x.hash,nowMs:x.state.clock});x.ledger.beginStalledDelete({attemptId:x.attemptId,hash:x.hash,nowMs:x.state.clock});}
+ else{const queue=openStartQueue(x.dbPath,{acquisitions:x.ledger});try{const claim=queue.claimNext({nowMs:x.state.clock});queue.recordResult({...claim,state:'held',reason:'related_installment_mismatch',checkedMs:x.state.clock});}finally{queue.close();}x.ledger.requestPrestartMismatchRetirement({attemptId:x.attemptId,hash:x.hash,nowMs:x.state.clock});x.ledger.beginPrestartMismatchDelete({attemptId:x.attemptId,hash:x.hash,nowMs:x.state.clock});}
+ x.state.added=false;let reads=0,allowed=true;
+ const {reconcilePendingRemoval}=await import('../src/acquisition/reconcile-pending-removal.mjs');
+ const result=await reconcilePendingRemoval({ledger:x.ledger,attemptId:x.attemptId,baseUrl:'http://qbit.invalid/',stagingRoot:'/staging',verifyStagingRoot:x.verifyStagingRoot,now:()=>x.state.clock,
+  authorizeAction:()=>allowed,sessionGate:{get:async()=>({state:'authenticated',sessionId:'syntheticSID'})},fetchImpl:x.fetchImpl,
+  lstatImpl:async()=>{if(++reads===2)allowed=false;throw Object.assign(Error('absent'),{code:'ENOENT'});}});
+ assert.equal(result.state,'held',JSON.stringify(result));assert.equal(x.ledger.getAttempt(x.attemptId).status,'torrent_observed');assert.equal(x.ledger.listPendingRemovalReview().length,1);
 });

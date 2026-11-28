@@ -8,6 +8,7 @@ export function combinedMultipartProof({ target, files, provenParts }) {
     groups.get(key).push(part);
   }
   for (const parts of groups.values()) {
+    if(target.fileId!==undefined && !parts.some(part=>part.fileId===target.fileId))continue;
     parts.sort((a,b) => a.partIndex-b.partIndex);
     const count = parts[0].partCount;
     if (parts.length !== count || parts.some((p,i) => p.partCount !== count || p.partIndex !== i) || ['partId','fileId','storageKey'].some(key => new Set(parts.map(p=>p[key])).size !== count)) continue;
@@ -28,10 +29,12 @@ export function combinedMultipartProof({ target, files, provenParts }) {
 // Retain the composite's ordering and exact physical witness for attribution.
 export function includesProvenFile(result, fileId, storageKey) {
   if(result?.state!=='available')return false;
-  if(result.multipart!==true)return result.fileId===fileId;
+  if(result.multipart!==true)return result.fileId===fileId &&
+    (storageKey===undefined || result.proof?.fileId===fileId && result.proof.storageKey===storageKey);
   const parts=result.proof?.parts;
   if(!Array.isArray(parts)||parts.length<2||parts.length>8)return false;
   const first=parts[0];
+  if([first.libraryId,first.ratingKey,first.mediaId].some(id=>!Number.isSafeInteger(id)||id<1))return false;
   if(parts.some((part,i)=>part.partIndex!==i||part.partCount!==parts.length||
       part.libraryId!==first.libraryId||part.ratingKey!==first.ratingKey||part.mediaId!==first.mediaId||
       !Number.isSafeInteger(part.fileId)||part.fileId<1||!Number.isSafeInteger(part.partId)||part.partId<1||

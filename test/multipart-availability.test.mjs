@@ -13,5 +13,18 @@ test('same-episode multipart segment is labelled linked while a different episod
 
 test('a requested non-first file is accepted only inside the complete physically proven Media',async t=>{
  const x=await fixture(t);const result=await x.observe(52);assert.equal(result.state,'available',JSON.stringify(result));assert.equal(result.multipart,true);
- assert.equal((await x.observe(99)).state,'unknown');x.card.Media[0].Part.reverse();assert.notEqual((await x.observe(52)).state,'available');
+ assert.notEqual((await x.observe(99)).state,'available');x.card.Media[0].Part.reverse();assert.notEqual((await x.observe(52)).state,'available');
+});
+
+for(const alternative of ['whole','multipart'])for(const reversed of [false,true])test(`owned multipart proof survives another complete version (alternative=${alternative}, reverse=${reversed})`,async t=>{
+ const x=await fixture(t),shoko=await x.read('availability');
+ const extras=alternative==='whole'?[{fileId:53,size:7,range:[0,100]}]:[{fileId:53,size:7,range:[0,50]},{fileId:54,size:8,range:[50,100]}];
+ for(const f of extras){await writeFile(path.join(x.root,`version-${f.fileId}.mkv`),Buffer.alloc(f.size,2));shoko.files.push({...f,anidbId:42,anidbFileId:f.fileId,episodeIds:[1001],coverage:[{episodeId:1001,start:f.range[0],end:f.range[1]}],sourcePaths:[`/pure/version-${f.fileId}.mkv`]});}
+ const second={id:701,Part:extras.map((f,i)=>({id:90+i,file:`/plex/version-${f.fileId}.mkv`,size:f.size}))};
+ x.card.Media=reversed?[second,x.card.Media[0]]:[x.card.Media[0],second];
+ const plex=await readPlexItemParts({baseUrl:'http://plex:32400',token:'synthetic',ratingKey:512,expectedType:'episode',libraryId:102,fetchImpl:async()=>Response.json({MediaContainer:{size:1,Metadata:[x.card]}})});
+ for(const fileId of alternative==='whole'?[52]:[52,54]){
+  const result=await observeKnownCardAvailability({target:{anidbId:42,episodeId:1001,kind:'series',fileId},shoko,plex:{...plex,parts:plex.parts.map(part=>({...part,ratingKey:512}))},publicLibraryIds:[102],shokoMount:{appRoot:'/pure',localRoot:x.root},plexMount:{appRoot:'/plex',localRoot:x.root}});
+  assert.equal(result.state,'available',JSON.stringify(result));assert.equal(result.multipart,true);assert.ok(result.proof.parts.some(part=>part.fileId===fileId));
+ }
 });

@@ -1180,3 +1180,19 @@ test('removal review exposes only an admin CSRF-protected read-only recheck', as
     user={...user,role:'user'};assert.equal((await post('retry')).statusCode,403);assert.equal(calls,1);
   } finally {await app.close();}
 });
+
+for(const revoked of ['role','session'])test(`removal authorization follows the acting ${revoked} after an awaited operation`,async()=>{
+ let user={id:1,username:'Owner',role:'admin',sessionVersion:1,adultAllowed:true},active=true;
+ const accounts={authenticate:async()=>user,getSessionUser:()=>active?user:null,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false};
+ let enter,finish;const entered=new Promise(resolve=>enter=resolve),pending=new Promise(resolve=>finish=resolve);let confirmed=0;
+ const app=await buildUserApp({accounts,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,submitRequest:async()=>null,readRequest:()=>null,
+  reviewOperationalItem:async({authorizeAction})=>{enter();await pending;if(authorizeAction?.()!==true)return{state:'held',reason:'account_access_changed'};confirmed++;return{state:'retired_stalled'};}});
+ try{
+  const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Owner',password:'long-owner-passphrase'}}),cookie=login.headers['set-cookie'].split(';')[0];
+  const session=await app.inject({method:'GET',url:'/api/session',headers:{cookie}});
+  const action=app.inject({method:'POST',url:'/api/admin/review/7',headers:{cookie,origin,'x-negev-csrf':session.json().csrfToken},payload:{stage:'removal_hold',action:'retry'}});
+  await entered;
+  if(revoked==='role')user={...user,role:'user'};else active=false;
+  finish();const result=await action;assert.notEqual(result.statusCode,200);assert.equal(confirmed,0);
+ }finally{finish();await app.close();}
+});

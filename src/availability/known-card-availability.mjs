@@ -186,7 +186,9 @@ export async function observeKnownCardAvailability({ target, shoko, plex,
   let result = evaluateExactAvailability({ target,
     shoko: { state: 'ok', complete: true, files },
     plex: { state: 'ok', complete: true, parts }, publicLibraryIds });
-  if (result.state === 'held' && result.reason === 'partial_episode') {
+  if (result.state === 'held' && result.reason === 'partial_episode' ||
+      result.state === 'available' && target.fileId !== undefined &&
+      !includesProvenFile(result,target.fileId)) {
     result = combinedMultipartProof({ target, files, provenParts }) ?? result;
   }
   // A registered playable file is positive proof even if a sibling could
