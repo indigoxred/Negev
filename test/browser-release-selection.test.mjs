@@ -111,10 +111,9 @@ const click=text=>[...document.querySelectorAll('dialog button')].find(b=>b.text
  await draftDialog.open({previewId:'preview-token',title:'Preview',mode:'manual'});
  click('Pick');await tick();
  const committedPreview=previewSaved?.requestId===42&&previewSaved?.previewId==='preview-token'&&Boolean(document.querySelector('dialog a[href="#/requests?requestId=42"]'));
- // Native dialog.close() queues its close event. Finish the previous
- // preview cleanup before measuring writes in the next read-only search.
- const closedDraft=new Promise(resolve=>document.querySelector('dialog').addEventListener('close',resolve,{once:true}));
- draftDialog.close();await closedDraft;
+ // Factory close finishes cleanup before the next read-only search;
+ // a later native close event must not introduce a duplicate write.
+ draftDialog.close();
  const beforePack=previewWrites;completedMode=true;control={mode:'manual',phase:'selecting',revision:1};searchUrls=[];
  await draftDialog.open({previewId:'pack-preview',title:'Completed Example',mode:'manual'});
  const checkbox=document.querySelector('[aria-label="Season packs only"]');
