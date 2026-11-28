@@ -1,3 +1,4 @@
+import { closeInOrder } from '../runtime/close-in-order.mjs';
 import { createAcquisitionAccess } from '../acquisition/acquisition-access.mjs';
 import { queueCompositeObservation } from '../availability/queue-composite-observation.mjs';
 import { createWatchingScheduleReader } from './watching-schedule.mjs';
@@ -232,6 +233,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let seasonalSnapshot;
   let fileCursor;
   let fileProofs;
+  let app, wakeRelease, eventConsumer, acquisitionRuntime;
+  const observations = new Set();
+  let stopping = false;
+  let stopPromise;
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
@@ -610,7 +615,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     // Background watches re-check 18+ access each time they add episodes.
     const watchAdultAllowed = ({ requesterId }) =>
       accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true;
-    const wakeRelease = createReleaseWake({
+    wakeRelease = createReleaseWake({
       wakeRequest: (id) => acquisitionRuntime?.wakeRequest(id),
       pollWatch: (requestId, {releaseTitles = []}) => pollAiringWatches({ ledger: requests,
         requestId, expectedEpisodeNumbers:observedReleaseEpisodes(releaseTitles),
@@ -652,7 +657,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }));
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
-    let acquisitionRuntime;
     // Set once acquisition workers open; an admin release needs qBittorrent.
     let releaseProviders = null;
     const publicAvailableIdsForTitle = (anidbId, checkedMs) =>
@@ -693,7 +697,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           titleForId: (id) => titleSource?.getTitle(id) ?? null }),
       }),
     });
-    const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
+    app = await buildUserApp({ accounts, sessionKey, publicOrigin,
       localOrigin, secureCookies, logger,
       readImportActivity,
       getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
@@ -1071,9 +1075,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
     });
-    const observations = new Set();
-    let stopping = false;
-    let stopPromise;
     const track = (task) => {
       observations.add(task);
       void task.then(() => observations.delete(task), () => observations.delete(task));
@@ -1111,7 +1112,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
-    let eventConsumer;
     const refreshRecognizedShokoFile = async (fileId) => {
       const token = eventConsumer?.snapshotPendingResolution(fileId);
       const result = await refreshShokoFile(fileId);
@@ -1379,40 +1379,74 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       close() {
         if (!stopPromise) {
           stopping = true;
-          stopPromise = (async () => {
-            await wakeRelease.close();
-            try { await app.close(); }
-            finally {
-              await acquisitionRuntime?.stop();
-              await eventConsumer.close();
-              await Promise.allSettled([...observations]);
-              plexObserver?.close();
-              scoreCache?.close(); rankings?.close(); seasonalSnapshot?.close();
-              fileProofs?.close(); fileCursor?.close();
-              directAvailability.close();
-              titleChecks?.close();
-              recent?.close();
-              inventory.close(); hydration.close(); progress.close();
-              completionReview.close(); startReview.close(); publishReview.close();
-              shokoRescans?.close(); recognitionRecoveries?.close();
-              pureMoves?.close();
-              candidateChecks?.close(); handoffs.close(); acquisitions.close();
-              pendingTitles.close(); requests.close(); accounts.close();
-            }
-          })();
+          stopPromise = closeInOrder([
+            ['release wakeups',()=>wakeRelease.close()],
+            ['HTTP server',()=>app.close()],
+            ['acquisition runtime',()=>acquisitionRuntime?.stop()],
+            ['Shoko event consumer',()=>eventConsumer.close()],
+            ['in-flight observations',()=>Promise.allSettled([...observations])],
+            ['plexObserver',()=>plexObserver?.close()],
+            ['scoreCache',()=>scoreCache?.close()],
+            ['rankings',()=>rankings?.close()],
+            ['seasonalSnapshot',()=>seasonalSnapshot?.close()],
+            ['fileProofs',()=>fileProofs?.close()],
+            ['fileCursor',()=>fileCursor?.close()],
+            ['directAvailability',()=>directAvailability?.close()],
+            ['titleChecks',()=>titleChecks?.close()],
+            ['recent',()=>recent?.close()],
+            ['inventory',()=>inventory?.close()],
+            ['hydration',()=>hydration?.close()],
+            ['progress',()=>progress?.close()],
+            ['completionReview',()=>completionReview?.close()],
+            ['startReview',()=>startReview?.close()],
+            ['publishReview',()=>publishReview?.close()],
+            ['shokoRescans',()=>shokoRescans?.close()],
+            ['recognitionRecoveries',()=>recognitionRecoveries?.close()],
+            ['pureMoves',()=>pureMoves?.close()],
+            ['candidateChecks',()=>candidateChecks?.close()],
+            ['handoffs',()=>handoffs?.close()],
+            ['acquisitions',()=>acquisitions?.close()],
+            ['pendingTitles',()=>pendingTitles?.close()],
+            ['requests',()=>requests?.close()],
+            ['accounts',()=>accounts?.close()],
+          ]);
         }
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); fileProofs?.close(); fileCursor?.close();
-    scoreCache?.close(); rankings?.close(); seasonalSnapshot?.close();
-    directAvailability?.close(); titleChecks?.close(); recent?.close();
-    inventory?.close(); hydration?.close();
-    progress?.close(); completionReview?.close(); startReview?.close();
-    publishReview?.close();
-    shokoRescans?.close(); recognitionRecoveries?.close(); pureMoves?.close();
-    candidateChecks?.close(); handoffs?.close(); acquisitions?.close();
-    pendingTitles?.close(); requests?.close(); accounts?.close();
+    stopping=true;
+    try { await closeInOrder([
+      ['release wakeups',()=>wakeRelease?.close()],
+      ['HTTP server',()=>app?.close()],
+      ['acquisition runtime',()=>acquisitionRuntime?.stop()],
+      ['Shoko event consumer',()=>eventConsumer?.close()],
+      ['in-flight observations',()=>Promise.allSettled([...observations])],
+      ['plexObserver',()=>plexObserver?.close()],
+      ['fileProofs',()=>fileProofs?.close()],
+      ['fileCursor',()=>fileCursor?.close()],
+      ['scoreCache',()=>scoreCache?.close()],
+      ['rankings',()=>rankings?.close()],
+      ['seasonalSnapshot',()=>seasonalSnapshot?.close()],
+      ['directAvailability',()=>directAvailability?.close()],
+      ['titleChecks',()=>titleChecks?.close()],
+      ['recent',()=>recent?.close()],
+      ['inventory',()=>inventory?.close()],
+      ['hydration',()=>hydration?.close()],
+      ['progress',()=>progress?.close()],
+      ['completionReview',()=>completionReview?.close()],
+      ['startReview',()=>startReview?.close()],
+      ['publishReview',()=>publishReview?.close()],
+      ['shokoRescans',()=>shokoRescans?.close()],
+      ['recognitionRecoveries',()=>recognitionRecoveries?.close()],
+      ['pureMoves',()=>pureMoves?.close()],
+      ['candidateChecks',()=>candidateChecks?.close()],
+      ['handoffs',()=>handoffs?.close()],
+      ['acquisitions',()=>acquisitions?.close()],
+      ['pendingTitles',()=>pendingTitles?.close()],
+      ['requests',()=>requests?.close()],
+      ['accounts',()=>accounts?.close()],
+    ]); }
+    catch (cleanup) { throw new AggregateError([error,...cleanup.errors],`User service startup failed: ${error?.message}; cleanup also failed`); }
     throw error;
   }
 }

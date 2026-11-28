@@ -1,3 +1,4 @@
+import { closeInOrder } from '../runtime/close-in-order.mjs';
 import { openQualityInspectionRetry } from './quality-inspection-retry.mjs';
 import { createAcquisitionStageProcessors } from
   './acquisition-stage-processors.mjs';
@@ -38,7 +39,7 @@ export function openAcquisitionRuntime(options = {}) {
   const scheduler = createPipelineScheduler({ pipeline, now });
   let stopPromise;
   return { start: () => scheduler.start(),
-    stop: () => stopPromise ??= (async () => { await scheduler.stop(); qualityInspectionRetry.close(); })(),
+    stop: () => stopPromise ??= closeInOrder([['pipeline scheduler',()=>scheduler.stop()],['quality inspection ledger',()=>qualityInspectionRetry.close()]]),
     wakeRequest: (requestId) => {
       const request = providers.requests?.getRequest(requestId);
       if (request) providers.discoverCandidates?.invalidateTitle?.(request.anidbId);

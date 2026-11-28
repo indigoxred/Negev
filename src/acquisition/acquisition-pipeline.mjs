@@ -1,3 +1,4 @@
+import { closeInOrder } from '../runtime/close-in-order.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from './acquisition-request-queue.mjs';
 import { openStartQueue, createStartWorker } from './start-queue.mjs';
@@ -263,7 +264,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
         closing = (async () => {
           if (initialization) await Promise.allSettled([initialization]);
           await Promise.allSettled([...active]);
-          for (const queue of [...queues].reverse()) queue.close();
+          await closeInOrder([...queues].reverse().map((queue,index)=>[`acquisition queue ${index}`,()=>queue.close()]));
         })();
       }
       return closing;

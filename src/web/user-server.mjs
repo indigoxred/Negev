@@ -1,3 +1,4 @@
+import { closeInOrder, createShutdownListener } from '../runtime/close-in-order.mjs';
 import { openUserStore } from '../auth/user-store.mjs';
 import { createUserService } from './user-service.mjs';
 import { dateInZone, parseUserServerConfig } from './user-server-config.mjs';
@@ -62,21 +63,23 @@ function redactStartupMessage(text, secrets = loadedSecrets) {
     '$1[redacted]');
 }
 async function closeAll() {
-  try {
-    await airingScheduler?.stop();
-    await releaseFeedScheduler?.stop();
-    releaseFeedLedger?.close();
-    await parentWatchRuntime?.close();
-    await plexScheduler?.close();
-    await fileBackfillScheduler?.close();
-    await directAvailabilityScheduler?.close();
-    await pendingTitleScheduler?.close();
-    await shokoInventory?.close();
-    await shokoProvisional?.close();
-    await shokoRecent?.close();
-    await shokoFeedSupervisor?.close();
-  } finally { if (service) await service.close(); }
+  await closeInOrder([
+    ['airing scheduler',()=>airingScheduler?.stop()],
+    ['release feed scheduler',()=>releaseFeedScheduler?.stop()],
+    ['release feed ledger',()=>releaseFeedLedger?.close()],
+    ['parent watches',()=>parentWatchRuntime?.close()],
+    ['Plex scheduler',()=>plexScheduler?.close()],
+    ['file backfill scheduler',()=>fileBackfillScheduler?.close()],
+    ['direct availability scheduler',()=>directAvailabilityScheduler?.close()],
+    ['pending title scheduler',()=>pendingTitleScheduler?.close()],
+    ['Shoko inventory scheduler',()=>shokoInventory?.close()],
+    ['Shoko provisional scheduler',()=>shokoProvisional?.close()],
+    ['Shoko recent scheduler',()=>shokoRecent?.close()],
+    ['Shoko feed supervisor',()=>shokoFeedSupervisor?.close()],
+    ['user service',()=>service?.close()],
+  ]);
 }
+
 try {
   const config = parseUserServerConfig(process.env);
   // Errors that workers turn into a held-and-retry reason are logged (rate
@@ -248,8 +251,12 @@ try {
     stopping = true;
     await closeAll();
   };
-  process.on('SIGINT', () => { void stop(); });
-  process.on('SIGTERM', () => { void stop(); });
+  const stopListener=createShutdownListener(stop,error=>{
+    process.exitCode=1;
+    process.stderr.write(`Negev shutdown failed: ${redactStartupMessage(error?.message)}\n`);
+  });
+  process.on('SIGINT',stopListener);
+  process.on('SIGTERM',stopListener);
 } catch (error) {
   try { await closeAll(); }
   catch (closeError) {
