@@ -25,6 +25,52 @@ test('a detected event has no file ID and asks for paced reconciliation', async 
   assert.deepEqual(calls, []);
 });
 
+test('Shoko folder-root slashes canonicalize detected and hashed paths to one scoped key', async () => {
+  const gate = deferred();
+  const consumer = createShokoEventConsumer({ intakeFolderIds: [5],
+    refreshFile: async () => gate.promise });
+  consumer.accept('file:detected', [{ ManagedFolderID: 5,
+    RelativePath: '/incoming/01.mkv' }]);
+  assert.deepEqual(consumer.getPendingSnapshot().pendingKeys, ['5:incoming/01.mkv']);
+  assert.equal(consumer.getState().fullReconciliationNeeded, false);
+  // Slashless observations and rooted event payloads refer to the same path.
+  consumer.accept('file:detected', [{ ManagedFolderID: 5,
+    RelativePath: 'incoming/01.mkv' }]);
+  assert.equal(consumer.getArrivalState().pendingPaths, 1);
+  consumer.accept('file:hashed', [{ ManagedFolderID: 5,
+    RelativePath: '/incoming/01.mkv', FileID: 69 }]);
+  assert(consumer.snapshotPendingResolution(69));
+  gate.resolve({ state: 'recorded_file', recognition: 'linked' });
+  await consumer.close();
+  assert.equal(consumer.getArrivalState().pendingPaths, 0);
+});
+
+test('a rooted detection resolves only from the same managed folder and safe exact path', async () => {
+  const consumer = createShokoEventConsumer({ intakeFolderIds: [5],
+    refreshFile: async () => ({ state: 'held' }) });
+  consumer.accept('file:detected', [{ ManagedFolderID: 5, RelativePath: '/new.mkv' }]);
+  const [token] = consumer.snapshotPendingPathResolutions();
+  const result = { state: 'recorded_file', recognition: 'linked' };
+  assert.equal(consumer.acknowledgeLinkedPathObservation({ token, fileId: 69,
+    path: { ManagedFolderID: 6, RelativePath: '/new.mkv' }, result }).state, 'held');
+  assert.equal(consumer.acknowledgeLinkedPathObservation({ token, fileId: 69,
+    path: { ManagedFolderID: 5, RelativePath: 'new.mkv' }, result }).state, 'resolved');
+  await consumer.close();
+});
+
+test('root-slash normalization never repairs malformed arrival paths', async () => {
+  for (const RelativePath of ['/', '//new.mkv', '/a//new.mkv', '/./new.mkv',
+    '/../new.mkv', '/a/../new.mkv', '/a\\new.mkv', '/a\0new.mkv',
+    '/a\rnew.mkv', '/a\nnew.mkv', '/' + 'a'.repeat(2048)]) {
+    const consumer = createShokoEventConsumer({ intakeFolderIds: [5],
+      refreshFile: async () => ({ state: 'recorded_file' }) });
+    consumer.accept('file:detected', [{ ManagedFolderID: 5, RelativePath }]);
+    assert.equal(consumer.getArrivalState().pendingPaths, 0, RelativePath);
+    assert.equal(consumer.getState().fullReconciliationNeeded, true, RelativePath);
+    await consumer.close();
+  }
+});
+
 test('a resolved path or full reconciliation debt cannot be treated as pending-only', async () => {
   const consumer = createShokoEventConsumer({ refreshFile: async () =>
     ({ state: 'recorded_file', recognition: 'provisional' }) });
