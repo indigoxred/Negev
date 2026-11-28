@@ -86,3 +86,13 @@ test('a request saved during the final coverage read wins over newly positive ow
  const opened=await sessions.open(x.input),id=sessions.access(opened.previewId,7),found=await sessions.selection.search(id);
  const result=await sessions.command(opened.previewId,7,{action:'choose',revision:1,token:found.items[0].token});assert.equal(result.state,'updated',JSON.stringify(result));assert.equal(result.requestId,committed.requestId);assert.equal(result.created,false);assert.deepEqual(x.wakes,[]);assert.equal(x.requests.listRequests({requesterId:7}).items.length,1);
 });
+
+test('closing abandoned previews reclaims quota without saving requests or affecting another owner',async t=>{
+ const x=await fixture(t);
+ for(let i=0;i<15;i++){
+  const {opened}=await x.open({...x.input,requestKey:'abandoned-'+i});
+  assert.equal(x.sessions.close(opened.previewId,8).reason,'release_preview_missing');assert.ok(x.sessions.access(opened.previewId,7));
+  assert.equal(x.sessions.close(opened.previewId,7).state,'closed');assert.equal(x.sessions.access(opened.previewId,7),null);
+ }
+ assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);
+});

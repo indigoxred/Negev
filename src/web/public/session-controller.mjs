@@ -48,6 +48,7 @@ export function createSessionController({
     state.detailLoad = data.capabilities?.detailLoad === true;
     state.titleChecks = data.capabilities?.titleChecks === true;
     state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
+    detail.refreshCapabilities?.();
     byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
       ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
       : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;

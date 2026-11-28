@@ -134,7 +134,7 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
   const listInviteRows = db.prepare(`SELECT i.id,i.created_ms,i.expires_ms,i.used_ms,
     i.revoked_ms,c.username AS created_by_name,u.username AS used_by_name
     FROM invitations i LEFT JOIN users c ON c.id=i.created_by
-    LEFT JOIN users u ON u.id=i.used_by ORDER BY i.id DESC LIMIT ?`);
+    LEFT JOIN users u ON u.id=i.used_by WHERE i.id<? ORDER BY i.id DESC LIMIT ?`);
   const revokeInviteRow = db.prepare(`UPDATE invitations SET revoked_ms=?
     WHERE id=? AND used_ms IS NULL AND revoked_ms IS NULL`);
   const insertReset = db.prepare(`INSERT INTO password_resets
@@ -258,14 +258,16 @@ export function openAccountLedger(dbPath, { now = Date.now } = {}) {
       const id = Number(insertInvite.run(digest(code), adminUserId, expiresMs, now()).lastInsertRowid);
       return { state: 'created', id, code, expiresMs };
     },
-    // The 50 most recent invitations. Codes are never stored, so a lost
+    // Bounded invitation history. Codes are never stored, so a lost
     // invite cannot be shown again; revoke it and create a new one.
-    listInvites({ adminUserId }) {
+    listInvites({ adminUserId, beforeId=Number.MAX_SAFE_INTEGER,limit=50 }) {
+      if(!validId(beforeId)||!Number.isSafeInteger(limit)||limit<1||limit>50)throw new TypeError('Invalid invitation page');
       if (!validId(adminUserId)) throw new TypeError('Invalid admin ID');
       const admin = findUser.get(adminUserId);
       if (!admin || admin.role !== 'admin' || admin.disabled) return held('admin_required');
       const at = now();
-      return { state: 'invitations', items: listInviteRows.all(50).map((row) => ({
+      const rows=listInviteRows.all(beforeId,limit+1);
+      return { state: 'invitations',nextBeforeId:rows.length>limit?rows[limit-1].id:null, items: rows.slice(0,limit).map((row) => ({
         id: row.id,
         status: row.revoked_ms !== null ? 'revoked' : row.used_ms !== null ? 'used'
           : row.expires_ms <= at ? 'expired' : 'active',

@@ -79,7 +79,7 @@ export function createSeriesRequestController(detailView) {
   const reviewSummary = element('p');
   review.append(reviewSummary);
   let releaseMode='auto_review';
-  const releasePicker=state.releaseSearch?{value:()=>releaseMode}:null;
+  const releasePicker={value:()=>state.releaseSearch?releaseMode:'auto'};
   review.append(element('p',
     'Each selected installment becomes its own request. You can cancel a saved request in My Requests until processing starts.',
     'muted'));
@@ -88,9 +88,9 @@ export function createSeriesRequestController(detailView) {
   review.append(cancel);
   const submit = element('button', 'Select seasons', 'primary');
   submit.disabled = true;
-  const modeActions=state.releaseSearch?makeReleaseActions(element,{
-    onAuto:()=>{if(saving)return;releaseMode='auto_review';reviewing=true;submit.click();},
-    onManual:()=>{if(saving)return;releaseMode='manual';reviewing=true;submit.click();}}):null;
+  const modeActions=makeReleaseActions(element,{
+    onAuto:()=>{if(saving)return;if(!state.releaseSearch){feedback.textContent='Release search is unavailable. You can still save an automatic request.';refresh();return;}releaseMode='auto_review';reviewing=true;submit.click();},
+    onManual:()=>{if(saving)return;if(!state.releaseSearch){feedback.textContent='Release search is unavailable. You can still save an automatic request.';refresh();return;}releaseMode='manual';reviewing=true;submit.click();}});
   if(modeActions)submit.hidden=true;
   const scopeHint=element('p','Select a season to continue.','request-scope-hint');scopeHint.setAttribute('role','status');
   const feedback = element('p', '', 'muted request-feedback');
@@ -101,12 +101,15 @@ export function createSeriesRequestController(detailView) {
   view.hidden = true;
   action.append(chooser, scopeHint, review, ...(modeActions?[modeActions.element]:[]), submit, feedback, view);
   const rows = new Map();
+  const pendingReviewJobs = new Map();
   let saving = false;
   let reviewing = false;
   const selectedRows = () => [...rows.values()].filter((row) =>
     row.input.checked && row.status?.selectable && !row.requested);
   const refresh = () => {
     const selected = selectedRows();
+    modeActions.element.hidden = modeActions.auto.hidden = modeActions.manual.hidden = !state.releaseSearch;
+    submit.hidden = state.releaseSearch;
     scopeHint.textContent=seasonSelectionScope(selected);
     closePopup.disabled=saving;
     const selectable = [...rows.values()].filter((row) =>
@@ -122,7 +125,7 @@ export function createSeriesRequestController(detailView) {
     monitoredLink.hidden = !watchRequestId;
     if (watchRequestId) monitoredLink.href = requestRoute(watchRequestId);
     availableButton.hidden = currentMonitored || !presentation.showAvailable;
-    trigger.hidden = currentMonitored ? !otherRequestable && family.next() === null
+    trigger.hidden = currentMonitored ? !canOpenSeasonRequest([...rows.values()].filter(row=>row.anidbId!==item.anidbId),family.next()!==null)
       : !presentation.showTrigger;
     trigger.textContent = currentMonitored
       ? otherRequestable ? 'Request another installment' : 'Find other installments'
@@ -211,7 +214,11 @@ export function createSeriesRequestController(detailView) {
     drain();
   };
   const addRow = (entry) => {
-    if (rows.has(entry.anidbId)) return;
+    if (rows.has(entry.anidbId)) {
+      const row=rows.get(entry.anidbId),cached=relatedDetails.peek(entry.anidbId);
+      if(cached && !row.requested){row.detailFailed=cached.state==='detail_unavailable';updateRow(row,cached);}
+      return;
+    }
     const row = { anidbId: entry.anidbId, title: entry.title, englishTitle:entry.englishTitle,
       status: null, requested: false, detailFailed: false, loading: false };
     const label = element('label', undefined, 'season-request-row');
@@ -307,6 +314,7 @@ export function createSeriesRequestController(detailView) {
       refresh();
       return;
     }
+    if(releaseMode==='manual'&&!state.releaseSearch){feedback.textContent='Release search is unavailable. Choose an automatic request or try again later.';refresh();return;}
     if(releasePicker?.value()==='manual'){
       reviewing=false;review.hidden=true;action.close();
       await openPreviewReleaseRequests(selected.map(row=>({title:row.title,englishTitle:row.englishTitle,
@@ -319,7 +327,7 @@ export function createSeriesRequestController(detailView) {
     refresh();
     const saved = [];
     let savedRequestId = null;
-    const releaseJobs = [];
+
     const failed = [];
     let alreadyMonitored = 0;
     let closedByPilot = 0;
@@ -330,7 +338,7 @@ export function createSeriesRequestController(detailView) {
     try {
       const submittedSeasons = selected.map((row) => ({
         anidbId: row.anidbId,
-        ...(releasePicker?{releaseMode:releasePicker.value()}:{}),
+        ...(state.releaseSearch?{releaseMode:releasePicker.value()}:{}),
         requestKey: requestKeys.pending({ userId: requesterId, anidbId: row.anidbId }),
       }));
       const submittedKeys = new Map(submittedSeasons.map(season =>
@@ -360,7 +368,7 @@ export function createSeriesRequestController(detailView) {
           } else {
             row.statusText.textContent = payload.state === 'pending'
               ? 'Queued for details' : 'Requested';
-            if(payload.created!==false&&payload.targetIds?.length!==0&&Number.isSafeInteger(payload.requestId))releaseJobs.push({requestId:payload.requestId,title:row.title,englishTitle:row.englishTitle});
+            if(payload.created!==false&&payload.targetIds?.length!==0&&Number.isSafeInteger(payload.requestId))pendingReviewJobs.set(payload.requestId,{requestId:payload.requestId,title:row.title,englishTitle:row.englishTitle});
             saved.push(Number.isSafeInteger(payload.requestId)
               ? `#${payload.requestId}` : row.title);
           }
@@ -409,7 +417,7 @@ export function createSeriesRequestController(detailView) {
     view.href = savedRequestId !== null ? requestRoute(savedRequestId) : '#/requests';
     refresh();
     if (saved.length) loadRequests();
-    if(isCurrentDetail()&&!failed.length&&releaseJobs.length&&releasePicker){action.close();void openSavedReleaseRequests(releaseJobs,releasePicker.value());}
+    if(isCurrentDetail()&&!failed.length&&pendingReviewJobs.size&&state.releaseSearch){const jobs=[...pendingReviewJobs.values()];pendingReviewJobs.clear();action.close();void openSavedReleaseRequests(jobs,releasePicker.value());}
   });
   if (detailView.checkingCompleteSeries && detailView.loadNextEpisodePage) {
     continueCheck = element('button', 'Continue availability check', 'quiet');
@@ -445,5 +453,5 @@ export function createSeriesRequestController(detailView) {
   panel.insertBefore(detailActionRow(availableButton, trigger,
     monitoredButton, monitoredLink), relatedHeading);
   panel.append(action);
-
+  return {refreshCapabilities:refresh};
 }

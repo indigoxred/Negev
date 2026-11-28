@@ -28,3 +28,9 @@ for (const role of ['member', 'admin']) test(`the real module graph starts a sig
   for (const id of ['login-form', 'register-form', 'reset-form', 'search-form'])
     assert.equal(result.listeners.filter(value => value === `${id}:submit`).length, 1);
 });
+
+for(const kind of ['invite','reset'])for(const revision of ['changed','stable'])test('signed-out '+kind+' form survives a '+revision+' client revision',()=>{
+ const result=JSON.parse(execFileSync(process.execPath,[fileURLToPath(new URL('./helpers/client-entry-probe.mjs',import.meta.url)),'update-'+kind,revision],{encoding:'utf8'}));
+ assert.equal(result.reloads,0);assert.equal(result.bannerHidden,revision==='stable');assert.equal(result.hash,'');
+ assert.equal(kind==='invite'?result.registerCode:result.resetCode,'a'.repeat(64));assert.equal(result.username,'In progress');
+});

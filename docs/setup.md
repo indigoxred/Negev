@@ -41,7 +41,7 @@ Use a local browser with the exact configured `http://localhost:3000` origin for
 - If Negev cannot start, stderr names the setting at fault, for example `Acquisition runtime is unavailable: NEGEV_SHOKO_EVENTS=1 is required`. Loaded secrets and token-like URL parameters are redacted. Set `NEGEV_DEBUG_STARTUP=1` to also print the stack trace.
 - `NEGEV_LOG_LEVEL` (`silent`, `error`, `warn`, `info` or `debug`; default `warn`) controls the JSON request log on stdout. Every 5xx response is logged with its route and, when one was caught, the underlying error. Cookies, CSRF tokens and authorization headers are never logged.
 - A signed-in browser stays signed in while it is used at least once every 7 days, for at most 30 days after sign-in. **Sign out** ends that browser's session only. **Sign out of all devices** in the account menu ends every session for the account.
-- When a new version is deployed, an open page reloads by itself only if nothing is in progress. Otherwise it shows a **Reload now** banner.
+- When a new version is deployed, a signed-in page reloads by itself only if nothing is in progress. Signed-out pages keep invitation and reset forms intact and offer the update banner. Otherwise it shows a **Reload now** banner.
 
 ### Admin tools
 

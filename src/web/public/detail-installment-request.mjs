@@ -73,10 +73,13 @@ export function createInstallmentRequestControls(view) {
     : `${data.title || item.title} · this installment’s regular episodes${data.monitorFuture === true ? ' and future episodes' : ''}`);
   requestReview.append(reviewSummary);
   let filmReleaseMode='auto_review';
-  const filmReleasePicker=state.releaseSearch?{value:()=>filmReleaseMode}:null;
-  const filmPopup=state.releaseSearch?element('dialog',undefined,'season-request-dialog release-request-submenu'):null;
+  const filmReleasePicker={value:()=>state.releaseSearch?filmReleaseMode:'auto'};
+  const filmPopup=element('dialog',undefined,'season-request-dialog release-request-submenu');
   let filmActions=null,filmClose=null;
   const filmFeedback=element('p','','muted');filmFeedback.setAttribute('role','status');
+  const automaticRequest=element('button','Save automatic request','primary');
+  automaticRequest.type='button';
+  automaticRequest.addEventListener('click',()=>{filmReleaseMode='auto';reviewingRequest=true;button.click();});
   if(filmPopup){
     filmPopup.setAttribute('aria-label',data.kind==='movie'?'Request Movie':'Request Series');
     related.openSeasonDialog=filmPopup;
@@ -85,9 +88,9 @@ export function createInstallmentRequestControls(view) {
     heading.append(element('h2',data.kind==='movie'?'Request Movie':'Request Series'),close);
     filmPopup.append(heading,element('p',data.title||item.title));
     filmActions=makeReleaseActions(element,{
-      onAuto:()=>{if(requestSaving)return;filmReleaseMode='auto_review';reviewingRequest=true;button.click();},
-      onManual:()=>{if(requestSaving)return;filmReleaseMode='manual';reviewingRequest=true;button.click();}});
-    filmPopup.append(filmActions.element,filmFeedback);requestAction.append(filmPopup);
+      onAuto:()=>{if(requestSaving)return;if(!state.releaseSearch){filmFeedback.textContent='Release search is unavailable. You can still save an automatic request.';return;}filmReleaseMode='auto_review';reviewingRequest=true;button.click();},
+      onManual:()=>{if(requestSaving)return;if(!state.releaseSearch){filmFeedback.textContent='Release search is unavailable. You can still save an automatic request.';return;}filmReleaseMode='manual';reviewingRequest=true;button.click();}});
+    filmPopup.append(filmActions.element,automaticRequest,filmFeedback);requestAction.append(filmPopup);
     filmPopup.addEventListener('cancel',event=>{if(requestSaving)event.preventDefault();});
     filmPopup.addEventListener('close',()=>{reviewingRequest=false;requestReview.hidden=true;if(!requestSaved){requestStatus.textContent='';view.refreshRequestAction();}});
   }
@@ -183,7 +186,7 @@ export function createInstallmentRequestControls(view) {
   button.addEventListener('click', async () => {
     if (alreadyAvailable() || related.selectedAvailability === 'checking' ||
         requestSaving || requestSaved) return;
-    if(filmPopup&&!filmPopup.open){
+    if(state.releaseSearch&&filmPopup&&!filmPopup.open){
       if(filmChoice)filmChoice.hidden=false;
       filmPopup.showModal();return;
     }
@@ -207,6 +210,7 @@ export function createInstallmentRequestControls(view) {
       requestStatus.textContent = 'Review this installment, then confirm.';
       return;
     }
+    if(filmReleaseMode==='manual'&&!state.releaseSearch){filmFeedback.textContent='Release search is unavailable. Choose an automatic request or try again later.';return;}
     if(filmReleasePicker?.value()==='manual'){
       const selectedFilmId=needsFilmChoice?Number(view.filmChoiceSelect.value):null;
       const keyScope={userId:state.user.id,anidbId:related.selectedInstallmentId,
@@ -237,7 +241,7 @@ export function createInstallmentRequestControls(view) {
         anidbId: related.selectedInstallmentId,
         scope: selectedFilmId ? 'episodes' : 'installment',
         ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
-        ...(filmReleasePicker?{releaseMode:filmReleasePicker.value()}:{}),
+        ...(state.releaseSearch?{releaseMode:filmReleasePicker.value()}:{}),
       }) });
       requestKeys.saved(scope);
       refreshTrackingAfterRequest();
@@ -300,5 +304,12 @@ export function createInstallmentRequestControls(view) {
     continueCheck.addEventListener('click', () => { void checkPages(); });
     void checkPages();
   }
-
+  const refreshCapabilities=()=>{
+    filmActions.element.hidden=filmActions.auto.hidden=filmActions.manual.hidden=!state.releaseSearch;
+    automaticRequest.hidden=state.releaseSearch;
+    if(!state.releaseSearch&&filmPopup.open)filmFeedback.textContent='Release search is unavailable. You can still save an automatic request.';
+    view.refreshRequestAction();
+  };
+  refreshCapabilities();
+  return {refreshCapabilities};
 }

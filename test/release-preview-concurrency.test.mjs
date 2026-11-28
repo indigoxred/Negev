@@ -220,3 +220,15 @@ test('authenticated HTTP overlapping inspect commands return separate evidence b
   assert.equal(x.requests.listRequests({ requesterId: 7 }).items.length, 1);
   assert.deepEqual(x.calls, [1, 1]); assert.deepEqual(x.wakes, [chosen.json().requestId]);
 });
+
+test('closing during inspection retains its context until the read settles, then frees it',async t=>{
+ const x=await fixture(t),pending=x.inspect(0);await x.started[0].promise;
+ assert.equal(x.sessions.close(x.opened.previewId,7).state,'closed');assert.equal(x.sessions.access(x.opened.previewId,7),null);
+ assert.ok(x.sessions.readRequest(x.id));x.gates[0].resolve();await pending;
+ assert.equal(x.sessions.readRequest(x.id),null);x.assertUnsaved();
+});
+test('closing after an explicit Grab began retains its one committed receipt',async t=>{
+ const x=await fixture(t),pending=x.choose(0);await x.started[0].promise;
+ assert.equal(x.sessions.close(x.opened.previewId,7).state,'closed');x.gates[0].resolve();const result=await pending;
+ assert.ok(result.requestId,JSON.stringify(result));assert.equal(x.requests.countRequests(),1);assert.equal(x.wakes.length,1);
+});

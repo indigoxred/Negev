@@ -8,7 +8,7 @@ function requestGate(status, detail) {
 
 export function canOpenSeasonRequest(rows, hasMore) {
   return hasMore || rows.some((row) => !row.requested &&
-    (row.status?.selectable || row.detailFailed || row.loading));
+    (row.status == null || row.status?.selectable || row.detailFailed || row.loading));
 }
 
 export function seasonTriggerPresentation(rows, currentAnidbId, hasMore) {

@@ -213,7 +213,9 @@ export function registerAdminRoutes(app, { requireUser, currentUser, writeGuards
     if (typeof accounts.listInvites !== 'function') {
       return reply.code(503).send({ error: 'Invitations unavailable' });
     }
-    return accounts.listInvites({ adminUserId: request.negevUser.id });
+    const beforeId=request.query.beforeId===undefined?Number.MAX_SAFE_INTEGER:Number(request.query.beforeId);
+    if(Object.keys(request.query).some(key=>key!=='beforeId')||!Number.isSafeInteger(beforeId)||beforeId<1)return reply.code(400).send({error:'Invalid invitation page'});
+    return accounts.listInvites({ adminUserId: request.negevUser.id,beforeId });
   });
   app.post('/api/admin/invitations/:id/revoke', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');

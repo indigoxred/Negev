@@ -360,7 +360,8 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
       metadataHidden: true,
       ...(item.progress ? { progress: { state: item.progress.state,
         targetCount: item.episodeIds?.length ?? 0,
-        publicAvailability: 'unverified' } } : {}) };
+        publicAvailability: 'unverified',
+        oneTimeAcquisitionComplete:item.progress.oneTimeAcquisitionComplete===true } } : {}) };
     };
     if (route === '/api/requests/:id' && request.method === 'GET') {
       const denied = await titleAccess(request, data.anidbId);
@@ -1303,6 +1304,13 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
           : 'Preparation cannot be cancelled',
           reason: result.reason });
     });
+  app.post('/api/release-previews/:previewId/close',{preHandler:writeGuards},async(request,reply)=>{
+    reply.header('Cache-Control','no-store');
+    if(!allowedBody(request.body??{},[])||Object.keys(request.body??{}).length||Object.keys(request.query).length)return reply.code(400).send({error:'Invalid preview close'});
+    if(typeof releasePreviews?.close!=='function')return reply.code(503).send({error:'Release preview unavailable'});
+    const result=releasePreviews.close(request.params.previewId,request.negevUser.id);
+    return reply.code(result.state==='closed'?200:404).send(result);
+  });
   app.post('/api/requests/:id/cancel', { preHandler: writeGuards }, async (request, reply) => {
     reply.header('Cache-Control', 'no-store');
     const requestId = Number(request.params.id);

@@ -12,7 +12,7 @@ const browser = findTestBrowser();
 const staticRoot = new URL('../src/web/public/', import.meta.url);
 // Serve public/ the way the server does: every page, script, stylesheet and font.
 const assets = new Map([
-  ['/negev.png', ['negev.png', 'image/png']],
+  ...readdirSync(staticRoot).filter(name=>name.endsWith('.png')).map(name=>['/'+name,[name,'image/png']]),
   ...readdirSync(staticRoot).filter((name) => /\.(?:html|m?js|css)$/.test(name)).map((name) =>
     [name === 'index.html' ? '/' : `/${name}`, [name, name.endsWith('.html') ? 'text/html'
       : name.endsWith('.css') ? 'text/css' : 'text/javascript']]),
