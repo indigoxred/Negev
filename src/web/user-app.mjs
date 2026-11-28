@@ -1,3 +1,4 @@
+import { STATUS_CODES } from 'node:http';
 import { registerAdminRoutes } from './routes/admin-routes.mjs';
 import { validRegularCoverage } from './public/card-availability.mjs';
 import { catalogueRetryAt } from '../catalogue/catalogue-retry.mjs';
@@ -105,6 +106,14 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   const app = Fastify({ logger,
     logController: new Fastify.LogController({ disableRequestLogging: true }),
     bodyLimit: 16 * 1024, trustProxy: false });
+  app.setErrorHandler((error,request,reply)=>{
+    request.negevError=error;
+    const status=Number.isInteger(error.statusCode) && error.statusCode>=400 && error.statusCode<500
+      ? error.statusCode : 503;
+    reply.code(status).header('Cache-Control','no-store').send({
+      error:status===503?'Service unavailable':STATUS_CODES[status]??'Request failed',
+    });
+  });
   // Every 5xx is logged once, with the underlying error when a handler
   // caught one (request.negevError). Route guards and shape checks that answer
   // "unavailable" without throwing are still visible this way.
@@ -511,7 +520,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store');
     const { id, username, role, adultAllowed } = request.negevUser;
     const reportedState = getAcquisitionStatus()?.state;
-    const acquisitionState = ['disabled', 'waiting', 'waiting_with_review',
+    const acquisitionState = ['disabled', 'setup_required', 'waiting', 'waiting_with_review',
       'running', 'reconciling', 'reconciliation_held',
       'reconciliation_failed', 'stopping', 'stopped']
       .includes(reportedState) ? reportedState : 'unknown';

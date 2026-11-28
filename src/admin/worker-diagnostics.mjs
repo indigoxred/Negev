@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { recentBaselineState } from '../availability/shoko-recent-ledger.mjs';
 import { fileURLToPath } from 'node:url';
 import { changedRequestScopeSql, currentRequestCompletionSql } from '../requests/request-check-scope.mjs';
 
@@ -104,6 +105,11 @@ export async function readWorkerDiagnostics({ dataDir, nowMs = Date.now() } = {}
       'SELECT COUNT(*) AS pending,COALESCE(SUM(due_ms<=?),0) AS due FROM plex_card_retries').get(nowMs) };
     const recent = exists('shoko_recent_pending') ? { ...db.prepare(
       'SELECT COUNT(*) AS pending,COALESCE(SUM(retry_after_ms<=?),0) AS due FROM shoko_recent_pending').get(nowMs) } : null;
+    if(recent){
+      const cursor=exists('shoko_recent_cursor')?db.prepare('SELECT file_id AS fileId,imported_ns AS importedNs FROM shoko_recent_cursor WHERE id=1').get():null;
+      recent.baselineState=recentBaselineState(cursor);
+      recent.retired=exists('shoko_recent_retirements')?db.prepare('SELECT COUNT(*) n FROM shoko_recent_retirements').get().n:0;
+    }
     if (recent && exists('shoko_recent_continuation')) recent.continuations = db.prepare(
       'SELECT COUNT(*) AS count FROM shoko_recent_continuation').get().count;
     const inventory = exists('shoko_inventory_cursor') ? db.prepare(

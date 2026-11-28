@@ -31,3 +31,8 @@ test('404, wrong file ID, and provider outage never assert deletion', async () =
 });
 
 test('optional exact path evidence comes only from accessible same-ID Shoko locations',async()=>{const result=await readShokoOneFile({...base,includePaths:true,fetchImpl:async()=>json({ID:10,Updated:'2026-10-31T00:00:00Z',SeriesIDs:[],Locations:[{FileID:10,ManagedFolderID:2,RelativePath:'/incoming.mkv',IsAccessible:true},{FileID:11,ManagedFolderID:2,RelativePath:'/wrong.mkv',IsAccessible:true},{FileID:10,ManagedFolderID:2,RelativePath:'/offline.mkv',IsAccessible:false}]})});assert.deepEqual(result.observedPaths,[{ManagedFolderID:2,RelativePath:'incoming.mkv'}]);});
+
+for(const status of [404,401,503])test(`optional missing-ID result distinguishes ${status} without asserting availability absence`,async()=>{
+ const result=await readShokoOneFile({...base,includeMissing:true,fetchImpl:async()=>new Response('',{status})});
+ assert.deepEqual(result,status===404?{state:'not_found',fileId:10}:{state:'unavailable'});
+});

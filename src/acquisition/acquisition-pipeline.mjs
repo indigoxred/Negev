@@ -1,3 +1,4 @@
+import { closeInOrder, closeSyncInOrder } from '../runtime/close-in-order.mjs';
 import { openAcquisitionRequestQueue, createAcquisitionPageWorker,
   reconcileUnresolvedAcquisitionClaims } from './acquisition-request-queue.mjs';
 import { openStartQueue, createStartWorker } from './start-queue.mjs';
@@ -18,12 +19,13 @@ const held = (reason) => ({ state: 'held', reason });
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   recognitionRecoveries = null, shokoRescans = null,
   processRequest, processStart, processCompletion, processPublish,
-  processRecovery, processRescan, processBonus,
+  processRecovery, processRescan, processBonus, readinessGate = null,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now, pureMode = false,
   requestPageLimit = 3 } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
+      (readinessGate!==null && typeof readinessGate!=='function') ||
       !Number.isSafeInteger(requestPageLimit) || requestPageLimit < 1 ||
       requestPageLimit > 3 ||
       [processRequest, processStart, processCompletion, processPublish, now]
@@ -50,8 +52,7 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     queues.push(openCompletionQueue(dbPath, { pureMode }));
     queues.push(openHandoffPublishQueue(dbPath, { pureMode }));
   } catch (error) {
-    for (const queue of queues.reverse()) queue.close();
-    throw error;
+    closeSyncInOrder([...queues].reverse().map((queue,index)=>[`acquisition queue ${index}`,()=>queue.close()]),error);
   }
   const [requestQueue, startQueue, completionQueue, publishQueue] = queues;
   const requestWorker = createAcquisitionPageWorker({ queue: requestQueue,
@@ -141,6 +142,11 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   };
   return {
     initialize() {
+      if(readinessGate && !closed){
+        let ready;
+        try{ready=readinessGate();}catch(error){return Promise.reject(error);}
+        if(ready?.state!=='ready')return Promise.resolve(held(typeof ready?.reason==='string'&&/^[a-z][a-z0-9_]{0,79}$/.test(ready.reason)?ready.reason:'readiness_unverified'));
+      }
       if (closed) return Promise.resolve(held('pipeline_closed'));
       if (recovery && [recovery.requests, recovery.starts,
         recovery.completions, recovery.publishes]
@@ -257,13 +263,22 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
     } }),
     tickPublish: () => run({ runOnce: () => runMediaBatch(publishWorker) }),
     beginShutdown() { closed = true; },
+    closeUnstarted() {
+      if (initialization || recovery || active.size || Object.values(running).some(Boolean)) {
+        throw new Error('Cannot synchronously close a started pipeline');
+      }
+      if (closing) return;
+      closed = true;
+      closing = Promise.resolve();
+      closeSyncInOrder([...queues].reverse().map((queue,index)=>['acquisition queue '+index,()=>queue.close()]));
+    },
     close() {
       if (!closing) {
         closed = true;
         closing = (async () => {
           if (initialization) await Promise.allSettled([initialization]);
           await Promise.allSettled([...active]);
-          for (const queue of [...queues].reverse()) queue.close();
+          await closeInOrder([...queues].reverse().map((queue,index)=>[`acquisition queue ${index}`,()=>queue.close()]));
         })();
       }
       return closing;

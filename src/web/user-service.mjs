@@ -1,3 +1,4 @@
+import { closeInOrder } from '../runtime/close-in-order.mjs';
 import { createAcquisitionAccess } from '../acquisition/acquisition-access.mjs';
 import { queueCompositeObservation } from '../availability/queue-composite-observation.mjs';
 import { createWatchingScheduleReader } from './watching-schedule.mjs';
@@ -232,6 +233,10 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
   let seasonalSnapshot;
   let fileCursor;
   let fileProofs;
+  let app, wakeRelease, eventConsumer, acquisitionRuntime;
+  const observations = new Set();
+  let stopping = false;
+  let stopPromise;
   try {
     accounts = openAccountLedger(dbPath, { now });
     requests = openRequestLedger(dbPath);
@@ -610,7 +615,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     // Background watches re-check 18+ access each time they add episodes.
     const watchAdultAllowed = ({ requesterId }) =>
       accounts.getActiveUser({ userId: requesterId })?.adultAllowed === true;
-    const wakeRelease = createReleaseWake({
+    wakeRelease = createReleaseWake({
       wakeRequest: (id) => acquisitionRuntime?.wakeRequest(id),
       pollWatch: (requestId, {releaseTitles = []}) => pollAiringWatches({ ledger: requests,
         requestId, expectedEpisodeNumbers:observedReleaseEpisodes(releaseTitles),
@@ -652,7 +657,6 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         }));
         return combineImportActivity(manual, automated, withFingerprint);
       } : null;
-    let acquisitionRuntime;
     // Set once acquisition workers open; an admin release needs qBittorrent.
     let releaseProviders = null;
     const publicAvailableIdsForTitle = (anidbId, checkedMs) =>
@@ -693,11 +697,11 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           titleForId: (id) => titleSource?.getTitle(id) ?? null }),
       }),
     });
-    const app = await buildUserApp({ accounts, sessionKey, publicOrigin,
+    app = await buildUserApp({ accounts, sessionKey, publicOrigin,
       localOrigin, secureCookies, logger,
       readImportActivity,
-      getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
-        { state: 'disabled' },
+      getAcquisitionStatus: () => acquisitionRuntime && recent && recent.getBaselineState()!=='ready'
+        ? {state:'setup_required'} : acquisitionRuntime?.getStatus() ?? {state:'disabled'},
       acquisitionAllowedAnidbIds,
       ownershipGate: acquisitionOwnershipGate,
       publicAvailabilityConfigured: Boolean(plexObserver),
@@ -1071,15 +1075,12 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         observeDisplayPublic(target) :
         { state: 'unknown', reason: 'observer_not_configured' },
     });
-    const observations = new Set();
-    let stopping = false;
-    let stopPromise;
     const track = (task) => {
       observations.add(task);
       void task.then(() => observations.delete(task), () => observations.delete(task));
       return task;
     };
-    const refreshShokoFile = (fileId) => {
+    const refreshShokoFile = (fileId, {includeMissing=false,includeObservation=false} = {}) => {
       if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
       if (!Number.isSafeInteger(fileId) || fileId < 1) {
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
@@ -1087,20 +1088,24 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       return track((async () => {
         const pathTokens=eventConsumer?.snapshotPendingPathResolutions()??[];
         const startingRevision = inventory.getFile(fileId)?.observedMs;
-        const startingGeneration = startingRevision === undefined ?
-          eventConsumer?.getState().generation : null;
+        const startingGeneration = eventConsumer?.getState().generation;
         const result = await metadata.run(() => readShokoOneFile({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includePaths:pathTokens.length>0,
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includeMissing, includePaths:pathTokens.length>0,
         }));
         if (inventory.getFile(fileId)?.observedMs !== startingRevision ||
-            (startingRevision === undefined &&
+            ((includeMissing || startingRevision === undefined) &&
               eventConsumer?.getState().generation !== startingGeneration)) {
           return { state: 'held', reason: 'file_event_during_read' };
         }
+        if(result?.state==='not_found')return{state:'missing_file',fileId,observedRevision:startingRevision??null,generation:startingGeneration};
         if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
         const observedMs = Math.max(now(), (startingRevision ?? -1) + 1);
         const saved = inventory.recordFileObservation({ item: result.item, observedMs });
         if (saved.state !== 'recorded_file') return saved;
+        // Capture the persisted normalization before yielding to any event.
+        const observed = inventory.getFile(fileId);
+        const receipt = { ...saved, fileId, recognition: observed?.state,
+          observedRevision: observed?.observedMs ?? null, generation: startingGeneration };
         const delivery = inventory.deliverPendingChanges({
           handle: (change) => enqueueChangedFile({ ...change, priority: 'event' }),
         });
@@ -1108,20 +1113,21 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         for(const token of pathTokens)for(const path of result.observedPaths??[]) {
           eventConsumer.acknowledgeLinkedPathObservation({token,fileId,path,result:{...saved,recognition:inventory.getFile(fileId)?.state}});
         }
-        return saved;
+        return includeObservation ? receipt : saved;
       })());
     };
-    let eventConsumer;
-    const refreshRecognizedShokoFile = async (fileId) => {
+    const refreshRecognizedShokoFile = async (fileId, options) => {
       const token = eventConsumer?.snapshotPendingResolution(fileId);
-      const result = await refreshShokoFile(fileId);
-      const recognized = result?.state === 'recorded_file' ? { ...result,
-        recognition: inventory.getFile(fileId)?.state } : result;
+      const recognized = await refreshShokoFile(fileId,{...options,includeObservation:true});
       if (token) eventConsumer.acknowledgeLinkedObservation({
         fileId, token, result: recognized });
       return recognized;
     };
     const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
+      isRetirementCurrent:result=>{
+        const revision=inventory.getFile(result.fileId)?.observedMs??null;
+        return !stopping && revision===result.observedRevision && eventConsumer.getState().generation===result.generation;
+      },
       readPage: (input) => metadata.run(() => readShokoRecentPage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
@@ -1129,7 +1135,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
       isKnownFileId: (fileId) => inventory.getFile(fileId)?.state === 'linked',
-      refreshFile: refreshRecognizedShokoFile,
+      refreshFile: fileId=>refreshRecognizedShokoFile(fileId,{includeMissing:true}),
     }) : null;
     eventConsumer = createShokoEventConsumer({
       ...([shokoImportFolderId, acquisitionImportFolderId].some(id => Number.isSafeInteger(id) && id > 0) ? {
@@ -1346,6 +1352,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             qbitStagingRoot, verifyStagingRoot };
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
+          readinessGate:()=>recent && recent.getBaselineState()!=='ready'?{state:'held',reason:'recent_baseline_required'}:{state:'ready'},
           dbPath, requests, acquisitions, handoffs, pureMoves,
           recognitionRecoveries, shokoRescans, pureMode,
           qbBaseUrl, sessionGate,
@@ -1375,44 +1382,79 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return acquisitionRuntime;
       },
       wakeReleaseRequest: (requestId, notification) => stopping ? Promise.resolve() : track(wakeRelease(requestId, notification)),
+      getRecentScannerStatus:()=>({state:recent?.getBaselineState()??'disabled',pending:recent?.getCapacity().pending??0}),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {
           stopping = true;
-          stopPromise = (async () => {
-            await wakeRelease.close();
-            try { await app.close(); }
-            finally {
-              await acquisitionRuntime?.stop();
-              await eventConsumer.close();
-              await Promise.allSettled([...observations]);
-              plexObserver?.close();
-              scoreCache?.close(); rankings?.close(); seasonalSnapshot?.close();
-              fileProofs?.close(); fileCursor?.close();
-              directAvailability.close();
-              titleChecks?.close();
-              recent?.close();
-              inventory.close(); hydration.close(); progress.close();
-              completionReview.close(); startReview.close(); publishReview.close();
-              shokoRescans?.close(); recognitionRecoveries?.close();
-              pureMoves?.close();
-              candidateChecks?.close(); handoffs.close(); acquisitions.close();
-              pendingTitles.close(); requests.close(); accounts.close();
-            }
-          })();
+          stopPromise = closeInOrder([
+            ['release wakeups',()=>wakeRelease.close()],
+            ['HTTP server',()=>app.close()],
+            ['acquisition runtime',()=>acquisitionRuntime?.stop()],
+            ['Shoko event consumer',()=>eventConsumer.close()],
+            ['in-flight observations',()=>Promise.allSettled([...observations])],
+            ['plexObserver',()=>plexObserver?.close()],
+            ['scoreCache',()=>scoreCache?.close()],
+            ['rankings',()=>rankings?.close()],
+            ['seasonalSnapshot',()=>seasonalSnapshot?.close()],
+            ['fileProofs',()=>fileProofs?.close()],
+            ['fileCursor',()=>fileCursor?.close()],
+            ['directAvailability',()=>directAvailability?.close()],
+            ['titleChecks',()=>titleChecks?.close()],
+            ['recent',()=>recent?.close()],
+            ['inventory',()=>inventory?.close()],
+            ['hydration',()=>hydration?.close()],
+            ['progress',()=>progress?.close()],
+            ['completionReview',()=>completionReview?.close()],
+            ['startReview',()=>startReview?.close()],
+            ['publishReview',()=>publishReview?.close()],
+            ['shokoRescans',()=>shokoRescans?.close()],
+            ['recognitionRecoveries',()=>recognitionRecoveries?.close()],
+            ['pureMoves',()=>pureMoves?.close()],
+            ['candidateChecks',()=>candidateChecks?.close()],
+            ['handoffs',()=>handoffs?.close()],
+            ['acquisitions',()=>acquisitions?.close()],
+            ['pendingTitles',()=>pendingTitles?.close()],
+            ['requests',()=>requests?.close()],
+            ['accounts',()=>accounts?.close()],
+          ]);
         }
         return stopPromise;
       } };
   } catch (error) {
-    plexObserver?.close(); fileProofs?.close(); fileCursor?.close();
-    scoreCache?.close(); rankings?.close(); seasonalSnapshot?.close();
-    directAvailability?.close(); titleChecks?.close(); recent?.close();
-    inventory?.close(); hydration?.close();
-    progress?.close(); completionReview?.close(); startReview?.close();
-    publishReview?.close();
-    shokoRescans?.close(); recognitionRecoveries?.close(); pureMoves?.close();
-    candidateChecks?.close(); handoffs?.close(); acquisitions?.close();
-    pendingTitles?.close(); requests?.close(); accounts?.close();
+    stopping=true;
+    try { await closeInOrder([
+      ['release wakeups',()=>wakeRelease?.close()],
+      ['HTTP server',()=>app?.close()],
+      ['acquisition runtime',()=>acquisitionRuntime?.stop()],
+      ['Shoko event consumer',()=>eventConsumer?.close()],
+      ['in-flight observations',()=>Promise.allSettled([...observations])],
+      ['plexObserver',()=>plexObserver?.close()],
+      ['fileProofs',()=>fileProofs?.close()],
+      ['fileCursor',()=>fileCursor?.close()],
+      ['scoreCache',()=>scoreCache?.close()],
+      ['rankings',()=>rankings?.close()],
+      ['seasonalSnapshot',()=>seasonalSnapshot?.close()],
+      ['directAvailability',()=>directAvailability?.close()],
+      ['titleChecks',()=>titleChecks?.close()],
+      ['recent',()=>recent?.close()],
+      ['inventory',()=>inventory?.close()],
+      ['hydration',()=>hydration?.close()],
+      ['progress',()=>progress?.close()],
+      ['completionReview',()=>completionReview?.close()],
+      ['startReview',()=>startReview?.close()],
+      ['publishReview',()=>publishReview?.close()],
+      ['shokoRescans',()=>shokoRescans?.close()],
+      ['recognitionRecoveries',()=>recognitionRecoveries?.close()],
+      ['pureMoves',()=>pureMoves?.close()],
+      ['candidateChecks',()=>candidateChecks?.close()],
+      ['handoffs',()=>handoffs?.close()],
+      ['acquisitions',()=>acquisitions?.close()],
+      ['pendingTitles',()=>pendingTitles?.close()],
+      ['requests',()=>requests?.close()],
+      ['accounts',()=>accounts?.close()],
+    ]); }
+    catch (cleanup) { throw new AggregateError([error,...cleanup.errors],`User service startup failed: ${error?.message}; cleanup also failed`); }
     throw error;
   }
 }

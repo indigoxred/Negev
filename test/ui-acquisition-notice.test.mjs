@@ -15,3 +15,7 @@ test('disabled and recovery states remain distinct', () => {
   assert.equal(acquisitionNotice('unknown'),
     'Automatic acquisition status is unavailable.');
 });
+
+test('initial acquisition setup has a concise distinct notice',()=>{
+ assert.equal(acquisitionNotice('setup_required'),'Automatic acquisition is waiting for initial setup.');
+});

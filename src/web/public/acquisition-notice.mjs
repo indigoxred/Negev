@@ -5,6 +5,7 @@ export function acquisitionNotice(state) {
   if (state === 'waiting' || state === 'running') {
     return 'Requests are reviewed automatically. Safety checks can hold a release before download or import.';
   }
+  if (state === 'setup_required') return 'Automatic acquisition is waiting for initial setup.';
   if (state === 'disabled') return 'Automatic acquisition is off.';
   if (state === 'unknown') {
     return 'Automatic acquisition status is unavailable.';

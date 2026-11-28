@@ -593,3 +593,17 @@ test('a bonus that cannot save its next check does not starve later bonuses', as
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('missing recent baseline holds startup until explicit initialization without dropping queue work',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-startup-readiness-')),dbPath=path.join(dir,'state.sqlite');
+ const requests=openRequestLedger(dbPath),acquisitions=openAcquisitionLedger(dbPath),handoffs=openHandoffLedger(dbPath);
+ let ready=false,reads=0;
+ const pipeline=openAcquisitionPipeline({dbPath,acquisitions,qbBaseUrl,sessionGate:authorizedSession,
+  readinessGate:()=>ready?{state:'ready'}:{state:'held',reason:'recent_baseline_required'},
+  processRequest:async()=>{reads++;return{state:'held',reason:'no_safe_release'}},processStart:async()=>{},processCompletion:async()=>{},processPublish:async()=>{},now:()=>100});
+ try{
+  assert.deepEqual(await pipeline.initialize(),{state:'held',reason:'recent_baseline_required'});
+  assert.equal((await pipeline.tickRequests()).reason,'reconciliation_required');assert.equal(reads,0);
+  ready=true;assert.equal((await pipeline.initialize()).state,'reconciled');
+ }finally{await pipeline.close();handoffs.close();acquisitions.close();requests.close();await rm(dir,{recursive:true,force:true});}
+});

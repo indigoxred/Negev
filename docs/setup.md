@@ -139,5 +139,21 @@ All settings are environment variables. On/off settings take `1` or `0`, and uns
 | `NEGEV_PURE_MOVE` | off | Move prepared files into the Source instead of copying them |
 | Ownership guard | | One of: `NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS` (comma list), `NEGEV_SONARR_OWNERSHIP_URL` with `secrets/sonarr.token`, or `NEGEV_ANIME_SOLE_OWNER=1` |
 
-**Admin commands** (`docker compose run … node <command>`): `src/auth/init-admin.mjs` creates the first owner from `NEGEV_ADMIN_USERNAME` and a password on stdin. `src/admin/worker-diagnostics.mjs` prints a read-only worker snapshot. `src/admin/retire-stalled.mjs` retires one stalled download; see [Design](how-it-works.md#design).
+Before enabling downloads, set `NEGEV_SHOKO_RECENT=1` and initialize recent-file recovery once:
 
+```sh
+docker compose exec negev node src/availability/init-recent-baseline.mjs --init
+```
+
+Until initialization succeeds, the site reports that acquisition needs setup and downloads stay paused. Worker diagnostics show `recent.baselineState` as `required`, `ready` or `invalid`. Existing cursors are never reset automatically.
+
+**Admin commands** (run with the same private data and configuration):
+
+| Command | Purpose |
+| --- | --- |
+| `src/auth/init-admin.mjs` | Create the first owner; password comes from stdin |
+| `src/auth/init-qbittorrent-password.mjs` | Save the dedicated downloader password |
+| `src/availability/init-recent-baseline.mjs --init` | Initialize recent-file recovery once |
+| `src/admin/worker-diagnostics.mjs` | Read the worker snapshot |
+| `src/admin/retire-stalled.mjs` | Retire one stalled download |
+| `src/admin/retire-prestart-mismatch.mjs` | Release one stopped download after review |

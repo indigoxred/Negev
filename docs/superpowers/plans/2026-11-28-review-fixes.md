@@ -37,7 +37,7 @@
 
 ## Remaining batches — Execute in the approved order
 
-2. [ ] Recovery: uncertain operator removals; renamed publications, alternate locations, first-read proof invalidation and multipart proof attribution; supported legacy publish replay. Reproduce each condition first.
+2. [x] Recovery: uncertain operator removals; renamed publications, alternate locations, first-read proof invalidation and multipart proof attribution; supported legacy publish replay. Reproduce each condition first.
 3. [ ] Operations: generic exception responses, ordered shutdown after failures, recent scanner initialization/status and orphan retirement, pure-move retirement CLI.
 4. [ ] Artwork and guidance: small icon assets, cold-request compression cost, accurate legacy/pure-move mount examples.
 5. [ ] Account/request lifecycle: paused-watch sponsorship with one effective owner, settled refusals on deletion, cancelled preparation replay and legacy promotion receipts.
