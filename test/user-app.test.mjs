@@ -1157,3 +1157,26 @@ test('administrators cancel another users unstarted request as its actual owner'
   } finally { await app.close(); }
 });
 
+
+test('removal review exposes only an admin CSRF-protected read-only recheck', async () => {
+  let user={id:1,username:'Owner',role:'admin',sessionVersion:1,adultAllowed:true};
+  const accounts={authenticate:async()=>user,getSessionUser:()=>user,registerInvite:async()=>null,createInvite:()=>null,revokeSessions:()=>false};
+  let calls=0;
+  const app=await buildUserApp({accounts,sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,
+    submitRequest:async()=>null,readRequest:()=>null,
+    listOperationalReview:async()=>({state:'review',items:[{attemptId:7,requestId:9,anidbId:42,stage:'removal_hold',reason:'removal_unconfirmed',observedMs:100}],nextAfterAttemptId:null}),
+    reviewOperationalItem:async input=>{assert.equal(input.stage,'removal_hold');assert.equal(input.action,'retry');calls++;return {state:'retired_stalled'};} });
+  try {
+    const login=await app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Owner',password:'long-owner-passphrase'}});
+    const cookie=login.headers['set-cookie'].split(';')[0];
+    const session=await app.inject({method:'GET',url:'/api/session',headers:{cookie}});
+    const headers={cookie,origin,'x-negev-csrf':session.json().csrfToken};
+    const post=(action,h=headers)=>app.inject({method:'POST',url:'/api/admin/review/7',headers:h,payload:{stage:'removal_hold',action}});
+    const page=await app.inject({method:'GET',url:'/api/admin/review',headers:{cookie}});
+    assert.equal(page.statusCode,200);assert.equal(page.json().items[0].stage,'removal_hold');
+    assert.equal((await post('retry',{cookie,origin})).statusCode,403);
+    assert.equal((await post('release')).statusCode,400);
+    const confirmed=await post('retry');assert.equal(confirmed.statusCode,200);assert.equal(confirmed.json().state,'removal_confirmed');
+    user={...user,role:'user'};assert.equal((await post('retry')).statusCode,403);assert.equal(calls,1);
+  } finally {await app.close();}
+});

@@ -18,8 +18,9 @@ export function listOperationalReview({ acquisitions, publishQueue, startQueue,
       !Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
     throw new TypeError('Invalid operational review');
   }
-  let rejected, publish, starts, completions, rescans;
+  let rejected, publish, starts, completions, rescans, removals;
   try {
+    removals = acquisitions.listPendingRemovalReview?.({afterAttemptId,limit:limit+1}) ?? [];
     rejected = acquisitions.listRejectedNeedsReview({ afterAttemptId,
       limit: limit + 1 });
     publish = publishQueue.listReviewNeeded({ afterAttemptId,
@@ -35,15 +36,17 @@ export function listOperationalReview({ acquisitions, publishQueue, startQueue,
     rows.every((row, index) => validId(row?.attemptId) &&
       row.attemptId > (index === 0 ? afterAttemptId : rows[index - 1].attemptId));
   if (!ordered(rejected) || !ordered(publish) || !ordered(starts) ||
-      !ordered(completions) || !ordered(rescans)) return held();
+      !ordered(completions) || !ordered(rescans) || !ordered(removals)) return held();
+  const removalIds = new Set(removals.map(row=>row.attemptId));
   const candidates = [
+    ...removals.map(row=>({...row,stage:'removal_hold'})),
     ...rejected.map((row) => ({ ...row, stage: 'release_rejected' })),
     ...publish.map((row) => ({ ...row, stage: 'import_hold' })),
     ...starts.map((row) => ({ ...row, stage: 'start_hold' })),
     ...completions.map((row) => ({ ...row,
       stage: 'completion_interrupted' })),
     ...rescans.map((row) => ({ ...row, stage: 'shoko_rescan_hold' })),
-  ].sort((a, b) => a.attemptId - b.attemptId);
+  ].filter(row=>row.stage==='removal_hold' || !removalIds.has(row.attemptId)).sort((a, b) => a.attemptId - b.attemptId);
   if (new Set(candidates.map((row) => row.attemptId)).size !== candidates.length) {
     return held();
   }
@@ -53,7 +56,7 @@ export function listOperationalReview({ acquisitions, publishQueue, startQueue,
     let anidbId = row.anidbId;
     const observedMs = row.stage === 'release_rejected' ||
       row.stage === 'completion_interrupted' ||
-      row.stage === 'shoko_rescan_hold'
+      row.stage === 'shoko_rescan_hold' || row.stage === 'removal_hold'
       ? row.observedMs : row.checkedMs;
     if (row.stage === 'import_hold' || row.stage === 'start_hold' ||
         row.stage === 'completion_interrupted') {

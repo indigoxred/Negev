@@ -102,13 +102,14 @@ for (const [kind, label, reply] of [
   ['users', 'Delete account', { username: 'Member', deletedRequests: 1 }],
   ['invites', 'Revoke', { state: 'revoked' }],
   ['review', 'Retry now', { state: 'scheduled' }],
+  ['removal', 'Check removal', { state: 'removal_confirmed' }],
 ]) for (const failed of [false, true]) test(`old ${label} ${failed ? 'failure' : 'success'} cannot publish into another session`, async () => {
   const f = fixture();
   const method = kind === 'users' ? 'loadUsers' : kind === 'invites' ? 'loadInvites' : 'loadOperationalReview';
   const id = kind === 'users' ? 'admin-users' : kind === 'invites' ? 'admin-invites' : 'review-list';
   const page = kind === 'users' ? users('Member') : kind === 'invites'
     ? { items: [{ id: 7, status: 'active', expiresMs: 1, createdMs: 1 }] }
-    : { items: [{ attemptId: 8, requestId: 9, anidbId: 10, title: 'Title', stage: 'start_hold', reason: 'retry' }], nextAfterAttemptId: null };
+    : { items: [{ attemptId: 8, requestId: 9, anidbId: 10, title: 'Title', stage: kind === 'removal' ? 'removal_hold' : 'start_hold', reason: 'retry' }], nextAfterAttemptId: null };
   if (label === 'Delete account') page.items[0].disabled = true;
   const load = f.controller[method](); f.pending[0].finish(page); await load;
   const previousConfirm = globalThis.confirm;

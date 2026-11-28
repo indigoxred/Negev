@@ -2,6 +2,7 @@
 // listed here fall back to a readable form of the code itself; the raw code
 // stays available as a tooltip for troubleshooting.
 const REASONS = {
+  removal_unconfirmed: 'The downloader removal has not been confirmed; its episodes stay reserved',
   file_plan_mismatch: 'The downloaded files do not match the planned episodes',
   related_installment_mismatch: 'The files belong to a different season or installment',
   file_wrong_identity: 'The files are for a different title',

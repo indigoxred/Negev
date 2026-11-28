@@ -472,6 +472,16 @@ export function openAcquisitionLedger(dbPath) {
               a - b))) return null;
       return { state: 'owned_observed', attemptId: existing.id };
     },
+    listPendingRemovalReview({ afterAttemptId = 0, limit = 20 } = {}) {
+      if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 || !validId(limit) || limit > 50) throw new TypeError('Invalid removal review page');
+      return db.prepare(`SELECT a.id AS attemptId,a.request_id AS requestId,a.anidb_id AS anidbId,
+        'removal_unconfirmed' AS reason,i.updated_ms AS observedMs
+        FROM acquisition_stall_retirement_intents i JOIN acquisition_attempts a ON a.id=i.attempt_id
+        WHERE i.status='delete_unknown' AND a.id>? AND a.status='torrent_observed'
+          AND NOT EXISTS (SELECT 1 FROM acquisition_retirements r WHERE r.attempt_id=a.id)
+          AND NOT EXISTS (SELECT 1 FROM acquisition_prestart_mismatch_retirements r WHERE r.attempt_id=a.id)
+        ORDER BY a.id LIMIT ?`).all(afterAttemptId,limit).map(row=>({...row}));
+    },
     listRejectedNeedsReview({ afterAttemptId = 0, limit = 20 } = {}) {
       if (!Number.isSafeInteger(afterAttemptId) || afterAttemptId < 0 ||
           !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
