@@ -1,3 +1,4 @@
+import { createAcquisitionAccess } from '../acquisition/acquisition-access.mjs';
 import { queueCompositeObservation } from '../availability/queue-composite-observation.mjs';
 import { createWatchingScheduleReader } from './watching-schedule.mjs';
 import { createCatalogueFetch } from '../catalogue/catalogue-fetch.mjs';
@@ -348,6 +349,13 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     const loadCurrentDetail = createFastDetailReader({ prefer: 'shoko',
       archive: (input) => rawDetailReader.read(input),
       shoko: (input) => metadata.run(() => loadDetail(input)),
+    });
+    const authorizeRequest = createAcquisitionAccess({
+      readRequest: id => requests.getRequest(id),
+      readAttempt: id => acquisitions.getAttempt(id),
+      readUser: userId => accounts.getActiveUser({ userId }),
+      readBonuses: attemptId => acquisitions.getBonusPlan(attemptId),
+      loadDetail: input => loadCurrentDetail(input),
     });
     const observeCurrentPublic = (target, observedShoko,
       includeProof = false) => {
@@ -1336,7 +1344,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
           stagingHostPath, qbitStagingRoot, holdingRoot, importRoot,
           inspectMounts, verifyStagingRoot, verifyShokoSource,
           realpathImpl, readPacer, fetchImpl, now,
-          allowedAnidbIds, ownershipGate, canAcquireRestrictedBonuses,
+          allowedAnidbIds, ownershipGate, canAcquireRestrictedBonuses, authorizeRequest,
           readRelatedTitles,
           shoko: { baseUrl: shokoBaseUrl, apiKey: shokoApiKey,
             providerId: shokoProviderId },

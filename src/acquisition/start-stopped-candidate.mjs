@@ -1,4 +1,5 @@
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
+import { checkAcquisitionAccess } from './acquisition-access.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
 import { refreshBonusOwnership } from './bonus-ownership.mjs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -20,7 +21,7 @@ const heldAfter = heldReporter('acquisition/start-stopped-candidate');
 // gates; a successful HTTP response alone is never evidence of either.
 export async function startStoppedCandidate(options) {
   const {
-  ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl,
+  ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl, authorizeRequest,
   verifyStagingRoot, saveRoot,
   baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
   readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
@@ -207,6 +208,9 @@ export async function startStoppedCandidate(options) {
       attempt.episodeIds.some((id) => !currentRequest.episodeIds.includes(id))) {
     return held('request_missing');
   }
+  const access = ledger.getStart?.(attemptId) ? { state: 'authorized' }
+    : await checkAcquisitionAccess(authorizeRequest, { requestId: request.id, attemptId });
+  if (access.state === 'held') return access;
   // The availability probe may take long enough for qBittorrent priorities or
   // paths to change. Recheck immediately before recording the one-send intent.
   let refreshedForFinal = false;
@@ -262,7 +266,7 @@ export async function startStoppedCandidate(options) {
     savePath: paths.save_path, downloadPath: paths.download_path,
   })).digest('hex');
   const sendToken = randomUUID();
-  const intent = ledger.beginStart({ attemptId, hash: expected.hash,
+  const intent = ledger.beginStart({ attemptId, hash: expected.hash, restricted: access.restricted,
     manifestDigest, nowMs: startMs, sendToken });
   if (intent.state === 'held' || !intent.sendNow) return intent;
 

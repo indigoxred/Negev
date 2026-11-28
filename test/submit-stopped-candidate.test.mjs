@@ -516,3 +516,20 @@ test('unsafe extra file never receives a priority write or torrent start', async
     assert.equal(priorityWrites, 0);
     assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
   }));
+
+test('fresh 18+ authorization prevents any downloader add POST', async () => withAttempt(async ({ ledger, attemptId }) => {
+ let adds=0,checks=0;
+ const result=await submitStoppedCandidate({...options,ledger,attemptId,
+  authorizeRequest:async()=>{checks++;return {state:'held',reason:'adult_access_disabled'};},
+  fetchImpl:async input=>{const endpoint=new URL(input).pathname;if(endpoint.endsWith('/version'))return new Response('v5.3.0');if(endpoint.endsWith('/info'))return Response.json([]);if(endpoint.endsWith('/add')){adds++;return new Response('Ok.');}throw Error(endpoint);}});
+ assert.deepEqual(result,{state:'held',reason:'adult_access_disabled'});assert.equal(checks,1);assert.equal(adds,0);assert.equal(ledger.getAttempt(attemptId).status,'reserved');
+}));
+
+test('mounts are rechecked after asynchronous 18+ authorization before adding a torrent',async()=>withAttempt(async({ledger,attemptId})=>{
+ let exposed=false,adds=0;
+ const result=await submitStoppedCandidate({...options,ledger,attemptId,
+ authorizeRequest:async()=>{exposed=true;return {state:'authorized',restricted:false};},
+ inspectMounts:async()=>exposed?{...mounts,shoko:[...mounts.shoko,mount(hostPath,'/import')]}:mounts,
+ fetchImpl:async input=>{const endpoint=new URL(input).pathname;if(endpoint.endsWith('/version'))return new Response('v5.3.0');if(endpoint.endsWith('/info'))return Response.json([]);if(endpoint.endsWith('/add')){adds++;return new Response('Ok.');}throw Error(endpoint);}});
+ assert.equal(result.state,'held');assert.equal(adds,0);
+}));

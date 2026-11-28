@@ -1,5 +1,6 @@
 import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
+import { checkAcquisitionAccess } from './acquisition-access.mjs';
 
 const held = (reason, episodeId) => ({ state: 'held', reason,
   ...(episodeId === undefined ? {} : { episodeId }) });
@@ -8,7 +9,7 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 // The observation must be one fresh, complete snapshot for the chosen
 // targets. A Shoko import waiting for Plex is not an absent target.
 export async function reserveMissingTargets({ request, candidate, episodeIds,
-  readEvidence, publicLibraryIds, ledger,
+  readEvidence, publicLibraryIds, ledger, authorizeRequest,
   firstTimePolicy = 'strict', now = Date.now, beforeReserve, preparedHash, plannedFiles }) {
   if (!validId(request?.id) || !validId(request.anidbId) || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
@@ -38,6 +39,8 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       { state: 'existing', attemptId: owned.attemptId,
         status: 'torrent_observed' } : held('claim_unavailable');
   }
+  const access = await checkAcquisitionAccess(authorizeRequest, { requestId: request.id });
+  if (access.state === 'held') return access;
   const checked = await confirmMissingTargets({ request, episodeIds,
     readEvidence, publicLibraryIds, firstTimePolicy, now });
   if (checked.state !== 'missing_confirmed') return checked;
@@ -49,7 +52,7 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       typeof preflight.reason === 'string' ? preflight :
       held('candidate_preflight_unavailable');
   }
-  return ledger.reserve({ requestId: request.id, candidate, episodeIds,
+  return ledger.reserve({ requestId: request.id, candidate, episodeIds, restricted: access.restricted,
     ...(preparedHash===undefined?{}:{preparedHash,plannedFiles}),
     evidencePolicy: checked.evidencePolicy ?? 'strict',
     nowMs: checked.checkedAtMs });

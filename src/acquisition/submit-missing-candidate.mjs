@@ -56,7 +56,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   readRelatedTitles, offlineLookup, loadDetail, readVideoExtensions, readBonusOwnership,
   allowRestrictedBonuses = false,
   readEvidence, publicLibraryIds, ledger,
-  renewQbittorrent,
+  renewQbittorrent, authorizeRequest,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   let beforeReservation = true;
   const inspectionResult = result => {
@@ -243,7 +243,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   beforeReservation = false;
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     preparedHash:prepared.expected.hash,plannedFiles,
-    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve });
+    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve, authorizeRequest });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   // Once the stopped torrent is recorded, start/completion workers own it.
   // Replaying its manifest here cannot make progress after it has downloaded,
@@ -282,7 +282,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   if(selectedBonuses?.state==='held')return selectedBonuses;
   const bonusFiles=selectedBonuses?.files??[];
-  return submitStoppedCandidate({ ...activeQbittorrent, ledger,
+  return submitStoppedCandidate({ ...activeQbittorrent, ledger, authorizeRequest,
     attemptId: reserved.attemptId, candidate, prepared, nowMs,
     plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name),
     excludedFileNames: [...(mapped.excludedVideoNames ?? []), ...(mapped.excludedSubtitleNames ?? [])] });

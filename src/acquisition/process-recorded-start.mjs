@@ -11,7 +11,7 @@ const heldAfter = heldReporter('acquisition/process-recorded-start');
 // Explicit one-attempt continuation. Identity, hash and file plan come from
 // the durable acquisition journal, never from a caller-supplied title or URL.
 // The start gate still rechecks stopped qBittorrent, staging and absence proof.
-export async function processRecordedStart({ attemptId, requests, acquisitions,
+export async function processRecordedStart({ attemptId, requests, acquisitions, authorizeRequest,
   stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
   verifyStagingRoot, realpathImpl, readEvidence,
   readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
@@ -99,7 +99,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions,
   const expected = { hash: attempt.torrentHash, category: 'negev',
     savePath: stagingSavePath(attempt.torrentHash,
       { saveRoot: qbitStagingRoot }) };
-  return start({ ledger: acquisitions, attemptId, expected,
+  return start({ ledger: acquisitions, attemptId, expected, authorizeRequest,
     hostPath: stagingHostPath, inspectMounts, verifyStagingRoot, realpathImpl,
     saveRoot: qbitStagingRoot,
     baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,

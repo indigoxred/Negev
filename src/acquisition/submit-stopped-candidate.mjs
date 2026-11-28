@@ -5,6 +5,7 @@ import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
+import { checkAcquisitionAccess } from './acquisition-access.mjs';
 import { qbittorrentSessionCookie, validQbittorrentSessionId } from
   './qbittorrent-session-cookie.mjs';
 
@@ -45,7 +46,7 @@ export async function submitStoppedCandidate(input) {
 }
 
 async function submitOwnedCandidate({
-  ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl,
+  ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl, authorizeRequest,
   verifyStagingRoot, saveRoot, plannedFileNames, excludedFileNames,
   baseUrl, sessionId, nowMs, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
@@ -94,6 +95,9 @@ async function submitOwnedCandidate({
 
   const headers = { Cookie: qbittorrentSessionCookie(sessionId) };
   if (bound.state === 'prepared') {
+    const access = await checkAcquisitionAccess(authorizeRequest, { attemptId });
+    if (access.state === 'held') return access;
+
     let version;
     try {
       const response = await fetchImpl(new URL('/api/v2/app/version', base), {
@@ -123,7 +127,7 @@ async function submitOwnedCandidate({
     if (existing.length !== 0) return held('torrent_hash_in_use');
     const isolation = await checkMounts();
     if (isolation.state !== 'isolated_mount') return isolation;
-    const intent = ledger.beginDispatch({ attemptId, nowMs });
+    const intent = ledger.beginDispatch({ attemptId, nowMs, restricted: access.restricted });
     if (intent.state === 'held') return intent;
     if (intent.sendNow) {
       addAttempted = true;

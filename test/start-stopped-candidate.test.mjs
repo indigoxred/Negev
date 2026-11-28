@@ -777,3 +777,27 @@ test('bonus priority response is disposed without blocking exact re-observation'
   finish?.();assert.equal(cancelled,true);assert.equal(result.state,'start_unknown');
  },{bonusFiles:[bonus]});
 });
+
+test('fresh 18+ authorization prevents a new start without changing its saved torrent',async()=>withObservedTorrent(async({ledger,attemptId,readRequest})=>{
+ let starts=0,checks=0;
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,
+ authorizeRequest:async()=>{checks++;return {state:'held',reason:'adult_access_disabled'};},
+ fetchImpl:async input=>{const endpoint=new URL(input).pathname;if(endpoint.endsWith('/start')){starts++;return new Response('');}if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json(endpoint.endsWith('/files')?files:[torrent]);}});
+ assert.deepEqual(result,{state:'held',reason:'adult_access_disabled'});assert.equal(checks,1);assert.equal(starts,0);assert.equal(ledger.getStart(attemptId),null);
+}));
+test('a definitive rejected-start retry rechecks access before sending again',async()=>withObservedTorrent(async({ledger,attemptId,readRequest})=>{
+ let starts=0,checks=0;
+ const fetchImpl=async input=>{const endpoint=new URL(input).pathname;if(endpoint.endsWith('/start')){starts++;return new Response(null,{status:403});}if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json(endpoint.endsWith('/files')?files:[torrent]);};
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,fetchImpl,
+ authorizeRequest:async()=>{checks++;return starts?{state:'held',reason:'adult_access_disabled'}:{state:'authorized',restricted:true};},
+ renewQbittorrent:async()=>({state:'authenticated',sessionId:'renewedSID',fetchImpl})});
+ assert.equal(result.reason,'adult_access_disabled');assert.equal(starts,1);assert.equal(checks,2);assert.equal(ledger.getStart(attemptId),null);
+}));
+
+test('slow 18+ classification cannot age the final absence proof past the start limit',async()=>withObservedTorrent(async({ledger,attemptId,readRequest})=>{
+ let clock=204,starts=0;
+ const result=await startStoppedCandidate({...options,ledger,attemptId,readRequest,now:()=>clock,
+ authorizeRequest:async()=>{clock+=31000;return {state:'authorized',restricted:false};},
+ fetchImpl:async input=>{const endpoint=new URL(input).pathname;if(endpoint.endsWith('/start')){starts++;return new Response('');}if(endpoint.endsWith('/properties'))return Response.json({save_path:expected.savePath,download_path:''});return Response.json(endpoint.endsWith('/files')?files:[torrent]);}});
+ assert.equal(result.reason,'availability_evidence_stale');assert.equal(starts,0);assert.equal(ledger.getStart(attemptId),null);
+}));

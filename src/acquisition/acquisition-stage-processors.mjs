@@ -46,7 +46,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
   verifyStagingRoot, realpathImpl,
   verifyShokoSource,
   readRelatedTitles,
-  ownershipGate = null, canAcquireRestrictedBonuses = () => false,
+  ownershipGate = null, canAcquireRestrictedBonuses = () => false, authorizeRequest,
   shoko, shokoMount = null, shokoSourcePath = null,
   providerFetchImpl = fetch, readPacer, now = Date.now,
   verifyHandoffMounts = verifyHandoffMountRoots,
@@ -260,7 +260,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
         submitCandidate: async ({ request, ...selected }) => {
           const ownership = await checkOwnership(request.anidbId);
           if (ownership) return ownership;
-          return submitMissingCandidate({ request, ...selected,
+          return submitMissingCandidate({ request, ...selected, authorizeRequest,
             releaseQueries, readEvidence, offlineLookup,
             readRelatedTitles: relatedTitleReader, loadDetail: input=>loadDetail(input),
             readVideoExtensions, readBonusOwnership: pureMode?readBonusOwnership:undefined,
@@ -290,7 +290,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       }
       const ownership = await checkOwnership(request.anidbId);
       if (ownership) return ownership;
-      return processRecordedStart({ attemptId, requests, acquisitions,
+      return processRecordedStart({ attemptId, requests, acquisitions, authorizeRequest,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,
         readEvidence, publicLibraryIds: publicLibraryIds(request.kind),

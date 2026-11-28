@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { MAX_RELEASE_GUID_LENGTH } from './release-candidate-limits.mjs';
 import { allocateDurableId } from '../runtime/durable-id.mjs';
-import { requestOwnerActive } from './request-owner.mjs';
+import { requestAccessHold } from './request-owner.mjs';
 
 const held = (reason) => ({ state: 'held', reason });
 const validTime = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -454,7 +454,7 @@ export function openAcquisitionLedger(dbPath) {
       return { state: attemptForRequest.get(requestId) ? 'attempt_present' : 'no_attempt' };
     },
     reserve({ requestId, candidate, episodeIds, preparedHash, plannedFiles,
-      evidencePolicy = 'strict', nowMs }) {
+      evidencePolicy = 'strict', nowMs, restricted }) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
           !validId(candidate?.indexerId) || typeof candidate.guid !== 'string' ||
@@ -467,7 +467,8 @@ export function openAcquisitionLedger(dbPath) {
       return transact(() => {
         const request = requestRow.get(requestId);
         if (!request || request.status !== 'held') return held('request_missing');
-        if (!requestOwnerActive(db, requestId)) return held('account_access_changed');
+        const accessHold = requestAccessHold(db, requestId, restricted);
+        if (accessHold) return held(accessHold);
         const selectionReason = releaseReservationGate(db,requestId,candidate,episodeIds,nowMs,preparedHash,plannedFiles);
         if (selectionReason) return held(selectionReason);
         const digest = digestForCandidate(candidate, request.anidb_id);
@@ -985,7 +986,7 @@ export function openAcquisitionLedger(dbPath) {
           attemptEpisodes.all(attemptId).map((item) => item.episode_id)) ? plan.files : null;
       } catch { return null; }
     },
-    beginDispatch({ attemptId, nowMs }) {
+    beginDispatch({ attemptId, nowMs, restricted }) {
       if (!validId(attemptId) || !validTime(nowMs)) throw new TypeError('Invalid dispatch intent');
       return transact(() => {
         const row = findAttempt.get(attemptId);
@@ -995,7 +996,8 @@ export function openAcquisitionLedger(dbPath) {
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'reserved' && !row.expected_hash) return held('torrent_not_prepared');
         if (row.status === 'reserved') {
-          if (!requestOwnerActive(db, row.request_id)) return held('account_access_changed');
+          const accessHold = requestAccessHold(db, row.request_id, restricted);
+          if (accessHold) return held(accessHold);
           begin.run(nowMs, attemptId);
           return { state: 'dispatch_unknown', sendNow: true };
         }
@@ -1038,7 +1040,7 @@ export function openAcquisitionLedger(dbPath) {
         return { state: 'torrent_observed' };
       });
     },
-    beginStart({ attemptId, hash, manifestDigest, nowMs, sendToken = null }) {
+    beginStart({ attemptId, hash, manifestDigest, nowMs, sendToken = null, restricted }) {
       if (!validId(attemptId) || typeof hash !== 'string' ||
           !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(hash) ||
           typeof manifestDigest !== 'string' || !/^[0-9a-f]{64}$/i.test(manifestDigest) ||
@@ -1063,7 +1065,8 @@ export function openAcquisitionLedger(dbPath) {
           if (existing.manifest_digest !== normalizedDigest) return held('start_manifest_conflict');
           return { state: existing.status, sendNow: false };
         }
-        if (!requestOwnerActive(db, row.request_id)) return held('account_access_changed');
+        const accessHold = requestAccessHold(db, row.request_id, restricted);
+          if (accessHold) return held(accessHold);
         insertStart.run(attemptId, normalizedHash, normalizedDigest, nowMs, nowMs);
         db.prepare('UPDATE acquisition_starts SET send_token=? WHERE attempt_id=?').run(sendToken,attemptId);
         return { state: 'start_unknown', sendNow: true };
