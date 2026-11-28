@@ -65,6 +65,7 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
               db.prepare('SELECT 1 FROM acquisition_dispatch_refusals WHERE attempt_id=? AND torrent_hash=? AND http_status=403').get(attempt.id,attempt.expected_hash) &&
               db.prepare('SELECT 1 FROM acquisition_releases WHERE attempt_id=?').get(attempt.id) &&
               !db.prepare('SELECT 1 FROM acquisition_target_claims WHERE attempt_id=? AND active=1').get(attempt.id) &&
+              !(has('acquisition_bonus_files') && db.prepare('SELECT 1 FROM acquisition_bonus_files WHERE attempt_id=? AND active=1').get(attempt.id)) &&
               !EXTERNAL_ATTEMPT_TABLES.filter(table=>has(table) && table!=='acquisition_dispatch_refusals').some(table=>db.prepare(`SELECT 1 FROM ${table} WHERE attempt_id=?`).get(attempt.id))) {
             refused.push(attempt);
           } else if (attempt.status === 'reserved' && attempt.torrent_hash === null &&

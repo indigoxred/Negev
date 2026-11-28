@@ -170,3 +170,14 @@ for(const mismatch of ['owner','title','scope'])test('legacy promotion receipt r
   assert.equal(pending.get(saved.intentId).state,'complete');assert.equal(pending.get(saved.intentId).normalRequestId,null);
  }finally{pending.close();requests.close()}
 }));
+
+test('repair a promotion already closed by v336 only when the exact receipt exists',()=>withPath(async dbPath=>{
+ const requests=openRequestLedger(dbPath);let pending=openPendingTitleLedger(dbPath);
+ try{
+  const item=pending.enqueue({...first,requestKey:'already-v336'}),claim=pending.claimDue({nowMs:1000,leaseMs:1000});
+  pending.finish({intentId:claim.id,version:claim.version,nowMs:1000,reason:'already_monitored_elsewhere'});
+  const saved=requests.submit({requesterId:7,requestKey:'already-v336',commandKey:JSON.stringify([4158,'installment',null]),nowMs:2000,intent:{state:'ready',anidbId:4158,kind:'series',monitorFuture:true,episodeIds:[88]}});
+  pending.close();pending=openPendingTitleLedger(dbPath);
+  assert.equal(pending.get(item.intentId).state,'resolved');assert.equal(pending.get(item.intentId).normalRequestId,saved.requestId);
+ }finally{pending.close();requests.close()}
+}));

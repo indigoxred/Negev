@@ -373,6 +373,9 @@ export function createSeriesRequestController(detailView) {
             text: 'Future episodes already monitored', selectable: false };
           row.statusText.textContent = 'Future episodes already monitored';
           alreadyMonitored++;
+        } else if (payload.reason === 'watch_paused_elsewhere') {
+          row.statusText.textContent = requestFailureMessage(payload);
+          failed.push(row.title);
         } else if (payload.reason === 'title_not_in_cutover') {
           row.status = { state: 'closed', text: 'Requests not open yet', selectable: false };
           row.statusText.textContent = requestFailureMessage(payload);

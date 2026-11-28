@@ -267,3 +267,11 @@ test('large candidate traversal eventually clears expedited continuation', async
   assert.equal(parents.hasPendingContinuation(),false);
   assert.deepEqual(parents.listInstallments({tvdbId:100}).map(x=>x.anidbId),[250]);
 }));
+
+test('a paused other-owner installment cannot block later parent installments',()=>withLedgers(async({parents,requests})=>{
+ const attempted=[];
+ const result=await reconcileParentWatch({parent:parents.listActive()[0],map:{version:2,anime:[{anidb_id:11,tvdb_id:100},{anidb_id:12,tvdb_id:100}]},parents,
+  requests:{submit:input=>{attempted.push(input.intent.anidbId);return input.intent.anidbId===11?{state:'held',reason:'watch_paused_elsewhere'}:requests.submit(input)}},
+  loadDetail:async({anidbId})=>detail(anidbId),readRelations:noRelations,today:'2026-11-12',nowMs:2000});
+ assert.equal(result.state,'reconciled');assert.deepEqual(attempted,[11,12]);assert.deepEqual(result.created,[12]);assert.deepEqual(result.heldCandidates,[11]);
+}));

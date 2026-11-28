@@ -178,3 +178,20 @@ for(const fault of ['uncertain','wrong_hash','no_release','active_claim'])test('
   assert.equal(count(dbPath,'SELECT count(*) n FROM users WHERE id=?',member.id),1);
  }finally{ledger.close()}
 }));
+
+for(const sibling of [false,true])test('old refusal with a live bonus claim stays held with started sibling='+sibling,()=>withData(async({dbPath,accounts,owner,member})=>{
+ const requests=openRequestLedger(dbPath),ledger=openAcquisitionLedger(dbPath);try{
+  const request=requests.submit({requesterId:member.id,requestKey:'live-bonus',nowMs:2000,intent:{state:'ready',anidbId:101,kind:'series',monitorFuture:false,episodeIds:[2]}});
+  const candidate={indexerId:7,guid:'live-bonus'},hash='e'.repeat(40);
+  const id=ledger.reserve({requestId:request.requestId,candidate,episodeIds:[2],nowMs:2010}).attemptId;
+  ledger.bindPreparedTorrent({attemptId:id,candidate,hash,nowMs:2011});ledger.recordFilePlan({attemptId:id,hash,plannedFiles:[{name:'main.mkv',size:100,episodeIds:[2]}],nowMs:2012});
+  ledger.recordBonusPlan({attemptId:id,hash,files:[{name:'Bonus.mkv',size:50,anidbId:102,episodeIds:[3],kind:'ova',evidence:'shoko_filename_prediction'}],nowMs:2020});
+  ledger.beginDispatch({attemptId:id,nowMs:2015});ledger.rejectDispatch({attemptId:id,candidate,hash,nowMs:2016,httpStatus:403});
+  assert.equal(ledger.listPendingBonuses({nowMs:3000}).length,1);
+  if(sibling){const next={indexerId:7,guid:'started-sibling'},other='f'.repeat(40),attempt=ledger.reserve({requestId:request.requestId,candidate:next,episodeIds:[2],nowMs:3000}).attemptId;
+   ledger.bindPreparedTorrent({attemptId:attempt,candidate:next,hash:other,nowMs:3001});ledger.beginDispatch({attemptId:attempt,nowMs:3002});ledger.recordTorrent({attemptId:attempt,hash:other,nowMs:3003});ledger.beginStart({attemptId:attempt,hash:other,manifestDigest:'a'.repeat(64),nowMs:3004});}
+  accounts.setDisabled({adminUserId:owner.id,userId:member.id,disabled:true});
+  assert.equal(deleteAccount(dbPath,{adminUserId:owner.id,userId:member.id}).reason,'acquisition_unsettled');
+  assert.equal(ledger.listPendingBonuses({nowMs:4000}).length,1,'live bonus claim retained');
+ }finally{ledger.close();requests.close()}
+}));

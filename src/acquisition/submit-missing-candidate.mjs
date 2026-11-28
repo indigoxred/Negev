@@ -287,7 +287,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   if(selectedBonuses?.state==='held')return selectedBonuses;
   const bonusFiles=selectedBonuses?.files??[];
   return submitStoppedCandidate({ ...activeQbittorrent, ledger, authorizeRequest,
-    attemptId: reserved.attemptId, candidate, prepared, nowMs,
+    attemptId: reserved.attemptId, candidate, prepared, nowMs:now(), now,
     plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name),
     excludedFileNames: [...(mapped.excludedVideoNames ?? []), ...(mapped.excludedSubtitleNames ?? [])] });
 }

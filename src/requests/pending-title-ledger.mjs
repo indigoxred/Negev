@@ -44,8 +44,8 @@ export function openPendingTitleLedger(dbPath) {
         version=version+1,reason=NULL,normal_request_id=(SELECT r.id FROM requests r
           WHERE r.requester_id=p.requester_id AND r.request_key=p.request_key
             AND r.anidb_id=p.anidb_id AND r.command_key=json_array(p.anidb_id,'installment',NULL))
-        WHERE state IN ('pending','resolving') AND normal_request_id IS NULL
-          AND EXISTS (SELECT 1 FROM requests r WHERE r.requester_id=p.requester_id
+        WHERE (state IN ('pending','resolving') OR (state='complete' AND reason='already_monitored_elsewhere'))
+          AND normal_request_id IS NULL AND EXISTS (SELECT 1 FROM requests r WHERE r.requester_id=p.requester_id
             AND r.request_key=p.request_key AND r.anidb_id=p.anidb_id
             AND r.command_key=json_array(p.anidb_id,'installment',NULL))`);
     }
