@@ -32,7 +32,7 @@ export function createReleasePreviews({ requests, prepare, selectionOptions,
   const access = (token, userId) => {
     prune();
     const session = sessions.get(token);
-    return session?.input.requesterId === userId && !session.abandoned && session.expiresMs > now() ? session.id : null;
+    return session?.input.requesterId === userId && (!session.abandoned || session.committed) && session.expiresMs > now() ? session.id : null;
   };
   const atCapacity = userId => {
     const active = [...sessions.values()].filter(s => !s.committed);

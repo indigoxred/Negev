@@ -33,13 +33,18 @@ export function createReleaseController({
 
   async function openPreviewReleaseRequests(jobs) {
     if(!state.releaseSearch)return;
-    const session=sessionResponses.current(),route=location.hash;
+    const session=sessionResponses.current(),route=location.hash,ownerId=state.user?.id;
     const show=async index=>{
       if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
       const item=jobs[index];if(!item)return;
       try{
         const preview=await api('/api/release-previews',{method:'POST',body:JSON.stringify(item.body)});
-        if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route)return;
+        if(!state.user||!sessionResponses.isCurrent(session)||location.hash!==route){
+          if(state.user?.id===ownerId&&sessionResponses.isCurrent(session)&&preview.state==='preview'&&typeof preview.previewId==='string') {
+            try{await api('/api/release-previews/'+preview.previewId+'/close',{method:'POST',body:'{}'});}catch{}
+          }
+          return;
+        }
         if(preview.state==='pending') {
           item.saved(preview);refreshTrackingAfterRequest();void loadRequests();
           message(savedRequestMessage(preview));

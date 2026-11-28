@@ -96,3 +96,14 @@ test('closing abandoned previews reclaims quota without saving requests or affec
  }
  assert.equal(x.requests.listRequests({requesterId:7}).items.length,0);
 });
+
+test('a newly created preview is closed when its initiating route has changed',async t=>{
+ const {createReleaseController}=await import('../src/web/public/release-controller.mjs'),{createResponseEpoch}=await import('../src/web/public/response-epoch.mjs');
+ const x=await fixture(t),location={hash:'#/title/42'},state={user:{id:7},releaseSearch:true};let shown=0;
+ const controller=createReleaseController({state,location,sessionResponses:createResponseEpoch(),dialog:{open(){shown++},close(){}},preferredDisplayTitle:item=>item.title,message(){},api:async(url,options)=>{
+  if(url==='/api/release-previews'){const result=await x.sessions.open(JSON.parse(options.body));location.hash='#/requests';return result;}
+  if(url.endsWith('/close'))return x.sessions.close(url.split('/')[3],7);throw Error('unexpected '+url);
+ }});
+ for(let i=0;i<15;i++){location.hash='#/title/42';await controller.openPreviewReleaseRequests([{title:'Title',body:{...x.input,requestKey:'navigated-'+i},saved(){}}]);}
+ assert.equal(shown,0);assert.equal((await x.sessions.open({...x.input,requestKey:'new-dialog'})).state,'preview');assert.equal(x.requests.countRequests(),0);
+});

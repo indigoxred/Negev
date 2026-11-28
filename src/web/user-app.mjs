@@ -1401,7 +1401,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     const token=request.query.token;
     if(typeof token!=='string'||token.length<1||token.length>64||Object.keys(request.query).some(k=>k!=='token'))return reply.code(400).send({error:'Invalid release inspection'});
     try {
-      const result=await request.releaseSelector.inspect(id,token);
+      const result=request.params.previewId
+        ? await releasePreviews.command(request.params.previewId,request.negevUser.id,{action:'inspect',token})
+        : await request.releaseSelector.inspect(id,token);
       if(result?.state==='held')return reply.code(409).send(result);
       if(request.params.previewId&&result?.requestId){const {requestId:ignored,...previewResult}=result;return previewResult;}
       return result;

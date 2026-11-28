@@ -64,6 +64,13 @@ export function createInstallmentRequestControls(view) {
   const button = element('button', requestLabel(), 'primary');
   let requestSaving = false;
   let requestSaved = false;
+  let pendingReview=null;
+  const reviewSaved=element('button','Review saved request','quiet');reviewSaved.type='button';reviewSaved.hidden=true;
+  function deliverReview(){
+    if(!isCurrentDetail()||!state.releaseSearch||!pendingReview||requestSaving)return;
+    const job=pendingReview;pendingReview=null;reviewSaved.hidden=true;void openSavedReleaseRequests([job],'auto');
+  }
+  reviewSaved.addEventListener('click',deliverReview);requestAction.append(reviewSaved);
   let reviewingRequest = earlyRequest?.dataset.reviewing === 'true';
   const requestReview = element('div', undefined, 'request-review');
   requestReview.hidden = !reviewingRequest;
@@ -186,7 +193,7 @@ export function createInstallmentRequestControls(view) {
   button.addEventListener('click', async () => {
     if (alreadyAvailable() || related.selectedAvailability === 'checking' ||
         requestSaving || requestSaved) return;
-    if(state.releaseSearch&&filmPopup&&!filmPopup.open){
+    if((state.releaseSearch||needsFilmChoice)&&filmPopup&&!filmPopup.open){
       if(filmChoice)filmChoice.hidden=false;
       filmPopup.showModal();return;
     }
@@ -210,8 +217,8 @@ export function createInstallmentRequestControls(view) {
       requestStatus.textContent = 'Review this installment, then confirm.';
       return;
     }
-    if(filmReleaseMode==='manual'&&!state.releaseSearch){filmFeedback.textContent='Release search is unavailable. Choose an automatic request or try again later.';return;}
-    if(filmReleasePicker?.value()==='manual'){
+    const submittedMode=state.releaseSearch?filmReleaseMode:'auto';
+    if(submittedMode==='manual'){
       const selectedFilmId=needsFilmChoice?Number(view.filmChoiceSelect.value):null;
       const keyScope={userId:state.user.id,anidbId:related.selectedInstallmentId,
         ...(selectedFilmId?{selection:'film-entry-'+selectedFilmId}:{})};
@@ -241,7 +248,7 @@ export function createInstallmentRequestControls(view) {
         anidbId: related.selectedInstallmentId,
         scope: selectedFilmId ? 'episodes' : 'installment',
         ...(selectedFilmId ? { episodeIds: [selectedFilmId] } : {}), requestKey,
-        ...(state.releaseSearch?{releaseMode:filmReleasePicker.value()}:{}),
+        ...(submittedMode==='auto'?{}:{releaseMode:submittedMode}),
       }) });
       requestKeys.saved(scope);
       refreshTrackingAfterRequest();
@@ -251,7 +258,7 @@ export function createInstallmentRequestControls(view) {
       button.textContent = 'Requested';
       requestStatus.textContent = savedRequestMessage(saved);
       filmPopup?.close();
-      if(isCurrentDetail()&&saved.created!==false&&filmReleasePicker&&Number.isSafeInteger(saved.requestId)){void openSavedReleaseRequests([{requestId:saved.requestId,title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle}],filmReleasePicker.value());}
+      if(submittedMode==='auto_review'&&saved.created!==false&&Number.isSafeInteger(saved.requestId))pendingReview={requestId:saved.requestId,title:data.title||item.title,englishTitle:data.englishTitle||item.englishTitle};
       if (Number.isSafeInteger(saved.requestId) && saved.requestId > 0) {
         viewRequest.href = requestRoute(saved.requestId);
       }
@@ -260,6 +267,7 @@ export function createInstallmentRequestControls(view) {
         ? 'Request saved. Follow it under My Requests.'
         : `Request #${saved.requestId} saved. ${currentAcquisitionNotice()}`);
       loadRequests();
+      requestSaving=false;deliverReview();reviewSaved.hidden=!state.releaseSearch||!pendingReview;
     } catch (error) {
       const feedback = requestFailureMessage(error);
       filmFeedback.textContent=feedback;if(filmClose)filmClose.disabled=false;
@@ -305,6 +313,7 @@ export function createInstallmentRequestControls(view) {
     void checkPages();
   }
   const refreshCapabilities=()=>{
+    reviewSaved.hidden=!state.releaseSearch||!pendingReview;reviewSaved.disabled=requestSaving;
     filmActions.element.hidden=filmActions.auto.hidden=filmActions.manual.hidden=!state.releaseSearch;
     automaticRequest.hidden=state.releaseSearch;
     if(!state.releaseSearch&&filmPopup.open)filmFeedback.textContent='Release search is unavailable. You can still save an automatic request.';

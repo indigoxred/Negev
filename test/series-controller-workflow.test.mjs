@@ -32,3 +32,18 @@ test('an open chooser gains and loses current release actions',async()=>{
  assert.equal(x.button('Manual Pick').hidden,false);assert.equal(x.button('Manual Pick').disabled,false);
  x.view.state.releaseSearch=false;x.controller.refreshCapabilities();assert.equal(x.button('Manual Pick').hidden,true);
 });
+
+test('explicit automatic confirmation recovers from a previous Manual choice after capability loss',async()=>{
+ let calls=0;const x=seriesFixture({releaseSearch:true,api:async()=>{calls++;return{items:[{anidbId:42,status:202,result:{requestId:1,created:true,targetIds:[1]}}]}}});
+ await x.selectAll();await x.button('Manual Pick').click();await settle();
+ x.view.state.releaseSearch=false;x.controller.refreshCapabilities();await x.find('.season-request-trigger').click();
+ const submit=x.button('Request season');await submit.click();await submit.click();await settle();assert.equal(calls,1);
+});
+for(const requestedReview of [false,true])test('review intent follows the submitted action across a capability flip (review='+requestedReview+')',async()=>{
+ const gate=Promise.withResolvers();let sent;
+ const x=seriesFixture({releaseSearch:requestedReview,api:async(url,options)=>{sent=JSON.parse(options.body);return gate.promise}});await x.selectAll();
+ if(requestedReview)await x.button('Auto-Pick').click();else{const submit=x.button('Request season');await submit.click();void submit.click();}
+ await settle();x.view.state.releaseSearch=!requestedReview;x.controller.refreshCapabilities();gate.resolve({items:[{anidbId:42,status:202,result:{requestId:1,targetIds:[1],created:true}}]});await settle();
+ assert.equal(sent.seasons[0].releaseMode,requestedReview?'auto_review':undefined);assert.equal(x.opened.length,0);
+ if(requestedReview){x.view.state.releaseSearch=true;x.controller.refreshCapabilities();const review=x.button('Review saved requests');assert.ok(review&&!review.hidden&&!review.disabled);await review.click();assert.deepEqual(x.opened[0].jobs.map(j=>j.requestId),[1]);await x.controller.refreshCapabilities();assert.equal(x.opened.length,1);}
+});

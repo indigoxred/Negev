@@ -231,4 +231,36 @@ test('closing after an explicit Grab began retains its one committed receipt',as
  const x=await fixture(t),pending=x.choose(0);await x.started[0].promise;
  assert.equal(x.sessions.close(x.opened.previewId,7).state,'closed');x.gates[0].resolve();const result=await pending;
  assert.ok(result.requestId,JSON.stringify(result));assert.equal(x.requests.countRequests(),1);assert.equal(x.wakes.length,1);
+ const replay=await x.choose(0);assert.equal(replay.requestId,result.requestId);
+ assert.equal((await x.sessions.command(x.opened.previewId,8,{action:'choose',token:x.tokens[0],revision:1})).reason,'release_preview_expired');
+ x.requests.cancelRequest({requesterId:7,requestId:result.requestId,nowMs:2000});assert.equal((await x.choose(0)).reason,'request_cancelled');
+});
+
+test('browser GET inspection retains its preview context until the read settles after close', async t => {
+  const x = await fixture(t);
+  const user = { id: 7, username: 'Member', role: 'member', adultAllowed: true, sessionVersion: 1 };
+  const accounts = { authenticate: async () => user, getSessionUser: () => user,
+    registerInvite: async () => null, createInvite: () => null, revokeSessions: () => false };
+  const origin = 'http://localhost:3000';
+  const app = await buildUserApp({ accounts, sessionKey: randomBytes(32), publicOrigin: origin, secureCookies: false,
+    submitRequest: async () => { throw new Error('ordinary submission must not run'); },
+    readRequest: id => x.requests.getRequest(id), releasePreviews: x.sessions, releaseSelection: x.sessions.selection,
+    confirmKnownTitle: async () => true,
+    loadDetail: async () => ({ state: 'details', anidbId: 123, title: 'Example', kind: 'series', restricted: false }),
+  });
+  t.after(() => app.close());
+  const login = await app.inject({ method: 'POST', url: '/api/login', headers: { origin },
+    payload: { username: 'Member', password: 'long-passphrase' } });
+  assert.equal(login.statusCode, 200, login.body);
+  const cookie = login.headers['set-cookie'].split(';')[0];
+  const session = await app.inject({ url: '/api/session', headers: { cookie } });
+  assert.equal(session.statusCode, 200, session.body);
+  const headers = { cookie, origin, 'x-negev-csrf': session.json().csrfToken };
+  const base = '/api/release-previews/' + x.opened.previewId;
+
+ const inspecting=app.inject({url:base+'/release-inspection?token='+x.tokens[0],headers:{cookie}}).then(response=>response);
+ await x.started[0].promise;
+ try{x.sessions.close(x.opened.previewId,7);assert.ok(x.sessions.readRequest(x.id),'GET provider read must retain its private context');}
+ finally{x.gates[0].resolve();await inspecting;}
+ assert.equal(x.sessions.readRequest(x.id),null);x.assertUnsaved();
 });
