@@ -139,6 +139,17 @@ All settings are environment variables. On/off settings take `1` or `0`, and uns
 | `NEGEV_PURE_MOVE` | off | Move prepared files into the Source instead of copying them |
 | Ownership guard | | One of: `NEGEV_ACQUISITION_ALLOWED_ANIDB_IDS` (comma list), `NEGEV_SONARR_OWNERSHIP_URL` with `secrets/sonarr.token`, or `NEGEV_ANIME_SOLE_OWNER=1` |
 
+**Acquisition mounts.** The mode determines staging access inside Negev:
+
+| Mode | Negev bind mounts | Paths inside Negev |
+| --- | --- | --- |
+| Pure move (`NEGEV_PURE_MOVE=1`) | `/srv/negev-acquisition:/acquisition:rw` | staging `/acquisition/staging`, holding `/acquisition/holding`, Source `/acquisition/source` |
+| Legacy copy (off) | `/srv/negev-staging:/staging:ro` and `/srv/negev-import:/acquisition:rw` | staging `/staging`, holding `/acquisition/holding`, Source `/acquisition/source` |
+
+Create the directories first. Pure move requires all three beneath the same actual mount; three separate binds to one disk do not qualify. Legacy mode requires holding and Source beneath one mount. Give the container user access to these folders; keep holding private. The read-only container root filesystem can stay enabled.
+
+qBittorrent needs a writable mapping to the same staging storage. Set `NEGEV_QBITTORRENT_STAGING_ROOT` to its container path. Shoko watches the Source only; do not expose staging or private holding to Shoko or Plex. Set the managed-folder ID and Shoko-side Source path to that exact folder. These are acquisition examples; keep separate manual import mounts as configured.
+
 Before enabling downloads, set `NEGEV_SHOKO_RECENT=1` and initialize recent-file recovery once:
 
 ```sh
