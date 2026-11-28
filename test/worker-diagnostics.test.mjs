@@ -63,3 +63,15 @@ test('diagnostics preserve real durable queue state and report an overdue retry 
     finally { queue.close(); }
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test('recent diagnostics distinguishes an uninitialized baseline from an idle scanner',async()=>{
+ const root=await mkdtemp(path.join(tmpdir(),'negev-recent-diagnostics-'));
+ const {openShokoRecentLedger}=await import('../src/availability/shoko-recent-ledger.mjs');
+ const {readWorkerDiagnostics}=await import('../src/admin/worker-diagnostics.mjs');
+ const ledger=openShokoRecentLedger(path.join(root,'negev.sqlite'));
+ try{
+  assert.equal((await readWorkerDiagnostics({dataDir:root,nowMs:100})).recent.baselineState,'required');
+  ledger.bootstrap({fileId:1,importedNs:'0'});
+  assert.equal((await readWorkerDiagnostics({dataDir:root,nowMs:100})).recent.baselineState,'ready');
+ }finally{ledger.close();await rm(root,{recursive:true,force:true});}
+});

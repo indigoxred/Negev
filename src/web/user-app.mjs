@@ -520,7 +520,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     reply.header('Cache-Control', 'no-store');
     const { id, username, role, adultAllowed } = request.negevUser;
     const reportedState = getAcquisitionStatus()?.state;
-    const acquisitionState = ['disabled', 'waiting', 'waiting_with_review',
+    const acquisitionState = ['disabled', 'setup_required', 'waiting', 'waiting_with_review',
       'running', 'reconciling', 'reconciliation_held',
       'reconciliation_failed', 'stopping', 'stopped']
       .includes(reportedState) ? reportedState : 'unknown';

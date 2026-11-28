@@ -19,12 +19,13 @@ const held = (reason) => ({ state: 'held', reason });
 export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   recognitionRecoveries = null, shokoRescans = null,
   processRequest, processStart, processCompletion, processPublish,
-  processRecovery, processRescan, processBonus,
+  processRecovery, processRescan, processBonus, readinessGate = null,
   qbBaseUrl, sessionGate, allowedAnidbIds = null, ownershipGate = null,
   fetchImpl = fetch, now = Date.now, pureMode = false,
   requestPageLimit = 3 } = {}) {
   if (typeof dbPath !== 'string' || !dbPath ||
       typeof acquisitions?.inspectRequestAttempts !== 'function' ||
+      (readinessGate!==null && typeof readinessGate!=='function') ||
       !Number.isSafeInteger(requestPageLimit) || requestPageLimit < 1 ||
       requestPageLimit > 3 ||
       [processRequest, processStart, processCompletion, processPublish, now]
@@ -142,6 +143,11 @@ export function openAcquisitionPipeline({ dbPath, acquisitions, holdingRoot,
   };
   return {
     initialize() {
+      if(readinessGate && !closed){
+        let ready;
+        try{ready=readinessGate();}catch(error){return Promise.reject(error);}
+        if(ready?.state!=='ready')return Promise.resolve(held(typeof ready?.reason==='string'&&/^[a-z][a-z0-9_]{0,79}$/.test(ready.reason)?ready.reason:'readiness_unverified'));
+      }
       if (closed) return Promise.resolve(held('pipeline_closed'));
       if (recovery && [recovery.requests, recovery.starts,
         recovery.completions, recovery.publishes]

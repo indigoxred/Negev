@@ -7,6 +7,7 @@ const validCursor = (value) => validId(value?.fileId) &&
   typeof value.importedNs === 'string' && /^[0-9]{1,22}$/.test(value.importedNs) &&
   (BigInt(value.importedNs) > 0n ||
     (value.fileId === emptyCursor.fileId && value.importedNs === '0'));
+export const recentBaselineState = cursor => cursor == null ? 'required' : validCursor(cursor) ? 'ready' : 'invalid';
 const compare = (left, right) => {
   const a = BigInt(left.importedNs);
   const b = BigInt(right.importedNs);
@@ -41,6 +42,11 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
     ) STRICT`);
     db.exec('INSERT INTO shoko_recent_drain_state VALUES (1,1) ON CONFLICT(id) DO NOTHING');
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_continuation (kind TEXT PRIMARY KEY, payload TEXT NOT NULL) STRICT`);
+    db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_retirements (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,file_id INTEGER NOT NULL CHECK(file_id>0),
+      reason TEXT NOT NULL CHECK(reason IN ('removed','unsupported_links')),
+      retired_ms INTEGER NOT NULL CHECK(retired_ms>=0)
+    ) STRICT`);
     db.exec(`CREATE INDEX IF NOT EXISTS shoko_recent_due
       ON shoko_recent_pending(retry_after_ms,seq)`);
     db.exec(`CREATE TABLE IF NOT EXISTS shoko_recent_fileid_cursor (
@@ -138,6 +144,7 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
       } catch (error) { rollback(); throw error; }
     },
     getCapacity() { return { pending: countPending.get().total, maxPending }; },
+    getBaselineState() { return recentBaselineState(readCursor.get()); },
     getCursor() {
       const saved = readCursor.get();
       return saved ? { ...saved } : null;
@@ -248,6 +255,18 @@ export function openShokoRecentLedger(dbPath, { maxPending = 32_768 } = {}) {
         ? nextRetry.get(nowMs) ?? nextFresh.get()
         : nextFresh.get() ?? nextRetry.get(nowMs);
       return row ? { ...row } : null;
+    },
+    retirePending({fileId,reason,nowMs}) {
+      if(!validId(fileId)||!['removed','unsupported_links'].includes(reason)||!Number.isSafeInteger(nowMs)||nowMs<0) return held('invalid_recent_retirement');
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const pending=findPending.get(fileId);
+        if(!pending){rollback();return held('recent_file_not_pending');}
+        setDrainState.run(pending.retryAfterMs>0?0:1);
+        db.prepare('INSERT INTO shoko_recent_retirements(file_id,reason,retired_ms) VALUES (?,?,?)').run(fileId,reason,nowMs);
+        removePending.run(fileId);
+        db.exec('COMMIT');return {state:'retired',reason};
+      }catch(error){rollback();throw error;}
     },
     recordResult({ fileId, success, nowMs } = {}) {
       if (!validId(fileId) || typeof success !== 'boolean' ||

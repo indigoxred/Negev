@@ -39,7 +39,7 @@ export function createShokoRecentScheduler({ scan, drainOne,
       nextKind = 'scan';
       return gapDelay;
     }
-    if (['acknowledged', 'retry_scheduled'].includes(result?.state) && drainsSinceScan < 30) {
+    if (['acknowledged', 'retry_scheduled', 'retired'].includes(result?.state) && drainsSinceScan < 30) {
       nextKind = 'drain';
       return drainDelay;
     }

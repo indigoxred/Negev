@@ -1,3 +1,4 @@
+import { retirementStagingOptions } from './retire-stalled.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openAcquisitionLedger } from '../acquisition/acquisition-ledger.mjs';
@@ -37,9 +38,7 @@ async function main() {
     const result = await runPrestartMismatchRetirement({ ledger, attemptId,
       hash, baseUrl: config.qbitSidecar.baseUrl,
       stagingRoot: a.stagingHostPath, saveRoot: a.qbitStagingRoot,
-      verifyStagingRoot: () => verifyLocalStagingRoot({
-        stagingRoot: a.stagingHostPath, holdingRoot: a.holdingRoot,
-        importRoot: a.importRoot }),
+      verifyStagingRoot: () => verifyLocalStagingRoot(retirementStagingOptions(a)),
       sessionGate: gate });
     process.stdout.write(`Negev prestart retirement: ${result.state}` +
       `${result.reason ? ` (${result.reason})` : ''}\n`);

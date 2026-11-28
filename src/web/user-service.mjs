@@ -700,8 +700,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
     app = await buildUserApp({ accounts, sessionKey, publicOrigin,
       localOrigin, secureCookies, logger,
       readImportActivity,
-      getAcquisitionStatus: () => acquisitionRuntime?.getStatus() ??
-        { state: 'disabled' },
+      getAcquisitionStatus: () => acquisitionRuntime && recent && recent.getBaselineState()!=='ready'
+        ? {state:'setup_required'} : acquisitionRuntime?.getStatus() ?? {state:'disabled'},
       acquisitionAllowedAnidbIds,
       ownershipGate: acquisitionOwnershipGate,
       publicAvailabilityConfigured: Boolean(plexObserver),
@@ -1080,7 +1080,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       void task.then(() => observations.delete(task), () => observations.delete(task));
       return task;
     };
-    const refreshShokoFile = (fileId) => {
+    const refreshShokoFile = (fileId, {includeMissing=false} = {}) => {
       if (stopping) return Promise.resolve({ state: 'held', reason: 'service_stopping' });
       if (!Number.isSafeInteger(fileId) || fileId < 1) {
         return Promise.resolve({ state: 'held', reason: 'invalid_file_id' });
@@ -1091,13 +1091,14 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         const startingGeneration = startingRevision === undefined ?
           eventConsumer?.getState().generation : null;
         const result = await metadata.run(() => readShokoOneFile({
-          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includePaths:pathTokens.length>0,
+          baseUrl: shokoBaseUrl, apiKey: shokoApiKey, fileId, fetchImpl, includeMissing, includePaths:pathTokens.length>0,
         }));
         if (inventory.getFile(fileId)?.observedMs !== startingRevision ||
             (startingRevision === undefined &&
               eventConsumer?.getState().generation !== startingGeneration)) {
           return { state: 'held', reason: 'file_event_during_read' };
         }
+        if(result?.state==='not_found')return{state:'missing_file',fileId,observedRevision:startingRevision??null,generation:startingGeneration};
         if (result?.state !== 'file') return { state: 'held', reason: 'file_unavailable' };
         const observedMs = Math.max(now(), (startingRevision ?? -1) + 1);
         const saved = inventory.recordFileObservation({ item: result.item, observedMs });
@@ -1112,16 +1113,21 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return saved;
       })());
     };
-    const refreshRecognizedShokoFile = async (fileId) => {
+    const refreshRecognizedShokoFile = async (fileId, options) => {
       const token = eventConsumer?.snapshotPendingResolution(fileId);
-      const result = await refreshShokoFile(fileId);
+      const result = await refreshShokoFile(fileId,options);
+      const file=inventory.getFile(fileId);
       const recognized = result?.state === 'recorded_file' ? { ...result,
-        recognition: inventory.getFile(fileId)?.state } : result;
+        recognition:file?.state, observedRevision:file?.observedMs??null } : result;
       if (token) eventConsumer.acknowledgeLinkedObservation({
         fileId, token, result: recognized });
       return recognized;
     };
     const recentWorker = recent ? createShokoRecentWorker({ ledger: recent, now,
+      isRetirementCurrent:result=>{
+        const revision=inventory.getFile(result.fileId)?.observedMs??null;
+        return revision===result.observedRevision && (revision!==null || eventConsumer.getState().generation===result.generation);
+      },
       readPage: (input) => metadata.run(() => readShokoRecentPage({
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
@@ -1129,7 +1135,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         baseUrl: shokoBaseUrl, apiKey: shokoApiKey, ...input, fetchImpl,
       })),
       isKnownFileId: (fileId) => inventory.getFile(fileId)?.state === 'linked',
-      refreshFile: refreshRecognizedShokoFile,
+      refreshFile: fileId=>refreshRecognizedShokoFile(fileId,{includeMissing:true}),
     }) : null;
     eventConsumer = createShokoEventConsumer({
       ...([shokoImportFolderId, acquisitionImportFolderId].some(id => Number.isSafeInteger(id) && id > 0) ? {
@@ -1346,6 +1352,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
             qbitStagingRoot, verifyStagingRoot };
         }
         acquisitionRuntime = openAcquisitionRuntime({ enabled: true,
+          readinessGate:()=>recent && recent.getBaselineState()!=='ready'?{state:'held',reason:'recent_baseline_required'}:{state:'ready'},
           dbPath, requests, acquisitions, handoffs, pureMoves,
           recognitionRecoveries, shokoRescans, pureMode,
           qbBaseUrl, sessionGate,
@@ -1375,6 +1382,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         return acquisitionRuntime;
       },
       wakeReleaseRequest: (requestId, notification) => stopping ? Promise.resolve() : track(wakeRelease(requestId, notification)),
+      getRecentScannerStatus:()=>({state:recent?.getBaselineState()??'disabled',pending:recent?.getCapacity().pending??0}),
       getObservedShokoFileIds: (input) => inventory.getObservedFileIds(input),
       close() {
         if (!stopPromise) {

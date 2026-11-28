@@ -10,7 +10,7 @@ const heldAfter = heldReporter('availability/shoko-recent-worker');
 // report recognition='linked' before a file leaves the queue: Shoko can first
 // list an import as provisional and link it after hashing. No server timer uses it.
 export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
-  isKnownFileId = () => false, refreshFile,
+  isKnownFileId = () => false, refreshFile, isRetirementCurrent = () => false,
   now = Date.now, pageSize = 100, maxPages = 5 } = {}) {
   if (typeof ledger?.getCursor !== 'function' ||
       typeof ledger?.getCapacity !== 'function' ||
@@ -21,7 +21,7 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
       (readFileIdPage !== undefined && (typeof readFileIdPage !== 'function' ||
         typeof ledger?.getFileIdCursor !== 'function' ||
         typeof ledger?.recordFileIdBatch !== 'function')) ||
-      typeof isKnownFileId !== 'function' ||
+      typeof isKnownFileId !== 'function' || typeof isRetirementCurrent !== 'function' ||
       typeof now !== 'function' || !Number.isSafeInteger(pageSize) ||
       pageSize < 1 || pageSize > 100 || !Number.isSafeInteger(maxPages) ||
       maxPages < 1 || maxPages > 5) {
@@ -34,7 +34,7 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
       busy = true;
       try {
         const since = ledger.getCursor();
-        if (!since) return held('recent_baseline_required');
+        if (!since) return heldAfter(new Error('Initialize once with node src/availability/init-recent-baseline.mjs --init'), 'recent_baseline_required');
         const capacity = ledger.getCapacity();
         if (!Number.isSafeInteger(capacity?.pending) || capacity.pending < 0 ||
             !Number.isSafeInteger(capacity.maxPending) || capacity.maxPending < 1 ||
@@ -76,6 +76,15 @@ export function createShokoRecentWorker({ ledger, readPage, readFileIdPage,
         let result;
         try { result = await refreshFile(pending.fileId); }
         catch { result = { state: 'unavailable' }; }
+        let retirement;
+        if(result?.state==='missing_file' && result.fileId===pending.fileId){
+          let confirmed;
+          try{confirmed=await refreshFile(pending.fileId);}catch{confirmed=null;}
+          if(confirmed?.state==='recorded_file')result=confirmed;
+          if(confirmed?.state==='missing_file' && confirmed.fileId===pending.fileId && isRetirementCurrent(confirmed)===true)retirement='removed';
+        }
+        if(result?.state==='recorded_file' && result.recognition==='unverified' && result.fileId===pending.fileId && isRetirementCurrent(result)===true) retirement='unsupported_links';
+        if(retirement && typeof ledger.retirePending==='function')return {...ledger.retirePending({fileId:pending.fileId,reason:retirement,nowMs:now()}),fileId:pending.fileId};
         const saved = ledger.recordResult({ fileId: pending.fileId,
           success: result?.state === 'recorded_file' &&
             result.recognition === 'linked', nowMs: now() });

@@ -21,7 +21,7 @@ export function openAcquisitionRuntime(options = {}) {
   };
   const { dbPath, acquisitions, recognitionRecoveries, shokoRescans, qbBaseUrl,
     sessionGate, allowedAnidbIds,
-    ownershipGate = null,
+    ownershipGate = null, readinessGate = null,
     fetchImpl = fetch, now = Date.now, ...providers } = options;
   const qualityInspectionRetry = openQualityInspectionRetry(dbPath);
   const stages = createAcquisitionStageProcessors({ qualityInspectionRetry,
@@ -31,7 +31,7 @@ export function openAcquisitionRuntime(options = {}) {
   const pipeline = openAcquisitionPipeline({ dbPath, acquisitions,
     recognitionRecoveries, shokoRescans,
     holdingRoot: providers.holdingRoot,
-    qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate,
+    qbBaseUrl, sessionGate, allowedAnidbIds, ownershipGate, readinessGate,
     fetchImpl, now, pureMode: providers.pureMode === true,
     // Give completed imports a turn between each potentially two-minute
     // first-time request check. The four stages remain strictly serial.

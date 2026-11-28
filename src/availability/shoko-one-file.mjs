@@ -2,9 +2,10 @@ import { cancelResponseBody, readBoundedJson } from '../http/bounded-response.mj
 import { normalizeShokoFile } from './shoko-file-page.mjs';
 
 // Targeted event follow-up. A 404 is inconclusive during Shoko's import
-// pipeline and never by itself removes an availability claim.
+// pipeline and never by itself removes an availability claim. The optional
+// not_found result supports fenced recent-queue cleanup, not absence proof.
 export async function readShokoOneFile({ baseUrl, apiKey, fileId,
-  includePaths = false, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
+  includePaths = false, includeMissing = false, fetchImpl = fetch, timeoutMs = 10_000 } = {}) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid Shoko URL'); }
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password ||
@@ -12,7 +13,7 @@ export async function readShokoOneFile({ baseUrl, apiKey, fileId,
       typeof apiKey !== 'string' || !apiKey ||
       !Number.isSafeInteger(fileId) || fileId < 1 ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
-      typeof includePaths !== 'boolean' || typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko file observation');
+      typeof includeMissing !== 'boolean' || typeof includePaths !== 'boolean' || typeof fetchImpl !== 'function') throw new TypeError('Invalid Shoko file observation');
   const url = new URL(`/api/v3/File/${fileId}`, base);
   url.searchParams.append('include', includePaths ? 'XRefs,AbsolutePaths' : 'XRefs');
   try {
@@ -21,7 +22,7 @@ export async function readShokoOneFile({ baseUrl, apiKey, fileId,
       signal: AbortSignal.timeout(timeoutMs) });
     if (response.status !== 200) {
       await cancelResponseBody(response);
-      return { state: 'unavailable' };
+      return includeMissing && response.status===404 ? {state:'not_found',fileId} : { state: 'unavailable' };
     }
     const raw=await readBoundedJson(response,100_000);
     const item = normalizeShokoFile(raw);
