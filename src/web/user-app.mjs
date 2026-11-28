@@ -234,11 +234,12 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   const classifiedSafe = async (anidbId) => {
     if (!Number.isSafeInteger(anidbId) || anidbId < 1) return false;
     try {
-      const classify=typeof readTitleClassification==='function'?readTitleClassification:readDisplayMetadata;
+      const dedicated=typeof readTitleClassification==='function';
+      const classify=dedicated?readTitleClassification:readDisplayMetadata;
       let value = typeof classify === 'function'
         ? await classify({ anidbId })
         : await loadDetail?.({ anidbId, page: 1 });
-      if (typeof value?.restricted !== 'boolean' && typeof classify === 'function') {
+      if (!dedicated && typeof value?.restricted !== 'boolean' && typeof classify === 'function') {
         value = await loadDetail?.({ anidbId, page: 1 });
       }
       return value?.restricted === false;

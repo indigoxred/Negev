@@ -1534,3 +1534,26 @@ test('requests expose saved airing preferences independently of a consumed choic
   assert.deepEqual(r.json().items[0].releasePreference,{group:'SubsPlease',audio:'dual'});
  }finally{await service?.close();await rm(dir,{recursive:true,force:true});}
 });
+
+test('history fallback uses validated Shoko page one without optional season roster reads',async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),'negev-history-roster-')),dbPath=path.join(dir,'db.sqlite');let service,pending,timer;const entered=Promise.withResolvers(),release=Promise.withResolvers(),pages=[];
+ try{
+  primeSavedScope({dbPath,localRoot:dir});const accounts=openAccountLedger(dbPath,{now:()=>1000});
+  const owner=await accounts.bootstrapAdmin({username:'Owner',password:'long-owner-passphrase'});accounts.setAdultAllowed({adminUserId:owner.id,userId:owner.id,allowed:false});accounts.close();
+  const requests=openRequestLedger(dbPath);requests.submit({requesterId:owner.id,requestKey:'history-roster',nowMs:1000,intent:{state:'ready',anidbId:144,title:'Saved roster title',kind:'series',monitorFuture:false,episodeIds:[1]}});requests.close();
+  const proofs=openFileProofLedger(dbPath,{positiveLifetimeMs:30*60000,now:()=>1000});proofs.observe({anidbId:144,episodeId:1,checkedMs:999,proof:{fileId:11,libraryId:102,ratingKey:21,partId:31}});proofs.close();
+  service=await createUserService({dbPath,shokoBaseUrl:'http://shoko.internal:8111',shokoApiKey:'synthetic',sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,fileProofLifetimeMs:30*60000,now:()=>1000,today:()=> '2026-11-13',
+   plex:{plexBaseUrl:'http://plex.internal:32400',plexToken:'synthetic',publicSections:{episode:[102],movie:[]},shokoMount:{appRoot:'/pure',localRoot:dir},plexMounts:[{appRoot:'/source-pure',localRoot:dir}]},
+   fetchImpl:async value=>{const url=new URL(value);
+    if(url.pathname==='/api/v3/Series/AniDB/144')return Response.json({ID:144,Title:'Inuyasha',Type:'TV',EpisodeCount:101,Restricted:false});
+    if(url.pathname==='/api/v3/Series/AniDB/144/Episode'){const page=Number(url.searchParams.get('page'));pages.push(page);if(page>1){entered.resolve();await release.promise;}
+     return Response.json({Total:101,List:page===1?Array.from({length:100},(_,i)=>({ID:i+1,AnimeID:144,EpisodeNumber:i+1,Type:'Episode',Title:'Episode '+(i+1),AirDate:'2026-11-01'})):[{ID:101,AnimeID:144,EpisodeNumber:101,Type:'Episode',Title:'Last',AirDate:'2026-11-01'}]});}
+    return new Response(null,{status:404});}
+  });
+  const login=await service.app.inject({method:'POST',url:'/api/login',headers:{origin},payload:{username:'Owner',password:'long-owner-passphrase'}});assert.equal(login.statusCode,200,login.body);const cookie=login.headers['set-cookie'].split(';')[0];
+  pending=service.app.inject({url:'/api/requests?view=history',headers:{cookie}}).then(response=>response);
+  const result=await Promise.race([pending.then(response=>({response})),entered.promise.then(()=>({extraPage:true})),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('History classification did not finish')),5000)})]);
+  assert.equal(result.extraPage,undefined,'page-one classification must not wait for page two');assert.equal(result.response.statusCode,200,result.response.body);
+  assert.equal(result.response.json().items[0].title,'Saved roster title');assert.deepEqual(pages,[1]);
+ }finally{clearTimeout(timer);release.resolve();if(pending)await pending;await service?.close();await rm(dir,{recursive:true,force:true});}
+});
