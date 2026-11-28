@@ -203,7 +203,7 @@ function renderRoute() {
     if (link.dataset.nav === page) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
-  document.title = `Negev · ${page[0].toUpperCase()}${page.slice(1)}`;
+  if(page!=='title'||state.selected!==route.anidbId)document.title = `Negev · ${page[0].toUpperCase()}${page.slice(1)}`;
   if (page === 'title') {
     byId('back-to-discover').href = state.lastBrowseDestination.href;
     byId('back-to-discover').textContent =

@@ -288,6 +288,7 @@ export function createDetailController({
       detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
       detailArt.append(detailPoster);
       const originalTitle = detailOriginalTitle(item, data);
+      document.title='Negev · '+(preferredDisplayTitle?.({...item,title:originalTitle})??originalTitle);
       titleBlock.replaceChildren(titleLabel({ title: originalTitle,
         englishTitle: item.englishTitle }, { tag: 'h1', className: 'detail-title' }));
       panel.replaceChildren(detailArt, titleBlock);

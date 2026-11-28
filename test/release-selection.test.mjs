@@ -46,3 +46,7 @@ test('AniDB correspondence cannot demote a seeded1080p candidate across a peer t
  const high=selection('Show WEB 1080p','unknown',2),low=selection('Show WEB 480p','likely',3);
  assert.equal(chooseReleaseProposal([low,high]).selection,high);
 });
+
+for(const [tag,source] of [['BD_1080p','Blu-ray'],['WEB_1080p','WEB'],['DVD_480p','DVD']])test('selected source label agrees with normalized release facts for '+tag,()=>{
+ const shown=publicRelease(candidate('[Group] Example '+tag));assert.equal(shown.source,source);assert.match(shown.qualityLabel,new RegExp(tag.split('_')[0]));
+});

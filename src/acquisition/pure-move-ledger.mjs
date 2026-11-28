@@ -1,4 +1,4 @@
-import { MAX_TORRENT_FILES, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
+import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';

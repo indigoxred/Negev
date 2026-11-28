@@ -38,9 +38,9 @@
 ## Remaining batches — Execute in the approved order
 
 2. [x] Recovery: uncertain operator removals; renamed publications, alternate locations, first-read proof invalidation and multipart proof attribution; supported legacy publish replay. Reproduce each condition first.
-3. [ ] Operations: generic exception responses, ordered shutdown after failures, recent scanner initialization/status and orphan retirement, pure-move retirement CLI.
-4. [ ] Artwork and guidance: small icon assets, cold-request compression cost, accurate legacy/pure-move mount examples.
-5. [ ] Account/request lifecycle: paused-watch sponsorship with one effective owner, settled refusals on deletion, cancelled preparation replay and legacy promotion receipts.
+3. [x] Operations: generic exception responses, ordered shutdown after failures, recent scanner initialization/status and orphan retirement, pure-move retirement CLI.
+4. [x] Artwork and guidance: small icon assets, cold-request compression cost, accurate legacy/pure-move mount examples.
+5. [x] Account/request lifecycle: paused-watch sponsorship with one effective owner, settled refusals on deletion, cancelled preparation replay and legacy promotion receipts.
 6. [ ] Member workflows: chooser continuation/capabilities, preview lifecycle, mixed Auto reviews, signed-out update preservation, invitation pagination, safe history and tracked-title display facts.
 7. [ ] Performance: actual invalidation indexes and optional metadata outside history's access-decision critical path.
 8. [ ] Cleanup/polish: subtitle sidecars, single folder normalization, preparation/source labels, title tabs, cancellation interaction, missing artwork, measured asset loading and proven-unused code/dependency cleanup. Keep compatibility evidence and all safety checks.

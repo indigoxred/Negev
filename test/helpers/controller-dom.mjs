@@ -1,7 +1,7 @@
 // Small event/DOM fixture for exercising shipped controllers without a browser.
 export function element(tag='div',text='',className='') {
- const node={tag,ownText:text??'',className,dataset:{},children:[],listeners:{},hidden:false,disabled:false,open:false,checked:false,value:'',isConnected:true,
-  append(...children){for(const child of children){child.parentNode=this;this.children.push(child)}},
+ const node={tag,ownText:text??'',className,style:{},dataset:{},children:[],listeners:{},hidden:false,disabled:false,open:false,checked:false,value:'',isConnected:true,
+  append(...children){for(const value of children){const child=typeof value==='string'?element('#text',value):value;child.parentNode=this;this.children.push(child)}},
   replaceChildren(...children){this.children=[];this.append(...children)},
   insertBefore(child,before){const index=this.children.indexOf(before);child.parentNode=this;this.children.splice(index<0?this.children.length:index,0,child)},
   replaceWith(node){if(this.parentNode){const parent=this.parentNode;parent.children[parent.children.indexOf(this)]=node;node.parentNode=parent;}},

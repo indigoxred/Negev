@@ -1,19 +1,10 @@
+import {normalizeManagedRelativePath} from './shoko-folder-path.mjs';
 const validId = (value) => Number.isSafeInteger(value) && value > 0;
 const idEvents = new Set(['file:hashed', 'file:relocated',
   'file:deleted', 'file:updated']);
 const arrivalKey = (event) => {
-  const rawName = event?.RelativePath;
-  // Shoko 6 emits managed-folder-relative paths with one root slash.
-  // Canonicalize that prefix only; repeated slashes and unsafe segments
-  // still fail the checks below, and the managed folder remains in the key.
-  const name = typeof rawName === 'string' && rawName.startsWith('/')
-    ? rawName.slice(1) : rawName;
-  if (!validId(event?.ManagedFolderID) || typeof name !== 'string' ||
-      !name || rawName.length > 2048 || name.startsWith('/') ||
-      /[\\\0\r\n]/.test(name) ||
-      name.split('/').some((part) => !part || part === '.' || part === '..')) {
-    return null;
-  }
+  const name=normalizeManagedRelativePath(event?.RelativePath);
+  if(!validId(event?.ManagedFolderID)||name===null)return null;
   return `${event.ManagedFolderID}:${name}`;
 };
 

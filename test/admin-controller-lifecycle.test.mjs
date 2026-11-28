@@ -23,6 +23,7 @@ function fixture() {
   const state = { user: { id: 1, username: 'First', role: 'admin', adultAllowed: true },
     csrf: 'first-csrf', searchItems: new Map(), detailHydrationQueued: new Set(), searchToken: 0 };
   const byId = id => { if (!nodes.has(id)) nodes.set(id, node('div')); return nodes.get(id); };
+  const document={title:'Negev · Private title'};
   let session,capabilityRefreshes=0;
   const { api } = createApiClient({ state, sessionResponses: epoch,
     clearWorkspace: () => session.clearWorkspace(),
@@ -33,7 +34,7 @@ function fixture() {
     location: { origin: 'https://negev.test' }, window: { confirm: () => true },
     titleLabel: item => node('span', item.title) });
   const noop = () => {};
-  const sessionArgs = { api, state, byId, element: node, sessionResponses: epoch,
+  const sessionArgs = { document,api, state, byId, element: node, sessionResponses: epoch,
     admin: controller, auth: {}, tracking: { resetTracking: noop }, browse: { setAiringFilters: noop },
     detail: { invalidate: noop,refreshCapabilities:()=>capabilityRefreshes++ }, displayCache: new Map(),
     genreSelections: { airing: new Set(), season: new Set() },
@@ -50,7 +51,7 @@ function fixture() {
     session.showSession({ user: { id: 2, username: 'Second', role: 'admin', adultAllowed: true }, csrfToken: 'second-csrf' });
     messages.length = 0;
   };
-  return { controller, byId, state, pending, messages, switchSession, epoch,session,get capabilityRefreshes(){return capabilityRefreshes} };
+  return { controller, byId, state, pending, messages, switchSession, epoch,session,document,get capabilityRefreshes(){return capabilityRefreshes} };
 }
 const users = name => ({ items: [{ id: 3, username: name, role: 'member', disabled: false, adultAllowed: true }] });
 const invites = name => ({ items: [{ id: 7, status: 'used', usedBy: name, usedMs: 1, createdMs: 1 }] });
@@ -163,4 +164,8 @@ test('background capabilities refresh updates the existing detail controls in pl
  const f=fixture(),pending=f.session.refreshSession({background:true});
  f.pending[0].finish({user:{...f.state.user},csrfToken:'new',capabilities:{releaseSearch:true}});await pending;
  assert.equal(f.state.releaseSearch,true);assert.equal(f.capabilityRefreshes,1);
+});
+
+test('clearing a session also clears the title from the browser tab',()=>{
+ const f=fixture();f.session.clearWorkspace();assert.equal(f.document.title,'Negev');
 });

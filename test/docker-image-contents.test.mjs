@@ -18,15 +18,15 @@ function productionModules() {
     seen.add(file);
     for (const match of readFileSync(file, 'utf8').matchAll(pattern)) {
       const target = path.resolve(path.dirname(file), match[1] || match[2] || match[3]);
-      if (existsSync(target)) stack.push(target);
+      assert.ok(existsSync(target), `Missing production module: ${target}`);
+      stack.push(target);
     }
   }
   return new Set([...seen].map((file) => path.relative(root, file).split(path.sep).join('/')));
 }
 
-test('the Docker image leaves out the test-only server and the user server never needs it', () => {
-  const ignored = readFileSync(path.join(root, '.dockerignore'), 'utf8').split(/\r?\n/);
-  for (const file of testOnly) assert.ok(ignored.includes(file), `${file} is not in .dockerignore`);
+test('removed prototype servers are absent and the production module graph is complete', () => {
+  for (const file of testOnly) assert.equal(existsSync(path.join(root,file)), false, `${file} must not ship`);
   const modules = productionModules();
   assert.ok(modules.size > 50, 'import walk found the production graph');
   for (const file of testOnly) assert.equal(modules.has(file), false, `${file} is imported by user-server`);

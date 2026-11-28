@@ -142,6 +142,7 @@ export function createSessionController({
   }
 
   function clearWorkspace() {
+    if(document)document.title='Negev';
     resetRoutePosition();
     for (const id of ['results', 'library-search-results']) {
       delete byId(id).dataset.query;
