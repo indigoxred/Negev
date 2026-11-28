@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,7 +8,9 @@ import { publishPureMove } from '../src/acquisition/publish-pure-move.mjs';
 import { processPurePublish } from '../src/acquisition/process-pure-publish.mjs';
 
 async function withPrepared(run) {
-  const root = await mkdtemp(path.join(tmpdir(), 'negev-pure-publish-'));
+  // Match the canonical roots journalled by preparePureMove, including Windows
+  // temporary-directory aliases whose spelling differs from realpath.
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'negev-pure-publish-')));
   const hash = 'a'.repeat(40);
   const stagingRoot = path.join(root, '.negev-staging', hash);
   const holdingRoot = path.join(root, '.negev-handoff', 'holding');
