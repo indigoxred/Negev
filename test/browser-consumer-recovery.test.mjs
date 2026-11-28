@@ -711,9 +711,12 @@ test('title and library controls recover from pending and failed reads without d
       await until("document.querySelector('dialog.season-request-dialog[open] .request-feedback')?.textContent.includes('could not be saved')");
       assert.match(await evaluate("document.querySelector('dialog[open] .request-feedback').textContent"),/#123/);
       await evaluate("[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='Auto-Pick').click()");
-      await until("document.querySelector('dialog.season-request-dialog[open] .request-feedback')?.textContent.includes('1 season requested')");
+      await until("document.querySelector('dialog.season-request-dialog .request-feedback')?.textContent.includes('1 season requested')");
       assert.deepEqual(recoverySeasonIds,[[50,51],[51]],'partial Auto retries only failed rows');
-      await evaluate("document.querySelector('dialog[open] .season-request-close').click()");
+      await until("document.querySelector('dialog.release-search-dialog[open] h2')?.textContent==='Recovery installment 50'");
+      assert.equal(await evaluate("document.querySelector('dialog.season-request-dialog').open"),false,
+        'successful retry delivers the retained first-success review after closing the chooser');
+      await evaluate("[...document.querySelectorAll('dialog.release-search-dialog[open] button')].find(b=>b.textContent==='Close').click()");
       recoveryMode='closed';
       await openRecoveryChooser();
       assert.equal(await evaluate("document.querySelector('dialog[open] [data-anidb-id=\"50\"] input').disabled"),true);
