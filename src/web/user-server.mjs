@@ -117,6 +117,9 @@ try {
   } : null;
   service = await createUserService({ ...config, plex, prowlarr,
     logger: config.logLevel === 'silent' ? false : { level: config.logLevel,
+      serializers: {err:error=>({type:error?.name??'Error',
+        message:redactStartupMessage(error?.message),
+        ...(typeof error?.stack==='string'?{stack:redactStartupMessage(error.stack)}:{})})},
       // Never write cookies, CSRF tokens or credentials to the log.
       redact: ['req.headers.cookie', 'req.headers["x-negev-csrf"]',
         'req.headers.authorization', 'res.headers["set-cookie"]'] },
