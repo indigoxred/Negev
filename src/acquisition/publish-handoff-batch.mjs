@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, open, readdir, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
@@ -308,7 +309,8 @@ export async function publishPreparedHandoff({
       return existing?.state === 'held' ? existing : held('shoko_unavailable');
     }
   }
-  const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs });
+  const sendToken=randomUUID();
+  const intent = ledger.beginPublish({ attemptId, evidenceDigest: evidence.digest, nowMs, sendToken });
   if (intent?.state !== 'publish_unknown' || !intent.sendNow ||
       intent.publishName !== row.publishName) return held('publish_outcome_unknown');
   try {
@@ -317,6 +319,19 @@ export async function publishPreparedHandoff({
     // pure-move path. A crash after this point recovers as publish_unknown.
     for (const name of finalDirs) await chmodImpl(path.join(holdingPath, ...name.split('/')), 0o755);
     await chmodImpl(holdingPath, 0o755);
+  } catch (error) {
+    // Rename has not been invoked. Restore privacy before retiring only this
+    // operation's token; an interrupted or uncertain rename stays unknown.
+    if (typeof ledger.cancelUnsentPublish==='function') {
+      try {
+        await chmodImpl(holdingPath,0o700);
+        const reset=ledger.cancelUnsentPublish({attemptId,evidenceDigest:evidence.digest,sendToken,nowMs});
+        if(reset.state==='prepared')return heldAfter(error,'publish_permissions_unavailable');
+      } catch { /* Keep the durable unknown intent if privacy/reset cannot be proved. */ }
+    }
+    return heldAfter(error,'publish_outcome_unknown');
+  }
+  try {
     await renamePrepared(holdingPath, destination);
     await syncDirectory(path.dirname(destination));
   } catch (error) { return heldAfter(error, 'publish_outcome_unknown'); }

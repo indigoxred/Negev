@@ -34,6 +34,13 @@ export function openHandoffLedger(dbPath) {
       created_ms INTEGER NOT NULL CHECK(created_ms >= 0),
       updated_ms INTEGER NOT NULL CHECK(updated_ms >= created_ms)
     ) STRICT`);
+    if (!db.prepare('PRAGMA table_info(handoff_intents)').all().some(column=>column.name==='publish_send_token')) {
+      db.exec('ALTER TABLE handoff_intents ADD COLUMN publish_send_token TEXT');
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS handoff_publish_preflight_failures (
+      send_token TEXT PRIMARY KEY, attempt_id INTEGER NOT NULL REFERENCES handoff_intents(attempt_id) ON DELETE CASCADE,
+      evidence_digest TEXT NOT NULL, failed_ms INTEGER NOT NULL CHECK(failed_ms>=0)
+    ) STRICT`);
     db.exec(`CREATE TABLE IF NOT EXISTS handoff_content_observations (
       attempt_id INTEGER PRIMARY KEY REFERENCES handoff_intents(attempt_id),
       evidence_digest TEXT NOT NULL,
@@ -147,10 +154,11 @@ export function openHandoffLedger(dbPath) {
         return { state: 'prepared', publishName };
       });
     },
-    beginPublish({ attemptId, evidenceDigest, nowMs }) {
+    beginPublish({ attemptId, evidenceDigest, nowMs, sendToken }) {
       if (!validId(attemptId) || !validDigest(evidenceDigest) || !validTime(nowMs)) {
         throw new TypeError('Invalid publish intent');
       }
+      if (sendToken!==undefined && (typeof sendToken!=='string' || !/^[a-f0-9-]{36}$/.test(sendToken))) throw new TypeError('Invalid publish token');
       return transact(() => {
         const row = handoffRow.get(attemptId);
         if (!row) return held('handoff_missing');
@@ -159,9 +167,20 @@ export function openHandoffLedger(dbPath) {
         if (nowMs < row.updated_ms) return held('time_before_last_transition');
         if (row.status === 'prepared') {
           markUnknown.run(nowMs, attemptId);
+          db.prepare('UPDATE handoff_intents SET publish_send_token=? WHERE attempt_id=?').run(sendToken??null,attemptId);
           return { state: 'publish_unknown', publishName: row.publish_name, sendNow: true };
         }
         return { state: row.status, publishName: row.publish_name, sendNow: false };
+      });
+    },
+    cancelUnsentPublish({attemptId,evidenceDigest,sendToken,nowMs}) {
+      if(!validId(attemptId)||!validDigest(evidenceDigest)||!validTime(nowMs)||typeof sendToken!=='string'||!/^[a-f0-9-]{36}$/.test(sendToken))throw new TypeError('Invalid unsent publish rollback');
+      return transact(()=>{
+        const row=db.prepare('SELECT status,evidence_digest,publish_send_token,updated_ms FROM handoff_intents WHERE attempt_id=?').get(attemptId);
+        if(row?.status!=='publish_unknown'||row.evidence_digest!==evidenceDigest.toLowerCase()||row.publish_send_token!==sendToken||nowMs<row.updated_ms)return held('publish_intent_changed');
+        db.prepare('INSERT INTO handoff_publish_preflight_failures VALUES (?,?,?,?)').run(sendToken,attemptId,evidenceDigest.toLowerCase(),nowMs);
+        db.prepare("UPDATE handoff_intents SET status='prepared',publish_send_token=NULL,updated_ms=? WHERE attempt_id=?").run(nowMs,attemptId);
+        return {state:'prepared'};
       });
     },
     // Caller must first prove the exact pre-rename bytes and a successful
