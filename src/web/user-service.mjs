@@ -906,6 +906,8 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
       },
       readPoster: ({ uid }) => shokoPosters.read({ uid }),
       readCataloguePoster: ({ anidbId }) => cataloguePosters.read({ anidbId }),
+      // Classification uses the validated raw record, not optional map facts.
+      readTitleClassification: input=>displayReader.read(input),
       readDisplayMetadata: async ({ anidbId }) => {
         await plexObserver?.ensureScope();
         const [display, facts] = await Promise.all([

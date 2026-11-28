@@ -50,7 +50,7 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   readActivePendingTitle,
   cancelPendingTitle, listLibraryTitles,
   listAiringSchedule, listSeasonalTitles, searchTitles,
-  readPoster, readPosterTitle, readCataloguePoster, readDisplayMetadata, titleRegistry,
+  readPoster, readPosterTitle, readCataloguePoster, readDisplayMetadata, readTitleClassification, titleRegistry,
   confirmKnownTitle = (input) => titleRegistry?.isKnownTitle(input) ?? false,
   loadDetail, loadRelatedTitles, hydrateTitle, observePublicTarget,
   startTitleCheck, getTitleCheck,
@@ -234,10 +234,11 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
   const classifiedSafe = async (anidbId) => {
     if (!Number.isSafeInteger(anidbId) || anidbId < 1) return false;
     try {
-      let value = typeof readDisplayMetadata === 'function'
-        ? await readDisplayMetadata({ anidbId })
+      const classify=typeof readTitleClassification==='function'?readTitleClassification:readDisplayMetadata;
+      let value = typeof classify === 'function'
+        ? await classify({ anidbId })
         : await loadDetail?.({ anidbId, page: 1 });
-      if (typeof value?.restricted !== 'boolean' && typeof readDisplayMetadata === 'function') {
+      if (typeof value?.restricted !== 'boolean' && typeof classify === 'function') {
         value = await loadDetail?.({ anidbId, page: 1 });
       }
       return value?.restricted === false;
