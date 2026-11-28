@@ -175,6 +175,9 @@ export async function buildUserApp({ accounts, sessionKey, publicOrigin,
     app.get(url, createStaticAsset(assets.get(name),
       { contentType, cacheControl: 'no-cache', headers: pageHeaders }));
   }
+  const projectIcon = await readFile(new URL('./public/negev.png', import.meta.url));
+  app.get('/negev.png', createStaticAsset(projectIcon, {
+    contentType: 'image/png', cacheControl: 'no-cache', headers: pageHeaders }));
   const fontNames = (await readdir(new URL('./fonts/', publicDir), { withFileTypes: true }))
     .filter((entry) => entry.isFile() && /\.(?:ttf|txt)$/.test(entry.name))
     .map((entry) => entry.name).sort();

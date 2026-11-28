@@ -748,6 +748,16 @@ test('invited users have private request ownership and CSRF guarded sessions', a
       assert.deepEqual(font.rawPayload,await readFile(new URL('../src/web/public/fonts/'+name,import.meta.url)));
     }
     assert.match(page.body, /Negev/);
+    assert.match(page.body, /<link rel="icon" type="image\/png" href="\/negev\.png">/);
+    const icon = await app.inject({ method: 'GET', url: '/negev.png' });
+    assert.equal(icon.statusCode, 200);
+    assert.match(icon.headers['content-type'], /image\/png/);
+    assert.equal(icon.headers['x-content-type-options'], 'nosniff');
+    assert.deepEqual(icon.rawPayload,
+      await readFile(new URL('../src/web/public/negev.png', import.meta.url)));
+    const cachedIcon = await app.inject({ method: 'GET', url: '/negev.png',
+      headers: { 'if-none-match': icon.headers.etag } });
+    assert.equal(cachedIcon.statusCode, 304);
     assert.match(page.body, /Sign in to see acquisition status/);
     assert.match(page.body, /<script src="\/app\.js" type="module"><\/script>/);
     assert.match(page.body, /<form id="login-form" method="post" action="\/api\/login">/);

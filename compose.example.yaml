@@ -2,7 +2,9 @@
 # This starts catalogue and request handling with acquisition disabled.
 services:
   negev:
-    image: ghcr.io/indigoxred/negev:v0.0.330
+    image: ghcr.io/indigoxred/negev:v0.0.336
+    labels:
+      net.unraid.docker.icon: https://raw.githubusercontent.com/indigoxred/Negev/main/src/web/public/negev.png
     network_mode: host
     user: "1000:1000"
     read_only: true

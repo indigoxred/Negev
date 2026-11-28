@@ -12,7 +12,7 @@ import { test } from 'node:test';
 const browser = findTestBrowser();
 const root = new URL('../src/web/public/', import.meta.url);
 // Serve public/ the way the server does: every page, script and stylesheet.
-const assets = new Set(readdirSync(root).filter((name) => /\.(?:html|m?js|css)$/.test(name)));
+const assets = new Set(readdirSync(root).filter((name) => /\.(?:html|m?js|css|png)$/.test(name)));
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('title and library controls recover from pending and failed reads without duplicate writes',
@@ -217,7 +217,7 @@ test('title and library controls recover from pending and failed reads without d
         const file = path === '/' ? 'index.html' : path.slice(1);
         if (!assets.has(file)) { response.writeHead(404); response.end(); return; }
         response.setHeader('Content-Type', file.endsWith('.css') ? 'text/css' :
-          file.endsWith('.html') ? 'text/html' : 'text/javascript');
+          file.endsWith('.html') ? 'text/html' : file.endsWith('.png') ? 'image/png' : 'text/javascript');
         response.end(await readFile(new URL(file, root)));
       }
     });
