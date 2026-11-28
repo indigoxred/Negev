@@ -475,17 +475,20 @@ export function openShokoInventoryLedger(dbPath, { pageSize = 100 } = {}) {
             if (candidates.length > 100) {
               status = 'invalid';
               retirementHeld = 'omission_budget_exceeded';
-            } else {
-              for (const before of candidates) {
-                const old = { fileId: before.fileId, updated: before.updated,
-                  state: before.state, pairs: JSON.parse(before.pairsJson),
-                  seenPass: before.seenPass, observedMs: before.observedMs };
-                saveObservation({ fileId: old.fileId, updated: old.updated,
-                  state: 'unverified', pairs: [] }, current.pass, observedMs);
-                retired.push({ before: old, after: { ...old,
-                  state: 'unverified', pairs: [], seenPass: current.pass,
-                  observedMs } });
-              }
+            }
+            // Both universes have already matched. Retire a bounded batch
+            // even when more omissions remain, so the durable linked rows
+            // form a backlog that later matching passes can drain. An
+            // overflow pass stays invalid and cannot clear feed-gap debt.
+            for (const before of candidates.slice(0, 100)) {
+              const old = { fileId: before.fileId, updated: before.updated,
+                state: before.state, pairs: JSON.parse(before.pairsJson),
+                seenPass: before.seenPass, observedMs: before.observedMs };
+              saveObservation({ fileId: old.fileId, updated: old.updated,
+                state: 'unverified', pairs: [] }, current.pass, observedMs);
+              retired.push({ before: old, after: { ...old,
+                state: 'unverified', pairs: [], seenPass: current.pass,
+                observedMs } });
             }
           }
         }

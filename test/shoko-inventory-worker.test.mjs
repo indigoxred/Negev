@@ -8,6 +8,8 @@ import { createShokoInventoryWorker, openShokoInventoryLedger } from
   '../src/availability/shoko-inventory-worker.mjs';
 import { openDirectAvailabilityQueue } from
   '../src/availability/direct-availability-queue.mjs';
+import { createShokoEventConsumer } from '../src/availability/shoko-event-consumer.mjs';
+import { createShokoFullReconciliation } from '../src/availability/shoko-full-reconciliation.mjs';
 
 const provisional = { fileId: 10, updated: '2026-10-31T00:00:00Z',
   state: 'provisional', pairs: [] };
@@ -52,6 +54,79 @@ test('an excessive omission is identified separately from a transient bad page',
     { state: 'held', reason: 'omission_budget_exceeded' });
     assert.deepEqual(ledger.getCursor(), { page: 1, pass: 3, pageSize: 100 });
   } finally { ledger.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('bulk omissions make bounded durable progress across reopen and replay held-pass changes', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-progress-'));
+  const dbPath = path.join(dir, 'inventory.sqlite');
+  let ledger = openShokoInventoryLedger(dbPath);
+  const queue = openDirectAvailabilityQueue(dbPath);
+  try {
+    for (let fileId = 1; fileId <= 201; fileId++) {
+      ledger.recordFileObservation({ item: { ...linked, fileId }, observedMs: 1 });
+    }
+    while (ledger.deliverPendingChanges({ handle: () => {} }).state === 'held') {}
+    const target = { anidbId: 42, episodeId: 1001 };
+    queue.enqueue({ ...target, observedMs: 2 });
+    const claim = queue.claimNext({ nowMs: 2 });
+    assert.equal(queue.recordResult({ claim, state: 'available', checkedMs: 2,
+      proof: { fileId: 1, libraryId: 1, ratingKey: 1, partId: 1 } }).state, 'recorded');
+    const empty = { state: 'page', page: 1, total: 0, items: [] };
+    const countLinked = () => Array.from({ length: 201 }, (_, i) =>
+      ledger.getFile(i + 1)).filter(file => file.state === 'linked').length;
+    for (const [pass, remaining] of [[2, 101], [4, 1], [6, 0]]) {
+      assert.equal(ledger.recordPage({ expected: ledger.getCursor(), result: empty,
+        observedMs: (pass - 1) * 100 }).state, 'recorded');
+      const saved = ledger.recordPage({ expected: ledger.getCursor(), result: empty,
+        observedMs: pass * 100 });
+      assert.equal(saved.state, remaining > 0 ? 'held' : 'recorded');
+      assert.equal(countLinked(), remaining);
+      assert.equal(queue.getStatus({ ...target, nowMs: pass * 100 }).state, 'unknown');
+      if (remaining > 0) assert.equal(ledger.getCompletedPass(pass), null);
+      ledger.close(); ledger = openShokoInventoryLedger(dbPath);
+      const delivered = [];
+      const worker = createShokoInventoryWorker({ ledger,
+        readPage: async () => { throw Error('replay must precede another page'); },
+        onChangedFile: change => delivered.push(change) });
+      assert.equal((await worker.tick()).state, 'delivered');
+      assert.equal(delivered.length, remaining === 0 ? 1 : 100);
+      assert(delivered.every(change => change.after.state === 'unverified'));
+    }
+  } finally { ledger.close(); queue.close(); await rm(dir, { recursive: true, force: true }); }
+});
+
+test('bulk omission debt blocks full reconciliation and protects a newer targeted observation', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'negev-shoko-omission-debt-'));
+  const ledger = openShokoInventoryLedger(path.join(dir, 'inventory.sqlite'));
+  const consumer = createShokoEventConsumer({ refreshFile: async () => ({ state: 'recorded_file' }) });
+  consumer.flagReconciliation('feed_disconnected');
+  let nowMs = 100;
+  const coordinator = createShokoFullReconciliation({ ledger, consumer,
+    readConnectionState: () => ({ state: 'connected' }),
+    tickPage: async () => ledger.recordPage({ expected: ledger.getCursor(),
+      observedMs: nowMs, result: { state: 'page', page: 1, total: 0, items: [] } }) });
+  try {
+    for (let fileId = 1; fileId <= 102; fileId++) {
+      ledger.recordFileObservation({ item: { ...linked, fileId }, observedMs: 1 });
+    }
+    assert.equal((await coordinator.tick()).state, 'held');
+    // A positive exact read newer than the first universe observation survives
+    // the next matching universe, despite being absent from those pages.
+    ledger.recordFileObservation({ item: { ...linked, fileId: 102 }, observedMs: 150 });
+    nowMs = 200;
+    assert.equal((await coordinator.tick()).reason, 'omission_budget_exceeded');
+    assert.equal(ledger.getFile(102).state, 'linked');
+    assert.equal(ledger.getFile(101).state, 'linked');
+    assert.equal(consumer.getState().fullReconciliationNeeded, true);
+    nowMs = 300;
+    assert.equal((await coordinator.tick()).state, 'held');
+    assert.equal(consumer.getState().fullReconciliationNeeded, true);
+    nowMs = 400;
+    assert.equal((await coordinator.tick()).state, 'recorded');
+    assert.equal(ledger.getFile(101).state, 'unverified');
+    assert.equal(ledger.getFile(102).state, 'unverified');
+    assert.equal(consumer.getState().fullReconciliationNeeded, false);
+  } finally { await consumer.close(); ledger.close(); await rm(dir, { recursive: true, force: true }); }
 });
 
 test('inventory change receipts omit optional source path hints', async () => {
