@@ -1,7 +1,7 @@
 import { detailAliasText } from './title-preference.mjs';
 import { nextAirDateLabel } from './episode-schedule.mjs';
 
-export function createDetailDisplay({ isCurrentDetail, state, panel, titleLabel, item, setPendingTitleKind, earlyRequest, displaySummary, element, titleBlock }) {
+export function createDetailDisplay({ onTitleRendered,isCurrentDetail, state, panel, titleLabel, item, setPendingTitleKind, earlyRequest, displaySummary, element, titleBlock }) {
   let displayReleaseStatus = null;
   let nextAirData = null;
   let nextAirElement = null;
@@ -25,6 +25,7 @@ export function createDetailDisplay({ isCurrentDetail, state, panel, titleLabel,
     setPendingTitleKind(earlyRequest, { title },
       /movie|film/i.test(display.type ?? '') ? 'movie' :
         /series|tv|ova|ona/i.test(display.type ?? '') ? 'series' : null);
+    onTitleRendered?.(title,display.englishTitle??item.englishTitle,display.restricted);
     displaySummary.replaceChildren();
     const main = element('div', undefined, 'detail-main');
     titleBlock.querySelectorAll('.detail-facts, .detail-alias').forEach(node => node.remove());

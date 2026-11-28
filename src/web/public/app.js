@@ -96,7 +96,7 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-const viewHelpers = createViewHelpers({ byId, state });
+const viewHelpers = createViewHelpers({ byId, state,onTitlePreferenceChange:()=>{if(state.routePage==='title')detail.refreshTitlePreference();} });
 const { message, element, preferredDisplayTitle, titleLabel, applyTitlePreference, posterImage } = viewHelpers;
 const currentAcquisitionNotice = () => acquisitionNotice(state.acquisitionState);
 

@@ -1,3 +1,4 @@
+import { exclusiveSubtitleNames } from './exclusive-subtitle-names.mjs';
 import { createReadDeadline } from './read-deadline.mjs';
 import { MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { verifyAbsoluteNumberingScope } from './absolute-numbering-scope.mjs';
@@ -153,6 +154,9 @@ export async function previewRequestCandidate({ requestId, candidate,
     releaseTitle: candidate.title, trustedTitle: firstQuery,
     allowTitleMetadataVariation: !verifiedIdentity });
   if (plan.state !== 'planned_targets') return {...plan,...(inspectedFiles?{inspectedFiles}:{})};
+  plan.excludedSubtitleNames=exclusiveSubtitleNames(prepared.files,
+    [...(plan.excludedVideoNames??[]),...bonus.skippedBonuses.map(file=>file.name)],
+    [...plan.plannedFiles,...bonus.bonusFiles].map(file=>file.name));
   if (candidate.targetEpisodeId !== undefined && !hasBroadMatch &&
       !plan.episodeIds.includes(candidate.targetEpisodeId)) {
     return held('targeted_result_wrong_episode');

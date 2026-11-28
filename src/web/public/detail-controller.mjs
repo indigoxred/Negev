@@ -44,6 +44,13 @@ export function createDetailController({
 
   let detailPollTimer = null;
   let requestCapabilities = null;
+  let validatedTabTitle=null;
+  function refreshTitlePreference(){
+    const current=validatedTabTitle;
+    const allowed=current?.restricted===false||state.showAdult&&state.user?.adultAllowed===true;
+    document.title=current&&current.isCurrent()&&allowed
+      ? 'Negev · '+(preferredDisplayTitle?.(current.item)??current.item.title) : 'Negev · Title';
+  }
 
   function pendingTitleAction(item) {
     if (!state.user || item.adult === true &&
@@ -190,6 +197,7 @@ export function createDetailController({
   }
 
   async function showDetail(item, franchise = null, refreshAttempt = 0) {
+    validatedTabTitle=null;document.title='Negev · Title';
     const previousAction = state.selected === item.anidbId
       ? byId('detail').querySelector('.request-action[data-pending="true"]')
       : null;
@@ -257,7 +265,11 @@ export function createDetailController({
       displayCache.set(item.anidbId, displayRead);
       if (displayCache.size > 100) displayCache.delete(displayCache.keys().next().value);
     }
-    const display = createDetailDisplay({ isCurrentDetail, state, panel, titleLabel, item, setPendingTitleKind, earlyRequest, displaySummary, element, titleBlock });
+    const recordTabTitle=(title,englishTitle,restricted)=>{
+      if(!isCurrentDetail())return;
+      validatedTabTitle={item:{title,englishTitle},restricted,isCurrent:isCurrentDetail};refreshTitlePreference();
+    };
+    const display = createDetailDisplay({ onTitleRendered:recordTabTitle,isCurrentDetail, state, panel, titleLabel, item, setPendingTitleKind, earlyRequest, displaySummary, element, titleBlock });
     const { renderDisplay } = display;
     void displayRead.then((display) => {
       if (isCurrentDetail() && typeof display?.restricted === 'boolean') {
@@ -288,7 +300,7 @@ export function createDetailController({
       detailPoster.addEventListener('load', () => detailArt.classList.add('has-poster'));
       detailArt.append(detailPoster);
       const originalTitle = detailOriginalTitle(item, data);
-      document.title='Negev · '+(preferredDisplayTitle?.({...item,title:originalTitle})??originalTitle);
+      recordTabTitle(originalTitle,item.englishTitle,data.restricted);
       titleBlock.replaceChildren(titleLabel({ title: originalTitle,
         englishTitle: item.englishTitle }, { tag: 'h1', className: 'detail-title' }));
       panel.replaceChildren(detailArt, titleBlock);
@@ -542,5 +554,5 @@ export function createDetailController({
       void displayRead.then((display) => renderDisplay(display, item.title));
     }
   }
-  return { showDetail, refreshCapabilities(){requestCapabilities?.refreshCapabilities?.();}, invalidate() { requestCapabilities=null; detailResponses.invalidate(); if (detailPollTimer !== null) clearTimeout(detailPollTimer); detailPollTimer = null; } };
+  return { showDetail,refreshTitlePreference, refreshCapabilities(){requestCapabilities?.refreshCapabilities?.();}, invalidate() { validatedTabTitle=null;requestCapabilities=null; detailResponses.invalidate(); if (detailPollTimer !== null) clearTimeout(detailPollTimer); detailPollTimer = null; } };
 }

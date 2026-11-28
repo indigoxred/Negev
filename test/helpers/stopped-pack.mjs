@@ -30,7 +30,7 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
   const files = ids.map((id, index) => ({ index, name: `Example - ${String(index + 1).padStart(2, '0')}.mkv`,
     size: 100, priority: 1, progress: 0 }));
   for (const extra of [...additionalFiles,...bonusFiles]) files.push({index:files.length,name:extra.name,size:extra.size,priority:1,progress:0});
-  const info = { name: 'Example', files: files.map(file => ({ length: file.size, path: [file.name] })),
+  const info = { name: 'Example', files: files.map(file => ({ length: file.size, path: file.name.split('/') })),
     'piece length': 16384, pieces: Buffer.alloc(20, 97) };
   const bytes = encode({ info }), hash = createHash('sha1').update(encode(info)).digest('hex');
   const saveRoot = '/Downloads/negev', savePath = `${saveRoot}/${hash}`;

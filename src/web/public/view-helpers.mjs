@@ -2,7 +2,7 @@ import { attachPosterRecovery } from './poster-recovery.mjs';
 import { detailAliasText } from './title-preference.mjs';
 
 // Owns DOM construction, title presentation and poster rendering. Construction does not register event handlers.
-export function createViewHelpers({ byId, state, document = globalThis.document }) {
+export function createViewHelpers({ onTitlePreferenceChange,byId, state, document = globalThis.document }) {
   function message(text, error = false) {
     const node = byId('message');
     node.textContent = text;
@@ -43,8 +43,7 @@ export function createViewHelpers({ byId, state, document = globalThis.document 
         ? `Original: ${label.dataset.originalTitle}`
         : `English: ${label.dataset.englishTitle}`;
     }
-    const heading=state.routePage==='title'?document.querySelector('#detail .detail-title'):null;
-    if(heading?.textContent)document.title='Negev · '+heading.textContent;
+    onTitlePreferenceChange?.();
     for (const alias of document.querySelectorAll('[data-title-alias]')) {
       alias.textContent = detailAliasText(state.preferEnglish,
         alias.dataset.originalTitle, alias.dataset.titleAlias);

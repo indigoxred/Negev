@@ -1,3 +1,4 @@
+import { exclusiveSubtitleNames } from './exclusive-subtitle-names.mjs';
 import { transientInspectionFailure } from './quality-inspection-retry.mjs';
 import { createReadDeadline } from './read-deadline.mjs';
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
@@ -286,8 +287,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   }
   if(selectedBonuses?.state==='held')return selectedBonuses;
   const bonusFiles=selectedBonuses?.files??[];
+  const retainedVideos=[...selectedFiles,...bonusFiles].map(file=>file.name);
+  const retainedNames=new Set(retainedVideos);
+  const excludedVideos=[...new Set([...(mapped.excludedVideoNames??[]),
+    ...bonus.skippedBonuses.map(file=>file.name),
+    ...bonus.bonusFiles.filter(file=>!retainedNames.has(file.name)).map(file=>file.name)])];
+  const excludedSubtitles=exclusiveSubtitleNames(prepared.files,excludedVideos,retainedVideos);
   return submitStoppedCandidate({ ...activeQbittorrent, ledger, authorizeRequest,
     attemptId: reserved.attemptId, candidate, prepared, nowMs:now(), now,
     plannedFileNames: [...selectedFiles,...bonusFiles].map((file) => file.name),
-    excludedFileNames: [...(mapped.excludedVideoNames ?? []), ...(mapped.excludedSubtitleNames ?? [])] });
+    excludedFileNames: [...excludedVideos,...excludedSubtitles] });
 }
