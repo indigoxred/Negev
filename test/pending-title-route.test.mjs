@@ -228,3 +228,15 @@ test('pending history and cancellation are owner scoped and CSRF guarded',
         input.intentId]), [[7, 12], [7, 14]]);
     } finally { await app.close(); }
   });
+
+for(const state of ['cancelled','resolved']) test('cancelled preparation replay is definitive after '+state,async()=>{
+ let submitted=0;
+ const app=await buildUserApp({accounts:accounts(),sessionKey:randomBytes(32),publicOrigin:origin,secureCookies:false,
+  confirmKnownTitle:async()=>true,submitRequest:async()=>{submitted++;return{}},
+  readPendingTitleByKey:()=>({id:12,requesterId:7,anidbId:4158,state,reason:state==='cancelled'?'cancelled':null,normalRequestId:state==='resolved'?99:null}),
+  readRequest:()=>({id:99,requesterId:7,anidbId:4158,status:'cancelled'})});
+ try{const headers=await signedIn(app);for(const url of ['/api/requests','/api/release-previews']){
+  const result=await app.inject({method:'POST',url,headers,payload:{anidbId:4158,scope:'installment',requestKey:'cold-one'}});
+  assert.equal(result.statusCode,409,result.body);assert.equal(result.json().reason,'request_cancelled');
+ }assert.equal(submitted,0);}finally{await app.close()}
+});

@@ -371,7 +371,7 @@ export function createRequestController({ api, byId, element, message, posterIma
         row.append(posterImage(item));
         const heading = element('div');
         heading.append(titleLabel(item),
-          element('small', item.state === 'complete' && item.reason === 'already_monitored_elsewhere'
+          element('small', item.reason === 'watch_paused_elsewhere' || item.state === 'complete' && item.reason === 'already_monitored_elsewhere'
             ? requestFailureMessage(item) : item.reason === 'release_state_unknown'
             ? 'Checking catalogue release dates' : 'Preparing episode details'),
           element('small', `Requested by ${item.requesterName || 'your account'}`));
@@ -392,7 +392,7 @@ export function createRequestController({ api, byId, element, message, posterIma
           });
           heading.append(cancel);
         }
-        row.append(heading, element('p', item.state === 'complete'
+        row.append(heading, element('p', item.reason === 'watch_paused_elsewhere' ? requestFailureMessage(item) : item.state === 'complete'
           ? item.reason === 'already_available'
             ? 'Already available in Negev’s Library.'
             : item.reason === 'ambiguous_movie_scope'

@@ -49,7 +49,7 @@ export async function submitStoppedCandidate(input) {
 async function submitOwnedCandidate({
   ledger, attemptId, candidate, prepared, hostPath, inspectMounts, realpathImpl, authorizeRequest,
   verifyStagingRoot, saveRoot, plannedFileNames, excludedFileNames,
-  baseUrl, sessionId, nowMs, fetchImpl = fetch, timeoutMs = 10_000,
+  baseUrl, sessionId, nowMs, now = () => nowMs, fetchImpl = fetch, timeoutMs = 10_000,
 }) {
   let base;
   try { base = new URL(baseUrl); } catch { throw new TypeError('Invalid qBittorrent URL'); }
@@ -61,7 +61,7 @@ async function submitOwnedCandidate({
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000 ||
       (typeof verifyStagingRoot !== 'function' &&
         (typeof inspectMounts !== 'function' || typeof realpathImpl !== 'function')) ||
-      typeof fetchImpl !== 'function' || !ledger ||
+      typeof now !== 'function' || typeof fetchImpl !== 'function' || !ledger ||
       typeof ledger.bindPreparedTorrent !== 'function' ||
       typeof ledger.beginDispatch !== 'function' ||
       typeof ledger.recordTorrent !== 'function') {
@@ -147,7 +147,7 @@ async function submitOwnedCandidate({
         });
         if(receipt.status===403 && typeof ledger.rejectDispatch==='function') {
           let refused;
-          try{refused=ledger.rejectDispatch({attemptId,candidate,hash:expected.hash,nowMs,httpStatus:403});}
+          try{refused=ledger.rejectDispatch({attemptId,candidate,hash:expected.hash,nowMs:now(),httpStatus:403});}
           finally{await cancelResponseBody(receipt);}
           if(refused?.state==='dispatch_rejected')return held('provider_http_403');
           return refused??held('dispatch_refusal_unreconciled');

@@ -486,3 +486,19 @@ test('airing page cursor survives restart and rejects stale concurrent advanceme
     } finally { reopened.close(); }
   } finally { if (!oneClosed) one.close(); two.close(); }
 }));
+
+test('paused watch has an actionable hold and enabling its owner retains the single watch',()=>withPath(async dbPath=>{
+ const ledger=openRequestLedger(dbPath),db=new DatabaseSync(dbPath);
+ try{
+  db.exec('CREATE TABLE users(id INTEGER PRIMARY KEY,disabled INTEGER NOT NULL);INSERT INTO users VALUES(7,0),(8,0)');
+  const first=ledger.submit({requesterId:7,requestKey:'owner',intent,nowMs:1000});
+  db.exec('UPDATE users SET disabled=1 WHERE id=7');
+  assert.equal(ledger.submit({requesterId:8,requestKey:'member',intent,nowMs:2000}).reason,'watch_paused_elsewhere');
+  assert.equal(ledger.findOtherPausedWatch({requesterId:8,anidbId:1234}),true);
+  db.exec('UPDATE users SET disabled=0 WHERE id=7');
+  assert.equal(ledger.findOtherPausedWatch({requesterId:8,anidbId:1234}),false);
+  assert.equal(ledger.submit({requesterId:8,requestKey:'member',intent,nowMs:3000}).reason,'already_monitored_elsewhere');
+  assert.equal(ledger.findActiveWatch({requesterId:7,anidbId:1234}),first.requestId);
+  assert.equal(db.prepare('SELECT count(*) n FROM requests').get().n,1);
+ }finally{db.close();ledger.close()}
+}));

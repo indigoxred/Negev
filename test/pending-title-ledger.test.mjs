@@ -144,3 +144,40 @@ test('preparation history is owner scoped and resolved rows leave the pending vi
         .map((row) => row.id), [3]);
     } finally { ledger.close(); }
   }));
+
+test('legacy interrupted promotion reconciles the exact saved command before terminal migration',()=>withPath(async dbPath=>{
+ const requests=openRequestLedger(dbPath);let pending=openPendingTitleLedger(dbPath);
+ try{
+  const input={requesterId:7,anidbId:4158,title:'Pale Cocoon',requestKey:'legacy',nowMs:1000};
+  const prepared=pending.enqueue(input);const claim=pending.claimDue({nowMs:1000,leaseMs:1000});
+  pending.defer({intentId:claim.id,version:claim.version,nowMs:1000,delayMs:1000,reason:'already_monitored_elsewhere'});
+  const saved=requests.submit({requesterId:7,requestKey:'legacy',commandKey:JSON.stringify([4158,'installment',null]),nowMs:2000,
+   intent:{state:'ready',anidbId:4158,title:'Pale Cocoon',kind:'series',monitorFuture:true,episodeIds:[88]}});
+  pending.close();pending=openPendingTitleLedger(dbPath);
+  assert.equal(pending.get(prepared.intentId).state,'resolved');assert.equal(pending.get(prepared.intentId).normalRequestId,saved.requestId);
+  assert.equal(requests.listRequests({requesterId:7}).items.length,1);
+ }finally{pending.close();requests.close()}
+}));
+
+for(const mismatch of ['owner','title','scope'])test('legacy promotion receipt rejects different '+mismatch,()=>withPath(async dbPath=>{
+ const requests=openRequestLedger(dbPath);let pending=openPendingTitleLedger(dbPath);
+ try{
+  const saved=pending.enqueue({...first,requestKey:'mismatch'}),claim=pending.claimDue({nowMs:1000,leaseMs:1000});
+  pending.defer({intentId:claim.id,version:claim.version,nowMs:1000,delayMs:1000,reason:'already_monitored_elsewhere'});
+  const id=mismatch==='title'?9999:4158;
+  requests.submit({requesterId:mismatch==='owner'?8:7,requestKey:'mismatch',commandKey:JSON.stringify([id,mismatch==='scope'?'episodes':'installment',mismatch==='scope'?[88]:null]),nowMs:2000,intent:{state:'ready',anidbId:id,kind:'series',monitorFuture:true,episodeIds:[88]}});
+  pending.close();pending=openPendingTitleLedger(dbPath);
+  assert.equal(pending.get(saved.intentId).state,'complete');assert.equal(pending.get(saved.intentId).normalRequestId,null);
+ }finally{pending.close();requests.close()}
+}));
+
+test('repair a promotion already closed by v336 only when the exact receipt exists',()=>withPath(async dbPath=>{
+ const requests=openRequestLedger(dbPath);let pending=openPendingTitleLedger(dbPath);
+ try{
+  const item=pending.enqueue({...first,requestKey:'already-v336'}),claim=pending.claimDue({nowMs:1000,leaseMs:1000});
+  pending.finish({intentId:claim.id,version:claim.version,nowMs:1000,reason:'already_monitored_elsewhere'});
+  const saved=requests.submit({requesterId:7,requestKey:'already-v336',commandKey:JSON.stringify([4158,'installment',null]),nowMs:2000,intent:{state:'ready',anidbId:4158,kind:'series',monitorFuture:true,episodeIds:[88]}});
+  pending.close();pending=openPendingTitleLedger(dbPath);
+  assert.equal(pending.get(item.intentId).state,'resolved');assert.equal(pending.get(item.intentId).normalRequestId,saved.requestId);
+ }finally{pending.close();requests.close()}
+}));

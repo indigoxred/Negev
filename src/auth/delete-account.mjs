@@ -52,6 +52,7 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
         : [];
       const startedIds = new Set();
       const reservations = [];
+      const refused = [];
       if (has('acquisition_attempts') && requestIds.length) {
         const attempts = db.prepare(`SELECT * FROM acquisition_attempts WHERE request_id IN
           (SELECT id FROM requests WHERE requester_id=?)`).all(userId);
@@ -59,6 +60,14 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
           if (has('acquisition_starts') && db.prepare(
             'SELECT 1 FROM acquisition_starts WHERE attempt_id=?').get(attempt.id)) {
             startedIds.add(attempt.request_id);
+          } else if (attempt.status === 'dispatch_unknown' && attempt.torrent_hash === null &&
+              has('acquisition_dispatch_refusals') && has('acquisition_releases') &&
+              db.prepare('SELECT 1 FROM acquisition_dispatch_refusals WHERE attempt_id=? AND torrent_hash=? AND http_status=403').get(attempt.id,attempt.expected_hash) &&
+              db.prepare('SELECT 1 FROM acquisition_releases WHERE attempt_id=?').get(attempt.id) &&
+              !db.prepare('SELECT 1 FROM acquisition_target_claims WHERE attempt_id=? AND active=1').get(attempt.id) &&
+              !(has('acquisition_bonus_files') && db.prepare('SELECT 1 FROM acquisition_bonus_files WHERE attempt_id=? AND active=1').get(attempt.id)) &&
+              !EXTERNAL_ATTEMPT_TABLES.filter(table=>has(table) && table!=='acquisition_dispatch_refusals').some(table=>db.prepare(`SELECT 1 FROM ${table} WHERE attempt_id=?`).get(attempt.id))) {
+            refused.push(attempt);
           } else if (attempt.status === 'reserved' && attempt.torrent_hash === null &&
               !EXTERNAL_ATTEMPT_TABLES.filter(has).some(table => db.prepare(
                 `SELECT 1 FROM ${table} WHERE attempt_id=?`).get(attempt.id))) {
@@ -74,6 +83,12 @@ export function deleteAccount(dbPath, { adminUserId, userId }) {
       rememberIdFloor(db, 'users');
       if (has('requests')) rememberIdFloor(db, 'requests');
       if (has('acquisition_attempts')) rememberIdFloor(db, 'acquisition_attempts');
+      // Retain settled refusal receipts when a sibling download requires this
+      // request's history. Otherwise remove only demonstrably unsent attempts.
+      for (const attempt of refused) if (!startedIds.has(attempt.request_id)) {
+        db.prepare('DELETE FROM acquisition_dispatch_refusals WHERE attempt_id=?').run(attempt.id);
+        reservations.push(attempt.id);
+      }
       for (const attemptId of reservations) {
         for (const table of RESERVATION_CHILD_TABLES.filter(has)) {
           db.prepare(`DELETE FROM ${table} WHERE attempt_id=?`).run(attemptId);

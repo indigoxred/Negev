@@ -301,10 +301,11 @@ export function createDetailController({
       void displayRead.then((display) => renderDisplay(display, originalTitle));
       if (data.state === 'detail_pending') {
         if (data.futureEpisodesMonitored) {
-          const monitored = element('button', 'Future episodes already monitored', 'primary');
+          const monitored = element('button', data.futureEpisodesPaused ? 'Future episode watch paused' : 'Future episodes already monitored', 'primary');
           monitored.type = 'button';
           monitored.disabled = true;
           panel.append(detailActionRow(monitored));
+          if(data.futureEpisodesPaused)panel.append(element('p',requestFailureMessage({reason:'watch_paused_elsewhere'}),'muted'));
           if (data.activeWatchRequestId) {
             const existingRequest = element('a', 'View in My Requests →',
               'text-link request-receipt-link');

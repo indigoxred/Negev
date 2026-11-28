@@ -152,7 +152,7 @@ export async function reconcileParentWatch({ parent, map, parents, requests,
         ...(validTitle(detail.title) ? { title: detail.title } : {}) }, nowMs });
     // Preserve one-watch ownership without blocking later installments. The
     // unrecorded claim is revisited during the next ordinary parent sweep.
-    if (submitted?.reason === 'already_monitored_elsewhere') {
+    if (['already_monitored_elsewhere','watch_paused_elsewhere'].includes(submitted?.reason)) {
       heldCandidates.push(anidbId); continue;
     }
     if (!validId(submitted?.requestId)) return held('watch_submit_unavailable');
