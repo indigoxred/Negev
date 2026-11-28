@@ -1,3 +1,4 @@
+import { selectMissingFiles } from './select-missing-files.mjs';
 import { pendingRecognitionSql } from './recognition-release-sql.mjs';
 import { canonicalReleaseGuid } from './durable-release-candidate.mjs';
 import { MAX_ACQUISITION_VIDEOS, MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
@@ -226,7 +227,7 @@ export function openAcquisitionLedger(dbPath) {
   const requestedEpisode = db.prepare(`SELECT 1 AS present FROM request_targets rt
     JOIN targets t ON t.id=rt.target_id
     WHERE rt.request_id=? AND t.anidb_id=? AND t.episode_id=? LIMIT 1`);
-  const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
+  const candidateRow = db.prepare('SELECT id,request_id,anidb_id,status,evidence_policy,expected_hash,updated_ms FROM acquisition_attempts WHERE indexer_id=? AND candidate_digest=?');
   const busyTarget = db.prepare(`WITH target(aid,eid) AS (VALUES (?,?))
     SELECT c.attempt_id FROM acquisition_target_claims c,target WHERE c.anidb_id=target.aid AND c.episode_id=target.eid AND c.active=1
     UNION ALL SELECT b.attempt_id FROM acquisition_bonus_files b,target WHERE b.anidb_id=target.aid AND b.episode_id=target.eid AND b.active=1 LIMIT 1`);
@@ -282,7 +283,7 @@ export function openAcquisitionLedger(dbPath) {
   };
   const findAttempt = db.prepare(`SELECT id,request_id,anidb_id,indexer_id,candidate_digest,status,evidence_policy,expected_hash,torrent_hash,created_ms,updated_ms
     FROM acquisition_attempts WHERE id=?`);
-  const attemptEpisodes = db.prepare('SELECT episode_id FROM acquisition_target_claims WHERE attempt_id=? ORDER BY episode_id');
+  const attemptEpisodes = db.prepare('SELECT c.episode_id FROM acquisition_target_claims c WHERE c.attempt_id=? AND NOT EXISTS (SELECT 1 FROM acquisition_selection_excluded_targets e WHERE e.attempt_id=c.attempt_id AND e.episode_id=c.episode_id) ORDER BY c.episode_id');
   const activeAttemptEpisodes = db.prepare(`SELECT episode_id FROM acquisition_target_claims
     WHERE attempt_id=? AND active=1 ORDER BY episode_id`);
   const planRows = db.prepare('SELECT file_name,file_size,episode_key FROM acquisition_file_plans WHERE attempt_id=? ORDER BY file_name');
@@ -389,6 +390,26 @@ export function openAcquisitionLedger(dbPath) {
     }
   }
 
+  // Called only inside the reservation/revision transaction. Original target
+  // claims and every prior file map remain available as historical evidence.
+  function saveNarrowedSelection(attemptId, previous, remaining, removedIds, checkedMs, nowMs, selection) {
+    const revision=db.prepare('SELECT COALESCE(MAX(revision),0)+1 n FROM acquisition_selection_revisions WHERE attempt_id=?').get(attemptId).n;
+    db.prepare('INSERT INTO acquisition_selection_revisions VALUES (?,?,?,?,?,?,?)').run(attemptId,revision,
+      JSON.stringify(previous),JSON.stringify(remaining),JSON.stringify(removedIds),checkedMs,nowMs);
+    for (const id of removedIds) {
+      db.prepare('INSERT INTO acquisition_selection_excluded_targets VALUES (?,?,?)').run(attemptId,id,nowMs);
+      db.prepare('UPDATE acquisition_target_claims SET active=0 WHERE attempt_id=? AND episode_id=?').run(attemptId,id);
+    }
+    const names=new Set(remaining.map(file=>file.name));
+    const removed=previous.filter(file=>!names.has(file.name));
+    for (const file of removed) db.prepare('DELETE FROM acquisition_file_plans WHERE attempt_id=? AND file_name=?').run(attemptId,file.name);
+    if (selection) {
+      const excluded=[...new Set([...selection.excludedFileNames,...removed.map(file=>file.name)])].sort();
+      db.prepare('UPDATE acquisition_torrent_selections SET excluded_json=? WHERE attempt_id=?').run(JSON.stringify(excluded),attemptId);
+    }
+    touchAttempt.run(nowMs,attemptId);
+  }
+
   return {
     ...bonuses,
     ...selections,
@@ -458,7 +479,7 @@ export function openAcquisitionLedger(dbPath) {
       if (!validId(requestId)) throw new TypeError('Invalid request ID');
       return { state: attemptForRequest.get(requestId) ? 'attempt_present' : 'no_attempt' };
     },
-    reserve({ requestId, candidate, episodeIds, preparedHash, plannedFiles,
+    reserve({ requestId, candidate, episodeIds, preparedHash, plannedFiles, availableEpisodeIds = [],
       evidencePolicy = 'strict', nowMs, restricted }) {
       if (!validId(requestId) || !validTime(nowMs) ||
           !['strict', 'first_time_permissive'].includes(evidencePolicy) ||
@@ -474,7 +495,7 @@ export function openAcquisitionLedger(dbPath) {
         if (!request || request.status !== 'held') return held('request_missing');
         const accessHold = requestAccessHold(db, requestId, restricted);
         if (accessHold) return held(accessHold);
-        const selectionReason = releaseReservationGate(db,requestId,candidate,episodeIds,nowMs,preparedHash,plannedFiles);
+        const selectionReason = releaseReservationGate(db,requestId,candidate,episodeIds,nowMs,preparedHash,plannedFiles,availableEpisodeIds);
         if (selectionReason) return held(selectionReason);
         const digest = digestForCandidate(candidate, request.anidb_id);
         if (episodeIds.some((id) => !requestedEpisode.get(requestId, request.anidb_id, id))) {
@@ -486,6 +507,24 @@ export function openAcquisitionLedger(dbPath) {
         if (existing && findRetirement.get(existing.id)) return held('candidate_retired');
         if (existing && findRecovery.get(existing.id)?.status === 'released') {
           return held('candidate_recovered');
+        }
+        if (existing && existing.request_id===requestId && existing.anidb_id===request.anidb_id &&
+            existing.status==='reserved' && existing.evidence_policy===evidencePolicy && !findStart.get(existing.id) &&
+            (existing.expected_hash===null || existing.expected_hash===preparedHash?.toLowerCase()) &&
+            nowMs>=existing.updated_ms && Array.isArray(availableEpisodeIds) && Array.isArray(plannedFiles)) {
+          const claimed=attemptEpisodes.all(existing.id).map(row=>row.episode_id);
+          const removed=claimed.filter(id=>!episodeIds.includes(id));
+          if (removed.length && removed.every(id=>availableEpisodeIds.includes(id)) && episodeIds.every(id=>claimed.includes(id))) {
+            const fresh=canonicalFilePlan(plannedFiles);
+            const previous=planRows.all(existing.id).map(item=>({name:item.file_name,size:item.file_size,episodeIds:JSON.parse(item.episode_key)}));
+            const narrowed=previous.length?selectMissingFiles(previous,claimed,availableEpisodeIds):null;
+            const selection=selections.getTorrentSelection(existing.id);
+            if (JSON.stringify(fresh.targetIds)===JSON.stringify([...episodeIds].sort((a,b)=>a-b)) &&
+                (!previous.length || narrowed.state==='missing_files' && JSON.stringify(narrowed.files)===JSON.stringify(fresh.files)) &&
+                (!selection || selection.torrentHash===preparedHash?.toLowerCase() && fresh.files.every(file=>selection.files.some(item=>item.name===file.name && item.size===file.size)))) {
+              saveNarrowedSelection(existing.id,previous,fresh.files,removed,nowMs,nowMs,selection);
+            }
+          }
         }
         if (existing) return existing.request_id === requestId && existing.anidb_id === request.anidb_id &&
           existing.evidence_policy === evidencePolicy &&
@@ -949,6 +988,36 @@ export function openAcquisitionLedger(dbPath) {
         }
         if (row.status === 'reserved') return { state: 'prepared', expectedHash: normalizedHash };
         return { state: row.status, expectedHash: normalizedHash };
+      });
+    },
+    reviseUnstartedSelection({ attemptId, hash, expectedPlan, availableEpisodeIds, checkedMs, nowMs, restricted }) {
+      if (!validId(attemptId) || !validHash(hash) || !validTime(nowMs) || !validTime(checkedMs) ||
+          !Array.isArray(availableEpisodeIds) || availableEpisodeIds.some(id=>!validId(id)) ||
+          new Set(availableEpisodeIds).size!==availableEpisodeIds.length) throw new TypeError('Invalid selection revision');
+      const expected = canonicalFilePlan(expectedPlan);
+      return transact(() => {
+        const row=findAttempt.get(attemptId);
+        if (!row || row.status!=='torrent_observed' || row.torrent_hash!==hash.toLowerCase() ||
+            findStart.get(attemptId) || findRelease.get(attemptId) || findRejection.get(attemptId) ||
+            findRetirement.get(attemptId) || findStallIntent.get(attemptId)) return held('selection_not_revisable');
+        if (nowMs<row.updated_ms || nowMs<checkedMs || nowMs-checkedMs>30_000) return held('availability_evidence_stale');
+        const request=requestRow.get(row.request_id);
+        if (!request || request.status!=='held') return held('request_missing');
+        const accessHold=requestAccessHold(db,row.request_id,restricted);
+        if (accessHold) return held(accessHold);
+        const ids=attemptEpisodes.all(attemptId).map(item=>item.episode_id);
+        const stored=planRows.all(attemptId).map(item=>({name:item.file_name,size:item.file_size,episodeIds:JSON.parse(item.episode_key)}));
+        if (JSON.stringify(stored)!==JSON.stringify(expected.files) ||
+            JSON.stringify(ids)!==JSON.stringify(expected.targetIds) ||
+            availableEpisodeIds.some(id=>!ids.includes(id))) return held('file_plan_changed');
+        const remaining=selectMissingFiles(stored,ids,availableEpisodeIds);
+        if (remaining.state!=='missing_files') return remaining;
+        if (!remaining.excludedFiles.length) return held('file_plan_unchanged');
+        const selection=selections.getTorrentSelection(attemptId);
+        if (!selection || selection.torrentHash!==hash.toLowerCase() || stored.some(file=>
+            !selection.files.some(item=>item.name===file.name && item.size===file.size))) return held('torrent_selection_conflict');
+        saveNarrowedSelection(attemptId,stored,remaining.files,remaining.excludedEpisodeIds,checkedMs,nowMs,selection);
+        return {state:'selection_revised'};
       });
     },
     recordFilePlan({ attemptId, hash, plannedFiles, nowMs }) {

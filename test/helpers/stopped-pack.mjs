@@ -18,7 +18,8 @@ export function encode(value) {
     .flatMap(key => [encode(key), encode(value[key])]), Buffer.from('e')]);
 }
 
-export async function stoppedPack(t, { count = 2, selected = [2], priorityFailure = 'before' } = {}) {
+export async function stoppedPack(t, { count = 2, selected = [2], priorityFailure = 'before',
+  reserve = true, evidencePolicy = 'strict' } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-stopped-pack-'));
   const dbPath = path.join(root, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -32,13 +33,17 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
     'piece length': 16384, pieces: Buffer.alloc(20, 97) };
   const bytes = encode({ info }), hash = createHash('sha1').update(encode(info)).digest('hex');
   const saveRoot = '/Downloads/negev', savePath = `${saveRoot}/${hash}`;
-  const candidate = { indexerId: 7, guid: 'season-pack' };
+  const candidate = { indexerId: 7, guid: 'season-pack',
+    title: `Example 01-${String(count).padStart(2, '0')} 1080p`, size: count * 100, seeders: 10, evidence: 'unverified' };
   const selectedFiles = files.filter(file => selected.includes(file.index + 1))
     .map(file => ({ name: file.name, size: file.size, episodeIds: [ids[file.index]] }));
-  const { attemptId } = ledger.reserve({ requestId: saved.requestId, candidate,
-    episodeIds: selectedFiles.flatMap(file => file.episodeIds), nowMs: 200 });
-  ledger.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
-  ledger.recordFilePlan({ attemptId, hash, plannedFiles: selectedFiles, nowMs: 202 });
+  let attemptId = null;
+  if (reserve) {
+    attemptId = ledger.reserve({ requestId: saved.requestId, candidate,
+      episodeIds: selectedFiles.flatMap(file => file.episodeIds), evidencePolicy, nowMs: 200 }).attemptId;
+    ledger.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
+    ledger.recordFilePlan({ attemptId, hash, plannedFiles: selectedFiles, nowMs: 202 });
+  }
   const state = { clock: 300, added: false, adds: 0, starts: 0, priorities: 0,
     ownerAllowed: true, mountReady: true, exports: 0, exportStatus: 200, corruptExport: false };
   const torrent = { hash, category: 'negev', save_path: savePath, state: 'stoppedDL',
@@ -76,9 +81,14 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
   const verifyStagingRoot = async () => state.mountReady
     ? { state: 'verified_staging_root' } : { state: 'held', reason: 'staging_root_unverified' };
   const prepared = { state: 'prepared_stopped', expected: { hash, category: 'negev', savePath },
+    files: files.map(file => ({ name: file.name, size: file.size })), version: 'v1', totalBytes: count * 100,
     form: buildStoppedTorrentAddForm({ torrentBytes: bytes, savePath, category: 'negev' }) };
   t.after(async () => { ledger.close(); requests.close(); await rm(root, { recursive: true, force: true }); });
-  const context = { root, dbPath, requests, ids, files, selectedFiles, state, torrent, hash, attemptId,
+  const context = { root, dbPath, requests, ids, files, selectedFiles, state, torrent, hash,
+    bytes, candidate, prepared, fetchImpl, authorizeRequest, verifyStagingRoot, saveRoot,
+    requestId: saved.requestId,
+    get attemptId() { return attemptId; },
+    useAttempt(id) { attemptId = id; },
     get ledger() { return ledger; },
     reopen() { ledger.close(); ledger = openAcquisitionLedger(dbPath); },
     dropSelection() {

@@ -261,7 +261,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
           const ownership = await checkOwnership(request.anidbId);
           if (ownership) return ownership;
           return submitMissingCandidate({ request, ...selected, authorizeRequest,
-            releaseQueries, readEvidence, offlineLookup,
+            releaseQueries, readEvidence, readPublicCoverage, offlineLookup,
             readRelatedTitles: relatedTitleReader, loadDetail: input=>loadDetail(input),
             readVideoExtensions, readBonusOwnership: pureMode?readBonusOwnership:undefined,
             allowRestrictedBonuses: canAcquireRestrictedBonuses(request)===true,
@@ -293,7 +293,7 @@ export function createAcquisitionStageProcessors({ requests, acquisitions,
       return processRecordedStart({ attemptId, requests, acquisitions, authorizeRequest,
         stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
         verifyStagingRoot, realpathImpl,
-        readEvidence, publicLibraryIds: publicLibraryIds(request.kind),
+        readEvidence, readPublicCoverage, publicLibraryIds: publicLibraryIds(request.kind),
         readRelatedTitles: relatedTitleReader, loadDetail, releaseQueries,
         readVideoExtensions, readBonusOwnership,
         fetchImpl, renewQbittorrent, now });

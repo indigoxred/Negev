@@ -143,10 +143,10 @@ test('legacy ambiguous first-time holds get one logged recheck, not endless revi
     } finally { raw.close(); }
   }));
 
-test('an old parked selection mismatch gets one guarded recovery turn', async () =>
+for (const reason of ['file_plan_mismatch','unexpected_selected_file','target_already_available','target_not_proven_unimported']) test(`an old parked ${reason} gets one guarded recovery turn`, async () =>
   startFixture(async ctx => {
     const claim = ctx.queue.claimNext({ nowMs: 1000 });
-    ctx.queue.recordResult({ ...claim, state: 'held', reason: 'file_plan_mismatch', checkedMs: 1001 });
+    ctx.queue.recordResult({ ...claim, state: 'held', reason, checkedMs: 1001 });
     const raw = new DatabaseSync(ctx.dbPath);
     try {
       raw.prepare('UPDATE start_checks SET version=2,next_due_ms=NULL WHERE attempt_id=?').run(claim.attemptId);
@@ -157,7 +157,7 @@ test('an old parked selection mismatch gets one guarded recovery turn', async ()
       assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61001);
       const retry = ctx.queue.claimNext({ nowMs: 61001 });
       assert.equal(retry.attemptId, claim.attemptId);
-      ctx.queue.recordResult({ ...retry, state: 'held', reason: 'file_plan_mismatch', checkedMs: 61002 });
+      ctx.queue.recordResult({ ...retry, state: 'held', reason, checkedMs: 61002 });
       ctx.reopen();
       assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, null,
         'a current real mismatch remains held for review');

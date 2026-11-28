@@ -1,3 +1,6 @@
+import { checkedPublicCoverage } from './checked-public-coverage.mjs';
+import { selectMissingFiles } from './select-missing-files.mjs';
+import { recoverTorrentSelection } from './recover-torrent-selection.mjs';
 import { collectAniDbDetail } from '../catalogue/collect-detail.mjs';
 import { checkAcquisitionAccess } from './acquisition-access.mjs';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
@@ -23,7 +26,7 @@ export async function startStoppedCandidate(options) {
   const {
   ledger, attemptId, expected, hostPath, inspectMounts, realpathImpl, authorizeRequest,
   verifyStagingRoot, saveRoot,
-  baseUrl, sessionId, readRequest, readEvidence, publicLibraryIds,
+  baseUrl, sessionId, readRequest, readEvidence, readPublicCoverage, publicLibraryIds,
   readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
   now = Date.now, fetchImpl = fetch, renewQbittorrent, timeoutMs = 10_000,
 } = options;
@@ -68,7 +71,7 @@ export async function startStoppedCandidate(options) {
   }
   const plannedFiles = ledger.getFilePlan(attemptId);
   if (!plannedFiles) return held('file_plan_missing');
-  const selection = ledger.getTorrentSelection?.(attemptId);
+  let selection = ledger.getTorrentSelection?.(attemptId);
   if (selection && selection.torrentHash !== expected.hash.toLowerCase()) return held('torrent_conflict');
   if (plannedFiles.length > 50 || attempt.episodeIds.length > 50) {
     if (typeof loadDetail !== 'function') return held('detail_unavailable');
@@ -161,13 +164,39 @@ export async function startStoppedCandidate(options) {
       timeoutMs, saveRoot, plannedFileNames, allowSelectedPassive:true,
       excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files });
   }
+  // Older observed torrents lack the descriptor journal. Only recover it when
+  // every saved selected file is still present exactly; changed plans stay held.
+  if (!selection && manifest.state==='manifest_safe' &&
+      manifest.videos.length!==selectedFiles.length) {
+    if (selectedFiles.some(file=>!manifest.videos.some(item=>item.name===file.name && item.size===file.size))) return held('file_plan_mismatch');
+    const recovered=await recoverTorrentSelection({acquisitions:ledger,attemptId,expected,
+      plan:selectedFiles,qbittorrent:{baseUrl,sessionId:activeSessionId},fetchImpl:activeFetch});
+    if (recovered.state!=='selection_recovered') return recovered;
+    const saved=ledger.recordTorrentSelection({attemptId,hash:expected.hash,files:recovered.files,
+      excludedFileNames:recovered.excludedFileNames,nowMs:now()});
+    if (saved.state!=='selection_recorded') return saved;
+    selection=ledger.getTorrentSelection(attemptId);
+    manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,
+      fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames,allowSelectedPassive:true,
+      excludedFileNames:selection.excludedFileNames,expectedFiles:selection.files});
+  }
+  const stagingReady = async () => {
+    try {
+      if (verifyStagingRoot) return (await verifyStagingRoot())?.state==='verified_staging_root';
+      const mounts=await inspectMounts();
+      return evaluateStagingMountIsolation(mounts,{hostPath}).state==='isolated_mount' &&
+        await realpathImpl(hostPath)===hostPath;
+    } catch { return false; }
+  };
   if(manifest.state==='manifest_needs_exclusions'){
+    if (!await stagingReady()) return held('staging_root_unverified');
     const access = await checkAcquisitionAccess(authorizeRequest, { requestId: request.id, attemptId });
     if (access.state === 'held') return access;
     const body=new URLSearchParams({hash:expected.hash,id:manifest.passive.map(file=>String(file.index)).join('|'),priority:'0'});
     try{const receipt=await activeFetch(new URL('/api/v2/torrents/filePrio',base),{method:'POST',headers:{Cookie:qbittorrentSessionCookie(activeSessionId)},body,redirect:'manual',signal:AbortSignal.timeout(timeoutMs)});await cancelResponseBody(receipt);}catch{/* Exact re-observation decides whether exclusion succeeded. */}
     manifest=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames,
       excludedFileNames: selection?.excludedFileNames, expectedFiles: selection?.files});
+    if (manifest.reason==='unexpected_selected_file' || manifest.state==='manifest_needs_exclusions') return held('passive_exclusion_unconfirmed');
   }
   if (manifest.state !== 'manifest_safe') return manifest;
   let manifestAtMs;
@@ -196,6 +225,41 @@ export async function startStoppedCandidate(options) {
       typeof paths.download_path !== 'string') return held('storage_path_unverified');
   if (paths.download_path !== '' && paths.download_path !== expected.savePath) {
     return held('incomplete_path_outside_staging');
+  }
+  if (!ledger.getStart?.(attemptId)) {
+    const scopedRequest={...request,episodeIds:attempt.episodeIds};
+    const coverage=await checkedPublicCoverage(readPublicCoverage,scopedRequest,now);
+    if (coverage.state==='held') return coverage;
+    if (coverage.availableEpisodeIds.length) {
+      const remaining=selectMissingFiles(plannedFiles,attempt.episodeIds,coverage.availableEpisodeIds);
+      if (remaining.state!=='missing_files') return remaining;
+      if (typeof ledger.reviseUnstartedSelection!=='function') return held('selection_not_revisable');
+      if (!selection) {
+        const recovered=await recoverTorrentSelection({acquisitions:ledger,attemptId,expected,
+          plan:plannedFiles,qbittorrent:{baseUrl,sessionId:activeSessionId},fetchImpl:activeFetch});
+        if (recovered.state!=='selection_recovered') return recovered;
+        const saved=ledger.recordTorrentSelection({attemptId,hash:expected.hash,files:recovered.files,
+          excludedFileNames:recovered.excludedFileNames,nowMs:now()});
+        if (saved.state!=='selection_recorded') return saved;
+      }
+      if (!await stagingReady()) return held('staging_root_unverified');
+      // Re-observe after awaiting public proof and preserve the full descriptor.
+      const journal=ledger.getTorrentSelection(attemptId);
+      const current=await observeStoppedManifest({baseUrl,sessionId:activeSessionId,expected,
+        fetchImpl:activeFetch,timeoutMs,saveRoot,plannedFileNames,
+        excludedFileNames:journal.excludedFileNames,expectedFiles:journal.files});
+      if (current.state!=='manifest_safe' || JSON.stringify(current.videos)!==JSON.stringify(manifest.videos)) return held('manifest_changed_before_start');
+      const fresh=await checkedPublicCoverage(readPublicCoverage,scopedRequest,now);
+      if (fresh.state==='held') return fresh;
+      if (JSON.stringify([...fresh.availableEpisodeIds].sort((a,b)=>a-b))!==
+          JSON.stringify([...coverage.availableEpisodeIds].sort((a,b)=>a-b))) return held('availability_evidence_stale');
+      const checkedMs=fresh.checkedAtMs;
+      const access=await checkAcquisitionAccess(authorizeRequest,{requestId:request.id,attemptId});
+      if (access.state==='held') return access;
+      const saved=ledger.reviseUnstartedSelection({attemptId,hash:expected.hash,expectedPlan:plannedFiles,
+        availableEpisodeIds:fresh.availableEpisodeIds,checkedMs,nowMs:now(),restricted:access.restricted});
+      return saved.state==='selection_revised' ? held('file_selection_changed') : saved;
+    }
   }
   const checked = await confirmMissingTargets({ request,
     episodeIds: attempt.episodeIds, readEvidence, publicLibraryIds,

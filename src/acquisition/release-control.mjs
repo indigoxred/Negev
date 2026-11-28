@@ -1,3 +1,4 @@
+import { selectMissingFiles } from './select-missing-files.mjs';
 import { durableControl, canonicalReleaseGuid, rememberLegacyControl } from './durable-release-candidate.mjs';
 import { initializePreferredReleases, validReleasePreference } from './preferred-release.mjs';
 // Private request-local intent, not an alternative download pipeline. Call
@@ -100,17 +101,21 @@ function validSelection(s) {
     Array.isArray(s.preview.episodeIds) && s.preview.episodeIds.length>0 &&
     Array.isArray(s.preview.files) && s.preview.files.length>0;
 }
-export function releaseReservationGate(db,id,candidate,episodeIds,nowMs,preparedHash,plannedFiles) {
+export function releaseReservationGate(db,id,candidate,episodeIds,nowMs,preparedHash,plannedFiles,availableEpisodeIds=[]) {
   // Old diagnostic databases need no migration just to read their attempts.
   if (!db.prepare('PRAGMA table_info(requests)').all().some(c=>c.name==='release_control')) return null;
   const control=readReleaseControl(db,id,nowMs);
   if (['selecting','proposal'].includes(control.phase)) return 'release_selection_pending';
   if (control.phase!=='chosen') return null;
   const s=control.selection;
+  const remaining=selectMissingFiles(s.preview.files,s.preview.episodeIds,availableEpisodeIds);
+  const acceptedFiles=sameReleaseFiles(plannedFiles,s.preview.files) ||
+    remaining.state==='missing_files' && sameReleaseFiles(plannedFiles,remaining.files) &&
+    JSON.stringify([...episodeIds].sort((a,b)=>a-b))===JSON.stringify(remaining.episodeIds);
   if (s.candidate.indexerId!==candidate.indexerId || canonicalReleaseGuid(s.candidate.guid,s.candidate.indexerId)!==canonicalReleaseGuid(candidate.guid,candidate.indexerId) ||
       s.candidate.title!==candidate.title || s.candidate.size!==candidate.size ||
       episodeIds.some(id=>!s.preview.episodeIds.includes(id)) ||
       preparedHash?.toLowerCase()!==s.preview.torrentHash ||
-      !sameReleaseFiles(plannedFiles,s.preview.files)) return 'release_choice_changed';
+      !acceptedFiles) return 'release_choice_changed';
   return null;
 }

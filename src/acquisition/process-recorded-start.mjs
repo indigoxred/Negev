@@ -15,7 +15,7 @@ const heldAfter = heldReporter('acquisition/process-recorded-start');
 // The start gate still rechecks stopped qBittorrent, staging and absence proof.
 export async function processRecordedStart({ attemptId, requests, acquisitions, authorizeRequest,
   stagingHostPath, qbitStagingRoot, qbittorrent, inspectMounts,
-  verifyStagingRoot, realpathImpl, readEvidence,
+  verifyStagingRoot, realpathImpl, readEvidence, readPublicCoverage,
   readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
   publicLibraryIds, fetchImpl = fetch, renewQbittorrent, now = Date.now,
   start = startStoppedCandidate } = {}) {
@@ -47,7 +47,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
     selection = acquisitions.getTorrentSelection?.(attemptId);
     if (selection && selection.torrentHash !== attempt.expectedHash) return held('torrent_conflict');
   } catch (error) { return heldAfter(error, 'attempt_unavailable'); }
-  if ((attempt.status === 'dispatch_unknown' || attempt.status === 'torrent_observed' && !selection) && attempt.expectedHash) {
+  if (attempt.status === 'dispatch_unknown' && attempt.expectedHash) {
     // The indexer may no longer list the release after qBittorrent accepted
     // it. Reconcile the saved hash from qBittorrent; never send another add.
     const pending = { hash: attempt.expectedHash, category: 'negev',
@@ -65,6 +65,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
     if (!selection && observed.state === 'manifest_safe' && plan &&
         signature(observed.videos) !== signature(plan) &&
         typeof acquisitions.recordTorrentSelection === 'function') {
+      if (plan.some(file=>!observed.videos.some(item=>item.name===file.name && item.size===file.size))) return held('file_plan_mismatch');
       const recovered = await recoverTorrentSelection({ acquisitions, attemptId,
         expected: pending, plan, qbittorrent, fetchImpl });
       if (recovered.state !== 'selection_recovered') return recovered;
@@ -131,7 +132,7 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
     hostPath: stagingHostPath, inspectMounts, verifyStagingRoot, realpathImpl,
     saveRoot: qbitStagingRoot,
     baseUrl: qbittorrent.baseUrl, sessionId: qbittorrent.sessionId,
-    readRequest: (id) => requests.getRequest(id), readEvidence,
+    readRequest: (id) => requests.getRequest(id), readEvidence, readPublicCoverage,
     readRelatedTitles, loadDetail, releaseQueries, readVideoExtensions, readBonusOwnership,
     publicLibraryIds, fetchImpl, renewQbittorrent, now });
 }

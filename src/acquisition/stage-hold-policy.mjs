@@ -37,7 +37,7 @@ export const START_SESSION_RETRY_HOLDS = Object.freeze([
   'account_access_changed', 'adult_access_disabled', 'restricted_or_unverified',
   'provider_unavailable', 'provider_http_403', 'authentication_backoff',
   'authentication_unavailable', 'metadata_reader_busy',
-  'availability_evidence_stale', 'import_activity_unverified',
+  'availability_evidence_stale', 'import_activity_unverified', 'file_selection_changed',
 ]);
 export const START_METADATA_RETRY_HOLDS = Object.freeze([
   'detail_unavailable', 'related_title_unavailable', 'shoko_settings_unavailable',
@@ -64,7 +64,7 @@ export const REQUEST_SESSION_RETRY_HOLDS = Object.freeze([
   'authentication_unavailable', 'release_search_incomplete',
   'import_quiet_window_unverified', 'torrent_hash_in_use',
   'service_stopping', 'metadata_reader_busy', 'release_preflight_unavailable',
-  'availability_evidence_stale', 'import_activity_unverified',
+  'availability_evidence_stale', 'import_activity_unverified', 'file_selection_changed',
   'provider_unavailable', 'release_selection_pending',
   'release_choice_changed',
 ]);

@@ -35,6 +35,18 @@ export function createTorrentSelectionLedger(db, transact) {
     excluded_json TEXT NOT NULL,
     recorded_ms INTEGER NOT NULL CHECK(recorded_ms>=0)
   ) STRICT`);
+  db.exec(`CREATE TABLE IF NOT EXISTS acquisition_selection_revisions (
+    attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL, previous_plan_json TEXT NOT NULL,
+    remaining_plan_json TEXT NOT NULL, excluded_episode_ids_json TEXT NOT NULL,
+    checked_ms INTEGER NOT NULL, revised_ms INTEGER NOT NULL,
+    PRIMARY KEY(attempt_id,revision)
+  ) STRICT;
+  CREATE TABLE IF NOT EXISTS acquisition_selection_excluded_targets (
+    attempt_id INTEGER NOT NULL REFERENCES acquisition_attempts(id) ON DELETE CASCADE,
+    episode_id INTEGER NOT NULL, excluded_ms INTEGER NOT NULL,
+    PRIMARY KEY(attempt_id,episode_id)
+  ) STRICT`);
   const find = db.prepare('SELECT * FROM acquisition_torrent_selections WHERE attempt_id=?');
   return {
     recordTorrentSelection({ attemptId, hash, files, excludedFileNames = [], nowMs }) {

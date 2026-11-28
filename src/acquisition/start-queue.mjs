@@ -68,7 +68,7 @@ export function openStartQueue(dbPath, { acquisitions = null } = {}) {
       db.exec('ALTER TABLE start_checks ADD COLUMN selection_policy_revision INTEGER NOT NULL DEFAULT 0 CHECK(selection_policy_revision>=0)');
     }
     reviveTransientHolds(db, { stage: 'start', table: 'start_checks',
-      reasons: ['file_plan_mismatch', 'unexpected_selected_file'],
+      reasons: ['file_plan_mismatch', 'unexpected_selected_file', 'target_already_available', 'target_not_proven_unimported'],
       extraWhere: `${REVIEWABLE_START} AND selection_policy_revision=0` });
     db.exec('UPDATE start_checks SET selection_policy_revision=1 WHERE selection_policy_revision=0');
     // Old properties-read failures were indistinguishable from actual storage
