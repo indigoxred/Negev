@@ -9,7 +9,7 @@ const MIN_COMPRESS_BYTES = 1024;
 
 // RFC 9110 section 12.5.3: explicit refusals override wildcards; identity
 // remains an acceptable fallback unless the client has excluded it too.
-function chooseEncoding(header, bytes) {
+function chooseEncoding(header, bytes, allowCompression) {
   const weights = new Map();
   for (const part of String(header ?? '').toLowerCase().split(',')) {
     const [coding, ...parameters] = part.trim().split(';').map(value => value.trim());
@@ -21,6 +21,7 @@ function chooseEncoding(header, bytes) {
     weights.set(coding, quality);
   }
   const identity = weights.get('identity') ?? (weights.get('*') === 0 ? 0 : null);
+  if (!allowCompression) return identity === 0 ? null : 'identity';
   if (bytes < MIN_COMPRESS_BYTES && identity !== 0) return 'identity';
   const quality = coding => weights.get(coding) ?? weights.get('*') ?? 0;
   const coding = quality('br') >= quality('gzip') ? 'br' : 'gzip';
@@ -30,6 +31,7 @@ function chooseEncoding(header, bytes) {
 }
 
 export function createStaticAsset(body, { contentType, cacheControl, headers = {} }) {
+  const allowCompression = !/^(?:image\/(?:png|jpeg|webp|avif|gif|x-icon|vnd\.microsoft\.icon)|font\/woff2)(?:;|$)/i.test(contentType);
   const raw = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf8');
   const tag = createHash('sha256').update(raw).digest('base64url').slice(0, 32);
   const encoded = new Map([['identity', raw]]);
@@ -44,7 +46,7 @@ export function createStaticAsset(body, { contentType, cacheControl, headers = {
     return encoded.get(encoding);
   };
   return (request, reply) => {
-    const encoding = chooseEncoding(request.headers['accept-encoding'], raw.length);
+    const encoding = chooseEncoding(request.headers['accept-encoding'], raw.length, allowCompression);
     if (encoding === null) return reply.headers(headers).header('Vary', 'Accept-Encoding')
       .header('Cache-Control', 'no-store').code(406).send();
     const etag = `"${tag}${encoding === 'identity' ? '' : `-${encoding}`}"`;

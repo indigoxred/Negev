@@ -70,3 +70,20 @@ test('the page keeps its security headers and fonts are cached for a week', () =
     assert.deepEqual(brotliDecompressSync(font.rawPayload), original);
     assert.ok(font.rawPayload.length < original.length * 0.7, `${font.rawPayload.length} of ${original.length}`);
   }));
+
+// Exercise the real routes, including PNG dimensions and cache revalidation.
+test('browser and deployment icons use small square renditions of the original art',()=>withApp(async app=>{
+ for (const [name,size] of [['favicon-32.png',32],['apple-touch-icon.png',180],['icon-192.png',192],['icon-512.png',512]]) {
+   const response=await app.inject({method:'GET',url:'/'+name,headers:{'accept-encoding':'br,gzip'}});
+   assert.equal(response.statusCode,200);assert.equal(response.headers['content-type'],'image/png');
+   assert.equal(response.headers['content-encoding'],undefined);
+   assert.equal(response.rawPayload.readUInt32BE(16),size);assert.equal(response.rawPayload.readUInt32BE(20),size);
+   assert.deepEqual(response.rawPayload,await source(name));
+   const cached=await app.inject({method:'GET',url:'/'+name,headers:{'if-none-match':response.headers.etag}});
+   assert.equal(cached.statusCode,304);assert.equal(cached.rawPayload.length,0);
+ }
+ const page=(await app.inject({method:'GET',url:'/'})).body;
+ assert.match(page,/rel="icon"[^>]*href="\/favicon-32.png"/);
+ assert.match(page,/rel="apple-touch-icon"[^>]*href="\/apple-touch-icon.png"/);
+ assert.match(page,/class="brand-mark" src="\/icon-192.png"/);
+}));
