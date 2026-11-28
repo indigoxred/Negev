@@ -54,7 +54,22 @@ test('a failed public probe blocks the attempt', async () => {
     probePublic: async () => { throw Error('Plex unavailable'); },
   }));
   assert.deepEqual(result, { state: 'held',
-    reason: 'public_probe_unverified' });
+    reason: 'availability_unavailable' });
+});
+
+test('provider outage provenance survives both first-time collectors', async () => {
+  for (const readEpisode of [async () => ({ state: 'unavailable' }),
+    async () => { throw Error('temporary Shoko outage'); }]) {
+    assert.deepEqual(await collectTargetScopedUncertain(providers({ readEpisode })),
+      { state: 'held', reason: 'availability_unavailable', episodeId: 1001 });
+  }
+  assert.deepEqual(await collectTargetScopedUncertain(providers({
+    probePublic: async () => ({ state: 'held', reason: 'public_probe_unavailable' }),
+  })), { state: 'held', reason: 'availability_unavailable' });
+  assert.deepEqual(await collectTargetScopedUncertain(providers({
+    probePublic: async () => ({ ...publicState, parts: [{ libraryId: 102 }] }),
+  })), { state: 'held', reason: 'public_probe_unverified' },
+  'a contradictory public observation is not classified as a transport outage');
 });
 
 
