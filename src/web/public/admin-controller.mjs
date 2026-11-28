@@ -4,6 +4,15 @@ import { titleRoute, requestRoute } from './consumer-route.mjs';
 // Owns account tools, invitation links and operational review pagination. Construction does not register event handlers.
 export function createAdminController({ api, applyAdultVisibility, byId, element, message, titleLabel, readAdultPreference, reviewResponses, sessionResponses, state, window = globalThis.window, location = globalThis.location, navigator = globalThis.navigator }) {
   let nextReviewAttemptId = null;
+  let invitesRead = 0;
+  let usersRead = 0;
+
+  function currentAdminSession() {
+    const session = sessionResponses.current();
+    const userId = state.user?.id;
+    return () => sessionResponses.isCurrent(session) &&
+      state.user?.id === userId && state.user?.role === 'admin';
+  }
 
   function reviewActionsFor(stage) {
     if (stage === 'start_hold') return [
@@ -56,15 +65,18 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
           control.type = 'button';
           control.addEventListener('click', async () => {
             if (!window.confirm(prompt)) return;
+            const isCurrent = currentAdminSession();
             for (const button of actions.querySelectorAll('button')) button.disabled = true;
             try {
               const result = await api(`/api/admin/review/${item.attemptId}`, {
                 method: 'POST', body: JSON.stringify({ stage: item.stage, action }) });
+              if (!isCurrent()) return;
               message(result.state === 'released'
                 ? 'Download released. Its episodes can be picked up again. No media files were removed.'
                 : 'Retry scheduled. Negev will check this item again shortly.');
               void loadOperationalReview();
             } catch (error) {
+              if (!isCurrent()) return;
               message(error.message, true);
               for (const button of actions.querySelectorAll('button')) button.disabled = false;
             }
@@ -134,11 +146,14 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
 
   async function loadInvites() {
     if (state.user?.role !== 'admin') return;
+    const sessionCurrent = currentAdminSession();
+    const read = ++invitesRead;
+    const isCurrent = () => sessionCurrent() && read === invitesRead;
     const list = byId('admin-invites');
     list.replaceChildren(element('p', 'Loading invitations…', 'muted'));
     try {
       const page = await api('/api/admin/invitations');
-      if (state.user?.role !== 'admin') return;
+      if (!isCurrent()) return;
       if (!page.items.length) {
         list.replaceChildren(element('p', 'No invitations yet.', 'muted'));
         return;
@@ -159,29 +174,35 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
           revoke.type = 'button';
           revoke.setAttribute('aria-label', `Revoke the invitation that ${detail}`);
           revoke.addEventListener('click', async () => {
+            const mutationCurrent = currentAdminSession();
             revoke.disabled = true;
             try {
               await api(`/api/admin/invitations/${invite.id}/revoke`, { method: 'POST', body: '{}' });
+              if (!mutationCurrent()) return;
               message('Invitation revoked. Its link no longer works.');
               void loadInvites();
-            } catch (error) { message(error.message, true); revoke.disabled = false; }
+            } catch (error) { if (mutationCurrent()) { message(error.message, true); revoke.disabled = false; } }
           });
           row.append(revoke);
         }
         return row;
       }));
     } catch {
+      if (!isCurrent()) return;
       list.replaceChildren(element('p', 'Invitations are unavailable right now.', 'muted'));
     }
   }
 
   async function loadUsers() {
     if (state.user?.role !== 'admin') return;
+    const sessionCurrent = currentAdminSession();
+    const read = ++usersRead;
+    const isCurrent = () => sessionCurrent() && read === usersRead;
     const list = byId('admin-users');
     list.replaceChildren(element('p', 'Loading accounts…', 'muted'));
     try {
       const page = await api('/api/admin/users');
-      if (state.user?.role !== 'admin') return;
+      if (!isCurrent()) return;
       state.usersLoaded = true;
       list.replaceChildren();
       for (const user of page.items) {
@@ -199,10 +220,12 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
         button.setAttribute('aria-pressed', String(user.adultAllowed));
         button.disabled = user.disabled;
         button.addEventListener('click', async () => {
+          const mutationCurrent = currentAdminSession();
           button.disabled = true;
           try {
             const result = await api(`/api/admin/users/${user.id}/adult`, {
               method: 'PATCH', body: JSON.stringify({ allowed: !user.adultAllowed }) });
+            if (!mutationCurrent()) return;
             user.adultAllowed = result.adultAllowed;
             button.textContent = user.adultAllowed ? '18+ allowed' : '18+ blocked';
             button.setAttribute('aria-pressed', String(user.adultAllowed));
@@ -211,14 +234,15 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
               state.showAdult = user.adultAllowed && readAdultPreference(user.id);
               applyAdultVisibility();
             }
-          } catch (error) { message(error.message, true); }
-          finally { button.disabled = user.disabled; }
+          } catch (error) { if (mutationCurrent()) message(error.message, true); }
+          finally { if (mutationCurrent()) button.disabled = user.disabled; }
         });
         row.append(button);
         const reset = element('button', 'Reset password', 'quiet');
         reset.type = 'button';
         reset.setAttribute('aria-label', `Create a password reset link for ${user.username}`);
         reset.addEventListener('click', async () => {
+          const mutationCurrent = currentAdminSession();
           reset.disabled = true;
           try {
             const session = sessionResponses.current();
@@ -227,8 +251,8 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
             showShareLink(`Password reset link for ${result.username}`, linkFor('reset', result.code),
               'Works once and expires in 24 hours. Using it signs that account out everywhere.' +
               (user.disabled ? ' The account stays disabled until you enable it.' : ''), session);
-          } catch (error) { message(error.message, true); }
-          finally { reset.disabled = false; }
+          } catch (error) { if (mutationCurrent()) message(error.message, true); }
+          finally { if (mutationCurrent()) reset.disabled = false; }
         });
         row.append(reset);
         if (user.id !== state.user.id) {
@@ -241,10 +265,12 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
             if (!user.disabled && !confirm(`Disable ${user.username}? They are signed out ` +
                 'everywhere and cannot sign in, and their requests pause, until you enable ' +
                 'the account again.')) return;
+            const mutationCurrent = currentAdminSession();
             access.disabled = true;
             try {
               const result = await api(`/api/admin/users/${user.id}/disabled`, {
                 method: 'PATCH', body: JSON.stringify({ disabled: !user.disabled }) });
+              if (!mutationCurrent()) return;
               user.disabled = result.disabled;
               access.textContent = user.disabled ? 'Enable account' : 'Disable account';
               access.setAttribute('aria-label',
@@ -252,8 +278,8 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
               button.disabled = user.disabled;
               showLabel();
               remove.hidden = !user.disabled;
-            } catch (error) { message(error.message, true); }
-            finally { access.disabled = false; }
+            } catch (error) { if (mutationCurrent()) message(error.message, true); }
+            finally { if (mutationCurrent()) access.disabled = false; }
           });
           // Deleting is only offered once the account is disabled.
           const remove = element('button', 'Delete account', 'quiet danger');
@@ -264,22 +290,25 @@ export function createAdminController({ api, applyAdultVisibility, byId, element
             if (!confirm(`Permanently delete ${user.username}? Their account and undispatched requests are ` +
                 'removed. Downloads that started or may have started stay as closed history. ' +
                 'Unsettled downloads must be reconciled first. This cannot be undone.')) return;
+            const mutationCurrent = currentAdminSession();
             remove.disabled = true;
             try {
               const result = await api(`/api/admin/users/${user.id}/delete`,
                 { method: 'POST', body: '{}' });
+              if (!mutationCurrent()) return;
               message(`Deleted ${result.username}: ${result.deletedRequests} request` +
                 `${result.deletedRequests === 1 ? '' : 's'} removed` +
                 (result.keptStartedRequests ? `, ${result.keptStartedRequests} started ` +
                   `download${result.keptStartedRequests === 1 ? '' : 's'} kept as history.` : '.'));
               void loadUsers();
-            } catch (error) { message(error.message, true); remove.disabled = false; }
+            } catch (error) { if (mutationCurrent()) { message(error.message, true); remove.disabled = false; } }
           });
           row.append(access, remove);
         }
         list.append(row);
       }
     } catch {
+      if (!isCurrent()) return;
       list.replaceChildren(element('p', 'Account settings are unavailable right now.', 'muted'));
     }
   }

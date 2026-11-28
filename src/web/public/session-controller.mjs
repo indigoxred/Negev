@@ -42,6 +42,16 @@ export function createSessionController({
 }) {
   let refreshing = null;
   let lastSessionCheckMs = -Infinity;
+  function applyCapabilities(data) {
+    state.csrf = data.csrfToken;
+    state.releaseSearch = data.capabilities?.releaseSearch === true;
+    state.detailLoad = data.capabilities?.detailLoad === true;
+    state.titleChecks = data.capabilities?.titleChecks === true;
+    state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
+    byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
+      ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
+      : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
+  }
   function showSession(data) {
     if (state.user?.id !== data.user.id ||
         state.user?.adultAllowed !== data.user.adultAllowed ||
@@ -78,6 +88,7 @@ export function createSessionController({
         'Select a result to see its details.', 'muted'));
       state.nextBeforeId = { watching: null, history: null, preparing: null };
       state.requestHistoryExpanded = false;
+      state.usersLoaded = false;
       state.requestScope = data.user.role === 'admin' ? 'all' : 'mine';
       state.libraryLoaded = false;
       state.libraryAfter = null;
@@ -98,14 +109,7 @@ export function createSessionController({
       readAdultPreference(data.user.id);
     state.showChinese = readChinesePreference(data.user.id);
     state.preferEnglish = readEnglishTitlePreference(data.user.id);
-    state.csrf = data.csrfToken;
-    state.releaseSearch = data.capabilities?.releaseSearch === true;
-    state.detailLoad = data.capabilities?.detailLoad === true;
-    state.titleChecks = data.capabilities?.titleChecks === true;
-    state.acquisitionState = data.capabilities?.acquisitionState || 'disabled';
-    byId('service-notice').textContent = data.capabilities?.availabilityChecks === true
-      ? `Negev is in preview. ${currentAcquisitionNotice()} Public Plex availability can be checked; an unconfirmed result does not mean a file is missing.`
-      : `Negev is in preview. ${currentAcquisitionNotice()} Public Plex checks are not active.`;
+    applyCapabilities(data);
     byId('auth').hidden = true;
     byId('session-loading').hidden = true;
     byId('workspace').hidden = false;
@@ -221,7 +225,7 @@ export function createSessionController({
       if (background && state.user?.id === data.user.id &&
           state.user.adultAllowed === data.user.adultAllowed &&
           state.user.role === data.user.role) {
-        state.csrf = data.csrfToken;
+        applyCapabilities(data);
         return true;
       }
       showSession(data);

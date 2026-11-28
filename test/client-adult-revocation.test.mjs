@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createSessionController } from '../src/web/public/session-controller.mjs';
 import { createApiClient } from '../src/web/public/api-client.mjs';
 import { createResponseEpoch } from '../src/web/public/response-epoch.mjs';
+import { acquisitionNotice } from '../src/web/public/acquisition-notice.mjs';
 
 function fixture() {
   const nodes = new Map(), epoch = createResponseEpoch();
@@ -69,6 +70,41 @@ test('background session checks preserve unchanged work and bound visible pollin
   await f.controller.refreshVisibleSession(); assert.equal(f.reads(), 1);
   f.document.hidden = false;
   await f.controller.refreshVisibleSession(); assert.equal(f.reads(), 2);
+});
+
+test('background session checks update runtime notices without resetting current work', async () => {
+  const f = fixture();
+  f.byId('query').value = 'unfinished search';
+  let runtime = 'running';
+  const controller = createSessionController({ ...f,
+    api: async () => ({ user: { ...f.state.user }, csrfToken: 'fresh',
+      capabilities: { acquisitionState: runtime, releaseSearch: true,
+        detailLoad: true, titleChecks: true, availabilityChecks: true } }),
+    currentAcquisitionNotice: () => acquisitionNotice(f.state.acquisitionState) });
+  const generation = f.epoch.current();
+  for (const [status, notice] of [['running', /reviewed automatically/],
+    ['reconciliation_failed', /paused/], ['waiting_with_review', /Some items need review/]]) {
+    runtime = status;
+    await controller.refreshSession({ background: true });
+    assert.equal(f.state.acquisitionState, status);
+    assert.match(f.byId('service-notice').textContent, notice);
+    assert.equal(f.byId('query').value, 'unfinished search');
+    assert.equal(f.state.selected.anidbId, 99);
+    assert.equal(f.renders(), 0);
+    assert.equal(f.epoch.isCurrent(generation), true);
+  }
+  assert.equal(f.state.releaseSearch, true);
+  assert.equal(f.state.detailLoad, true);
+  assert.equal(f.state.titleChecks, true);
+});
+
+test('permission changes invalidate loaded admin settings before rerendering the route', async () => {
+  const f = fixture();
+  f.state.user.role = 'admin';
+  f.state.usersLoaded = true;
+  const controller = createSessionController({ ...f,
+    renderRoute: () => assert.equal(f.state.usersLoaded, false) });
+  controller.showSession({ user: { ...f.state.user, adultAllowed: false }, csrfToken: 'fresh' });
 });
 
 test('API permission signal refreshes the current account before resolving and ignores old sessions', async () => {
