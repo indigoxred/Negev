@@ -30,7 +30,11 @@ export async function collectTargetScopedUncertain({ anidbId, episodeIds,
   const inspectPublic = async () => {
     let result;
     try { result = await probePublic({ kind }); }
-    catch (error) { return heldAfter(error, 'public_probe_unverified'); }
+    catch (error) { return heldAfter(error, 'availability_unavailable'); }
+    if (result?.state === 'unavailable' || result?.state === 'held' &&
+        result.reason === 'public_probe_unavailable') {
+      return held('availability_unavailable');
+    }
     if (result?.state !== 'healthy_unconfirmed' ||
         result.probeCoverage !== 'health_only' ||
         result.sourceVerified !== true || result.complete !== false ||

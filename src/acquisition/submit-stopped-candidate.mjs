@@ -2,6 +2,7 @@ import { cancelResponseBody, readBoundedJson, readBoundedText } from '../http/bo
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
 import { observeStoppedManifest } from './observe-stopped-manifest.mjs';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { matchesStagingSavePath } from './staging-save-path.mjs';
 import { acquireAttemptOperation } from './attempt-operation-ownership.mjs';
@@ -68,6 +69,9 @@ async function submitOwnedCandidate({
   }
   const metainfo = await exactPreparedTorrent(prepared, saveRoot);
   if (!metainfo) return held('prepared_torrent_mismatch');
+  if (metainfo.files.some(file => !['video', 'subtitle', 'passive'].includes(torrentFileKind(file.name)))) {
+    return held('unsafe_file');
+  }
   const checkMounts = async () => {
     if (verifyStagingRoot) {
       try {
@@ -92,6 +96,11 @@ async function submitOwnedCandidate({
   const bound = ledger.bindPreparedTorrent({ attemptId, candidate,
     hash: expected.hash, nowMs });
   if (bound.state === 'held') return bound;
+  if (typeof ledger.recordTorrentSelection === 'function') {
+    const saved = ledger.recordTorrentSelection({ attemptId, hash: expected.hash,
+      files: metainfo.files, excludedFileNames, nowMs });
+    if (saved.state !== 'selection_recorded') return saved;
+  } else if (excludedFileNames?.length) return held('selection_journal_unavailable');
 
   const headers = { Cookie: qbittorrentSessionCookie(sessionId) };
   if (bound.state === 'prepared') {
@@ -170,6 +179,10 @@ async function submitOwnedCandidate({
       plannedFileNames, excludedFileNames, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state === 'manifest_needs_exclusions') {
+    const access = await checkAcquisitionAccess(authorizeRequest, { attemptId });
+    if (access.state === 'held') return access;
+    const isolation = await checkMounts();
+    if (isolation.state !== 'isolated_mount') return isolation;
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),
       priority: '0' });

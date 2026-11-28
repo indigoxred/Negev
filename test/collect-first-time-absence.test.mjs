@@ -49,7 +49,8 @@ test('hashing, wrong title, and provider outage cannot claim absence', async () 
       readPublic: async () => { publicReads++; return {}; },
     }));
     assert.deepEqual(result, { state: 'held',
-      reason: 'target_not_proven_unimported', episodeId: 1001 });
+      reason: observed.state === 'unavailable' ? 'availability_unavailable'
+        : 'target_not_proven_unimported', episodeId: 1001 });
     assert.equal(publicReads, 0);
   }
 });

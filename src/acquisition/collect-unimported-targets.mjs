@@ -18,10 +18,13 @@ export async function collectUnimportedTargets({ anidbId, episodeIds,
     const batch = episodeIds.slice(offset, offset + 4);
     const observations = await Promise.all(batch.map(async episodeId => {
       try { return await readEpisode({ anidbId, episodeId }); }
-      catch { return null; }
+      catch { return { state: 'unavailable' }; }
     }));
     for (const [index, episodeId] of batch.entries()) {
       const observed = observations[index];
+      if (observed?.state === 'unavailable') {
+        return { state: 'held', reason: 'availability_unavailable', episodeId };
+      }
       if (observed?.state === 'busy') {
         return { state: 'held', reason: 'metadata_reader_busy', episodeId };
       }

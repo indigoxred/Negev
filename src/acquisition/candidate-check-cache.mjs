@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { torrentFileKind } from './evaluate-stopped-manifest.mjs';
 
 const relatedGuardRevision = 'trusted-title-season-v3';
 const packBudgetRevision = 'completed-pack-capacity-v1';
@@ -16,7 +17,7 @@ for (const reason of ['ambiguous_catalogue_number','ambiguous_movie_scope',
   'invalid_piece_list','unsupported_torrent_version']) deterministic.add(reason);
 const fields = ['state', 'reason', 'requestId', 'anidbId', 'searchQuery', 'identityTitle',
   'torrentHash', 'shokoPreview', 'shokoPreviewConflict', 'correspondence', 'version', 'totalBytes',
-  'episodeIds', 'files', 'bonusFiles', 'skippedBonuses', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
+  'episodeIds', 'files', 'mappingFiles', 'bonusFiles', 'skippedBonuses', 'subtitles', 'filesToExclude', 'registeredInAniDb', 'downloadStarted'];
 const keyFor = ({ request, candidate }) => createHash('sha256').update(JSON.stringify([
   'candidate-check-v4-bonuses', request.id, request.anidbId, request.kind,
   [...request.episodeIds].sort((a, b) => a - b), candidate.indexerId,
@@ -49,6 +50,10 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
       try {
         if (!row) return null;
         const result = JSON.parse(row.result_json);
+        if (result.state === 'preflight' &&
+            result.filesToExclude?.some(file => torrentFileKind(file.name) === 'video') &&
+            result._mappingContextRevision !== 1) return null;
+        delete result._mappingContextRevision;
         // Old parsing decisions must not hold saved requests for six hours.
         // Keep unrelated negatives and positive evidence reusable.
         if (result.state === 'held' && result.reason === 'related_installment_mismatch' &&
@@ -74,6 +79,7 @@ export function openCandidateCheckCache(dbPath, { now = Date.now } = {}) {
       if (!positive && !(result?.state === 'held' && deterministic.has(result.reason))) return;
       const safe = Object.fromEntries(fields.filter(key => result[key] !== undefined)
         .map(key => [key, result[key]]));
+      if (positive) safe._mappingContextRevision = 1;
       if (result.reason === 'related_installment_mismatch') safe._relatedGuardRevision = relatedGuardRevision;
       if (result.reason === 'release_title_mismatch') safe._titleIdentityRevision = titleIdentityRevision;
       if (result.reason === 'shoko_preview_wrong_identity') safe._previewIdentityRevision = previewIdentityRevision;

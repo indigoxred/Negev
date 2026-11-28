@@ -87,6 +87,83 @@ test('decisive start evidence still reaches review after its single retry', asyn
     assert.deepEqual(ctx.queue.listReviewNeeded().map((row) => row.reason), ['file_plan_mismatch']);
   }));
 
+test('first-time provider outages remain due across repeated checks and restart', async () =>
+  startFixture(async (ctx) => {
+    const { collectTargetScopedUncertain } = await import('../src/acquisition/collect-target-scoped-uncertain.mjs');
+    const first = ctx.ids[0].attemptId;
+    let clock = 1000, restored = false;
+    const processAttempt = async () => collectTargetScopedUncertain({
+        anidbId: 42, episodeIds: [1001], kind: 'series', publicLibraryIds: [102],
+        readEpisode: async target => restored ? { state: 'ok', files: [{}], ...target }
+          : { state: 'unavailable' },
+        probePublic: async () => { throw Error('must not pass the Shoko gate'); },
+        now: () => clock,
+      });
+    const worker = createStartWorker({ queue: ctx.queue, now: () => clock, processAttempt });
+    for (let turn = 0; turn < 4; turn++) {
+      assert.equal((await worker.runOnce()).attemptId, first);
+      const saved = ctx.queue.getResult(first);
+      assert.equal(saved.reason, 'availability_unavailable');
+      assert.ok(saved.nextDueMs > clock, 'an outage must retain a paced retry');
+      clock = saved.nextDueMs;
+    }
+    ctx.reopen();
+    restored = true;
+    const reopenedWorker = createStartWorker({ queue: ctx.queue, now: () => clock, processAttempt });
+    assert.equal((await reopenedWorker.runOnce()).attemptId, first);
+    assert.equal(ctx.queue.getResult(first).reason, 'target_not_proven_unimported');
+    assert.equal(ctx.queue.getResult(first).nextDueMs, null,
+      'positive imported ownership after recovery is still held for review');
+  }));
+
+test('legacy ambiguous first-time holds get one logged recheck, not endless revival', async () =>
+  startFixture(async (ctx) => {
+    const raw = new DatabaseSync(ctx.dbPath);
+    try {
+      for (const [index, reason] of ['public_probe_unverified', 'target_not_proven_unimported'].entries()) {
+        const claim = ctx.queue.claimNext({ nowMs: 1000 });
+        assert.equal(claim.attemptId, ctx.ids[index].attemptId);
+        ctx.queue.recordResult({ ...claim, state: 'held', reason, checkedMs: 1001 });
+        raw.prepare('UPDATE start_checks SET version=2,next_due_ms=NULL WHERE attempt_id=?').run(claim.attemptId);
+      }
+      if (raw.prepare('PRAGMA table_info(start_checks)').all().some(c => c.name === 'first_time_policy_revision')) {
+        raw.exec('UPDATE start_checks SET first_time_policy_revision=0');
+      }
+      ctx.reopen();
+      const id = ctx.ids[0].attemptId;
+      assert.equal(ctx.queue.getResult(id).nextDueMs, 61001);
+      const claim = ctx.queue.claimNext({ nowMs: 61001 });
+      assert.equal(claim.attemptId, id);
+      ctx.queue.recordResult({ ...claim, state: 'held',
+        reason: 'public_probe_unverified', checkedMs: 61002 });
+      ctx.reopen();
+      assert.equal(ctx.queue.getResult(id).nextDueMs, null,
+        'a fresh contradictory observation must not be revived on every restart');
+      assert.equal(raw.prepare("SELECT COUNT(*) n FROM stage_hold_policy_revivals WHERE reason IN ('public_probe_unverified','target_not_proven_unimported')").get().n, 2);
+    } finally { raw.close(); }
+  }));
+
+for (const reason of ['file_plan_mismatch','unexpected_selected_file','target_already_available','target_not_proven_unimported']) test(`an old parked ${reason} gets one guarded recovery turn`, async () =>
+  startFixture(async ctx => {
+    const claim = ctx.queue.claimNext({ nowMs: 1000 });
+    ctx.queue.recordResult({ ...claim, state: 'held', reason, checkedMs: 1001 });
+    const raw = new DatabaseSync(ctx.dbPath);
+    try {
+      raw.prepare('UPDATE start_checks SET version=2,next_due_ms=NULL WHERE attempt_id=?').run(claim.attemptId);
+      if (raw.prepare('PRAGMA table_info(start_checks)').all().some(c => c.name === 'selection_policy_revision')) {
+        raw.exec('UPDATE start_checks SET selection_policy_revision=0');
+      }
+      ctx.reopen();
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, 61001);
+      const retry = ctx.queue.claimNext({ nowMs: 61001 });
+      assert.equal(retry.attemptId, claim.attemptId);
+      ctx.queue.recordResult({ ...retry, state: 'held', reason, checkedMs: 61002 });
+      ctx.reopen();
+      assert.equal(ctx.queue.getResult(claim.attemptId).nextDueMs, null,
+        'a current real mismatch remains held for review');
+    } finally { raw.close(); }
+  }));
+
 test('legacy parked transient start holds are revived once, logged and exactly reversible', async () =>
   startFixture(async (ctx) => {
     const [a, b] = ctx.ids.map((row) => row.attemptId);

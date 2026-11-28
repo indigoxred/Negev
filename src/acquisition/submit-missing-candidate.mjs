@@ -55,7 +55,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   plannedFiles, expectedHash, searchQuery, releaseQueries = async () => [],
   readRelatedTitles, offlineLookup, loadDetail, readVideoExtensions, readBonusOwnership,
   allowRestrictedBonuses = false,
-  readEvidence, publicLibraryIds, ledger,
+  readEvidence, readPublicCoverage, publicLibraryIds, ledger,
   renewQbittorrent, authorizeRequest,
   firstTimePolicy = 'strict', now = Date.now, prowlarr, qbittorrent }) {
   let beforeReservation = true;
@@ -156,10 +156,14 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
     episode.type === 'Special' && request.episodeIds.includes(episode.id));
   // Re-derive the episode map even when a caller supplies a reviewed plan.
   // The final server boundary cannot trust stale or forged preflight fields.
-  const mapped = planTorrentTargets({ request, detail, prepared:mainPrepared,
+  if (episodeIds !== undefined && (!Array.isArray(episodeIds) || !episodeIds.length ||
+      new Set(episodeIds).size !== episodeIds.length || episodeIds.some(id => !request.episodeIds.includes(id)))) {
+    return held('file_plan_mismatch');
+  }
+  const mapped = planTorrentTargets({ request: episodeIds === undefined ? request : { ...request, episodeIds }, detail, prepared:mainPrepared,
     releaseTitle: candidate.title, trustedTitle: identityQuery,
     allowTitleMetadataVariation: !verifiedIdentity, today: new Date(now()).toISOString().slice(0,10) });
-  if (mapped.state !== 'planned_targets') return mapped;
+  if (mapped.state !== 'planned_targets') return episodeIds !== undefined && mapped.reason === 'no_requested_video' ? held('file_plan_mismatch') : mapped;
   if ((episodeIds !== undefined || plannedFiles !== undefined) &&
       !exactFilePlan(mainPrepared, plannedFiles, episodeIds, allowOptionalClips,
         mapped.excludedVideoNames)) return held('file_plan_mismatch');
@@ -243,7 +247,7 @@ export async function submitMissingCandidate({ request, candidate, detail, episo
   beforeReservation = false;
   const reserved = await reserveMissingTargets({ request, candidate, episodeIds: selectedEpisodeIds,
     preparedHash:prepared.expected.hash,plannedFiles,
-    readEvidence, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve, authorizeRequest });
+    readEvidence, readPublicCoverage, publicLibraryIds, ledger, firstTimePolicy, now, beforeReserve, authorizeRequest });
   if (!['reserved', 'existing'].includes(reserved.state)) return reserved;
   // Once the stopped torrent is recorded, start/completion workers own it.
   // Replaying its manifest here cannot make progress after it has downloaded,

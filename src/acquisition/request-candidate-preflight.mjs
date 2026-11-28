@@ -254,6 +254,10 @@ export async function previewRequestCandidate({ requestId, candidate,
     ...(correspondence ? { correspondence } : {}),
     version: prepared.version, totalBytes: prepared.totalBytes,
     episodeIds: plan.episodeIds, files: plan.plannedFiles,
+    ...(plan.numberingEvidence === 'complete_absolute_sequence' ? {
+      mappingFiles: mainPrepared.files.filter(file => torrentFileKind(file.name) === 'video')
+        .map(file => ({ name: file.name, size: file.size })),
+    } : {}),
     ...(bonus.bonusFiles.length || bonus.skippedBonuses.length ?
       { bonusFiles: bonus.bonusFiles, skippedBonuses: bonus.skippedBonuses } : {}),
     subtitles: prepared.files.filter((file) =>

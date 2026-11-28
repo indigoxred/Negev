@@ -1,3 +1,4 @@
+import { checkedPublicCoverage } from './checked-public-coverage.mjs';
 import { MAX_ACQUISITION_TARGETS } from './torrent-file-limits.mjs';
 import { confirmMissingTargets } from './confirm-missing-targets.mjs';
 import { checkAcquisitionAccess } from './acquisition-access.mjs';
@@ -9,7 +10,7 @@ const validId = (id) => Number.isSafeInteger(id) && id > 0;
 // The observation must be one fresh, complete snapshot for the chosen
 // targets. A Shoko import waiting for Plex is not an absent target.
 export async function reserveMissingTargets({ request, candidate, episodeIds,
-  readEvidence, publicLibraryIds, ledger, authorizeRequest,
+  readEvidence, readPublicCoverage, publicLibraryIds, ledger, authorizeRequest,
   firstTimePolicy = 'strict', now = Date.now, beforeReserve, preparedHash, plannedFiles }) {
   if (!validId(request?.id) || !validId(request.anidbId) || request.status !== 'held' ||
       !Array.isArray(request.episodeIds) || request.episodeIds.length === 0 ||
@@ -52,7 +53,9 @@ export async function reserveMissingTargets({ request, candidate, episodeIds,
       typeof preflight.reason === 'string' ? preflight :
       held('candidate_preflight_unavailable');
   }
-  return ledger.reserve({ requestId: request.id, candidate, episodeIds, restricted: access.restricted,
+  const coverage = await checkedPublicCoverage(readPublicCoverage, request, now);
+  if (coverage.state === 'held') return coverage;
+  return ledger.reserve({ requestId: request.id, candidate, episodeIds, availableEpisodeIds:coverage.availableEpisodeIds, restricted: access.restricted,
     ...(preparedHash===undefined?{}:{preparedHash,plannedFiles}),
     evidencePolicy: checked.evidencePolicy ?? 'strict',
     nowMs: checked.checkedAtMs });

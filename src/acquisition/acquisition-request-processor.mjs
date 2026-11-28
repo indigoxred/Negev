@@ -1,5 +1,5 @@
 import { openQualityInspectionRetry, transientInspectionFailure } from './quality-inspection-retry.mjs';
-import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
+import { MAX_ACQUISITION_TARGETS, MAX_ACQUISITION_VIDEOS, MAX_TORRENT_FILES } from './torrent-file-limits.mjs';
 import { isCompleteAniDbDetail } from '../catalogue/hydration-ledger.mjs';
 import { matchesTrustedReleaseTitle, matchesSeasonLabelledTitle, planTorrentTargets } from './plan-torrent-targets.mjs';
 import { createHash } from 'node:crypto';
@@ -11,6 +11,7 @@ import { correspondenceLevel, publicRelease } from './release-selection.mjs';
 import { sameReleaseFiles } from './release-control.mjs';
 import { matchesPreferredGroup } from './preferred-release.mjs';
 import { matchesReleaseFilters } from '../web/public/release-choice-fields.mjs';
+import { selectMissingFiles } from './select-missing-files.mjs';
 
 import { heldReporter } from '../runtime/held-diagnostics.mjs';
 const held = (reason) => ({ state: 'held', reason });
@@ -415,7 +416,9 @@ export function createAcquisitionRequestProcessor({ readRequest,
           new Set(preview.episodeIds).size !== preview.episodeIds.length ||
           preview.episodeIds.some((id) => !request.episodeIds.includes(id)) ||
           !Array.isArray(preview.files) || preview.files.length < 1 ||
-          preview.files.length > MAX_ACQUISITION_VIDEOS) {
+          preview.files.length > MAX_ACQUISITION_VIDEOS ||
+          (preview.mappingFiles !== undefined && (!Array.isArray(preview.mappingFiles) ||
+            preview.mappingFiles.length < 1 || preview.mappingFiles.length > MAX_TORRENT_FILES))) {
         if(requireReleasePolicy&&!pinned&&preview?.state==='preflight'){qualityInspectionRetry.fail(request,candidate,now());transientFailure=true;}
         continue;
       }
@@ -426,6 +429,18 @@ export function createAcquisitionRequestProcessor({ readRequest,
       // delayed by a separate queue retry for each new-episode release.
       if (preview.episodeIds.every((id) => exactAvailable.has(id))) continue;
       if (preview.episodeIds.some((id) => uncertainOwned.has(id))) continue;
+      if (preview.episodeIds.some(id => exactAvailable.has(id))) {
+        const remaining = selectMissingFiles(preview.files, preview.episodeIds, [...exactAvailable]);
+        if (remaining.state !== 'missing_files') {
+          if (pinned) return remaining;
+          continue;
+        }
+        const names = new Set(remaining.files.map(file => file.name));
+        preview = { ...preview, episodeIds: remaining.episodeIds, files: remaining.files,
+          mappingFiles: preview.mappingFiles ?? preview.files.map(file => ({ name: file.name, size: file.size })),
+          ...(preview.correspondence?.files ? { correspondence: { ...preview.correspondence,
+            files: preview.correspondence.files.filter(file => names.has(file.name)) } } : {}) };
+      }
       if (preview.episodeIds.some((id) => recoveredTargets.has(id)) &&
           preview.shokoPreview !== 'exact') continue;
       if (inspectCandidateTargets) {
@@ -553,8 +568,12 @@ export function createAcquisitionRequestProcessor({ readRequest,
     if (request.episodeIds.some((id) => !currentIds.has(id))) {
       return held('target_missing');
     }
-    const freshPlan = planTorrentTargets({ request, detail,
-      prepared: { state: 'prepared_stopped', files: selected.preview.files },
+    const freshPlan = planTorrentTargets({ request: { ...request, episodeIds: selected.preview.episodeIds }, detail,
+      // Excluded files still establish a complete absolute-numbered pack.
+      // Revalidating only the selected suffix loses its independently checked
+      // numbering context. Final submission re-reads the actual metainfo.
+      prepared: { state: 'prepared_stopped',
+        files: selected.preview.mappingFiles ?? selected.preview.files },
       releaseTitle: selected.candidate.title,
       trustedTitle: selected.preview.identityTitle ?? detail.title,
       allowTitleMetadataVariation: selected.preview.shokoPreview === 'exact' });
@@ -563,7 +582,10 @@ export function createAcquisitionRequestProcessor({ readRequest,
           JSON.stringify(selected.preview.episodeIds) ||
         JSON.stringify(freshPlan.plannedFiles) !==
           JSON.stringify(selected.preview.files)) {
-      return held('preflight_mapping_changed');
+      return { ...held('preflight_mapping_changed'), ...(!pinned ? {
+        nextCandidateOffset: nextIndex < ordered.length ? nextIndex : 0,
+        nextCandidateFingerprint: cursor,
+      } : {}) };
     }
     let outcome;
     try { outcome = await submitCandidate({ request,

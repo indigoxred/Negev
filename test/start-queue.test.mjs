@@ -319,6 +319,19 @@ test('journalled start processor and queue issue only one start intent', async (
         qbittorrent: { baseUrl: 'http://qbit.local/', sessionId: 'sid' },
         inspectMounts: async () => ({}), realpathImpl: async () => '/srv/staging',
         readEvidence: async () => ({}), publicLibraryIds: [102],
+        fetchImpl: async url => {
+          const parsed = new URL(url), hash = parsed.searchParams.get('hashes') ?? parsed.searchParams.get('hash');
+          const row = ctx.ids.find(item => item.hash === hash);
+          assert.ok(row, 'read only a journaled fixture torrent');
+          const savePath = `/Downloads/negev/${hash}`;
+          if (parsed.pathname.endsWith('/properties')) return Response.json({ save_path: savePath, download_path: '' });
+          if (parsed.pathname.endsWith('/files')) return Response.json(ctx.acquisitions.getFilePlan(row.attemptId)
+            .map((file, index) => ({ index, name: file.name, size: file.size, priority: 1, progress: 0 })));
+          assert.ok(parsed.pathname.endsWith('/info'));
+          return Response.json([{ hash, category: 'negev', save_path: savePath,
+            state: 'stoppedDL', progress: 0, downloaded: 0, amount_left: 10,
+            auto_tmm: false, force_start: false }]);
+        },
         start: async ({ ledger, attemptId: id, expected }) => {
           const intent = ledger.beginStart({ attemptId: id, hash: expected.hash,
             manifestDigest: 'a'.repeat(64), nowMs: 1_000 });

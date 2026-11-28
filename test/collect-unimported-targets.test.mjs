@@ -40,7 +40,8 @@ test('one imported, unverified, wrong-title or unavailable episode prevents the 
           ? { state: 'not_imported', anidbId: 42, episodeId }
           : changed });
     assert.deepEqual(result, { state: 'held',
-      reason: 'target_not_proven_unimported', episodeId: 1002 });
+      reason: changed.state === 'unavailable' ? 'availability_unavailable'
+        : 'target_not_proven_unimported', episodeId: 1002 });
   }
 });
 
@@ -48,7 +49,7 @@ test('reader failure and invalid target lists cannot claim unimported status', a
   assert.deepEqual(await collectUnimportedTargets({ anidbId: 42,
     episodeIds: [1001], readEpisode: async () => {
       throw new Error('Shoko unavailable');
-    } }), { state: 'held', reason: 'target_not_proven_unimported',
+    } }), { state: 'held', reason: 'availability_unavailable',
     episodeId: 1001 });
   await assert.rejects(collectUnimportedTargets({ anidbId: 42,
     episodeIds: [1001, 1001], readEpisode: async () => null }), TypeError);

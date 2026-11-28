@@ -514,7 +514,8 @@ test('unsafe extra file never receives a priority write or torrent start', async
       attemptId, fetchImpl });
     assert.deepEqual(result, { state: 'held', reason: 'unsafe_file' });
     assert.equal(priorityWrites, 0);
-    assert.equal(ledger.getAttempt(attemptId).status, 'dispatch_unknown');
+    assert.equal(added, false, 'reject unsafe descriptor content before any add');
+    assert.equal(ledger.getAttempt(attemptId).status, 'reserved');
   }));
 
 test('fresh 18+ authorization prevents any downloader add POST', async () => withAttempt(async ({ ledger, attemptId }) => {

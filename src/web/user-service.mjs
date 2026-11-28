@@ -1180,7 +1180,7 @@ export async function createUserService({ dbPath, shokoBaseUrl, shokoApiKey,
         ? [...plex.publicSections.episode, ...plex.publicSections.movie]
         : [...plex.publicSections.episode];
       return track((async () => {
-        if((await plexObserver.ensureScope()).state!=='ready') return {state:'held',reason:'public_probe_unverified'};
+        if((await plexObserver.ensureScope()).state!=='ready') return {state:'held',reason:'availability_unavailable'};
         const metadataCache = new Map();
         const observation = await metadata.run(() => collectTargetScopedUncertain({ ...input,
         publicLibraryIds, now,
