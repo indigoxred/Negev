@@ -1,3 +1,4 @@
+import { exclusiveSubtitleNames } from './exclusive-subtitle-names.mjs';
 import { MAX_TORRENT_FILES, MAX_ACQUISITION_VIDEOS } from './torrent-file-limits.mjs';
 import path from 'node:path';
 import { inferReleaseState } from '../catalogue/infer-release-state.mjs';
@@ -320,13 +321,8 @@ export function planTorrentTargets({ request, detail, prepared,
     plannedFiles.push({ name: file.name, size: file.size, episodeIds: ids });
   }
   if (plannedFiles.length === 0) return held('no_requested_video');
-  const stem = name => name.slice(0, -path.posix.extname(name).length);
-  const associated = (subtitle, video) => stem(subtitle) === stem(video) ||
-    stem(subtitle).startsWith(stem(video) + '.');
-  const excludedSubtitleNames = prepared.files.filter(file =>
-    torrentFileKind(file.name) === 'subtitle' &&
-    excludedVideoNames.some(video => associated(file.name, video)) &&
-    !plannedFiles.some(video => associated(file.name, video.name))).map(file => file.name);
+  const excludedSubtitleNames = exclusiveSubtitleNames(prepared.files, excludedVideoNames,
+    plannedFiles.map(file => file.name));
   return { state: 'planned_targets',
     episodeIds: [...targets].sort((a, b) => a - b), plannedFiles,
     ...(packSequence?.sourceNumbers ? { numberingEvidence:'complete_absolute_sequence',

@@ -179,6 +179,10 @@ async function submitOwnedCandidate({
       plannedFileNames, excludedFileNames, expectedFiles: metainfo.files, saveRoot });
   }
   if (observed.state === 'manifest_needs_exclusions') {
+    const access = await checkAcquisitionAccess(authorizeRequest, { attemptId });
+    if (access.state === 'held') return access;
+    const isolation = await checkMounts();
+    if (isolation.state !== 'isolated_mount') return isolation;
     const body = new URLSearchParams({ hash: expected.hash,
       id: observed.passive.map((file) => String(file.index)).join('|'),
       priority: '0' });

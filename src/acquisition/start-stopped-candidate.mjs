@@ -236,7 +236,7 @@ export async function startStoppedCandidate(options) {
       if (typeof ledger.reviseUnstartedSelection!=='function') return held('selection_not_revisable');
       if (!selection) {
         const recovered=await recoverTorrentSelection({acquisitions:ledger,attemptId,expected,
-          plan:plannedFiles,qbittorrent:{baseUrl,sessionId:activeSessionId},fetchImpl:activeFetch});
+          plan:selectedFiles,qbittorrent:{baseUrl,sessionId:activeSessionId},fetchImpl:activeFetch});
         if (recovered.state!=='selection_recovered') return recovered;
         const saved=ledger.recordTorrentSelection({attemptId,hash:expected.hash,files:recovered.files,
           excludedFileNames:recovered.excludedFileNames,nowMs:now()});

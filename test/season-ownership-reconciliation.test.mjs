@@ -27,8 +27,9 @@ const coverage = owned => async request => {
     availableEpisodeIds, uncertainEpisodeIds: [] };
 };
 
-for (const reserved of [false, true]) for (const pinned of [false, true]) test(`ownership gained after submission trims only the chosen pack (${pinned ? 'manual' : 'Auto'}, reserved=${reserved})`, async t => {
-  const x = await stoppedPack(t, { count: 6, selected: [1, 2, 3, 4, 5, 6], reserve: false, priorityFailure: 'none' });
+for (const withSubtitles of [false, true]) for (const reserved of [false, true]) for (const pinned of [false, true]) test(`ownership gained after submission trims only the chosen pack (${pinned ? 'manual' : 'Auto'}, reserved=${reserved}, subtitles=${withSubtitles})`, async t => {
+  const x = await stoppedPack(t, { count: 6, selected: [1, 2, 3, 4, 5, 6], reserve: false, priorityFailure: 'none', additionalFiles: withSubtitles ? [
+    {name:'Example - 01.en.srt',size:5},{name:'Example - 03.en.srt',size:5}] : [] });
   const detail = { state: 'details', complete: true, total: 6, anidbId: 42,
     kind: 'series', title: 'Example', restricted: false, page: 1, nextPage: null,
     episodes: x.ids.map((id, i) => ({ id, number: i + 1, type: 'Episode', title: `Episode ${i + 1}` })) };
@@ -50,6 +51,7 @@ for (const reserved of [false, true]) for (const pinned of [false, true]) test(`
     x.useAttempt(claim.attemptId);
     x.ledger.bindPreparedTorrent({ attemptId: x.attemptId, candidate: x.candidate, hash: x.hash, nowMs: x.state.clock });
     x.ledger.recordFilePlan({ attemptId: x.attemptId, hash: x.hash, plannedFiles: initial.files, nowMs: x.state.clock });
+    x.ledger.recordTorrentSelection({attemptId:x.attemptId,hash:x.hash,files:x.prepared.files,excludedFileNames:[],nowMs:x.state.clock});
     x.reopen();
   }
   const owned = new Set(x.ids.slice(0, 2));
@@ -75,7 +77,7 @@ for (const reserved of [false, true]) for (const pinned of [false, true]) test(`
   x.useAttempt(result.attemptId);
   assert.deepEqual(x.ledger.getAttempt(x.attemptId).episodeIds, x.ids.slice(2));
   assert.deepEqual(x.requests.getRequest(x.requestId).episodeIds, x.ids, 'the season request retains its complete history');
-  assert.deepEqual(x.files.map(file => file.priority), [0, 0, 1, 1, 1, 1]);
+  assert.deepEqual(x.files.map(file => file.priority), [0, 0, 1, 1, 1, 1, ...(withSubtitles ? [0, 1] : [])]);
   assert.equal((await x.start({ readPublicCoverage, readEvidence })).state, 'start_unknown');
   assert.equal(x.state.adds, 1); assert.equal(x.state.starts, 1);
 });
@@ -188,4 +190,42 @@ test('two first-time provider outages survive queue restart and recover with one
 test('a combined video is never split around a publicly owned episode', () => {
   assert.deepEqual(selectMissingFiles([{ name: '01-02.mkv', size: 100, episodeIds: [1, 2] }], [1, 2], [1]),
     { state: 'held', reason: 'target_already_available' });
+});
+
+const retainedBonus = { name: 'Example OVA 01.mkv', size: 50, anidbId: 43, episodeIds: [2001],
+  kind: 'ova', evidence: 'shoko_filename_prediction' };
+test('legacy ownership revision retains an accepted bonus in the exact selection', async t => {
+  const x = await stoppedPack(t, { count: 3, selected: [1, 2, 3], priorityFailure: 'none', bonusFiles: [retainedBonus] });
+  assert.equal((await x.submit()).state, 'stopped_observed');
+  x.dropSelection(); x.reopen();
+  const owned = new Set(x.ids.slice(0, 1));
+  const options = { readPublicCoverage: coverage(owned), readEvidence: ownedEvidence(x, owned), readBonusOwnership: async () => ({ state: 'missing' }) };
+  assert.equal((await x.start(options)).reason, 'file_selection_changed');
+  x.reopen();
+  assert.equal((await x.start(options)).state, 'start_unknown');
+  assert.equal(x.files.at(-1).priority, 1);
+  assert.ok(!x.ledger.getTorrentSelection(x.attemptId).excludedFileNames.includes(retainedBonus.name));
+  assert.equal(x.state.adds, 1); assert.equal(x.state.starts, 1);
+});
+
+for (const legacy of [false, true]) test(`ownership revision excludes only episode-exclusive root subtitles (legacy=${legacy})`, async t => {
+  const x = await stoppedPack(t, { count: 3, selected: [1, 2, 3], priorityFailure: 'none', additionalFiles: [
+    { name: 'Example - 01.en.srt', size: 5 }, { name: 'Example - 02.en.srt', size: 5 } ] });
+  await x.submit();
+  if (legacy) { x.dropSelection(); x.reopen(); }
+  const owned = new Set(x.ids.slice(0, 1));
+  const options = { readPublicCoverage: coverage(owned), readEvidence: ownedEvidence(x, owned) };
+  assert.equal((await x.start(options)).reason, 'file_selection_changed');
+  x.reopen();
+  assert.equal((await x.start(options)).state, 'start_unknown');
+  assert.deepEqual(x.files.map(file => file.priority), [0, 1, 1, 0, 1]);
+  assert.equal(x.state.adds, 1); assert.equal(x.state.starts, 1);
+});
+
+test('a journaled bonus becoming owned is excluded without stranding the main pack', async t => {
+  const x = await stoppedPack(t, { count: 3, selected: [1, 2, 3], priorityFailure: 'none', bonusFiles: [retainedBonus] });
+  await x.submit(); x.reopen();
+  const result = await x.start({ readBonusOwnership: async () => ({ state: 'owned' }) });
+  assert.equal(result.state, 'start_unknown', JSON.stringify(result));
+  assert.equal(x.files.at(-1).priority, 0); assert.equal(x.state.starts, 1); assert.equal(x.state.adds, 1);
 });

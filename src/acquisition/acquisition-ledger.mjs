@@ -1,3 +1,4 @@
+import { exclusiveSubtitleNames } from './exclusive-subtitle-names.mjs';
 import { selectMissingFiles } from './select-missing-files.mjs';
 import { pendingRecognitionSql } from './recognition-release-sql.mjs';
 import { canonicalReleaseGuid } from './durable-release-candidate.mjs';
@@ -404,7 +405,10 @@ export function openAcquisitionLedger(dbPath) {
     const removed=previous.filter(file=>!names.has(file.name));
     for (const file of removed) db.prepare('DELETE FROM acquisition_file_plans WHERE attempt_id=? AND file_name=?').run(attemptId,file.name);
     if (selection) {
-      const excluded=[...new Set([...selection.excludedFileNames,...removed.map(file=>file.name)])].sort();
+      const removedNames=removed.map(file=>file.name);
+      const retainedNames=[...remaining,...(bonuses.getBonusPlan(attemptId)??[])].map(file=>file.name);
+      const subtitles=exclusiveSubtitleNames(selection.files,removedNames,retainedNames);
+      const excluded=[...new Set([...selection.excludedFileNames,...removedNames,...subtitles])].sort();
       db.prepare('UPDATE acquisition_torrent_selections SET excluded_json=? WHERE attempt_id=?').run(JSON.stringify(excluded),attemptId);
     }
     touchAttempt.run(nowMs,attemptId);

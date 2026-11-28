@@ -19,7 +19,7 @@ export function encode(value) {
 }
 
 export async function stoppedPack(t, { count = 2, selected = [2], priorityFailure = 'before',
-  reserve = true, evidencePolicy = 'strict' } = {}) {
+  reserve = true, evidencePolicy = 'strict', additionalFiles = [], bonusFiles = [] } = {}) {
   const root = await mkdtemp(path.join(tmpdir(), 'negev-stopped-pack-'));
   const dbPath = path.join(root, 'state.sqlite');
   const requests = openRequestLedger(dbPath);
@@ -29,6 +29,7 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
   let ledger = openAcquisitionLedger(dbPath);
   const files = ids.map((id, index) => ({ index, name: `Example - ${String(index + 1).padStart(2, '0')}.mkv`,
     size: 100, priority: 1, progress: 0 }));
+  for (const extra of [...additionalFiles,...bonusFiles]) files.push({index:files.length,name:extra.name,size:extra.size,priority:1,progress:0});
   const info = { name: 'Example', files: files.map(file => ({ length: file.size, path: [file.name] })),
     'piece length': 16384, pieces: Buffer.alloc(20, 97) };
   const bytes = encode({ info }), hash = createHash('sha1').update(encode(info)).digest('hex');
@@ -43,6 +44,7 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
       episodeIds: selectedFiles.flatMap(file => file.episodeIds), evidencePolicy, nowMs: 200 }).attemptId;
     ledger.bindPreparedTorrent({ attemptId, candidate, hash, nowMs: 201 });
     ledger.recordFilePlan({ attemptId, hash, plannedFiles: selectedFiles, nowMs: 202 });
+    if (bonusFiles.length) ledger.recordBonusPlan({attemptId,hash,files:bonusFiles,nowMs:202});
   }
   const state = { clock: 300, added: false, adds: 0, starts: 0, priorities: 0,
     ownerAllowed: true, mountReady: true, exports: 0, exportStatus: 200, corruptExport: false };
@@ -96,11 +98,11 @@ export async function stoppedPack(t, { count = 2, selected = [2], priorityFailur
       try { db.prepare('DELETE FROM acquisition_torrent_selections WHERE attempt_id=?').run(attemptId); }
       finally { db.close(); }
     },
-    submit: () => submitStoppedCandidate({ ledger, attemptId, candidate, prepared,
+    submit: overrides => submitStoppedCandidate({ ledger, attemptId, candidate, prepared,
       hostPath: '/staging', saveRoot, baseUrl: 'http://qbit.invalid/', sessionId: 'syntheticSID',
       verifyStagingRoot, fetchImpl, authorizeRequest, nowMs: state.clock,
-      plannedFileNames: selectedFiles.map(file => file.name),
-      excludedFileNames: files.filter(file => !selected.includes(file.index + 1)).map(file => file.name) }),
+      plannedFileNames: [...selectedFiles,...bonusFiles].map(file => file.name),
+      excludedFileNames: files.filter(file => file.index<count && !selected.includes(file.index + 1)).map(file => file.name), ...overrides }),
     start: overrides => processRecordedStart({ attemptId, requests, acquisitions: ledger,
       stagingHostPath: '/staging', qbitStagingRoot: saveRoot,
       qbittorrent: { baseUrl: 'http://qbit.invalid/', sessionId: 'syntheticSID' },

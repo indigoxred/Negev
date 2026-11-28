@@ -63,3 +63,30 @@ for (const change of ['size', 'name', 'owner', 'access', 'mount']) test(`stopped
   assert.equal(x.state.priorities, writes, 'unverified ownership/manifest cannot authorize a priority write');
   assert.equal(x.state.starts, 0);
 });
+
+for (const change of ['access', 'mount']) test(`stopped add rechecks ${change} after observing files before a priority write`, async t => {
+  const x = await stoppedPack(t, { priorityFailure: 'none' });
+  const result = await x.submit({ fetchImpl: async (url, init) => {
+    const response = await x.fetchImpl(url, init);
+    if (new URL(url).pathname.endsWith('/files')) {
+      if (change === 'access') x.state.ownerAllowed = false;
+      else x.state.mountReady = false;
+    }
+    return response;
+  } });
+  assert.equal(result.state, 'held');
+  assert.equal(x.state.priorities, 0); assert.equal(x.state.starts, 0);
+});
+
+test('dispatch exclusion recovery verifies fallback mount isolation before priority writes', async t => {
+  const x = await stoppedPack(t);
+  await x.submit();
+  const writes = x.state.priorities;
+  let mountReads = 0;
+  const result = await x.start({ verifyStagingRoot: undefined,
+    inspectMounts: async () => { mountReads++; return { qbittorrent: [], shoko: [], plex: [] }; },
+    realpathImpl: async () => '/staging' });
+  assert.equal(result.state, 'held');
+  assert.ok(mountReads > 0);
+  assert.equal(x.state.priorities, writes); assert.equal(x.state.starts, 0);
+});

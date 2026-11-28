@@ -1,3 +1,4 @@
+import { evaluateStagingMountIsolation } from './staging-mount-isolation.mjs';
 import { cancelResponseBody } from '../http/bounded-response.mjs';
 import { stagingSavePath } from './staging-save-path.mjs';
 import { startStoppedCandidate } from './start-stopped-candidate.mjs';
@@ -80,12 +81,18 @@ export async function processRecordedStart({ attemptId, requests, acquisitions, 
         excludedFileNames: selection.excludedFileNames, expectedFiles: selection.files });
     }
     if (observed.state === 'manifest_needs_exclusions') {
-      if (typeof verifyStagingRoot === 'function' &&
-          (await verifyStagingRoot())?.state !== 'verified_staging_root') {
-        return held('staging_root_unverified');
-      }
       const access = await checkAcquisitionAccess(authorizeRequest, { attemptId, requestId: attempt.requestId });
       if (access.state === 'held') return access;
+      try {
+        if (typeof verifyStagingRoot === 'function') {
+          if ((await verifyStagingRoot())?.state !== 'verified_staging_root') return held('staging_root_unverified');
+        } else {
+          const mounts=await inspectMounts();
+          const isolation=evaluateStagingMountIsolation(mounts,{hostPath:stagingHostPath});
+          if (isolation.state!=='isolated_mount') return isolation;
+          if (await realpathImpl(stagingHostPath)!==stagingHostPath) return held('staging_path_not_canonical');
+        }
+      } catch { return held('staging_root_unverified'); }
       const body = new URLSearchParams({ hash: pending.hash,
         id: observed.passive.map((file) => String(file.index)).join('|'),
         priority: '0' });

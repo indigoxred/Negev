@@ -1,3 +1,4 @@
+import { exclusiveSubtitleNames } from './exclusive-subtitle-names.mjs';
 import { cancelResponseBody, readBoundedBytes } from '../http/bounded-response.mjs';
 import { MAX_TORRENT_METAINFO_BYTES } from './torrent-metainfo-limits.mjs';
 import { inspectTorrentMetainfo } from './inspect-torrent-metainfo.mjs';
@@ -32,7 +33,8 @@ export async function recoverTorrentSelection({ acquisitions, attemptId, expecte
   const byName = new Map(metadata.files.map(file => [file.name, file]));
   if (!plan?.length || plan.some(file => byName.get(file.name)?.size !== file.size)) return held('file_plan_mismatch');
   const plannedNames = new Set(plan.map(file => file.name));
+  const excludedVideos=metadata.files.filter(file => torrentFileKind(file.name) === 'video' &&
+    !plannedNames.has(file.name)).map(file => file.name);
   return { state: 'selection_recovered', files: metadata.files,
-    excludedFileNames: metadata.files.filter(file => torrentFileKind(file.name) === 'video' &&
-      !plannedNames.has(file.name)).map(file => file.name) };
+    excludedFileNames: [...excludedVideos,...exclusiveSubtitleNames(metadata.files,excludedVideos,[...plannedNames])] };
 }
